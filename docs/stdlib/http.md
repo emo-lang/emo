@@ -35,6 +35,8 @@ http.put(url, body)                          // PUT with a body
 http.delete(url)                             // DELETE, no body
 http.request(method, url, headers, body, timeout)
 http.request_with(method, url, headers, body, timeout, tls_options)
+http.request_via(proxy, method, url, headers, body, timeout)
+http.request_with_via(proxy, method, url, headers, body, timeout, tls_options)
 ```
 
 `http.request`'s full signature:
@@ -45,8 +47,16 @@ def request(method String, url String, headers Array[(String, String)], body Str
 
 - `headers` is an array of `(name, value)` tuples, appended after the
   built-in `Host`, `Content-Length`, and `Connection: close` lines.
-- `timeout` is in seconds and is passed to `net.connect` /
-  `net.tls_connect`; `0.0` (what the verb helpers use) waits indefinitely.
+- `timeout` is one budget for the whole request — the connect, the
+  proxy tunnel, the request write, and the response read all draw from
+  it. `0.0` (what the verb helpers use) waits indefinitely.
+- `request` takes the proxy from the environment: `https_proxy` for
+  `https://` URLs and `http_proxy` for `http://`, falling back to
+  `all_proxy` (each variable in lower- and upper-case), with `no_proxy`
+  honoring `*`, domain suffixes, and `host:port` entries. The proxy url
+  is `http://host:port` (bare `host:port` works); an `https://` URL
+  opens a `CONNECT` tunnel through it. `request_via` states the proxy
+  explicitly and skips the lookup; `""` forces a direct connection.
 - The URL must carry an explicit `http://` or `https://` scheme;
   anything else is the error tuple, as is every transport failure the
   `net` package reports — match the pair, don't assume the response.
@@ -68,7 +78,8 @@ policy: `tls_options` is a `net.TlsClientOptions` from
 `net.tls_client_options()` (`with_ca_file`, `with_client_certificate`,
 `with_server_name`, `without_verification`), and an `https://` URL
 connects through `net.tls_connect_with`. A plain `http://` URL has no
-TLS leg, so the policy applies only to `https`.
+TLS leg, so the policy applies only to `https`. `http.request_with_via`
+is the same pair with an explicit proxy.
 
 ```emo
 require "http"
@@ -100,8 +111,13 @@ about.
 - **No connection pooling.** One TCP connection per request, closed after
   the exchange.
 - **No redirect following.** 3xx responses are returned as-is.
-- **`Content-Length` responses.** Responses are read by their
-  `Content-Length`; a response without one reads the connection's
-  remaining bytes.
-- **No header continuation, trailers, or compression** — headers are read
-  as flat `Name: value` lines.
+- **Body framing.** A `Content-Length` body is read exactly; a
+  `Transfer-Encoding: chunked` body has its framing decoded; a response
+  with neither reads until the connection closes.
+- **No header continuation or compression** — headers are read as flat
+  `Name: value` lines, and chunked trailers are consumed but not
+  exposed.
+- **HTTP proxies only.** The proxy url must be `http://host:port`;
+  SOCKS and TLS proxies, IPv6 proxy addresses, and credentials in the
+  proxy url, are refused with a stated reason rather than silently
+  ignored.

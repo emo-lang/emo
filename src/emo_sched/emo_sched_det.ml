@@ -210,6 +210,24 @@ let describe_sockaddr = function
 (* A connect candidate: the socket family and address, as resolved. *)
 type candidate = { cfam : Unix.socket_domain; caddr : Unix.sockaddr }
 
+(* RFC 8305's ordering: alternate address families, preserving each
+   family's own order, so the first attempt of each goes out early. The
+   first candidate's family leads. *)
+let interleave_candidates addrs =
+  let is4 a = a.cfam = Unix.PF_INET in
+  let is6 a = a.cfam = Unix.PF_INET6 in
+  let v6 = List.filter is6 addrs in
+  let v4 = List.filter is4 addrs in
+  let rest = List.filter (fun a -> (not (is4 a)) && not (is6 a)) addrs in
+  let rec go first second acc =
+    match (first, second) with
+    | [], [] -> List.rev acc
+    | a :: tail, _ -> go tail second (a :: acc)
+    | [], b :: tail -> go [] tail (b :: acc)
+  in
+  let v6_first = match addrs with a :: _ -> not (is4 a) | [] -> false in
+  (if v6_first then go v6 v4 [] else go v4 v6 []) @ rest
+
 (* Maps a Unix error onto the precise failure reason for [what]. *)
 let io_reason what desc (err : Unix.error) =
   Printf.sprintf "cannot %s on %s: %s" what desc (Unix.error_message err)
@@ -325,6 +343,20 @@ let exit_name = function
   | Emo_eval.Exit_normal -> "normal"
   | Emo_eval.Exit_raised _ -> "raised"
   | Emo_eval.Exit_failed _ -> "failed"
+
+(* A peer that closes without close_notify is end of stream for a read;
+   OpenSSL spells it SSL_R_UNEXPECTED_EOF_WHILE_READING. A
+   close-delimited HTTP body depends on that close reading as EOF, not
+   as a transport failure. *)
+let tls_read_eof detail =
+  let detail = String.lowercase_ascii detail in
+  let needle = "unexpected eof" in
+  let n = String.length needle in
+  let rec scan i =
+    i + n <= String.length detail
+    && (String.equal (String.sub detail i n) needle || scan (i + 1))
+  in
+  scan 0
 
 let rec handler state (proc : Emo_eval.process) () :
     (unit, outcome) Effect.Shallow.handler =
@@ -487,6 +519,48 @@ let rec handler state (proc : Emo_eval.process) () :
                 | addrs ->
                     connect_tls_entry state proc k ~host ~port ~timeout
                       ~tls_options span addrs)
+        | Emo_eval.Net_tls_wrap (c, tls_options, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                conn_entry state proc k c span (fun live ->
+                    let finished = ref false in
+                    let deadline = conn_deadline c in
+                    let fail message =
+                      finish_w finished state proc k
+                        (Emo_eval.net_error message)
+                    in
+                    let name = tls_options.Emo_eval.tls_server_name in
+                    if Option.is_some live.ltls then
+                      fail
+                        (Printf.sprintf "the connection to %s is already TLS"
+                           c.Emo_eval.cdesc)
+                    else if
+                      (not tls_options.Emo_eval.tls_insecure)
+                      && tls_name_is_ip_literal name
+                    then
+                      fail
+                        (Printf.sprintf
+                           "tls: cannot verify a certificate for the IP \
+                            address `%s`; pass server_name with the \
+                            certificate's DNS name"
+                           name)
+                    else if
+                      (not tls_options.Emo_eval.tls_insecure) && name = ""
+                    then
+                      fail
+                        "tls: verifying a certificate needs a DNS name; pass \
+                         server_name"
+                    else
+                      match client_tls_ctx tls_options with
+                      | Error reason -> fail reason
+                      | Ok ctx ->
+                          let ssl = Ssl.embed_socket live.lfd ctx in
+                          if not tls_options.Emo_eval.tls_insecure then
+                            Ssl.set_host ssl name;
+                          if name <> "" && not (tls_name_is_ip_literal name)
+                          then Ssl.set_client_SNI_hostname ssl name;
+                          wrap_handshake state proc k finished c live ssl
+                            tls_options.Emo_eval.tls_server_name span deadline))
         | Emo_eval.Net_accept (l, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -896,88 +970,111 @@ and connect_unix_entry state proc
 and connect_next state proc k ~target ~deadline ~message
     ~(tls : Ssl.context option) ~(tls_name : string) ~(tls_verify : bool)
     ~(last_error : Unix.error option) span addrs =
-  match addrs with
-  | [] ->
-      (* Every candidate failed; the last OS error is the precise reason. *)
-      let reason =
-        match last_error with
-        | Some Unix.ECONNREFUSED ->
-            Printf.sprintf "connection refused to %s" target
-        | Some err ->
-            Printf.sprintf "cannot connect to %s: %s" target
-              (Unix.error_message err)
-        | None -> Printf.sprintf "cannot connect to %s" target
-      in
-      Effect.Shallow.continue_with k
-        (Emo_eval.net_error reason)
-        (handler state proc ())
-  | addr :: rest -> (
-      (* One completion flag per address attempt; moving to the next
-         candidate starts a fresh attempt with its own flag. *)
-      let finished = ref false in
-      (* The attempt's deadline timer outlives the operation in the
-         timer list — the scheduler holds no handle to cancel it — so
-         the attempt marks itself spent on every exit, and a late fire
-         is a no-op rather than a close of a live socket. *)
-      let deadline_spent = ref false in
+  (* Happy eyeballs: the first candidate starts at once, the next one
+     every 250ms while nothing has connected, and a refused attempt
+     starts the next immediately. The first socket to connect wins; the
+     rest close. One overall deadline still bounds the race. *)
+  let finished = ref false in
+  let pending = ref 0 in
+  let remaining = ref (interleave_candidates addrs) in
+  let live_fds = ref [] in
+  let last_error = ref last_error in
+  let failure_reason () =
+    match !last_error with
+    | Some Unix.ECONNREFUSED ->
+        Printf.sprintf "connection refused to %s" target
+    | Some err ->
+        Printf.sprintf "cannot connect to %s: %s" target
+          (Unix.error_message err)
+    | None -> Printf.sprintf "cannot connect to %s" target
+  in
+  let finish_failure st reason =
+    if !finished then None
+    else (
+      List.iter
+        (fun fd ->
+          drop_io st fd `W;
+          try Unix.close fd with Unix.Unix_error _ -> ())
+        !live_fds;
+      live_fds := [];
+      finish_w finished st proc k (Emo_eval.net_error reason))
+  in
+  let rec attempt st addr =
+    if !finished then None
+    else begin
       let fd = Unix.socket addr.cfam Unix.SOCK_STREAM 0 in
       Unix.set_nonblock fd;
-      let cleanup st =
-        drop_io st fd `W;
-        try Unix.close fd with Unix.Unix_error _ -> ()
+      live_fds := fd :: !live_fds;
+      incr pending;
+      let settled = ref false in
+      let succeed st =
+        if (not !settled) && not !finished then begin
+          settled := true;
+          decr pending;
+          List.iter
+            (fun other ->
+              if other <> fd then (
+                drop_io st other `W;
+                try Unix.close other with Unix.Unix_error _ -> ()))
+            !live_fds;
+          live_fds := [ fd ];
+          connect_tls_upgrade st proc k finished fd target tls tls_name
+            tls_verify ~deadline span
+        end
+        else None
       in
-      let refusal err =
-        match err with
-        | Unix.ECONNREFUSED -> Printf.sprintf "connection refused to %s" target
-        | _ ->
-            Printf.sprintf "cannot connect to %s: %s" target
-              (Unix.error_message err)
+      let refuse st err =
+        if (not !settled) && not !finished then begin
+          settled := true;
+          decr pending;
+          last_error := Some err;
+          drop_io st fd `W;
+          (try Unix.close fd with Unix.Unix_error _ -> ());
+          live_fds := List.filter (fun other -> other <> fd) !live_fds;
+          start_next st
+        end
+        else None
       in
       let step st =
         match Unix.getsockopt_error fd with
-        | Some err ->
-            (* This address is done, successfully or not: its deadline
-               timer must never fire again, or it would close a socket
-               this attempt no longer owns — or deliver a spurious
-               timeout over an address that went on to connect. *)
-            deadline_spent := true;
-            cleanup st;
-            (* This address failed; the refusal is only final when the
-               last candidate said it. *)
-            connect_next st proc k ~target ~deadline ~message ~tls ~tls_name
-              ~tls_verify ~last_error:(Some err) span rest
-        | None ->
-            deadline_spent := true;
-            connect_tls_upgrade st proc k finished fd target tls tls_name
-              tls_verify span
-      in
-      let timeout_step st =
-        if !deadline_spent then None
-        else (
-          cleanup st;
-          finish_w finished st proc k (Emo_eval.net_error message))
+        | Some err -> refuse st err
+        | None -> succeed st
       in
       match Unix.connect fd addr.caddr with
-      | () ->
-          connect_tls_upgrade state proc k finished fd target tls tls_name
-            tls_verify span
-      | exception Unix.Unix_error (Unix.EINPROGRESS, _, _) ->
-          add_io state fd `W (fun () -> Queue.add (Io (proc, step)) state.runq);
-          (match deadline with
-          | Some dl ->
-              let remaining = max 0.001 (dl -. Unix.gettimeofday ()) in
-              add_timer state remaining (fun () ->
-                  if not !deadline_spent then
-                    Queue.add (Io (proc, timeout_step)) state.runq)
-          | None -> ());
+      | () -> succeed st
+      | exception Unix.Unix_error ((Unix.EINPROGRESS | Unix.EWOULDBLOCK), _, _)
+        ->
+          add_io st fd `W (fun () -> Queue.add (Io (proc, step)) st.runq);
           None
-      | exception Unix.Unix_error (err, _, _) ->
-          cleanup state;
-          if rest = [] then
-            finish_w finished state proc k (Emo_eval.net_error (refusal err))
-          else
-            connect_next state proc k ~target ~deadline ~message ~tls ~tls_name
-              ~tls_verify ~last_error:(Some err) span rest)
+      | exception Unix.Unix_error (err, _, _) -> refuse st err
+    end
+  and start_next st =
+    if !finished then None
+    else if !remaining = [] && !pending = 0 then
+      finish_failure st (failure_reason ())
+    else
+      match !remaining with
+      | [] -> None
+      | addr :: rest ->
+          remaining := rest;
+          if !remaining <> [] then stagger ();
+          attempt st addr
+  and stagger () =
+    add_timer state 0.25 (fun () ->
+        if not !finished then
+          Queue.add (Io (proc, (fun st -> start_next st))) state.runq)
+  in
+  (match deadline with
+  | Some dl ->
+      let budget = max 0.001 (dl -. Unix.gettimeofday ()) in
+      add_timer state budget (fun () ->
+          if not !finished then
+            Queue.add
+              (Io (proc, (fun st -> finish_failure st message)))
+              state.runq)
+  | None -> ());
+  if addrs = [] then finish_failure state (failure_reason ())
+  else start_next state
 
 (* One negotiate-all profile for both ends of a TLS connection: TLS 1.2 up to
    1.3. The two SSL-2.0/3.0-era constants of this binding are the only ones
@@ -1043,7 +1140,7 @@ and connect_tls_upgrade state proc
     (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
     (finished : bool ref) (fd : Unix.file_descr) (target : string)
     (tls : Ssl.context option) (tls_name : string) (tls_verify : bool)
-    (span : Emo_support.Span.t) : outcome =
+    ~(deadline : float option) (span : Emo_support.Span.t) : outcome =
   match tls with
   | None ->
       finish_w finished state proc k
@@ -1053,7 +1150,7 @@ and connect_tls_upgrade state proc
       if tls_verify then Ssl.set_host ssl tls_name;
       if not (tls_name_is_ip_literal tls_name) then
         Ssl.set_client_SNI_hostname ssl tls_name;
-      handshake state proc k finished fd ssl target span Ssl.connect
+      handshake state proc k finished fd ssl target ~deadline span Ssl.connect
 
 (* Drives a nonblocking TLS handshake to completion: want_read /
    want_write park the continuation on the fd, so both ends of a
@@ -1061,8 +1158,8 @@ and connect_tls_upgrade state proc
 and handshake state proc
     (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
     (finished : bool ref) (fd : Unix.file_descr) (ssl : Ssl.socket)
-    (desc : string) (span : Emo_support.Span.t) (once : Ssl.socket -> unit) :
-    outcome =
+    (desc : string) ~(deadline : float option) (span : Emo_support.Span.t)
+    (once : Ssl.socket -> unit) : outcome =
   match once ssl with
   | () ->
       finish_w finished state proc k
@@ -1071,12 +1168,12 @@ and handshake state proc
       ( Ssl.Connection_error (Ssl.Error_want_read as want)
       | Ssl.Accept_error (Ssl.Error_want_read as want) )
     when want = Ssl.Error_want_read ->
-      park_and_handshake state proc k finished fd ssl desc span `R once
+      park_and_handshake state proc k finished fd ssl desc ~deadline span `R once
   | exception
       ( Ssl.Connection_error (Ssl.Error_want_write as want)
       | Ssl.Accept_error (Ssl.Error_want_write as want) )
     when want = Ssl.Error_want_write ->
-      park_and_handshake state proc k finished fd ssl desc span `W once
+      park_and_handshake state proc k finished fd ssl desc ~deadline span `W once
   | exception (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _)
     ->
       finish_w finished state proc k
@@ -1084,10 +1181,48 @@ and handshake state proc
            (Printf.sprintf "the TLS handshake with %s failed: %s" desc
               ((Ssl.get_error_string [@alert "-deprecated"]) ())))
 
-and park_and_handshake state proc k finished fd ssl desc span kind once =
-  park_fd state proc k finished fd kind ~deadline:None
+and park_and_handshake state proc k finished fd ssl desc ~deadline span kind
+    once =
+  park_fd state proc k finished fd kind ~deadline
     ~timeout_message:(Printf.sprintf "timed out handshaking with %s" desc) span
-    (fun st -> handshake st proc k finished fd ssl desc span once)
+    (fun st -> handshake st proc k finished fd ssl desc ~deadline span once)
+
+(* The TLS half of `net_tls_wrap`: shakes hands on an existing plain
+   connection and, once it completes, attaches the SSL socket to that
+   same connection — the handle the caller already holds keeps working,
+   now over TLS. *)
+and wrap_handshake state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (c : Emo_eval.conn) (live : live) (ssl : Ssl.socket)
+    (desc : string) (span : Emo_support.Span.t) (deadline : float option) :
+    outcome =
+  match Ssl.connect ssl with
+  | () ->
+      Hashtbl.replace state.live c.Emo_eval.cid { live with ltls = Some ssl };
+      finish_w finished state proc k
+        (Emo_eval.net_ok (Emo_eval.TcpConn c))
+  | exception
+      ( Ssl.Connection_error (Ssl.Error_want_read as want)
+      | Ssl.Accept_error (Ssl.Error_want_read as want) )
+    when want = Ssl.Error_want_read ->
+      park_fd state proc k finished live.lfd `R ~deadline
+        ~timeout_message:(Printf.sprintf "timed out handshaking with %s" desc)
+        span
+        (fun st -> wrap_handshake st proc k finished c live ssl desc span deadline)
+  | exception
+      ( Ssl.Connection_error (Ssl.Error_want_write as want)
+      | Ssl.Accept_error (Ssl.Error_want_write as want) )
+    when want = Ssl.Error_want_write ->
+      park_fd state proc k finished live.lfd `W ~deadline
+        ~timeout_message:(Printf.sprintf "timed out handshaking with %s" desc)
+        span
+        (fun st -> wrap_handshake st proc k finished c live ssl desc span deadline)
+  | exception (Ssl.Connection_error _ | Ssl.Accept_error _ | Ssl.Verify_error _)
+    ->
+      finish_w finished state proc k
+        (Emo_eval.net_error
+           (Printf.sprintf "the TLS handshake with %s failed: %s" desc
+              ((Ssl.get_error_string [@alert "-deprecated"]) ())))
 
 (* The setup half of a TLS listener: TCP listen plus a server context
    holding the certificate. A client-CA file turns on peer verification;
@@ -1157,7 +1292,8 @@ and accept_loop state proc
               (Emo_eval.net_ok (Emo_eval.TcpConn (make_conn state client desc)))
         | Some ctx ->
             let ssl = Ssl.embed_socket client ctx in
-            handshake state proc k finished client ssl desc span Ssl.accept)
+            handshake state proc k finished client ssl desc ~deadline span
+              Ssl.accept)
     | exception Unix.Unix_error (Unix.EAGAIN, _, _) ->
         park_fd state proc k finished fd `R ~deadline
           ~timeout_message:
@@ -1315,8 +1451,10 @@ and read_chunk live buf : read_result =
       | n -> RData n
       | exception Ssl.Read_error Ssl.Error_want_read -> RWant `R
       | exception Ssl.Read_error Ssl.Error_want_write -> RWant `W
+      | exception Ssl.Read_error Ssl.Error_zero_return -> REof
       | exception (Ssl.Read_error _ | Ssl.Connection_error _) ->
-          RFailed ((Ssl.get_error_string [@alert "-deprecated"]) ())
+          let detail = (Ssl.get_error_string [@alert "-deprecated"]) () in
+          if tls_read_eof detail then REof else RFailed detail
       | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> RWant `R)
 
 and read_line_loop state proc
