@@ -2895,6 +2895,29 @@ let version_cmd =
     (Cmd.info "version" ~doc:"Print the version.")
     Term.(const print_version $ const ())
 
+(* `emo man`: the standard library's reference pages, rendered for the
+   terminal from the pages the binary carries — the same docs/stdlib
+   pages, so an installed binary reads its own manual. The renderer is
+   re-exported so a test can read a page without a terminal. *)
+module Man = Emo_man
+
+let man_cmd =
+  let package =
+    Arg.(
+      value
+      & pos 0 (some string) None
+      & info [] ~docv:"PACKAGE"
+          ~doc:
+            "The standard library package whose reference page to read. \
+             Without one, the pages the bundled library carries are listed.")
+  in
+  Cmd.v
+    (Cmd.info "man" ~doc:"Read the standard library's reference pages.")
+    Term.(
+      const (fun package ->
+          match Emo_man.run package with 0 -> Cmd.Exit.ok | code -> exit code)
+      $ package)
+
 (* ---- `emo emoji`: the shared-package lifecycle ----
 
    The group gathers the authoring flow for packages meant for the
@@ -3581,6 +3604,7 @@ let cmd =
       emoji;
       new_cmd;
       doctor_cmd;
+      man_cmd;
       version_cmd;
     ]
 

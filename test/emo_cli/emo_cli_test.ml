@@ -5042,6 +5042,40 @@ let doctor_tests =
           || contains text "no external tools"));
   ]
 
+(* ---- man: the standard library's reference pages ---- *)
+
+let man_tests =
+  [
+    tc "lists every bundled page" (fun () ->
+        let page = Emo_cli.Man.list_page () in
+        List.iter
+          (fun name ->
+            Alcotest.(check bool) ("lists " ^ name) true (contains page name))
+          [ "json"; "yaml"; "toml"; "stdlib"; "websocket" ]);
+    tc "renders a package's reference" (fun () ->
+        match Emo_cli.Man.find "json" with
+        | None -> Alcotest.fail "the json page is not in the binary"
+        | Some markdown ->
+            let page = Emo_cli.Man.package_page "json" markdown in
+            List.iter
+              (fun text ->
+                Alcotest.(check bool)
+                  ("renders " ^ text) true (contains page text))
+              [
+                "JSON(3)";
+                "NAME";
+                "json — JSON decode and encode";
+                "deps { \"json\" = \"0.1.0\" }";
+                "require \"json\"";
+                "DECODE";
+                "def decode(text String) (R, Json)";
+              ]);
+    tc "an unknown name has no page" (fun () ->
+        Alcotest.(check bool)
+          "no entry" true
+          (Emo_cli.Man.find "no-such-package" = None));
+  ]
+
 (* ---- browser: the page bundle (T48.10) ---- *)
 
 (* A stub page — just enough of document and window for the dom family.
@@ -6911,6 +6945,7 @@ let () =
       ("manifest_entry", manifest_entry_tests);
       ("emoji", emoji_tests);
       ("doctor", doctor_tests);
+      ("man", man_tests);
       ("browser", browser_tests);
       ("wasm_run", wasm_run_tests);
     ]
