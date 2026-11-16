@@ -3002,6 +3002,7 @@ void emo_net_wait_readable(int64_t fd) {
   emo_current->wait_fd = fd;
   emo_current->wait_write = 0;
   emo_current->blocked = 1;
+  emo_current->wait_until = 0;
   swapcontext(&emo_current->ctx, &emo_sched_ctx);
 }
 
@@ -3011,7 +3012,167 @@ void emo_net_wait_writable(int64_t fd) {
   emo_current->wait_fd = fd;
   emo_current->wait_write = 1;
   emo_current->blocked = 1;
+  emo_current->wait_until = 0;
   swapcontext(&emo_current->ctx, &emo_sched_ctx);
+}
+
+/* The deadline-aware parks: the process carries the deadline in
+   [wait_until], the field the sleeper scan already fires — a readiness
+   wake re-runs the read (data wins), a deadline wake resumes into the
+   caller's own recheck (still not ready, deadline past → the refusal),
+   and re-parking re-arms it. 0 means no deadline. */
+void emo_net_wait_readable_until(int64_t fd, int64_t deadline_ms) {
+  emo_current->wait_fd = fd;
+  emo_current->wait_write = 0;
+  emo_current->blocked = 1;
+  emo_current->wait_until = deadline_ms;
+  swapcontext(&emo_current->ctx, &emo_sched_ctx);
+}
+
+void emo_net_wait_writable_until(int64_t fd, int64_t deadline_ms) {
+  emo_current->wait_fd = fd;
+  emo_current->wait_write = 1;
+  emo_current->blocked = 1;
+  emo_current->wait_until = deadline_ms;
+  swapcontext(&emo_current->ctx, &emo_sched_ctx);
+}
+
+/* ---- the connection metadata ----
+
+   The timeout each conn or listener rides (seconds, 0.0 waits
+   indefinitely) and the peer text its refusals name. `set_timeout`
+   records them here: every socket is non-blocking — the scheduler
+   parks on EAGAIN — so the socket option SO_RCVTIMEO this used to set
+   never fired once; the deadline lives where the parking is. The desc
+   is the interpreter's own conn text — the connect's host:port as
+   written, the accepted client's sockaddr, the listener's bound name —
+   so a c timeout refusal is byte-identical with the interpreter's. */
+
+struct emo_net_meta {
+  int64_t fd;
+  double timeout;
+  char *desc;
+  /* The bytes a timed-out read consumed before the deadline answered:
+     the interpreter's connection buffer keeps them for the next read on
+     the same conn, and so does this. Appended at the timeout, drained
+     first by every read. */
+  char *pending;
+  int64_t pending_len;
+  struct emo_net_meta *next;
+};
+static struct emo_net_meta *emo_net_meta_slots;
+
+static int64_t emo_net_monotonic_ms(void);
+
+static struct emo_net_meta *emo_net_meta_of(int64_t fd) {
+  for (struct emo_net_meta *m = emo_net_meta_slots; m != NULL; m = m->next)
+    if (m->fd == fd) return m;
+  return NULL;
+}
+
+/* Appends [len] bytes to the conn's pending buffer. */
+static void emo_net_pending_store(int64_t fd, const char *src, int64_t len) {
+  if (len <= 0) return;
+  struct emo_net_meta *m = emo_net_meta_of(fd);
+  if (m == NULL) return;
+  char *grown = realloc(m->pending, (size_t)(m->pending_len + len));
+  if (grown == NULL) abort();
+  m->pending = grown;
+  memcpy(m->pending + m->pending_len, src, (size_t)len);
+  m->pending_len += len;
+}
+
+/* Drains the whole pending buffer into [*buf], growing [*cap] as
+   needed; answers the byte count (0 when nothing is pending). */
+static int64_t emo_net_pending_take_all(int64_t fd, char **buf, size_t *cap) {
+  struct emo_net_meta *m = emo_net_meta_of(fd);
+  if (m == NULL || m->pending_len == 0) return 0;
+  int64_t taken = m->pending_len;
+  if ((size_t)taken > *cap) {
+    while ((size_t)taken > *cap) *cap *= 2;
+    char *bigger = realloc(*buf, *cap);
+    if (bigger == NULL) abort();
+    *buf = bigger;
+  }
+  memcpy(*buf, m->pending, (size_t)taken);
+  free(m->pending);
+  m->pending = NULL;
+  m->pending_len = 0;
+  return taken;
+}
+
+/* Copies up to [want] bytes out of the pending buffer; the remainder
+   stays pending. Answers the byte count taken. */
+static int64_t emo_net_pending_take_exact(int64_t fd, char *dst,
+                                          int64_t want) {
+  struct emo_net_meta *m = emo_net_meta_of(fd);
+  if (m == NULL || m->pending_len == 0 || want <= 0) return 0;
+  int64_t taken = want < m->pending_len ? want : m->pending_len;
+  memcpy(dst, m->pending, (size_t)taken);
+  m->pending_len -= taken;
+  if (m->pending_len == 0) {
+    free(m->pending);
+    m->pending = NULL;
+  } else {
+    memmove(m->pending, m->pending + taken, (size_t)m->pending_len);
+  }
+  return taken;
+}
+
+static void emo_net_meta_register(int64_t fd, double timeout,
+                                  const char *desc) {
+  struct emo_net_meta *m = emo_net_meta_of(fd);
+  if (m != NULL) {
+    m->timeout = timeout;
+    if (desc != NULL) {
+      free(m->desc);
+      m->desc = strdup(desc);
+      if (m->desc == NULL) abort();
+    }
+    return;
+  }
+  m = malloc(sizeof *m);
+  if (m == NULL) abort();
+  m->fd = fd;
+  m->timeout = timeout;
+  if (desc != NULL) {
+    m->desc = strdup(desc);
+    if (m->desc == NULL) abort();
+  } else {
+    m->desc = NULL;
+  }
+  m->next = emo_net_meta_slots;
+  emo_net_meta_slots = m;
+}
+
+static void emo_net_meta_drop(int64_t fd) {
+  for (struct emo_net_meta **p = &emo_net_meta_slots; *p != NULL;
+       p = &(*p)->next)
+    if ((*p)->fd == fd) {
+      struct emo_net_meta *dead = *p;
+      *p = dead->next;
+      free(dead->desc);
+      free(dead);
+      return;
+    }
+}
+
+/* The deadline this handle's reads park toward: 0 waits indefinitely,
+   else the absolute monotonic ms the operation started against. */
+static int64_t emo_net_deadline_ms(int64_t fd, int64_t started_ms) {
+  struct emo_net_meta *m = emo_net_meta_of(fd);
+  double t = m != NULL ? m->timeout : 0.0;
+  return t > 0.0 ? started_ms + (int64_t)(t * 1000.0) : 0;
+}
+
+/* The timeout refusal, the interpreter's own text. */
+static emo_value emo_net_timeout_error(const char *what, int64_t fd) {
+  struct emo_net_meta *m = emo_net_meta_of(fd);
+  const char *desc =
+      (m != NULL && m->desc != NULL) ? m->desc : "the connection";
+  char text[512];
+  snprintf(text, sizeof text, "timed out %s %s", what, desc);
+  return emo_os_pair("error", emo_box_str(emo_str_from_cstr(text)));
 }
 
 /* The data-driven net failures are values, like the os ones above: the
@@ -3077,6 +3238,17 @@ emo_value emo_net_listen(emo_str host, int64_t port) {
   char why[512];
   int fd = emo_net_listen_fd(host, port, why, sizeof why);
   if (fd < 0) return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  /* The listener's desc is the interpreter's: the host as written, the
+     bound port answering — port 0 resolves through getsockname. */
+  struct sockaddr_in addr;
+  socklen_t len = sizeof addr;
+  char desc[128];
+  if (getsockname((int)fd, (struct sockaddr *)&addr, &len) == 0)
+    snprintf(desc, sizeof desc, "%s:%d", emo_str_cstr(host),
+             (int)ntohs(addr.sin_port));
+  else
+    snprintf(desc, sizeof desc, "%s:%d", emo_str_cstr(host), (int)port);
+  emo_net_meta_register(fd, 0.0, desc);
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
@@ -3088,22 +3260,67 @@ int64_t emo_net_port(int64_t listener) {
   return ntohs(addr.sin_port);
 }
 
-/* The raw accept shared by both planes: parks on readability until a
-   connection arrives. Returns the fd or -1 with the refusal in [why]. */
-static int emo_net_accept_fd(int64_t listener, char *why, size_t whyn) {
+/* The raw accept shared by both planes: parks on readability toward
+   the listener's own deadline (0 waits indefinitely) until a connection
+   arrives, and hands the client's sockaddr back for the desc table.
+   Returns the fd or -1 with the refusal in [why]. */
+static int emo_net_accept_fd(int64_t listener, char *why, size_t whyn,
+                             struct sockaddr_storage *client,
+                             socklen_t *client_len) {
+  int64_t started_ms = emo_net_monotonic_ms();
+  int64_t deadline_ms = emo_net_deadline_ms(listener, started_ms);
   for (;;) {
-    int fd = accept((int)listener, NULL, NULL);
+    int fd = accept((int)listener, (struct sockaddr *)client, client_len);
     if (fd >= 0) {
       emo_net_nonblock(fd);
       return fd;
     }
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      emo_net_wait_readable(listener);
+      if (deadline_ms > 0 && emo_net_monotonic_ms() >= deadline_ms) {
+        /* The interpreter's own accept text, against the listener's
+           bound name. */
+        struct emo_net_meta *m = emo_net_meta_of(listener);
+        const char *desc =
+            (m != NULL && m->desc != NULL) ? m->desc : "the listener";
+        snprintf(why, whyn, "timed out waiting to accept on %s", desc);
+        return -1;
+      }
+      emo_net_wait_readable_until(listener, deadline_ms);
       continue;
     }
     snprintf(why, whyn, "cannot accept: %s", strerror(errno));
     return -1;
   }
+}
+
+/* The accepted client's desc, the interpreter's describe_sockaddr: the
+   dotted quad and port, or the unix socket's bound path whole. */
+static void emo_net_client_desc(const struct sockaddr_storage *client,
+                                socklen_t len, char *desc, size_t descn) {
+  if (client->ss_family == AF_UNIX) {
+    const struct sockaddr_un *u = (const struct sockaddr_un *)client;
+    size_t pathlen = len > offsetof(struct sockaddr_un, sun_path)
+                         ? len - offsetof(struct sockaddr_un, sun_path)
+                         : 0;
+    if (pathlen >= descn) pathlen = descn - 1;
+    snprintf(desc, descn, "unix socket %.*s", (int)pathlen, u->sun_path);
+    return;
+  }
+  char host[64];
+  if (getnameinfo((const struct sockaddr *)client, len, host, sizeof host,
+                  NULL, 0, NI_NUMERICHOST) == 0) {
+    int port = 0;
+    if (client->ss_family == AF_INET) {
+      const struct sockaddr_in *in4 = (const struct sockaddr_in *)client;
+      port = (int)ntohs(in4->sin_port);
+    } else {
+      const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *)client;
+      port = (int)ntohs(in6->sin6_port);
+    }
+    snprintf(desc, descn, "%s:%d", host, port);
+    return;
+  }
+  snprintf(desc, descn, "the client");
 }
 
 /* The TLS listeners' hooks, defined with the fence below: the
@@ -3120,8 +3337,14 @@ emo_value emo_net_accept(int64_t listener) {
   if (lctx != NULL) return emo_net_accept_tls(listener, lctx);
 #endif
   char why[512];
-  int fd = emo_net_accept_fd(listener, why, sizeof why);
+  struct sockaddr_storage client;
+  socklen_t client_len = sizeof client;
+  int fd = emo_net_accept_fd(listener, why, sizeof why,
+                             (struct sockaddr_storage *)&client, &client_len);
   if (fd < 0) return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  char desc[128];
+  emo_net_client_desc(&client, client_len, desc, sizeof desc);
+  emo_net_meta_register(fd, 0.0, desc);
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
@@ -3268,8 +3491,13 @@ static int emo_net_connect_fd(emo_str host, int64_t port, double timeout,
     free(h);
     return -1;
   }
+  /* The conn's desc is the interpreter's own: the host as written and
+     the port. The connect's timeout bounds the connect only — reads
+     wait indefinitely until `set_timeout` says otherwise. */
+  char desc[128];
+  snprintf(desc, sizeof desc, "%s:%d", h, (int)port);
   free(h);
-  emo_net_set_timeout(fd, timeout);
+  emo_net_meta_register(fd, 0.0, desc);
   return fd;
 }
 
@@ -3351,6 +3579,9 @@ emo_value emo_net_listen_unix(emo_str path) {
   char why[512];
   int fd = emo_net_listen_unix_fd(path, why, sizeof why);
   if (fd < 0) return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  char desc[128];
+  snprintf(desc, sizeof desc, "unix socket %s", emo_str_cstr(path));
+  emo_net_meta_register(fd, 0.0, desc);
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
@@ -3382,9 +3613,14 @@ emo_value emo_net_connect_unix(emo_str path, double timeout) {
     free(p);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
   }
-  free(p);
-  emo_net_set_timeout(fd, timeout);
   emo_net_nonblock(fd);
+  /* The conn's desc is the interpreter's ("unix socket <path>"), and
+     the connect's own timeout bounds the connect only — reads wait
+     indefinitely until `set_timeout` says otherwise. */
+  char desc[160];
+  snprintf(desc, sizeof desc, "unix socket %s", p);
+  free(p);
+  emo_net_meta_register(fd, 0.0, desc);
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 
@@ -3525,10 +3761,14 @@ emo_value emo_os_sleep_ms(int64_t ms) {
 }
 
 int64_t emo_net_set_timeout(int64_t fd, double seconds) {
-  struct timeval tv = {
-      (time_t)seconds,
-      (suseconds_t)((seconds - (double)(time_t)seconds) * 1000000.0)};
-  setsockopt((int)fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+  /* The sockets are all non-blocking, so the socket option this used
+     to set (SO_RCVTIMEO) never fired once — the deadline lives in the
+     parking, and the reads carry it. */
+  struct emo_net_meta *m = emo_net_meta_of(fd);
+  if (m == NULL)
+    emo_net_meta_register(fd, seconds, NULL);
+  else
+    m->timeout = seconds;
   return fd;
 }
 
@@ -3821,8 +4061,13 @@ static SSL_CTX *emo_tls_server_ctx(emo_str cert_path, emo_str key_path,
    the ocaml scheduler's tls_listener shape is met. */
 static emo_value emo_net_accept_tls(int64_t listener, SSL_CTX *lctx) {
   char why[512];
-  int fd = emo_net_accept_fd(listener, why, sizeof why);
+  struct sockaddr_storage client;
+  socklen_t client_len = sizeof client;
+  int fd = emo_net_accept_fd(listener, why, sizeof why,
+                             (struct sockaddr_storage *)&client, &client_len);
   if (fd < 0) return emo_os_pair("error", emo_box_str(emo_str_from_cstr(why)));
+  char client_desc[128];
+  emo_net_client_desc(&client, client_len, client_desc, sizeof client_desc);
   SSL *ssl = SSL_new(lctx);
   if (ssl == NULL || SSL_set_fd(ssl, fd) != 1) {
     char drained[256], what[512];
@@ -3832,20 +4077,43 @@ static emo_value emo_net_accept_tls(int64_t listener, SSL_CTX *lctx) {
     close(fd);
     return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
   }
+  /* The handshake rides the listener's own deadline — one budget
+     covers the accept and its handshake, the interpreter's shape. */
+  int64_t handshake_deadline = emo_net_deadline_ms(
+      listener, emo_net_monotonic_ms());
   for (;;) {
     ERR_clear_error();
     int r = SSL_accept(ssl);
     if (r == 1) {
       emo_tls_attach(fd, ssl, NULL);
+      emo_net_meta_register(fd, 0.0, client_desc);
       return emo_os_pair("ok", emo_box_i64(fd));
     }
     int err = SSL_get_error(ssl, r);
     if (err == SSL_ERROR_WANT_READ) {
-      emo_net_wait_readable(fd);
+      if (handshake_deadline > 0 &&
+          emo_net_monotonic_ms() >= handshake_deadline) {
+        char what[640];
+        snprintf(what, sizeof what, "timed out handshaking with %s",
+                 client_desc);
+        SSL_free(ssl);
+        close(fd);
+        return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+      }
+      emo_net_wait_readable_until(fd, handshake_deadline);
       continue;
     }
     if (err == SSL_ERROR_WANT_WRITE) {
-      emo_net_wait_writable(fd);
+      if (handshake_deadline > 0 &&
+          emo_net_monotonic_ms() >= handshake_deadline) {
+        char what[640];
+        snprintf(what, sizeof what, "timed out handshaking with %s",
+                 client_desc);
+        SSL_free(ssl);
+        close(fd);
+        return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+      }
+      emo_net_wait_writable_until(fd, handshake_deadline);
       continue;
     }
     char local[64], drained[256], what[768];
@@ -3970,6 +4238,11 @@ static emo_value emo_tls_connect_impl(emo_str host, int64_t port,
   if (!emo_tls_addr_literal(name))
     SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name,
              (void *)name);
+  /* The handshake rides the connect's own deadline: one budget covers
+     connect and handshake, the interpreter's shape. The desc is the
+     target's, the text the connect refusals already name. */
+  int64_t handshake_deadline =
+      timeout > 0.0 ? emo_net_monotonic_ms() + (int64_t)(timeout * 1000.0) : 0;
   for (;;) {
     ERR_clear_error();
     int r = SSL_connect(ssl);
@@ -3979,11 +4252,31 @@ static emo_value emo_tls_connect_impl(emo_str host, int64_t port,
     }
     int err = SSL_get_error(ssl, r);
     if (err == SSL_ERROR_WANT_READ) {
-      emo_net_wait_readable(fd);
+      if (handshake_deadline > 0 &&
+          emo_net_monotonic_ms() >= handshake_deadline) {
+        char what[640];
+        snprintf(what, sizeof what, "timed out handshaking with %s:%d", h,
+                 (int)port);
+        SSL_free(ssl);
+        close(fd);
+        SSL_CTX_free(ctx);
+        return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+      }
+      emo_net_wait_readable_until(fd, handshake_deadline);
       continue;
     }
     if (err == SSL_ERROR_WANT_WRITE) {
-      emo_net_wait_writable(fd);
+      if (handshake_deadline > 0 &&
+          emo_net_monotonic_ms() >= handshake_deadline) {
+        char what[640];
+        snprintf(what, sizeof what, "timed out handshaking with %s:%d", h,
+                 (int)port);
+        SSL_free(ssl);
+        close(fd);
+        SSL_CTX_free(ctx);
+        return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
+      }
+      emo_net_wait_writable_until(fd, handshake_deadline);
       continue;
     }
     char drained[256], what[640];
@@ -4054,6 +4347,10 @@ emo_value emo_net_tls_wrap(int64_t fd, emo_str server_name, emo_str ca_file,
   if (name[0] != '\0' && !emo_tls_addr_literal(name))
     SSL_ctrl(ssl, SSL_CTRL_SET_TLSEXT_HOSTNAME, TLSEXT_NAMETYPE_host_name,
              (void *)name);
+  /* The handshake rides the connection's own timeout — the deadline
+     the wrap's caller's read operations would park toward, the
+     interpreter's shape. */
+  int64_t handshake_deadline = emo_net_deadline_ms(fd, emo_net_monotonic_ms());
   for (;;) {
     ERR_clear_error();
     int r = SSL_connect(ssl);
@@ -4063,11 +4360,17 @@ emo_value emo_net_tls_wrap(int64_t fd, emo_str server_name, emo_str ca_file,
     }
     int err = SSL_get_error(ssl, r);
     if (err == SSL_ERROR_WANT_READ) {
-      emo_net_wait_readable(fd);
+      if (handshake_deadline > 0 &&
+          emo_net_monotonic_ms() >= handshake_deadline)
+        return emo_net_timeout_error("handshaking with", fd);
+      emo_net_wait_readable_until(fd, handshake_deadline);
       continue;
     }
     if (err == SSL_ERROR_WANT_WRITE) {
-      emo_net_wait_writable(fd);
+      if (handshake_deadline > 0 &&
+          emo_net_monotonic_ms() >= handshake_deadline)
+        return emo_net_timeout_error("handshaking with", fd);
+      emo_net_wait_writable_until(fd, handshake_deadline);
       continue;
     }
     char drained[256], what[640];
@@ -4088,8 +4391,14 @@ emo_value emo_net_tls_wrap(int64_t fd, emo_str server_name, emo_str ca_file,
    already share. Returns the byte count, 0 on a clean close, or -1
    with [detail] filled (the library's wording for TLS, errno's for
    raw). */
+/* One read of the fd, TLS-aware when the fence carries it. Would-block
+   parks toward [deadline_ms] (0 waits indefinitely) and retries; the
+   deadline past with still nothing ready answers -2, the caller's
+   timeout signal — the refusal text is the wrapper's, which knows the
+   operation's own name. Returns bytes read, 0 on EOF, -1 with [detail]
+   on a real error. */
 static int emo_net_read_once(int64_t fd, void *buf, size_t n, char *detail,
-                             size_t detailn) {
+                             size_t detailn, int64_t deadline_ms) {
 #ifdef EMO_HAS_TLS
   SSL *ssl = emo_tls_lookup(fd);
   if (ssl != NULL) {
@@ -4100,11 +4409,13 @@ static int emo_net_read_once(int64_t fd, void *buf, size_t n, char *detail,
       if (r == 0) return 0;
       int err = SSL_get_error(ssl, r);
       if (err == SSL_ERROR_WANT_READ) {
-        emo_net_wait_readable(fd);
+        if (deadline_ms > 0 && emo_net_monotonic_ms() >= deadline_ms) return -2;
+        emo_net_wait_readable_until(fd, deadline_ms);
         continue;
       }
       if (err == SSL_ERROR_WANT_WRITE) {
-        emo_net_wait_writable(fd);
+        if (deadline_ms > 0 && emo_net_monotonic_ms() >= deadline_ms) return -2;
+        emo_net_wait_writable_until(fd, deadline_ms);
         continue;
       }
       emo_tls_drain(detail, detailn);
@@ -4115,7 +4426,8 @@ static int emo_net_read_once(int64_t fd, void *buf, size_t n, char *detail,
   for (;;) {
     ssize_t got = recv((int)fd, buf, n, 0);
     if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-      emo_net_wait_readable(fd);
+      if (deadline_ms > 0 && emo_net_monotonic_ms() >= deadline_ms) return -2;
+      emo_net_wait_readable_until(fd, deadline_ms);
       continue;
     }
     if (got < 0) snprintf(detail, detailn, "%s", strerror(errno));
@@ -4158,20 +4470,61 @@ static int emo_net_write_once(int64_t fd, const void *buf, size_t n,
 /* One byte at a time is slow but exact; the arena absorbs the growth. */
 /* One byte at a time is slow but exact; the line buffer is a malloc'd
    transient that the boxing copies out and frees. */
+/* The reads share one shape: the conn's pending bytes (what a previous
+   timed-out read consumed) ride first, the deadline parks toward the
+   op's own budget, and the timeout stashes what was consumed so the
+   next read on the same conn sees it — the interpreter's connection
+   buffer. read_line accumulates the raw bytes and scans for the whole
+   line, the interpreter's rbuf shape; its carries and its EOF text
+   match the interpreter's byte for byte. */
+
 emo_value emo_net_read_line(int64_t fd) {
+  int64_t started_ms = emo_net_monotonic_ms();
+  int64_t deadline_ms = emo_net_deadline_ms(fd, started_ms);
   size_t cap = 64;
   char *buf = malloc(cap);
   if (buf == NULL) abort();
-  int64_t len = 0;
+  int64_t len = emo_net_pending_take_all(fd, &buf, &cap);
   for (;;) {
+    char *nl = memchr(buf, '\n', (size_t)len);
+    if (nl != NULL) {
+      int64_t raw_line = nl - buf; /* the bytes up to and not including \n */
+      int64_t line_len = raw_line;
+      if (line_len > 0 && buf[line_len - 1] == '\r') line_len--;
+      emo_value out = emo_box_str((emo_str){line_len, buf});
+      int64_t rest = len - (raw_line + 1);
+      if (rest > 0) emo_net_pending_store(fd, buf + raw_line + 1, rest);
+      free(buf);
+      return emo_os_pair("ok", out);
+    }
+    if ((size_t)len + 1 > cap) {
+      cap *= 2;
+      char *bigger = realloc(buf, cap);
+      if (bigger == NULL) abort();
+      buf = bigger;
+    }
     char detail[256];
     detail[0] = '\0';
     char c;
-    int got = emo_net_read_once(fd, &c, 1, detail, sizeof detail);
-    if (got == 0) { /* EOF ends the line */
-      emo_value out = emo_box_str((emo_str){len, buf});
+    int got = emo_net_read_once(fd, &c, 1, detail, sizeof detail, deadline_ms);
+    if (got == -2) { /* the deadline past, still nothing ready */
+      emo_net_pending_store(fd, buf, len);
       free(buf);
-      return emo_os_pair("ok", out);
+      return emo_net_timeout_error("reading a line from", fd);
+    }
+    if (got == 0) { /* EOF: a clean close at a line boundary, or the error */
+      emo_value out = emo_box_str((emo_str){len, buf});
+      if (len == 0) {
+        free(buf);
+        return emo_os_pair("ok", out);
+      }
+      struct emo_net_meta *m = emo_net_meta_of(fd);
+      const char *desc =
+          (m != NULL && m->desc != NULL) ? m->desc : "the connection";
+      char what[512];
+      snprintf(what, sizeof what, "the connection to %s closed mid-line", desc);
+      free(buf);
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
     if (got < 0) {
       char what[512];
@@ -4179,36 +4532,36 @@ emo_value emo_net_read_line(int64_t fd) {
       free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
-    if (c == '\n') {
-      emo_value out = emo_box_str((emo_str){len, buf});
-      free(buf);
-      return emo_os_pair("ok", out);
-    }
-    if (c == '\r') continue;
-    if ((size_t)len + 1 > cap) {
-      cap *= 2;
-      char *bigger = realloc(buf, cap);
-      if (bigger == NULL) abort();
-      buf = bigger;
-    }
     buf[len++] = c;
   }
 }
 
 emo_value emo_net_read_exactly(int64_t fd, int64_t n) {
+  int64_t started_ms = emo_net_monotonic_ms();
+  int64_t deadline_ms = emo_net_deadline_ms(fd, started_ms);
   char *buf = malloc(n > 0 ? (size_t)n : 1);
   if (buf == NULL) abort();
-  int64_t got_total = 0;
+  int64_t got_total = emo_net_pending_take_exact(fd, buf, n);
   while (got_total < n) {
     char detail[256];
     detail[0] = '\0';
-    int got = emo_net_read_once(fd, buf + got_total,
-                                (size_t)(n - got_total), detail, sizeof detail);
-    if (got == 0) {
+    int got = emo_net_read_once(fd, buf + got_total, (size_t)(n - got_total),
+                                detail, sizeof detail, deadline_ms);
+    if (got == -2) { /* the deadline past, still nothing ready */
+      emo_net_pending_store(fd, buf, got_total);
       free(buf);
-      return emo_os_pair(
-          "error",
-          emo_box_str(emo_str_from_cstr("the connection closed early")));
+      return emo_net_timeout_error("reading from", fd);
+    }
+    if (got == 0) {
+      struct emo_net_meta *m = emo_net_meta_of(fd);
+      const char *desc =
+          (m != NULL && m->desc != NULL) ? m->desc : "the connection";
+      char what[512];
+      snprintf(what, sizeof what,
+               "the connection to %s closed after %lld of %lld bytes", desc,
+               (long long)got_total, (long long)n);
+      free(buf);
+      return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
     if (got < 0) {
       char what[512];
@@ -4224,15 +4577,23 @@ emo_value emo_net_read_exactly(int64_t fd, int64_t n) {
 }
 
 emo_value emo_net_read_all(int64_t fd) {
+  int64_t started_ms = emo_net_monotonic_ms();
+  int64_t deadline_ms = emo_net_deadline_ms(fd, started_ms);
   size_t cap = 4096;
   char *buf = malloc(cap);
   if (buf == NULL) abort();
-  int64_t len = 0;
+  int64_t len = emo_net_pending_take_all(fd, &buf, &cap);
   for (;;) {
     char detail[256];
     detail[0] = '\0';
     char chunk[4096];
-    int got = emo_net_read_once(fd, chunk, sizeof chunk, detail, sizeof detail);
+    int got = emo_net_read_once(fd, chunk, sizeof chunk, detail, sizeof detail,
+                                deadline_ms);
+    if (got == -2) { /* the deadline past, still nothing ready */
+      emo_net_pending_store(fd, buf, len);
+      free(buf);
+      return emo_net_timeout_error("reading from", fd);
+    }
     if (got == 0) {
       emo_value out = emo_box_str((emo_str){len, buf});
       free(buf);
@@ -4284,6 +4645,7 @@ emo_value emo_net_close(int64_t fd) {
     SSL_CTX_free(ctx);
   }
 #endif
+  emo_net_meta_drop(fd);
   close((int)fd);
   return emo_os_pair("ok", emo_box_i64(fd));
 }
