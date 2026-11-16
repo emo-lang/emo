@@ -179,9 +179,12 @@ let resolve p (path : string list) : module_kind option =
   | Some f -> Some (File f)
   | None -> Option.map (fun d -> Dir d) (Hashtbl.find_opt p.dirs path)
 
-(* All known module file paths (segment lists), for the checker and graph. *)
+(* All known module file paths (segment lists), for the checker and graph.
+   One canonical order: the paths' own sort — a table fold's order is not
+   the program's to inherit, and every consumer that walks these paths
+   walks them the same way every run. *)
 let module_paths p : string list list =
-  Hashtbl.fold (fun path _ acc -> path :: acc) p.files []
+  List.sort compare (Hashtbl.fold (fun path _ acc -> path :: acc) p.files [])
 
 let diagnostics p : Emo_support.Diagnostic.t list = List.rev !(p.diagnostics)
 
@@ -533,9 +536,18 @@ let units_of (p : project) : (string list * Ast.item list) list =
       | Some kept when List.length kept <= List.length path -> ()
       | _ -> Hashtbl.replace shortest file path)
     p.files;
-  Hashtbl.fold
-    (fun file path acc -> (path, parse_cached p file) :: acc)
-    shortest []
+  (* The program's units in one canonical order: the module paths' own
+     sort. The fold's order was the hash table's — one the binary itself
+     need not keep stable across builds — and every consumer inherits it
+     straight into the program's representation: the compiled targets'
+     emission order follows the module order, so the same sources built
+     twice could disagree byte for byte in the riscv64 .s (the httpd
+     trail's codegen-order finding). *)
+  List.sort
+    (fun (a, _) (b, _) -> compare a b)
+    (Hashtbl.fold
+       (fun file path acc -> (path, parse_cached p file) :: acc)
+       shortest [])
 
 let check_project (p : project) :
     string list list

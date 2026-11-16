@@ -420,8 +420,8 @@ const once = 1|});
         let p =
           discover
             [
-              ("a.emo",
-                 {|class A {
+              ( "a.emo",
+                {|class A {
   def init() {
     self.mark = 0
   }
@@ -429,9 +429,10 @@ const once = 1|});
 
 def entry(b other.b.B) Int64 {
   return 0
-}|});
-              ("other/b.emo",
-                 {|class B {
+}|}
+              );
+              ( "other/b.emo",
+                {|class B {
   def init() {
     self.mark = 0
   }
@@ -439,7 +440,8 @@ def entry(b other.b.B) Int64 {
 
 def tag(a a.A) Int64 {
   return 0
-}|});
+}|}
+              );
             ]
         in
         (* No value reference anywhere — each module's only reference to
@@ -452,8 +454,8 @@ def tag(a a.A) Int64 {
         let p =
           discover
             [
-              ("a.emo",
-                 {|class A {
+              ( "a.emo",
+                {|class A {
   def init() {
     self.mark = 0
   }
@@ -461,7 +463,8 @@ def tag(a a.A) Int64 {
 
 def entry(v a.A) Int64 {
   return 0
-}|});
+}|}
+              );
             ]
         in
         let _, _, _, errors = Emo_project.check_project p in
