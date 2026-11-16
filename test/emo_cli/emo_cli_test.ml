@@ -6444,16 +6444,94 @@ const n = Atomic.new(-> (x Int64) { return x })
    payload since T83.3 — the constructor rule types `Bytes.new` as `Bytes`
    and the payload scope carries it — so the clean form joins the
    constructor golden as the zero-diagnostics pin below, not the refusal
-   list. The pin is check-time only, and deliberately so: `beam`'s cell is
-   an `atomics` array (integers only), where a Bytes payload is a runtime
-   `emo_no_atomic` error — the non-scalar cell's design is recorded in
-   `CHECK.md`, found-not-fixed. *)
+   list. The pin is check-time here and run-time beside it: the beam's
+   Bytes cell is the holder process (CHECK.md, fixed 2026-11-16), so the
+   run pin below drives the whole value-generic family on `beam` and `c`. *)
 let atomic_constructor_clean_source =
   {|
 const buf = Atomic.new(Bytes.new(4))
 buf.store("ok".to_bytes())
 println(buf.load().length())
 |}
+
+(* The Bytes cell's run pin: the whole value-generic family — new, store,
+   load, exchange, compare_exchange hit and miss — plus the shared shape,
+   a spawned process operating the same cell. The holder's answer rides
+   the transcript byte-identically on the two runtimes the suite drives
+   here. *)
+let atomic_bytes_run_source =
+  {|
+const buf = Atomic.new(Bytes.new(4))
+buf.store("ok".to_bytes())
+println(buf.load().length())
+const cell = Atomic.new("hello".to_bytes())
+const old = cell.exchange("swap".to_bytes())
+println(old.length())
+const cas = cell.compare_exchange("swap".to_bytes(), "next".to_bytes())
+println(cas[0])
+println(cas[1].length())
+const miss = cell.compare_exchange("swap".to_bytes(), "never".to_bytes())
+println(miss[0])
+println(miss[1].length())
+println(cell.load().length())
+
+def child_writer(cell Atomic) {
+  cell.store("from-child".to_bytes())
+  println(cell.load().length())
+}
+
+def main() {
+  const shared = Atomic.new("seed".to_bytes())
+  do child_writer(shared)
+  time.sleep(0.2)
+  println(shared.load().length())
+}
+
+main()
+|}
+
+let atomic_bytes_run_expected = "2\n5\ntrue\n4\nfalse\n4\n4\n10\n10\n"
+
+let atomic_bytes_run_tests =
+  List.map
+    (fun target ->
+      tc
+        (Printf.sprintf "%s: the Bytes cell's family runs, shared cell included"
+           target) (fun () ->
+          if (not (Lazy.force erl_available)) || not (Lazy.force erlc_available)
+          then Alcotest.skip ();
+          let dir = Filename.concat scratch "atomic-bytes-run" in
+          if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+          write_file
+            (Filename.concat dir "package.emo")
+            {|package {
+  name = "local/atomic-bytes-run"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "beam"]
+
+  deps {
+    "time" = "0.1.0"
+  }
+}
+|};
+          let entry = Filename.concat dir "main.emo" in
+          write_file entry atomic_bytes_run_source;
+          let out = Filename.concat dir "main" in
+          Alcotest.(check int) "build exit" 0 (build_entry ~target entry out);
+          let cmd =
+            match target with
+            | "beam" ->
+                Printf.sprintf
+                  "erl -noshell -pa %s -eval 'main:main(), erlang:halt(0).'"
+                  (Filename.quote dir)
+            | _ -> Filename.quote out
+          in
+          let out_run, err, proc_status = run_cmd cmd in
+          check_run
+            (Printf.sprintf "%s run" target)
+            (out_run, err, proc_status)
+            atomic_bytes_run_expected))
+    [ "beam"; "c" ]
 
 let atomic_refusal_new_expected =
   List.map
@@ -7007,6 +7085,7 @@ let () =
       ("atomic_wasm", atomic_wasm_tests);
       ("atomic_riscv64", atomic_riscv64_tests);
       ("atomic_refusal", atomic_refusal_tests);
+      ("atomic_bytes_run", atomic_bytes_run_tests);
       ("strictness_refusal", strictness_refusal_tests);
       ("peek_refusal", peek_refusal_tests);
       ("c_integer", c_integer_tests);

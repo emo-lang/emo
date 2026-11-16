@@ -2709,14 +2709,17 @@ let rt_source =
 %% ---- The Atomic cell ----
 %%
 %% Box's synchronized sibling (CHECK.md, the atomic memory model). The
-%% cell is an `atomics` array of two slots: slot 1 pins the payload's
-%% kind (1 Int64, 2 Bool) and slot 2 holds the encoded value — the
-%% raw integer, or 0/1 for a Bool — so a Bool cell decodes to the
-%% atoms, never to an integer. The ref crosses a process boundary as
-%% the handle to the same array: BEAM's term copy shares the cell by
-%% construction. The BEAM preempts, which is why every access is an
-%% `atomics` call: the module documents them as mutually ordered
-%% (sequentially consistent).
+%% scalar cell is an `atomics` array of two words — word 1 the payload
+%% kind (1 = Int64, 2 = Bool), word 2 the encoded value (the raw
+%% integer, or 0/1 for a Bool) — wrapped as {'emo_atomic', Ref}, so a
+%% Bool cell decodes to the atoms, never to an integer. The ref crosses
+%% a process boundary as the handle to the same array: BEAM's term copy
+%% shares the cell by construction. The BEAM preempts, which is why
+%% every access is an `atomics` call: the module documents its
+%% operations as mutually ordered (sequentially consistent), and
+%% exchange and compare_exchange ride the module's own atomic exchange
+%% and CAS rather than a get-then-put pair, whose two steps a
+%% preempting sibling could split.
 
 'emo_atomic_new'/1 =
     fun (_v) ->
@@ -2725,9 +2728,95 @@ let rt_source =
 	      apply 'emo_atomic_make'/2 (_i, 1)
 	  <'true'> when 'true' -> apply 'emo_atomic_make'/2 (1, 2)
 	  <'false'> when 'true' -> apply 'emo_atomic_make'/2 (0, 2)
+	  <{'emo_bytes', _k}> when 'true' ->
+	      let <_bin> = call 'erlang':'get'(_k)
+	      in let <_pid> =
+		      call 'erlang':'spawn'(fun () ->
+			  do
+			      apply 'emo_spawn_reg'/1 (call 'erlang':'self'())
+			      apply 'emo_atomic_holder'/1 (_bin))
+	      in {'emo_atomic_bytes', _pid}
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_atomic', _other})
 	end
+
+%% The Bytes cell: an `atomics` word cannot hold a binary, so the cell
+%% is a holder process owning the raw buffer. Every operation is a
+%% tagged synchronous call the holder answers in its own mailbox order
+%% — one process, one queue, the cell's whole operation history
+%% serialized, which is the sequential-consistency promise by
+%% construction. The holder's pid crosses a process boundary as the
+%% handle to the same cell, and the payload rides the messages as the
+%% raw binary: the store resolves the Bytes value's own buffer here, in
+%% the calling process, and a load or exchange wraps the holder's
+%% answer into this process's own Bytes value — so the cell's
+%% operations carry byte content across process boundaries, the one
+%% shape on this target that does. The holder rides the root's child
+%% table ('emo_spawn_reg'), so the cell lives exactly as long as the
+%% program does.
+
+'emo_atomic_holder'/1 =
+    fun (_bin) ->
+	receive
+	  <{ _from, _ref, 'load', _p }> when 'true' ->
+	      do call 'erlang':'!'(_from, {_ref, _bin})
+		 apply 'emo_atomic_holder'/1 (_bin)
+	  <{ _from, _ref, 'store', _v }> when 'true' ->
+	      do call 'erlang':'!'(_from, {_ref, 'ok'})
+		 apply 'emo_atomic_holder'/1 (_v)
+	  <{ _from, _ref, 'exchange', _v }> when 'true' ->
+	      do call 'erlang':'!'(_from, {_ref, _bin})
+		 apply 'emo_atomic_holder'/1 (_v)
+	  <{ _from, _ref, 'cas', _expected, _fresh }> when 'true' ->
+	      do call 'erlang':'!'(_from, {_ref, _bin})
+		 apply 'emo_atomic_holder'/1
+		     (case call 'erlang':'=:='(_bin, _expected) of
+			<'true'> when 'true' -> _fresh
+			<'false'> when 'true' -> _bin
+		      end)
+	after 'infinity' ->
+	    primop 'recv_wait'()
+
+%% The payload's own raw buffer, read in the calling process (the
+%% process dictionary is where this target's Bytes values live).
+
+'emo_atomic_bytes_bin'/1 =
+    fun (_v) ->
+	case _v of
+	  <{'emo_bytes', _k}> when 'true' -> call 'erlang':'get'(_k)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_atomic', _other})
+	end
+
+%% A raw buffer back as this process's own Bytes value.
+
+'emo_atomic_bytes_wrap'/1 =
+    fun (_bin) ->
+	let <_k> = call 'erlang':'make_ref'()
+	in do call 'erlang':'put'(_k, _bin)
+	       {'emo_bytes', _k}
+
+'emo_atomic_bytes_call'/4 =
+    fun (_pid, _ref, _op, _payload) ->
+	do
+	    call 'erlang':'!'
+		(_pid, {call 'erlang':'self'(), _ref, _op, _payload})
+	    receive
+	      <{ _ref, _answer }> when 'true' -> _answer
+	    after 'infinity' ->
+		primop 'recv_wait'()
+
+
+'emo_atomic_bytes_cas'/4 =
+    fun (_pid, _ref, _expected, _fresh) ->
+	do
+	    call 'erlang':'!'
+		(_pid, {call 'erlang':'self'(), _ref, 'cas', _expected, _fresh})
+	    receive
+	      <{ _ref, _answer }> when 'true' -> _answer
+	    after 'infinity' ->
+		primop 'recv_wait'()
+
 
 'emo_atomic_make'/2 =
     fun (_v, _kind) ->
@@ -2744,6 +2833,11 @@ let rt_source =
 	  <{'emo_atomic', _r}> when 'true' ->
 	      apply 'emo_atomic_decode'/2
 		  (call 'atomics':'get'(_r, 2), call 'atomics':'get'(_r, 1))
+	  <{'emo_atomic_bytes', _pid}> when 'true' ->
+	      let <_ref> = call 'erlang':'make_ref'()
+	      in apply 'emo_atomic_bytes_wrap'/1
+		     (apply 'emo_atomic_bytes_call'/4
+			  (_pid, _ref, 'load', 'ok'))
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_atomic', _other})
 	end
@@ -2756,6 +2850,13 @@ let rt_source =
 	      in do
 		     call 'atomics':'put'
 			 (_r, 2, apply 'emo_atomic_encode'/2 (_v, _kind))
+		     _a
+	  <{'emo_atomic_bytes', _pid}> when 'true' ->
+	      let <_ref> = call 'erlang':'make_ref'()
+	      in do
+		     apply 'emo_atomic_bytes_call'/4
+			 (_pid, _ref, 'store',
+			  apply 'emo_atomic_bytes_bin'/1 (_v))
 		     _a
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_atomic', _other})
@@ -2795,11 +2896,16 @@ let rt_source =
 	case _a of
 	  <{'emo_atomic', _r}> when 'true' ->
 	      let <_kind> = call 'atomics':'get'(_r, 1)
-	      in let <_old> = call 'atomics':'get'(_r, 2)
-		 in do
-		     call 'atomics':'put'
-			 (_r, 2, apply 'emo_atomic_encode'/2 (_v, _kind))
-		     apply 'emo_atomic_decode'/2 (_old, _kind)
+	      in apply 'emo_atomic_decode'/2
+		     (call 'atomics':'exchange'
+			 (_r, 2, apply 'emo_atomic_encode'/2 (_v, _kind)),
+		      _kind)
+	  <{'emo_atomic_bytes', _pid}> when 'true' ->
+	      let <_ref> = call 'erlang':'make_ref'()
+	      in apply 'emo_atomic_bytes_wrap'/1
+		     (apply 'emo_atomic_bytes_call'/4
+			  (_pid, _ref, 'exchange',
+			   apply 'emo_atomic_bytes_bin'/1 (_v)))
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_atomic', _other})
 	end
@@ -2809,19 +2915,32 @@ let rt_source =
 	case _a of
 	  <{'emo_atomic', _r}> when 'true' ->
 	      let <_kind> = call 'atomics':'get'(_r, 1)
-	      in let <_old> = call 'atomics':'get'(_r, 2)
-		 in let <_oldv> = apply 'emo_atomic_decode'/2 (_old, _kind)
-		    in let <_swapped> = call 'erlang':'=:='(_oldv, _expected)
-		       in do
-			   case _swapped of
-			     <'true'> when 'true' ->
-				 call 'atomics':'put'
-				     (_r, 2,
-				      apply 'emo_atomic_encode'/2
-					  (_fresh, _kind))
-			     <'false'> when 'true' -> _a
-			   end
-			   {_swapped, _oldv}
+	      in let <_res> =
+		     call 'atomics':'compare_exchange'
+			 (_r, 2,
+			  apply 'emo_atomic_encode'/2 (_expected, _kind),
+			  apply 'emo_atomic_encode'/2 (_fresh, _kind))
+		 in case _res of
+		      <'ok'> when 'true' ->
+			  {'true',
+			   apply 'emo_atomic_decode'/2 (_expected, _kind)}
+		      <_actual> when 'true' ->
+			  {'false',
+			   apply 'emo_atomic_decode'/2 (_actual, _kind)}
+		    end
+	  <{'emo_atomic_bytes', _pid}> when 'true' ->
+	      let <_ref> = call 'erlang':'make_ref'()
+	      in let <_old> =
+		     apply 'emo_atomic_bytes_cas'/4
+			 (_pid, _ref,
+			  apply 'emo_atomic_bytes_bin'/1 (_expected),
+			  apply 'emo_atomic_bytes_bin'/1 (_fresh))
+		 in let <_swapped> =
+			call 'erlang':'=:='
+			    (_old, apply 'emo_atomic_bytes_bin'/1 (_expected))
+		    in {_swapped, apply 'emo_atomic_bytes_wrap'/1 (_old)}
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_atomic', _other})
 	end
 
 %% The fetch family: a compare-exchange loop over the encoded value —

@@ -79,11 +79,16 @@ the two scalars' vocabulary and stays off the buffer:
 | `exchange(v)` | `Bytes` | replaces the buffer, returns the previous one |
 | `compare_exchange(expected, new)` | `(Bool, Bytes)` | the same pair contract over buffers |
 
-One honest caveat: the `beam` cell is an Erlang `atomics` array — integers
-only — so a Bytes cell checks everywhere but dies at run time on `beam`
-alone (`emo_no_atomic`). Carrying a buffer honestly on the BEAM wants the
-non-scalar cell's design, and until that lands the Bytes cell is a
-check-time shape, not a run-everywhere one.
+One honest caveat, retired: the `beam` cell is an Erlang `atomics` array —
+integers only — so the Bytes cell is a holder process on that target. Every
+operation is a tagged synchronous call the holder answers in its own mailbox
+order: one process, one queue, the cell's whole operation history serialized,
+which is the sequential-consistency promise by construction. The holder's pid
+crosses a process boundary as the handle to the same cell, the payload rides
+the messages as the raw buffer (each process wraps the answer into its own
+`Bytes` value), and the holder rides the program's child table — the cell
+lives exactly as long as the program does. It is the one shape on `beam` that
+carries byte content across process boundaries.
 
 The rules the tables sit on:
 
@@ -151,7 +156,7 @@ The rules the tables sit on:
 | `wasm` | exact no-ops | full set | no-op |
 | `c` | `__atomic` builtins, sequential-consistency order | full set | `__atomic_thread_fence` |
 | `ocaml` | the `Atomic` module, one scheduler domain | full set; bitwise `fetch_*` as compare-and-set loops | no-op |
-| `beam` | the runtime's `atomics` array | full set; bitwise `fetch_*` as compare-exchange loops | no-op |
+| `beam` | scalars: the runtime's `atomics` array; `Bytes`: a holder process owning the raw buffer, every op a tagged synchronous call | full set; bitwise `fetch_*` as compare-exchange loops | no-op |
 | `riscv64` | AMOs, LR/SC, `fence` — runtime helpers in the generated image | full set | the `fence` instruction |
 
 The honesty notes behind the rows:

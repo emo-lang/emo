@@ -660,14 +660,16 @@ emo_value emo_atomic_compare_exchange(emo_value cell, emo_value expected,
     if (__atomic_compare_exchange_n(p, &prev, (uintptr_t)fresh, false,
                                     __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
       swapped = true;
-      emo_release((emo_value)cur); /* the cell drops the old */
-      break;
+      break; /* the cell's claim on the old value rides to the tuple
+                below — the drop happens after the tuple's own retain */
     }
     emo_release(fresh); /* the cell moved under us; retry against it */
     cur = prev;
   }
   emo_value elems[2] = {emo_vbool(swapped), (emo_value)cur};
-  return emo_tuple_new(2, elems);
+  emo_value out = emo_tuple_new(2, elems);
+  if (swapped) emo_release((emo_value)cur); /* now the cell's claim drops */
+  return out;
 }
 
 /* The read-modify-write family: decode the current value, compute in
