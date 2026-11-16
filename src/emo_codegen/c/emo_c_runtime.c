@@ -3145,16 +3145,15 @@ static void emo_net_meta_register(int64_t fd, double timeout,
   emo_net_meta_slots = m;
 }
 
-static void emo_net_meta_drop(int64_t fd) {
-  for (struct emo_net_meta **p = &emo_net_meta_slots; *p != NULL;
-       p = &(*p)->next)
-    if ((*p)->fd == fd) {
-      struct emo_net_meta *dead = *p;
-      *p = dead->next;
-      free(dead->desc);
-      free(dead);
-      return;
-    }
+/* The handle's desc for the read/write refusals, the interpreter's own
+   text ("cannot read on <desc>: ..."). The meta entries outlive their
+   fd's close on purpose — a fiber parked on the fd when another process
+   closes it wakes and names its peer from here — and the register
+   replaces them by fd, so the table is bounded by the fd pool's size,
+   never by the conns the process churned. */
+static const char *emo_net_meta_desc_or(int64_t fd, const char *fallback) {
+  struct emo_net_meta *m = emo_net_meta_of(fd);
+  return (m != NULL && m->desc != NULL) ? m->desc : fallback;
 }
 
 /* The deadline this handle's reads park toward: 0 waits indefinitely,
@@ -4528,7 +4527,8 @@ emo_value emo_net_read_line(int64_t fd) {
     }
     if (got < 0) {
       char what[512];
-      snprintf(what, sizeof what, "cannot read: %s", detail);
+      snprintf(what, sizeof what, "cannot read on %s: %s",
+                 emo_net_meta_desc_or(fd, "the connection"), detail);
       free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
@@ -4565,7 +4565,8 @@ emo_value emo_net_read_exactly(int64_t fd, int64_t n) {
     }
     if (got < 0) {
       char what[512];
-      snprintf(what, sizeof what, "cannot read: %s", detail);
+      snprintf(what, sizeof what, "cannot read on %s: %s",
+                 emo_net_meta_desc_or(fd, "the connection"), detail);
       free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
@@ -4601,7 +4602,8 @@ emo_value emo_net_read_all(int64_t fd) {
     }
     if (got < 0) {
       char what[512];
-      snprintf(what, sizeof what, "cannot read: %s", detail);
+      snprintf(what, sizeof what, "cannot read on %s: %s",
+                 emo_net_meta_desc_or(fd, "the connection"), detail);
       free(buf);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
@@ -4627,7 +4629,8 @@ emo_value emo_net_write(int64_t fd, emo_str data) {
                            sizeof detail);
     if (sent < 0) {
       char what[512];
-      snprintf(what, sizeof what, "cannot write: %s", detail);
+      snprintf(what, sizeof what, "cannot write on %s: %s",
+                 emo_net_meta_desc_or(fd, "the connection"), detail);
       return emo_os_pair("error", emo_box_str(emo_str_from_cstr(what)));
     }
     sent_total += sent;
@@ -4645,8 +4648,22 @@ emo_value emo_net_close(int64_t fd) {
     SSL_CTX_free(ctx);
   }
 #endif
-  emo_net_meta_drop(fd);
+  /* The fd's io registrations survive the close on purpose — the meta
+     entry (the peer text) with them: a fiber parked on this fd — a read
+     on a conn another process just closed — wakes and its next read or
+     write observes the closure for itself, naming the peer the meta
+     still carries. The entry itself stays until the fd number is
+     registered again (the register replaces by fd), so the table is
+     bounded by the fd pool's size, never by the conns the process
+     churned. */
   close((int)fd);
+  for (emo_process *q = emo_process_table; q; q = q->next_table) {
+    if (!q->finished && q->blocked && q->wait_fd == fd) {
+      q->blocked = 0;
+      q->wait_fd = -1;
+      emo_runq_push(q);
+    }
+  }
   return emo_os_pair("ok", emo_box_i64(fd));
 }
 

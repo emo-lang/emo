@@ -159,6 +159,20 @@ let add_io state fd kind wake =
   let l = match Hashtbl.find_opt state.io fd with Some l -> l | None -> [] in
   Hashtbl.replace state.io fd ({ iokind = kind; iowake = wake } :: l)
 
+(* The fd's registrations go when the fd does: a waiter whose fd closed
+   under it wakes and its next read or write observes the closure for
+   itself — the same contract the select loop's dead-fd sweep keeps. A
+   registration left behind would ride the fd number into its next
+   owner: a recycled fd's traffic would wake a stranger's parked read,
+   which then read a closed (or another conn's) descriptor — the
+   playwright live check's EBADF-on-a-healthy-fd wall. *)
+let drop_io_fd state fd =
+  match Hashtbl.find_opt state.io fd with
+  | None -> ()
+  | Some l ->
+      Hashtbl.remove state.io fd;
+      List.iter (fun w -> w.iowake ()) l
+
 let drop_io state fd kind =
   match Hashtbl.find_opt state.io fd with
   | None -> ()
@@ -662,10 +676,15 @@ let rec handler state (proc : Emo_eval.process) () :
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
                 conn_entry state proc k c span (fun live ->
                     (* Graceful: writes have already been delivered in
-                       full; shut down our sending side, then close. *)
+                       full; shut down our sending side, then close. The
+                       fd's io registrations go with it — a read parked
+                       on this conn wakes and observes the closure for
+                       itself, and the number never rides into its next
+                       owner. *)
                     (try Unix.shutdown live.lfd Unix.SHUTDOWN_SEND
                      with Unix.Unix_error _ -> ());
                     (try Unix.close live.lfd with Unix.Unix_error _ -> ());
+                    drop_io_fd state live.lfd;
                     Hashtbl.remove state.live c.Emo_eval.cid;
                     Effect.Shallow.continue_with k
                       (Emo_eval.net_ok (Emo_eval.TcpConn c))
@@ -741,8 +760,11 @@ let rec handler state (proc : Emo_eval.process) () :
                 else (
                   u.Emo_eval.uclosed <- true;
                   (match Hashtbl.find_opt state.udps u.Emo_eval.uid with
-                  | Some fd -> (
-                      try Unix.close fd with Unix.Unix_error _ -> ())
+                  | Some fd ->
+                      (try Unix.close fd with Unix.Unix_error _ -> ());
+                      (* A parked recv_from on this socket wakes and
+                         observes the closure for itself. *)
+                      drop_io_fd state fd
                   | None -> ());
                   Hashtbl.remove state.udps u.Emo_eval.uid;
                   Effect.Shallow.continue_with k
@@ -772,8 +794,11 @@ let rec handler state (proc : Emo_eval.process) () :
                 else (
                   l.Emo_eval.lclosed <- true;
                   (match Hashtbl.find_opt state.listeners l.Emo_eval.lid with
-                  | Some (fd, _ctx) -> (
-                      try Unix.close fd with Unix.Unix_error _ -> ())
+                  | Some (fd, _ctx) ->
+                      (try Unix.close fd with Unix.Unix_error _ -> ());
+                      (* A parked accept on this listener wakes and
+                         observes the closure for itself. *)
+                      drop_io_fd state fd
                   | None -> ());
                   Hashtbl.remove state.listeners l.Emo_eval.lid;
                   Effect.Shallow.continue_with k
