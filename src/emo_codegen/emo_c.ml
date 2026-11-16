@@ -1120,8 +1120,12 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
          in the dynamic world *)
       match (t, name, args) with
       | "Byte", "from_int64", [ x ] ->
+          (* the checked constructor: the runtime range-checks and
+             answers the interpreter's E3004, where the old `(uint8_t)
+             (x & 255)` narrowed silently — the one path left masking
+             after the interpreter and riscv64 went loud *)
           let v =
-            Printf.sprintf "(uint8_t)((%s) & 255)"
+            Printf.sprintf "(uint8_t)emo_byte_from_int64((int64_t)(%s))"
               (as_native env x Emo_check.Int64)
           in
           if is_dyn result_ty then

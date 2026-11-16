@@ -394,6 +394,10 @@ int64_t emo_shr_i64(int64_t a, int64_t c);
 int64_t emo_f64_bits(double d);
 double emo_f64_from_bits(int64_t bits);
 
+/* The checked Byte constructor: E3004 on anything outside 0-255, the
+   interpreter's own text. */
+int64_t emo_byte_from_int64(int64_t v);
+
 /* The Float64 method surface: the libm rounding/root functions the
    interpreter offers as methods. */
 double emo_f64_sqrt(double x);

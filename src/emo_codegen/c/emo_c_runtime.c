@@ -4946,6 +4946,22 @@ int64_t emo_bytes_set(emo_value b, int64_t i, int64_t v) {
   return v;
 }
 
+/* `Byte.from_int64` is the checked constructor: the interpreter and the
+   ocaml runtime answer E3004 on anything outside 0-255, and the c
+   target's silent `(uint8_t)(x & 255)` was the one path that narrowed
+   instead (CHECK.md, the raw-memory record's divergence (1)). The text
+   is the interpreter's own. */
+int64_t emo_byte_from_int64(int64_t v) {
+  if (v < 0 || v > 255) {
+    fprintf(stderr,
+            "runtime error: `Byte.from_int64` needs a value in 0-255, "
+            "got %lld\n",
+            (long long)v);
+    exit(70);
+  }
+  return v;
+}
+
 emo_value emo_bytes_of_str(emo_value s) {
   emo_str str = emo_str_of(s); /* a borrow: the cell outlives the call */
   emo_value v = emo_cell_new(EMO_BYTES, 1 + (str.len + 7) / 8);
