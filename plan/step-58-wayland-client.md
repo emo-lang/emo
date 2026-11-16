@@ -78,9 +78,17 @@ compositor.**
   two IR goldens in `test/emo_ir`; the mid-body `if`, the mid-body
   `case`, and the demo's `c` build byte-identical with its golden
   verified 2026-11-16.
-- **The generated C seeds module consts in the root entry**, so a
-  def binding-but-never-using them warns (`main__w` unused). The
-  corpus's own pre-existing shape.
+- **The generated C seeded module consts in the root entry**, so a
+  const no script statement read warned under `-Wall` (`w` unused —
+  the seed bound the const's value to a local only the script's own
+  statements read; a def's read goes through the memoized thunk, so
+  the def-only shape warned too). The corpus's own pre-existing
+  shape — **fixed 2026-11-16 at the IR**: an unread const seeds as
+  the effect it is, the eager call stays (the interpreter
+  initializes eagerly), the dead local goes, and a capture or a
+  script read keeps the binding; pinned by three IR goldens in
+  `test/emo_ir` and re-verified against the sampled examples and
+  this demo's `c` golden.
 
 ## Named follow-ups
 

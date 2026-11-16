@@ -477,6 +477,91 @@ def pick(n Int64) Void {
               (Printf.sprintf "expected one tail-position if, got %d stmts"
                  (List.length other)));
         ignore program);
+    tc "an unread top-level const seeds as an effect" (fun () ->
+        (* The seed keeps the eager initialization — the interpreter runs
+           the initializer eagerly, side effects included — and drops the
+           dead local: the binding's only reader was the top level, and
+           the c target's -Wall answered it with an unused variable per
+           unread const (the wayland trail's finding). *)
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+def tag(msg String) String {
+  println(msg)
+  return msg
+}
+
+const w = tag("seeded")
+
+def main() {
+  println("hi")
+}
+
+main()
+|}
+              );
+            ]
+            ~entry:[]
+        in
+        let seed_func = function
+          | Emo_ir.Effect { desc = Emo_ir.Call { func; args = []; _ }; _ } ->
+              func
+          | _ -> "not an effect seed"
+        in
+        (match program.Emo_ir.pinit with
+        | [ seed; last ] ->
+            Alcotest.(check string)
+              "the unread const seeds as a call" "w" (seed_func seed);
+            Alcotest.(check string)
+              "the script's own call follows" "main" (seed_func last)
+        | other ->
+            Alcotest.fail
+              (Printf.sprintf "expected two effects, got %d stmts"
+                 (List.length other)));
+        ignore program);
+    tc "a top-level const the script reads keeps its binding" (fun () ->
+        (* The binding stays so the top-level read resolves to the local —
+           the shape that keeps a const holding a callable a value call. *)
+        let program =
+          lower_program
+            [ ([], {|
+const w = "read by the script"
+println(w)
+|}) ]
+            ~entry:[]
+        in
+        (match program.Emo_ir.pinit with
+        | Emo_ir.Let { name = "w"; _ } :: Emo_ir.Effect _ :: _ -> ()
+        | other ->
+            Alcotest.fail
+              (Printf.sprintf "expected the binding and the print, got %d stmts"
+                 (List.length other)));
+        ignore program);
+    tc "a const captured by a later block keeps its binding" (fun () ->
+        (* The read walk descends into closures: a capture reads the
+           local, so the binding stays and the seed is no effect. *)
+        let program =
+          lower_program
+            [
+              ( [],
+                {|
+const w = "captured"
+var keep = -> () { println(w) }
+keep()
+|}
+              );
+            ]
+            ~entry:[]
+        in
+        (match program.Emo_ir.pinit with
+        | Emo_ir.Let { name = "w"; _ } :: _ -> ()
+        | other ->
+            Alcotest.fail
+              (Printf.sprintf "expected the const binding first, got %d stmts"
+                 (List.length other)));
+        ignore program);
     tc "a constructor's init keeps its exit call an effect" (fun () ->
         (* A ctor factory must return the instance, so init's
            exit-position bare call cannot lower as the return it is —

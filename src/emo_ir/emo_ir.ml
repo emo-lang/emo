@@ -1799,6 +1799,86 @@ let lower (input : input) : program =
                   }
             | _ -> s)
         | _ -> s)
+    |> fun ss ->
+    (* A top-level const no script statement reads keeps its eager
+           initialization and loses its dead local: the binding's only
+           reader was the top level, so the seed lowers as the effect it
+           is. The interpreter runs the initializer eagerly either way —
+           the call stays — while the c target's -Wall answered the
+           binding with an unused variable per unread const (the
+           wayland trail's finding). A def's read goes through the
+           thunk, never this local, so the def-only shape is the common
+           one. Closures count: a capture reads the local. *)
+    let rec expr_reads (e : expr) (acc : string list) : string list =
+      let g acc (e : expr) = expr_reads e acc in
+      match e.desc with
+      | Var n -> n :: acc
+      | Tuple es | Array_lit es | Interpolate es | Map_lit es ->
+          List.fold_left g acc es
+      | Unary (_, x) -> g acc x
+      | Binary (_, l, r) -> g (g acc l) r
+      | Cond { c; t; e } -> g (g (g acc c) t) e
+      | Index (b, i) -> g (g acc b) i
+      | Field_read { obj; _ } -> g acc obj
+      | Method { self_; args; _ } -> List.fold_left g (g acc self_) args
+      | Call { args; _ }
+      | Builtin { args; _ }
+      | Runtime_impl { args; _ }
+      | Do_spawn { args; _ } ->
+          List.fold_left g acc args
+      | Call_value { f; args; _ } | Spawn_value { f; args; _ } ->
+          List.fold_left g (g acc f) args
+      | Box_new e | Atomic_new e | Bytes_new e | List_new e -> g acc e
+      | Make_exception { message; data; _ } ->
+          g (match data with Some d -> g acc d | None -> acc) message
+      | Closure { cbody; _ } -> stmt_reads cbody acc
+      | Const _ | Type_ref _ | Global _ | Global_var _ | Make_enum _
+      | Builder_new ->
+          acc
+    and stmt_reads (ss : stmt list) (acc : string list) : string list =
+      List.fold_left
+        (fun acc s ->
+          match s with
+          | Effect e | Return_stmt e | Raise e -> expr_reads e acc
+          | Let { init; _ } -> expr_reads init acc
+          | Assign_var { value; _ } | Set_global_var { value; _ } ->
+              expr_reads value acc
+          | Set_field { self_; value; _ } ->
+              expr_reads value (expr_reads self_ acc)
+          | If { cond; then_; else_ } ->
+              stmt_reads else_ (stmt_reads then_ (expr_reads cond acc))
+          | While { cond; body } -> stmt_reads body (expr_reads cond acc)
+          | For { init; cond; post; body } ->
+              stmt_reads body
+                (stmt_reads [ post ]
+                   (stmt_reads [ init ] (expr_reads cond acc)))
+          | Case { scrutinee; branches } ->
+              List.fold_left
+                (fun a b ->
+                  stmt_reads b.body
+                    (match b.guard with Some g -> expr_reads g a | None -> a))
+                (expr_reads scrutinee acc) branches
+          | Receive { branches } ->
+              List.fold_left
+                (fun a b ->
+                  stmt_reads b.body
+                    (match b.guard with Some g -> expr_reads g a | None -> a))
+                acc branches
+          | Send { target; message } ->
+              expr_reads message (expr_reads target acc)
+          | Break | Continue -> acc)
+        acc ss
+    in
+    let rec seed acc = function
+      | [] -> List.rev acc
+      | s :: rest -> (
+          match s with
+          | Let { mutable_ = false; name; init } ->
+              if List.mem name (stmt_reads rest []) then seed (s :: acc) rest
+              else seed (Effect init :: acc) rest
+          | _ -> seed (s :: acc) rest)
+    in
+    seed [] ss
   in
   (* The entry module can be discovered under two paths, lowering its
      items twice; dedupe functions by name, keeping the first. *)
