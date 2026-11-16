@@ -6897,6 +6897,45 @@ case l.pop_front() {
               "codes" [ "E4017" ] (List.map fst got);
             Alcotest.(check (list string))
               "messages" [ no_return_message ] (List.map snd got));
+        tc
+          (Printf.sprintf
+             "%s: a builtin door under a do refuses, the door named" target)
+          (fun () ->
+            let got =
+              diagnostics target
+                {|
+def worker(boss Pid) {
+  boss <- "done"
+}
+
+do worker(self_pid())
+do println("hello")
+|}
+            in
+            Alcotest.(check (list string))
+              "codes" [ "E4031" ] (List.map fst got);
+            Alcotest.(check (list string))
+              "messages"
+              [
+                "`do` spawns a process, and `println` is a builtin door, not a \
+                 def of this program";
+              ]
+              (List.map snd got));
+        tc
+          (Printf.sprintf
+             "%s: a def shadowing a door's name spawns as any def does" target)
+          (fun () ->
+            let got =
+              diagnostics target
+                {|
+def peek64(addr Int64) Int64 {
+  return addr + 1
+}
+
+do peek64(8)
+|}
+            in
+            Alcotest.(check (list string)) "codes" [] (List.map fst got));
       ])
     every_target
 

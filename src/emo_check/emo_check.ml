@@ -2531,6 +2531,32 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                  (to_string tt) (to_string et));
             Unknown)
   | Ast.Do operand ->
+      (* `do` spawns a process, and the spawn's callee is one of this
+         program's own defs. A builtin door under a `do` lowered as a
+         spawn whose "closure" word was the door's own return value —
+         the spawn thunk jumped through it (the T3.7 note's wild jump);
+         the refusal is that record's loud seat. The program's own
+         names answer first, so a def shadowing a door's name spawns
+         as any def does. *)
+      (match operand.Ast.desc with
+      | Ast.Call ({ Ast.desc = Ast.Ident name; _ }, _) -> (
+          (* The pre-bound surface (empty_env's doors) carries the zero
+             span; a program def or a const holding a callable shadows
+             it with a real span, and spawns as any def does. The name
+             still answering its pre-bind is the name that will lower
+             as a door. *)
+          match lookup_env env name with
+          | Some { span = s; _ } when s = Emo_support.Span.zero ->
+              report ctx operand.Ast.span "E4031"
+                (Printf.sprintf
+                   "`do` spawns a process, and `%s` is a builtin door, not a \
+                    def of this program"
+                   name)
+                ~hint:
+                  "spawn a def that calls the door, and call the door plainly \
+                   inside it"
+          | _ -> ())
+      | _ -> ());
       ignore (check_expr ctx env operand);
       Pid
   | Ast.Quote q ->

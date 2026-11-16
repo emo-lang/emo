@@ -4,7 +4,7 @@ Emo ships with a native concurrency model built around **processes and message p
 
 The concurrency semantics are shaped by the following decisions:
 
-- **`do` starts a process and yields its pid.** `do work(item)` runs the call in a new process; the value of the `do`-expression is the new process's pid, and the call's own result is discarded.
+- **`do` starts a process and yields its pid.** `do work(item)` runs the call in a new process; the value of the `do`-expression is the new process's pid, and the call's own result is discarded. The spawned call is one of the program's own defs — a builtin door under a `do` refuses at check time (E4031), and a def carrying a door's own name spawns as any def does.
 - **`pid <- message` sends.** `<-` delivers a message to a process's mailbox, and is always written with a space on each side — a juxtaposed `a<-b` is a syntax error rather than a guess, and comparison against a negated value is `a < -b`.
 - **`receive` takes the same branches as `case`.** `receive { ... }` scans the mailbox for the first message matching any branch; non-matching messages stay queued, and the process blocks while nothing matches — selective receive comes from ordinary patterns, with no separate mechanism.
 - **A process learns its own pid with `self_pid()`.** The idiomatic reply pattern is one line — `sender <- (self_pid(), request)` — with the tuple destructured right in the receiver's branch pattern. Pids are opaque values of type `Pid` that compare by identity and render as `<pid 3>`. The numbering is one story everywhere: the root runs as `<pid 1>`, and every spawn takes the next number — on the interpreter, on every compiled target, and on metal, where the kernel holds nothing back for itself.
