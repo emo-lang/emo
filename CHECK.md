@@ -625,7 +625,27 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   167.8–170.9 s straddling (this build's, six boots). The budget is
   3600 rounds (360 s), twice the straddle. Found-not-fixed: the
   placement follows the runtime's size, so the pace flips with any
-  shift of the code; the budget now covers both cases.
+  shift of the code; the budget now covers both cases. **Fixed
+  2026-11-16 at the image's own layout: the program text starts on its
+  own page** — the emitter emits one `.balign 4096` at the seam
+  between the runtime's text and the program's functions (`emo_riscv`,
+  after the float tables), so the program's page-relative layout stops
+  following the runtime's size. The pad never executes (the stub's
+  entry is `emo_start`, ahead of it) and the image grows at most 4
+  KiB of text. The current app-profile build was re-measured on the
+  way in: its loop spanned 0x87102fe0–0x87103018, straddling
+  0x87103000, exactly the recorded state — with the seam it sits
+  0x87103008–0x87103040, one page whole, and the kernel-profile
+  standalone spinner answers its 4e9-iteration announce in 22.2 s
+  under QEMU (the boot and the loop together; the straddle's 170 s
+  was the ten-fold tax). The gate's wall time stops being the
+  runtime's size's shadow: run.sh green × 3 (4:35, 4:25, 4:23 — the
+  transcripts byte-identical but the desktop clock's own wall
+  seconds), the spinner's beat the fast state on both transports, and
+  the riscv64 corpus examples (`atomic_cell`, `fib`, `processes`)
+  byte-green under QEMU. The budget keeps its 3600 rounds: the seam
+  pins the layout, the two-valued state space and the machine code's
+  identity stay the budget's own reason.
 - One interleave to record, inside the launch era's own race class:
   the REPL's prompt after a slot app's `exec` lands within a line of
   the app's first slide — the prompt's position among the launch's
@@ -676,8 +696,10 @@ landed 2026-11-08 (M16 complete; EmoOS T10.2–T10.4 beside it):**
   shell REPL's write/cat/rm round whole. The golden's comp and frame
   pins await the harvest re-pin (the tree's run.sh carries the relaxed
   form), the console renderer's exec the one open death, and the
-  spinner's budget rides the host's TCG weather. The four golden-dir
-  locks ride the gate staging's own refresh.
+  spinner's budget rides the host's TCG weather — the program text's
+  page-aligned seam pins it against the runtime's size (2026-11-16,
+  the record in the arena track's entry). The four golden-dir locks
+  ride the gate staging's own refresh.
 
 ## 2026-11-10 — The seam migrates, the pixel pipeline retires (emo-desktop A17.4)
 

@@ -10178,6 +10178,14 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
   (* The runtime's message block ends in .rodata; the program's code is
      text. *)
   gput env "\n    .section .text\n";
+  (* The program text starts on its own page: the runtime's size before
+     this point otherwise put the program's hot loops at the mercy of
+     every runtime edit — a loop whose bytes straddle a 4 KiB boundary
+     pays QEMU TCG's block lookup every iteration, ten times the pace
+     for the identical machine code (the spinner's 18 s against 170 s,
+     the gate's wall the runtime's size's shadow). The pad never
+     executes: the stub's entry is emo_start, ahead of it. *)
+  gput env "    .balign 4096\n";
   List.iter
     (fun (f : Emo_ir.func) ->
       if f.fforeign = None then
