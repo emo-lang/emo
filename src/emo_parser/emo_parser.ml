@@ -1113,6 +1113,23 @@ and check_assign_target st ?(allow_string = false) target =
       if not st.in_init then
         error "E2016" target.Ast.span "fields are assigned only inside `init`"
           ~hint:"`init` is the only window where `self.x = ...` may appear"
+  | Ast.Index (base, _) ->
+      (* `arr[i] = v` — the element mutates in place. The base is the
+         array's home, so it must be an lvalue-shaped expression: a
+         name, or a chain of `.` reads off one. *)
+      let rec ok_base b =
+        match b.Ast.desc with
+        | Ast.Ident _ -> true
+        | Ast.Self -> true
+        | Ast.Member (inner, _) -> ok_base inner
+        | _ -> false
+      in
+      if ok_base base then ()
+      else
+        error "E2015" target.Ast.span "invalid assignment target"
+          ~hint:
+            "an element assignment's base is a name or a field chain, like \
+             `rows[i] = x`"
   | _ when st.manifest ->
       error "E2015" target.Ast.span
         "a manifest assigns to a package field or to a dependency's name"

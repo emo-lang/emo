@@ -2354,6 +2354,21 @@ module Emo_runtime = struct
         else failwith (Printf.sprintf "index %Ld is out of bounds" n)
     | _ -> failwith "indexing expects an Array or Tuple and an Int64"
 
+  (* The element store behind `arr[i] = v`: the array mutates in place,
+     every holder of the value seeing the write; the bounds rule is the
+     read's own story, the interpreter's E3004 text. *)
+  let array_set collection i v =
+    match (collection, i) with
+    | Emo_eval.Array xs, Emo_eval.Int64 n ->
+        if n >= 0L && n < Int64.of_int (Array.length xs) then
+          xs.(Int64.to_int n) <- v
+        else
+          failwith
+            (Printf.sprintf "index %Ld is out of bounds for a length-%d Array" n
+               (Array.length xs))
+    | Emo_eval.Tuple _, _ -> failwith "a tuple is immutable; nothing to assign"
+    | _, _ -> failwith "`a[i] = v` assigns into an Array"
+
   let interpolate parts =
     Emo_eval.String
       (String.concat "" (List.map (fun p -> Emo_eval.to_string p) parts))

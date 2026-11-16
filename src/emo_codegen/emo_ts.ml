@@ -514,6 +514,11 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
            "the typescript target does not support module-level `var` yet")
   | Set_field { self_; name; value } ->
       Printf.sprintf "(%s).%s = %s;" (expr env self_) name (expr env value)
+  | Assign_index { target; index; value } ->
+      (* the array mutates in place; the bounds rule is the read's,
+         thrown loudly — a bare JS write would extend the array instead *)
+      Printf.sprintf "E.setIndex(%s, %s, %s);" (expr env target)
+        (expr env index) (expr env value)
   | If { cond; then_; else_ } ->
       Printf.sprintf "if (E.truthy(%s)) {\n%s\n} else {\n%s\n}" (expr env cond)
         (block env then_) (block env else_)

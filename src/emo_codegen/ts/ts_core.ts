@@ -1493,6 +1493,21 @@ const E: any = {
     return items[n];
   },
 
+  // `arr[i] = v` mutates the EArray in place; a bare JS write would
+  // extend the array past its length instead of refusing, so the
+  // bounds rule is spelled here — the interpreter's E3004 text.
+  setIndex(coll: any, i: any, v: any): void {
+    if (!(coll instanceof EArray))
+      throw new Error("`a[i] = v` assigns into an Array");
+    const n = typeof i === "bigint" ? Number(i) : (i as number);
+    if (n < 0 || n >= coll.items.length)
+      throw new Error(
+        "index " + i + " is out of bounds for a length-" +
+          coll.items.length + " Array"
+      );
+    coll.items[n] = v;
+  },
+
   callValue(f: any, args: any[]): any {
     return f(...args);
   },

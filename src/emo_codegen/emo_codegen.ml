@@ -166,6 +166,18 @@ and emit_stmt env (stmt : Emo_ir.stmt) ~(tail : bool) : string =
                 Printf.sprintf "Emo_runtime.obj_set_field (%s) \"%s\" (%s)" sv
                   name vv
           | _ -> assert false)
+  | Emo_ir.Assign_index { target; index; value } ->
+      (* the array mutates in place; the bounds rule is the read's own *)
+      emit_operands env [ target; index; value ] (fun vs ->
+          match vs with
+          | [ tv; iv; vv ] ->
+              if tail then
+                Printf.sprintf
+                  "(Emo_runtime.array_set (%s) (%s) (%s);\nEmo_eval.Int64 0L)"
+                  tv iv vv
+              else
+                Printf.sprintf "(Emo_runtime.array_set (%s) (%s) (%s))" tv iv vv
+          | _ -> assert false)
   | Emo_ir.If { cond; then_; else_ } ->
       let then_code = emit_stmts env then_ ~tail in
       let else_code = emit_stmts env else_ ~tail in
@@ -1107,6 +1119,7 @@ and emit_native_stmts env (stmts : Emo_ir.stmt list) ~(tail : bool)
                 | Emo_ir.Assign_var _ -> "Assign"
                 | Emo_ir.Set_global_var _ -> "Set_global_var"
                 | Emo_ir.Set_field _ -> "Set_field"
+                | Emo_ir.Assign_index _ -> "Assign_index"
                 | Emo_ir.If _ -> "If"
                 | Emo_ir.Case _ -> "Case"
                 | Emo_ir.Receive _ -> "Receive"

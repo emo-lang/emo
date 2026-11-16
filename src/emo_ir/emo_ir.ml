@@ -49,6 +49,9 @@ and stmt =
   | Assign_var of { name : string; value : expr } (* a `var`, in scope *)
   | Set_global_var of { name : string; value : expr } (* a module-level `var` *)
   | Set_field of { self_ : expr; name : string; value : expr }
+  | Assign_index of { target : expr; index : expr; value : expr }
+  (* `arr[i] = v` — the array mutates in place, the binding never
+     rebinds; a `const`-bound array's elements stay assignable *)
   | If of { cond : expr; then_ : stmt list; else_ : stmt list }
   | While of { cond : expr; body : stmt list }
   | For of {
@@ -827,6 +830,13 @@ and lower_stmt env (s : Ast.stmt) : stmt =
               name = field;
               value = lower_expr env value;
             }
+      | Ast.Index (base, idx) ->
+          Assign_index
+            {
+              target = lower_expr env base;
+              index = lower_expr env idx;
+              value = lower_expr env value;
+            }
       | _ -> raise (Lower_error "invalid assignment target"))
   | Ast.Return (Some e) -> Return_stmt (lower_expr env e)
   | Ast.Return None ->
@@ -1106,6 +1116,8 @@ and stmt_native special (s : stmt) : bool =
   | Assign_var { value; _ } -> expr_native special value
   | Set_global_var _ -> false
   | Set_field _ -> false
+  | Assign_index _ -> false
+  (* the store keeps the def dynamic, Set_field's own rule *)
   | If { cond; then_; else_ } ->
       expr_native special cond && stmts_native special then_
       && stmts_native special else_
@@ -1845,6 +1857,8 @@ let lower (input : input) : program =
               expr_reads value acc
           | Set_field { self_; value; _ } ->
               expr_reads value (expr_reads self_ acc)
+          | Assign_index { target; index; value } ->
+              expr_reads value (expr_reads index (expr_reads target acc))
           | If { cond; then_; else_ } ->
               stmt_reads else_ (stmt_reads then_ (expr_reads cond acc))
           | While { cond; body } -> stmt_reads body (expr_reads cond acc)

@@ -583,6 +583,28 @@ emo_value emo_array_append(emo_value arr, emo_value v) {
   return out;
 }
 
+/* The element store behind `arr[i] = v`: the array mutates in place,
+   every holder of the value seeing the write. The bounds rule is the
+   read's own (emo_index's text); the write barrier keeps the old
+   word's release after the new word's retain, emo_set_field's order. */
+void emo_array_set(emo_value arr, int64_t i, emo_value v) {
+  if (emo_cell_kind(arr) != EMO_ARRAY)
+    emo_fatal("`a[i] = v` assigns into an Array");
+  int64_t n = emo_length(arr);
+  if (i < 0 || i >= n) {
+    fprintf(stderr,
+            "runtime error: index %lld is out of bounds for a length-%lld "
+            "array\n",
+            (long long)i, (long long)n);
+    exit(70);
+  }
+  uintptr_t *p = emo_payload(arr);
+  uintptr_t old = p[i + 1];
+  p[i + 1] = (uintptr_t)v;
+  emo_retain(v);
+  emo_release((emo_value)old);
+}
+
 emo_value emo_box_new(emo_value v) {
   emo_value box = emo_cell_new(EMO_BOX, 1);
   *emo_payload(box) = (uintptr_t)v;

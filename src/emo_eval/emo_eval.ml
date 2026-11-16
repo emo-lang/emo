@@ -4550,6 +4550,30 @@ and eval_stmt ?(tail = false) env s =
                 (Printf.sprintf
                    "`self.x = ...` needs an instance under construction, got %s"
                    (type_name v)))
+      | Ast.Index (base, idx) -> (
+          (* `arr[i] = v` mutates the array in place — the binding never
+             rebinds, and an alias sees the write. The bounds rule is
+             the read's own (eval_index's `at`). *)
+          match eval_expr env base with
+          | Array xs -> (
+              match eval_expr env idx with
+              | Int64 i when i >= 0L && i < Int64.of_int (Array.length xs) ->
+                  xs.(Int64.to_int i) <- v
+              | Int64 i ->
+                  error span "E3004"
+                    (Printf.sprintf
+                       "index %Ld is out of bounds for a length-%d Array" i
+                       (Array.length xs))
+              | bad ->
+                  error span "E3001"
+                    (Printf.sprintf "the index must be an Int64, got %s"
+                       (type_name bad)))
+          | Tuple _ ->
+              error span "E3003" "a tuple is immutable; nothing to assign"
+          | other ->
+              error span "E3003"
+                (Printf.sprintf "`a[i] = v` assigns into an Array, got %s"
+                   (type_name other)))
       | _ -> error span "E3003" "invalid assignment target")
   | Ast.Return None -> not_yet span "a valueless `return`"
   | Ast.Return (Some e) -> (

@@ -649,6 +649,10 @@ let rec closure_free ~(cparams : (string * Emo_check.t) list)
     | Set_field { self_; value; _ } ->
         ex self_;
         ex value
+    | Assign_index { target; index; value } ->
+        ex target;
+        ex index;
+        ex value
     | If { cond; then_; else_ } ->
         ex cond;
         List.iter st then_;
@@ -922,6 +926,10 @@ let rec pool_stmt env (ctr : int ref) (f : frame) (s : Emo_ir.stmt) : unit =
   | Return_stmt e -> pool_expr env ctr e
   | Set_field { self_; value; _ } ->
       pool_expr env ctr self_;
+      pool_expr env ctr value
+  | Assign_index { target; index; value } ->
+      pool_expr env ctr target;
+      pool_expr env ctr index;
       pool_expr env ctr value
   | Send { target; message } ->
       pool_expr env ctr target;
@@ -3239,6 +3247,47 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
           put env "    add a3, a3, a2\n";
           put env "    ld a0, %d(sp)\n" (temp_offset env 1);
           store ())
+  | Assign_index { target; index; value } ->
+      (* `arr[i] = v`: the base block's length word bounds the index
+         (unsigned — a negative index reads as huge), then the store
+         runs Set_field's own barrier order: the new word's retain
+         before the old word's release, the element's address riding
+         a3 across both calls alone *)
+      let self_slot = temp_offset env 0 in
+      emit_expr env 1 target;
+      put env "    sd a0, %d(sp)\n" self_slot;
+      emit_expr env 1 index;
+      if env.native && index.Emo_ir.ety = Emo_check.Int64 then
+        put env "    mv t2, a0\n"
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld t2, 8(a0)\n"
+      end;
+      emit_expr env 1 value;
+      box_if_numeric env value.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" (temp_offset env 1);
+      put env "    ld t0, %d(sp)\n" self_slot;
+      put env "    andi t0, t0, -32\n";
+      let l_oob = fresh_label env "stoob" in
+      put env "    ld t1, 8(t0)\n";
+      put env "    bgeu t2, t1, %s\n" l_oob;
+      put env "    slli t2, t2, 3\n";
+      put env "    addi a3, t0, 16\n";
+      put env "    add a3, a3, t2\n";
+      put env "    ld a0, %d(sp)\n" (temp_offset env 1);
+      put env "    call emo_retain\n";
+      put env "    mv a5, a0\n";
+      put env "    ld a0, 0(a3)\n";
+      put env "    call emo_release\n";
+      put env "    sd a5, 0(a3)\n";
+      let l_ok = fresh_label env "stok" in
+      put env "    j %s\n" l_ok;
+      put env "%s:\n" l_oob;
+      let label = string_label env "index out of bounds" in
+      put env "    la a0, %s\n" label;
+      put env "    la a1, %s_end\n" label;
+      call_runtime env "emo_fail";
+      put env "%s:\n" l_ok
   | Set_global_var _ -> refuse "module-level `var` assignment"
   | Send { target; message } ->
       (* the send boundary: the message snapshots in emo_send and the
@@ -9979,6 +10028,10 @@ and walk_stmt_enum env (s : Emo_ir.stmt) : unit =
   | Set_global_var { value; _ } -> walk_expr_enum env value
   | Set_field { self_; value; _ } ->
       walk_expr_enum env self_;
+      walk_expr_enum env value
+  | Assign_index { target; index; value } ->
+      walk_expr_enum env target;
+      walk_expr_enum env index;
       walk_expr_enum env value
   | If { cond; then_; else_ } ->
       walk_expr_enum env cond;

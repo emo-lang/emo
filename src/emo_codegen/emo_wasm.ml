@@ -3205,6 +3205,12 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
               @ [ W.Struct_set (tidx, fidx) ]
           | None -> failwith ("wasm: unknown field " ^ class_name ^ "." ^ name))
       | _ -> failwith ("wasm: unknown class " ^ class_name))
+  | Emo_ir.Assign_index { target; index; value } ->
+      (* the array mutates in place; WasmGC's Array_set traps on an
+         out-of-bounds index — the read's own loud end *)
+      expr_block env target @ [ W.Ref_cast t_anyarray ] @ expr_block env index
+      @ [ W.Ref_cast t_vint; W.Struct_get (t_vint, 0); W.I32_wrap_i64 ]
+      @ expr_block env value @ [ W.Array_set t_anyarray ]
   | Emo_ir.If { cond; then_; else_ } ->
       let saved = env.depth in
       env.depth <- saved + 1;

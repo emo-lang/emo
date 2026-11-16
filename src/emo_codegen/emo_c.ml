@@ -1696,6 +1696,10 @@ and closure_free env (cparams : (string * Emo_check.t) list)
     | Set_field { self_; value; _ } ->
         ex self_;
         ex value
+    | Assign_index { target; index; value } ->
+        ex target;
+        ex index;
+        ex value
     | If { cond; then_; else_ } ->
         ex cond;
         List.iter st then_;
@@ -2322,6 +2326,14 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
   | Set_field { self_; name; value } ->
       let idx = field_index env self_ name in
       put env "  emo_set_field(%s, INT64_C(%d), %s);\n" (as_dyn env self_) idx
+        (as_dyn env value)
+  | Assign_index { target; index; value } ->
+      (* the array mutates in place: the store keeps the old word's
+         release and the new word's retain inside the runtime helper
+         (the write barrier's own order), and the bounds rule is the
+         read's — emo_index's text, exit 70 *)
+      put env "  emo_array_set(%s, %s, %s);\n" (as_dyn env target)
+        (as_native env index Emo_check.Int64)
         (as_dyn env value)
   | If { cond; then_; else_ } ->
       let c = emit_expr env cond in
@@ -3464,6 +3476,10 @@ let globals_as_values (program : Emo_ir.program) : string list =
     | Set_field { self_; value; _ } ->
         ex self_;
         ex value
+    | Assign_index { target; index; value } ->
+        ex target;
+        ex index;
+        ex value
     | If { cond; then_; else_ } ->
         ex cond;
         List.iter st then_;
@@ -3627,6 +3643,10 @@ let emit (program : Emo_ir.program) : string * string * bool =
       | Set_global_var { value; _ } -> ex value
       | Set_field { self_; value; _ } ->
           ex self_;
+          ex value
+      | Assign_index { target; index; value } ->
+          ex target;
+          ex index;
           ex value
       | If { cond; then_; else_ } ->
           ex cond;

@@ -3898,6 +3898,29 @@ and check_stmt ctx env (s : Ast.stmt) : env =
                          (to_string vt) field (to_string declared)))
           | _ -> ());
           env
+      | Ast.Index (base, idx) ->
+          (* `arr[i] = v` mutates the array the base names; the binding
+             never rebinds, so a `const`-bound array's elements stay
+             assignable — the Map.set rule. The base must be an Array:
+             a tuple is immutable, and nothing else indexes. *)
+          let bt = check_expr ctx env base in
+          let it = check_expr ctx env idx in
+          (match bt with
+          | ArrayType elem ->
+              if not (conforms ctx it Int64) then
+                report ctx idx.Ast.span "E4004"
+                  (Printf.sprintf "the index must be an Int64, got %s"
+                     (to_string it));
+              if not (conforms ctx vt elem) then
+                report ctx span "E4004"
+                  (Printf.sprintf "cannot assign %s into an %s element"
+                     (to_string vt) (to_string elem))
+          | Unknown -> ()
+          | _ ->
+              report ctx base.Ast.span "E4004"
+                (Printf.sprintf "`a[i] = v` assigns into an Array, got %s"
+                   (to_string bt)));
+          env
       | _ -> env)
   | Ast.Return None ->
       if env.in_void then

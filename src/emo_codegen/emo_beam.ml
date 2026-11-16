@@ -423,19 +423,20 @@ let rec expr env (x : Emo_ir.expr) : unit =
         es;
       put env "}"
   | Array_lit es ->
-      (* the array is a self-contained tagged tuple {'emo_array', Inner}:
-         the inner tuple answers element/2 in constant time, where the
-         old Erlang list answered lists:nth with a walk per read (the
-         19-minute deflate on beam, CHECK.md). Immutable terms cross a
-         process boundary by reference, so the tag rides the payload —
-         no per-process key, no re-registration at the send. *)
-      put env "{'emo_array', {";
+      (* the array is the {'emo_array', Key} tag over per-element rows
+         in the root-owned ETS table: the element read is one
+         lookup_element (the 19-minute lists:nth walk's fix, and the
+         whole-row copy that would have re-created it), the store
+         replaces one row, and the alias rule falls out of the shared
+         rows — the interp's spawn-argument alias. The literal hands
+         the runtime a plain list; the walk lays the rows. *)
+      put env "apply 'emo_array_lit'/1 ([";
       List.iteri
         (fun i e ->
           if i > 0 then put env ", ";
           expr env e)
         es;
-      put env "}}"
+      put env "])"
   | Map_lit pairs ->
       (* the pairs lower as Erlang 2-tuples in the literal's order —
          the insertion order emo_map_new records *)
@@ -461,11 +462,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
           expr env b;
           put env ")"
       | Emo_check.ArrayType _ ->
-          put env "call 'erlang':'element'(call 'erlang':'+'(1, ";
-          expr env i;
-          put env "), call 'erlang':'element'(2, ";
+          put env "apply 'emo_array_elem'/2 (";
           expr env b;
-          put env "))"
+          put env ", ";
+          expr env i;
+          put env ")"
       | _ ->
           put env "apply 'emo_index'/2 (";
           expr env b;
@@ -543,40 +544,32 @@ let rec expr env (x : Emo_ir.expr) : unit =
           List.iter2
             (fun arg l ->
               put env ("let <" ^ l ^ "> =\n");
-              (* the fun's environment is the crossing: every Bytes
-                 rides packed (its dictionary entry stays behind in the
-                 spawner), and the call inside the child unpacks *)
-              put env "apply 'emo_msg_pack'/1 (";
+              (* the fun's environment is the crossing, and the cell
+                 keys cross it by reference — the child's calls hit the
+                 same ETS rows, the spawn-arg alias the interpreter's
+                 own spawn has. (A send copies instead: emo_msg_pack
+                 rides the send, the receiver re-registering the
+                 contents under fresh keys.) *)
               expr env arg;
-              put env ")";
               put env "\nin ")
             args arg_locals;
           spawn_registered env
             (Printf.sprintf "apply '%s'/%d (%s)"
                (Emo_ir.sanitize_ident func)
                a
-               (String.concat ", "
-                  (List.map
-                     (fun l -> Printf.sprintf "apply 'emo_msg_unpack'/1 (%s)" l)
-                     arg_locals)))
+               (String.concat ", " arg_locals))
       | None -> failwith ("beam: unbound spawn " ^ func))
   | Spawn_value { f; args } ->
       let arg_locals = List.map (fun _ -> fresh_var env "_spawnarg") args in
       List.iter2
         (fun arg l ->
           put env ("let <" ^ l ^ "> =\n");
-          put env "apply 'emo_msg_pack'/1 (";
           expr env arg;
-          put env ")";
           put env "\nin ")
         args arg_locals;
       let f_code = expr_block env f in
       spawn_registered env
-        (Printf.sprintf "apply %s (%s)" f_code
-           (String.concat ", "
-              (List.map
-                 (fun l -> Printf.sprintf "apply 'emo_msg_unpack'/1 (%s)" l)
-                 arg_locals)))
+        (Printf.sprintf "apply %s (%s)" f_code (String.concat ", " arg_locals))
   | Builtin { name; args } -> builtin env name args
   | Runtime_impl { name = "rand_bytes"; args = [ n ] } ->
       (* the rand package's entropy source: crypto:strong_rand_bytes
@@ -585,8 +578,8 @@ let rec expr env (x : Emo_ir.expr) : unit =
          answer rides the (R.ok, …) pair; a negative count is the
          package's own raise, upstream *)
       put env
-        "let <_rand_k> = call 'erlang':'make_ref'() in do call \
-         'erlang':'put'(_rand_k, call 'crypto':'strong_rand_bytes'(";
+        "let <_rand_k> = call 'erlang':'make_ref'() in do apply \
+         'emo_cell_put'/2 (_rand_k, call 'crypto':'strong_rand_bytes'(";
       expr env n;
       put env ")) { {'emo_enum', 'R', 'ok'}, {'emo_bytes', _rand_k} }"
   | Runtime_impl { name = "time_now_ms"; args = [] } ->
@@ -860,8 +853,9 @@ and builtin_method_call env self_ name args =
            recv);
       put env
         (Printf.sprintf
-           "  <{'emo_array', _t}> when 'true' ->\n\
-           \    call 'erlang':'tuple_size'(_t)\n");
+           "  <{'emo_array', _k}> when 'true' ->\n\
+           \    apply 'emo_array_len'/1 (%s)\n"
+           recv);
       put env
         "  <_str> when call 'erlang':'is_binary'(_str) ->\n\
         \    call 'erlang':'byte_size'(_str)\n";
@@ -1457,6 +1451,16 @@ and stmt env (s : Emo_ir.stmt) : unit =
       put env call;
       put env "\nin ";
       put env v
+  | Emo_ir.Assign_index { target; index; value } ->
+      (* the store mutates the dictionary tuple under the tag's key;
+         the chain discards the answer *)
+      put env "apply 'emo_array_store'/3 (";
+      expr env target;
+      put env ", ";
+      expr env index;
+      put env ", ";
+      expr env value;
+      put env ")"
   | Emo_ir.Return_stmt x ->
       (* the function-body try wrapper turns this into the result *)
       put env "call 'erlang':'throw'({'emo_return', ";
@@ -1674,6 +1678,8 @@ and free_stmt env (s : Emo_ir.stmt) (acc : string list) : string list =
   | Emo_ir.Set_global_var { value; _ } -> free_expr env value acc
   | Emo_ir.Set_field { self_; name = _; value } ->
       free_expr env self_ (free_expr env value acc)
+  | Emo_ir.Assign_index { target; index; value } ->
+      free_expr env target (free_expr env index (free_expr env value acc))
   | Emo_ir.If { cond; then_; else_ } ->
       free_expr env cond (free_stmts env then_ (free_stmts env else_ acc))
   | Emo_ir.While { cond; body; _ } ->
@@ -2708,15 +2714,16 @@ let rt_source =
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_other, _other)
 	end
 
-%% A dynamic value indexed with [k]: the {'emo_array', Inner} tag
-%%   answers element/2 on the inner tuple, a plain tuple answers
+%% A dynamic value indexed with [k]: the {'emo_array', Key} tag reads
+%%   element/2 off its dictionary tuple, a plain tuple answers
 %%   element/2, and a bare list (no array has worn one since the
 %%   tagged form) stays as the last arm's honest fallback.
 'emo_index'/2 =
     fun (_b, _i) ->
 	case _b of
-	  <{'emo_array', _t}> when 'true' ->
-	      call 'erlang':'element'(call 'erlang':'+'(1, _i), _t)
+	  <{'emo_array', _k}> when 'true' ->
+	      call 'ets':'lookup_element'
+		(apply 'emo_cells_table'/0 (), {_k, _i}, 2)
 	  <_other> when 'true' ->
 	      case call 'erlang':'is_tuple'(_other) of
 		<'true'> when 'true' ->
@@ -2768,16 +2775,6 @@ let rt_source =
 	  <{_x, _y}> when 'true' -> call 'erlang':'>='(_x, _y)
 	end
 
-'emo_array_append'/2 =
-    fun (_xs, _x) ->
-	{'emo_array',
-	 call 'erlang':'list_to_tuple'
-	   (call 'lists':'append'
-	      (call 'erlang':'tuple_to_list'
-		 (call 'erlang':'element'(2, _xs)),
-	       [_x]))}
-
-
 %% ---- The Atomic cell ----
 %%
 %% Box's synchronized sibling (CHECK.md, the atomic memory model). The
@@ -2801,7 +2798,7 @@ let rt_source =
 	  <'true'> when 'true' -> apply 'emo_atomic_make'/2 (1, 2)
 	  <'false'> when 'true' -> apply 'emo_atomic_make'/2 (0, 2)
 	  <{'emo_bytes', _k}> when 'true' ->
-	      let <_bin> = call 'erlang':'get'(_k)
+	      let <_bin> = apply 'emo_cell_get'/1 (_k)
 	      in let <_pid> =
 		      call 'erlang':'spawn'(fun () ->
 			  do
@@ -2855,7 +2852,7 @@ let rt_source =
 'emo_atomic_bytes_bin'/1 =
     fun (_v) ->
 	case _v of
-	  <{'emo_bytes', _k}> when 'true' -> call 'erlang':'get'(_k)
+	  <{'emo_bytes', _k}> when 'true' -> apply 'emo_cell_get'/1 (_k)
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_atomic', _other})
 	end
@@ -2865,7 +2862,7 @@ let rt_source =
 'emo_atomic_bytes_wrap'/1 =
     fun (_bin) ->
 	let <_k> = call 'erlang':'make_ref'()
-	in do call 'erlang':'put'(_k, _bin)
+	in do apply 'emo_cell_put'/2 (_k, _bin)
 	       {'emo_bytes', _k}
 
 'emo_atomic_bytes_call'/4 =
@@ -3122,14 +3119,14 @@ let rt_source =
 'emo_bytes_new'/1 =
     fun (_n) ->
 	let <_k> = call 'erlang':'make_ref'()
-	in do call 'erlang':'put'(_k, call 'binary':'copy'(#{#<0>(8,1,'integer',['unsigned'|['big']])}#, _n))
+	in do apply 'emo_cell_put'/2 (_k, call 'binary':'copy'(#{#<0>(8,1,'integer',['unsigned'|['big']])}#, _n))
 	   {'emo_bytes', _k}
 
 'emo_bytes_len'/1 =
     fun (_a) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      call 'erlang':'byte_size'(call 'erlang':'get'(_k))
+	      call 'erlang':'byte_size'(apply 'emo_cell_get'/1 (_k))
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
@@ -3138,7 +3135,7 @@ let rt_source =
     fun (_a, _i) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      call 'binary':'at'(call 'erlang':'get'(_k), _i)
+	      call 'binary':'at'(apply 'emo_cell_get'/1 (_k), _i)
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
@@ -3147,8 +3144,8 @@ let rt_source =
     fun (_a, _i, _v) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      let <_b> = call 'erlang':'get'(_k)
-	      in do call 'erlang':'put'(_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
+	      let <_b> = apply 'emo_cell_get'/1 (_k)
+	      in do apply 'emo_cell_put'/2 (_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
 		#<apply 'emo_mask'/1 (_v)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 1), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 1)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 _v
@@ -3160,7 +3157,7 @@ let rt_source =
     fun (_a, _i) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      call 'binary':'decode_unsigned'(call 'binary':'part'(call 'erlang':'get'(_k), _i, 2), 'little')
+	      call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 2), 'little')
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
@@ -3169,7 +3166,7 @@ let rt_source =
     fun (_a, _i) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      call 'binary':'decode_unsigned'(call 'binary':'part'(call 'erlang':'get'(_k), _i, 4), 'little')
+	      call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 4), 'little')
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
@@ -3178,7 +3175,7 @@ let rt_source =
     fun (_a, _i) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      apply 'emo_mask'/1 (call 'binary':'decode_unsigned'(call 'binary':'part'(call 'erlang':'get'(_k), _i, 8), 'little'))
+	      apply 'emo_mask'/1 (call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 8), 'little'))
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
@@ -3187,8 +3184,8 @@ let rt_source =
     fun (_a, _i, _v) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      let <_b> = call 'erlang':'get'(_k)
-	      in do call 'erlang':'put'(_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
+	      let <_b> = apply 'emo_cell_get'/1 (_k)
+	      in do apply 'emo_cell_put'/2 (_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
 		#<call 'erlang':'band'(_v, 255)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 2), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 2)))>('all',8,'binary',['unsigned'|['big']])}#)
@@ -3201,8 +3198,8 @@ let rt_source =
     fun (_a, _i, _v) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      let <_b> = call 'erlang':'get'(_k)
-	      in do call 'erlang':'put'(_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
+	      let <_b> = apply 'emo_cell_get'/1 (_k)
+	      in do apply 'emo_cell_put'/2 (_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
 		#<call 'erlang':'band'(_v, 255)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
@@ -3217,8 +3214,8 @@ let rt_source =
     fun (_a, _i, _v) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      let <_b> = call 'erlang':'get'(_k)
-	      in do call 'erlang':'put'(_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
+	      let <_b> = apply 'emo_cell_get'/1 (_k)
+	      in do apply 'emo_cell_put'/2 (_k, #{#<call 'binary':'part'(_b, 0, _i)>('all',8,'binary',['unsigned'|['big']]),
 		#<call 'erlang':'band'(_v, 255)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
 		#<call 'erlang':'band'(call 'erlang':'bsr'(_v, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
@@ -3236,14 +3233,14 @@ let rt_source =
 'emo_str_to_bytes'/1 =
     fun (_s) ->
 	let <_k> = call 'erlang':'make_ref'()
-	in do call 'erlang':'put'(_k, _s)
+	in do apply 'emo_cell_put'/2 (_k, _s)
 	   {'emo_bytes', _k}
 
 'emo_bytes_to_str'/1 =
     fun (_a) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      call 'erlang':'get'(_k)
+	      apply 'emo_cell_get'/1 (_k)
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
@@ -3284,9 +3281,8 @@ let rt_source =
 		({'emo_empty_sep',
 		  call 'erlang':'iolist_to_binary'([116, 104, 101, 32, 115, 101, 112, 97, 114, 97, 116, 111, 114, 32, 109, 117, 115, 116, 32, 110, 111, 116, 32, 98, 101, 32, 101, 109, 112, 116, 121])})
 	  <_other> when 'true' ->
-	      {'emo_array',
-	       call 'erlang':'list_to_tuple'
-		 (call 'binary':'split'(_s, _other, ['global']))}
+	      apply 'emo_array_lit'/1
+		(call 'binary':'split'(_s, _other, ['global']))
 	end
 
 'emo_str_index_of'/2 =
@@ -3426,7 +3422,7 @@ let rt_source =
     fun (_a) ->
 	case _a of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      call 'erlang':'iolist_to_binary'([66, 121, 116, 101, 115, 91, call 'erlang':'integer_to_list'(call 'erlang':'byte_size'(call 'erlang':'get'(_k))), 93])
+	      call 'erlang':'iolist_to_binary'([66, 121, 116, 101, 115, 91, call 'erlang':'integer_to_list'(call 'erlang':'byte_size'(apply 'emo_cell_get'/1 (_k))), 93])
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
@@ -3435,10 +3431,8 @@ let rt_source =
     fun (_arr) ->
 	let <_k> = call 'erlang':'make_ref'()
 	in do call 'erlang':'put'
-	 (_k,
-	  {call 'erlang':'tuple_to_list'
-	     (call 'erlang':'element'(2, _arr)),
-	   []})
+		 (_k,
+	  {apply 'emo_array_elems'/1 (_arr), []})
 	   {'emo_list', _k}
 
 'emo_list_elems'/1 =
@@ -3625,13 +3619,11 @@ let rt_source =
 	      call 'erlang':'error'({'emo_no_builder', _other})
 	end
 
-%% to_array hands out a fresh {'emo_array', Inner} tag over a fresh
-%%   inner tuple — a copy, so the builder stays free to grow without
-%%   touching the array it already returned.
+%% to_array hands out a fresh {'emo_array', Key} tag over a fresh
+%%   tuple — a copy, so the builder stays free to grow without touching
+%%   the array it already returned.
 'emo_builder_to_array'/1 =
-    fun (_b) ->
-	{'emo_array',
-	 call 'erlang':'list_to_tuple'(apply 'emo_builder_elems'/1 (_b))}
+    fun (_b) -> apply 'emo_array_lit'/1 (apply 'emo_builder_elems'/1 (_b))
 
 'emo_builder_to_str'/1 =
     fun (_b) ->
@@ -3681,14 +3673,6 @@ let rt_source =
 	      end
 	end
 
-'emo_array_to_str'/1 =
-    fun (_a) ->
-	call 'erlang':'iolist_to_binary'
-	    (apply 'emo_array_join'/2
-	       (call 'erlang':'tuple_to_list'
-		  (call 'erlang':'element'(2, _a)),
-		1))
-
 'emo_array_join'/2 =
     fun (_elems, _first) ->
 	case _elems of
@@ -3729,14 +3713,15 @@ let rt_source =
 'emo_eq'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <{'emo_array', _ta}> when 'true' ->
+	  <{'emo_array', _ka}> when 'true' ->
 	      case _b of
-		<{'emo_array', _tb}> when 'true' ->
+		<{'emo_array', _kb}> when 'true' ->
 		    case call 'erlang':'=='
-			    (call 'erlang':'tuple_size'(_ta),
-			     call 'erlang':'tuple_size'(_tb)) of
+			    (apply 'emo_array_len'/1 (_a),
+			     apply 'emo_array_len'/1 (_b)) of
 		      <'true'> when 'true' ->
-			  apply 'emo_eq_tuple'/3 (_ta, _tb, 1)
+			  apply 'emo_eq_array_walk'/4
+			    (_ka, _kb, 0, apply 'emo_array_len'/1 (_a))
 		      <'false'> when 'true' -> 'false'
 		    end
 		<_other> when 'true' -> 'false'
@@ -3751,7 +3736,7 @@ let rt_source =
 	  <{'emo_bytes', _ka}> when 'true' ->
 	      case _b of
 		<{'emo_bytes', _kb}> when 'true' ->
-		    call 'erlang':'=:='(call 'erlang':'get'(_ka), call 'erlang':'get'(_kb))
+		    call 'erlang':'=:='(apply 'emo_cell_get'/1 (_ka), apply 'emo_cell_get'/1 (_kb))
 		<_other> when 'true' -> 'false'
 	      end
 	  <{'emo_list', _ka}> when 'true' ->
@@ -3827,6 +3812,26 @@ let rt_source =
 
 'emo_ne'/2 =
     fun (_a, _b) -> apply 'emo_not'/1 (apply 'emo_eq'/2 (_a, _b))
+
+%% The array eq walk: element I of each row set through lookup_element
+%%   (one element a call), recursing through emo_eq so tagged values
+%%   compare at their own arms. Sizes are checked by the caller.
+'emo_eq_array_walk'/4 =
+    fun (_ka, _kb, _i, _len) ->
+	case call 'erlang':'>='(_i, _len) of
+	  <'true'> when 'true' -> 'true'
+	  <'false'> when 'true' ->
+	      case apply 'emo_eq'/2
+			  (call 'ets':'lookup_element'
+			     (apply 'emo_cells_table'/0 (), {_ka, _i}, 2),
+			   call 'ets':'lookup_element'
+			     (apply 'emo_cells_table'/0 (), {_kb, _i}, 2)) of
+		<'true'> when 'true' ->
+		    apply 'emo_eq_array_walk'/4
+		      (_ka, _kb, call 'erlang':'+'(_i, 1), _len)
+		<'false'> when 'true' -> 'false'
+	      end
+	end
 
 %% ---- Map ----
 %%
@@ -3966,7 +3971,7 @@ let rt_source =
 	  <{'emo_map', _mk}> when 'true' ->
 	      case call 'erlang':'get'(_mk) of
 		<{_order, _pairs}> when 'true' ->
-		    {'emo_array', call 'erlang':'list_to_tuple'(_order)}
+		    apply 'emo_array_lit'/1 (_order)
 	      end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_map', _other})
@@ -3978,9 +3983,8 @@ let rt_source =
 	  <{'emo_map', _mk}> when 'true' ->
 	      case call 'erlang':'get'(_mk) of
 		<{_order, _pairs}> when 'true' ->
-		    {'emo_array',
-		     call 'erlang':'list_to_tuple'
-		       (apply 'emo_map_values_walk'/2 (_order, _pairs))}
+		    apply 'emo_array_lit'/1
+		      (apply 'emo_map_values_walk'/2 (_order, _pairs))
 	      end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_map', _other})
@@ -4122,7 +4126,7 @@ let rt_source =
 	call 'io':'put_chars'
 	  (apply 'emo_printf_walk'/3
 	     (call 'binary':'bin_to_list'(_fmt),
-	      call 'erlang':'tuple_to_list'(call 'erlang':'element'(2, _args)),
+	      apply 'emo_array_elems'/1 (_args),
 	      []))
 
 'emo_printf_walk'/3 =
@@ -4796,6 +4800,166 @@ let rt_source =
 	  <_t> when 'true' -> _t
 	end
 
+%% The cell store: the root-owned public table a Bytes buffer and an
+%%   Array's tuple live in. The key crosses a spawn's fun environment
+%%   and both processes hit one row — the interp's spawn-arg alias, the
+%%   same heap cell seen from two stacks. The send still copies: the
+%%   pack hands the raw contents across and the receiver re-registers
+%%   them under its own fresh key.
+'emo_cells_table'/0 =
+    fun () ->
+	case call 'ets':'whereis'('emo_cells') of
+	  <'undefined'> when 'true' ->
+	      call 'ets':'new'('emo_cells', ['named_table', 'public', 'set'])
+	  <_t> when 'true' -> _t
+	end
+
+'emo_cell_get'/1 =
+    fun (_k) ->
+	case call 'ets':'lookup'(apply 'emo_cells_table'/0 (), _k) of
+	  <[{_rk, _v}]> when 'true' -> _v
+	  <[]> when 'true' -> call 'erlang':'error'({'emo_cell_gone', _k})
+	end
+
+'emo_cell_put'/2 =
+    fun (_k, _v) ->
+	do call 'ets':'insert'(apply 'emo_cells_table'/0 (), {_k, _v}) _k
+
+%% ---- The array ----
+%%
+%%   The array is the {'emo_array', Key} tag over per-element rows in
+%%   the root-owned table: the row for element I is {{K, I}, V}, the
+%%   length row is {{K, 'n'}, L} (indexes are non-negative, the atom
+%%   cannot collide). `ets:lookup_element` copies the ONE element the
+%%   read asks for — a whole-row lookup would copy the stored tuple,
+%%   the O(n) per read that turned the 19-minute lists:nth walk into
+%%   the same quadratic wall one level down. The store replaces one
+%%   row — O(1) — and the alias rule falls out: every holder of the
+%%   tag reads the same rows, the interp's spawn-argument alias. The
+%%   send still copies: emo_msg_pack walks the elements into fresh
+%%   rows under a new key, the receiver's unpack nothing to re-register
+%%   (the rows are already shared), so a sent array is a fresh array.
+
+'emo_array_lit'/1 =
+    fun (_elems) ->
+	let <_k> = call 'erlang':'make_ref'()
+	in do apply 'emo_array_lit_walk'/3
+		 (_elems, _k, 0)
+	   let <_len> = call 'erlang':'length'(_elems)
+	   in do call 'ets':'insert'
+		   (apply 'emo_cells_table'/0 (),
+		    {{_k, 'n'}, _len})
+	      {'emo_array', _k}
+
+'emo_array_lit_walk'/3 =
+    fun (_elems, _k, _i) ->
+	case _elems of
+	  <[_e | _rest]> when 'true' ->
+	      do call 'ets':'insert'
+		   (apply 'emo_cells_table'/0 (), {{_k, _i}, _e})
+		 apply 'emo_array_lit_walk'/3
+		   (_rest, _k, call 'erlang':'+'(_i, 1))
+	  <[]> when 'true' -> 'ok'
+	end
+
+'emo_array_len'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_array', _k}> when 'true' ->
+	      call 'ets':'lookup_element'
+		(apply 'emo_cells_table'/0 (), {_k, 'n'}, 2)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_array', _other})
+	end
+
+'emo_array_elem'/2 =
+    fun (_a, _i) ->
+	case _a of
+	  <{'emo_array', _k}> when 'true' ->
+	      call 'ets':'lookup_element'
+		(apply 'emo_cells_table'/0 (), {_k, _i}, 2)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_array', _other})
+	end
+
+'emo_array_store'/3 =
+    fun (_a, _i, _v) ->
+	case _a of
+	  <{'emo_array', _k}> when 'true' ->
+	      do call 'ets':'insert'
+		   (apply 'emo_cells_table'/0 (), {{_k, _i}, _v})
+		 _a
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_array', _other})
+	end
+
+'emo_array_append'/2 =
+    fun (_a, _x) ->
+	case _a of
+	  <{'emo_array', _k}> when 'true' ->
+	      %% value semantics: the rows walk to a fresh key, the
+	      %%   original untouched — the checker types append as a new
+	      %%   Array, and the toml encoder's path prefixes are the
+	      %%   first program to lean on it
+	      let <_len> =
+		      call 'ets':'lookup_element'
+			(apply 'emo_cells_table'/0 (), {_k, 'n'}, 2)
+	      in let <_k2> = call 'erlang':'make_ref'()
+		 in do apply 'emo_array_copy_walk'/4
+			  (_k, _k2, 0, _len)
+		 do call 'ets':'insert'
+			  (apply 'emo_cells_table'/0 (), {{_k2, _len}, _x})
+		 do call 'ets':'insert'
+			  (apply 'emo_cells_table'/0 (),
+			   {{_k2, 'n'}, call 'erlang':'+'(_len, 1)})
+		 {'emo_array', _k2}
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_array', _other})
+	end
+
+'emo_array_copy_walk'/4 =
+    fun (_k, _k2, _i, _len) ->
+	case call 'erlang':'>='(_i, _len) of
+	  <'true'> when 'true' -> 'ok'
+	  <'false'> when 'true' ->
+	      do call 'ets':'insert'
+		   (apply 'emo_cells_table'/0 (),
+		    {{_k2, _i},
+		     call 'ets':'lookup_element'
+		       (apply 'emo_cells_table'/0 (), {_k, _i}, 2)})
+		 apply 'emo_array_copy_walk'/4
+		   (_k, _k2, call 'erlang':'+'(_i, 1), _len)
+	end
+
+'emo_array_elems'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_array', _k}> when 'true' ->
+	      apply 'emo_array_elems_walk'/3
+		(_k, call 'ets':'lookup_element'
+		       (apply 'emo_cells_table'/0 (), {_k, 'n'}, 2),
+		 0)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_array', _other})
+	end
+
+'emo_array_elems_walk'/3 =
+    fun (_k, _len, _i) ->
+	case call 'erlang':'>='(_i, _len) of
+	  <'true'> when 'true' -> []
+	  <'false'> when 'true' ->
+	      [call 'ets':'lookup_element'
+		 (apply 'emo_cells_table'/0 (), {_k, _i}, 2)
+	       | apply 'emo_array_elems_walk'/3
+		   (_k, _len, call 'erlang':'+'(_i, 1))]
+	end
+
+'emo_array_to_str'/1 =
+    fun (_a) ->
+	call 'erlang':'iolist_to_binary'
+	    (apply 'emo_array_join'/2
+	       (apply 'emo_array_elems'/1 (_a), 1))
+
 %% ---- The process-boundary pack ----
 %%
 %%   A Bytes is {'emo_bytes', Key} over a process-dictionary binary —
@@ -4815,10 +4979,40 @@ let rt_source =
     fun (_m) ->
 	case _m of
 	  <{'emo_bytes', _k}> when 'true' ->
-	      {'emo_bytes_val', call 'erlang':'get'(_k)}
+	      {'emo_bytes_val', apply 'emo_cell_get'/1 (_k)}
+	  <{'emo_array', _k}> when 'true' ->
+	      {'emo_array_val',
+	       apply 'emo_msg_pack_array'/4
+		 (_k,
+		  call 'ets':'lookup_element'
+		    (apply 'emo_cells_table'/0 (), {_k, 'n'}, 2),
+		  0,
+		  call 'erlang':'make_ref'())}
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
 	      apply 'emo_msg_pack_tuple'/2 (_t, call 'erlang':'tuple_size'(_t))
 	  <_other> when 'true' -> _other
+	end
+
+%% The send's array copy: the elements walk into fresh rows under the
+%%   new key, each element packed (a Bytes inside a sent array crosses,
+%%   a nested array re-rows), the length row last. The receiver's tag
+%%   is the new key's own — the rows are already shared.
+'emo_msg_pack_array'/4 =
+    fun (_k, _len, _i, _k2) ->
+	case call 'erlang':'>='(_i, _len) of
+	  <'true'> when 'true' ->
+	      do call 'ets':'insert'
+		   (apply 'emo_cells_table'/0 (), {{_k2, 'n'}, _len})
+		 {'emo_array', _k2}
+	  <'false'> when 'true' ->
+	      do call 'ets':'insert'
+		   (apply 'emo_cells_table'/0 (),
+		    {{_k2, _i},
+		     apply 'emo_msg_pack'/1
+		       (call 'ets':'lookup_element'
+			  (apply 'emo_cells_table'/0 (), {_k, _i}, 2))})
+		 apply 'emo_msg_pack_array'/4
+		   (_k, _len, call 'erlang':'+'(_i, 1), _k2)
 	end
 
 'emo_msg_pack_tuple'/2 =
@@ -4837,8 +5031,15 @@ let rt_source =
 	case _v of
 	  <{'emo_bytes_val', _bin}> when 'true' ->
 	      let <_k> = call 'erlang':'make_ref'()
-	      in do call 'erlang':'put'(_k, _bin)
+	      in do apply 'emo_cell_put'/2 (_k, _bin)
 		 {'emo_bytes', _k}
+	  <{'emo_array_val', _t}> when 'true' ->
+	      %% the pack's array answer is a tag over rows the shared
+	      %%   table already holds — the tag rides as-is
+	      let <_k> = call 'erlang':'element'(2, _t)
+	      in {'emo_array', _k}
+	  <{'emo_array', _k}> when 'true' ->
+	      _v
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
 	      apply 'emo_msg_unpack_tuple'/2 (_t, call 'erlang':'tuple_size'(_t))
 	  <_other> when 'true' -> _other
@@ -5115,6 +5316,7 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env "'main'/0 =\n";
   put env "    fun () ->\n";
   put env "        do apply 'emo_root_table'/0 ()\n";
+  put env "        do apply 'emo_cells_table'/0 ()\n";
   put env (body_wrapper ~on_exit:"apply 'emo_kill_spawned'/0 ()" body);
   put env "\nend\n";
   Buffer.contents buf
