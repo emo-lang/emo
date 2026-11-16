@@ -458,10 +458,10 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                 else if beam_stem_claims_otp_module stem then begin
                   prerr_endline
                     (Printf.sprintf
-                       "emo build: `%s` is an OTP module name — the BEAM module \
-                        is named after the output file, and OTP's own `%s` owns \
-                        that name at run time, so the artifact can never run; \
-                        rename the output"
+                       "emo build: `%s` is an OTP module name — the BEAM \
+                        module is named after the output file, and OTP's own \
+                        `%s` owns that name at run time, so the artifact can \
+                        never run; rename the output"
                        stem stem);
                   65
                 end

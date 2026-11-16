@@ -431,54 +431,6 @@ let install_hooks p =
           Hashtbl.replace resolved_types name answer;
           answer
 
-(* `internal` is subtree-private: a module whose path contains an internal
-   segment may only be referenced from modules under that segment's parent.
-   Returns one diagnostic per violation, naming both modules. *)
-let check_internal_privacy (graph : (string list, string list list) Hashtbl.t) :
-    Emo_support.Diagnostic.t list =
-  let dotted path = String.concat "." path in
-  List.concat_map
-    (fun (use_site, refs) ->
-      List.filter_map
-        (fun r ->
-          let rec internal_parent before = function
-            | "internal" :: _ -> Some (List.rev before)
-            | seg :: rest -> internal_parent (seg :: before) rest
-            | [] -> None
-          in
-          match internal_parent [] r with
-          | Some parent ->
-              let rec prefix n xs =
-                if n <= 0 then []
-                else
-                  match xs with
-                  | [] -> []
-                  | x :: rest -> x :: prefix (n - 1) rest
-              in
-              let shares =
-                List.length use_site >= List.length parent
-                && prefix (List.length parent) use_site = parent
-              in
-              if shares then None
-              else
-                Some
-                  {
-                    Emo_support.Diagnostic.severity = Error;
-                    code = Some "E5001";
-                    message =
-                      Printf.sprintf
-                        "module `%s` cannot reference `%s`: `internal` is \
-                         subtree-private"
-                        (dotted use_site) (dotted r);
-                    span =
-                      Emo_support.Span.make ~file:(dotted use_site) ~line:1
-                        ~col:1 ~start:0 ~stop:0;
-                    hint = None;
-                  }
-          | None -> None)
-        refs)
-    (Hashtbl.fold (fun path refs acc -> (path, refs) :: acc) graph [])
-
 (* Checks every module in the project, collecting the reference graph.
    Returns per-module references and every diagnostic found. *)
 (* Detects a reference cycle between file modules and returns its chain
@@ -583,7 +535,6 @@ let check_project (p : project) :
         | ds -> (ds @ errors, (path, refs) :: entries))
       ([], []) units
   in
-  let internal_errors = check_internal_privacy graph in
   let cycle_error =
     match find_cycle graph with
     | None -> []
@@ -656,8 +607,7 @@ let check_project (p : project) :
   ( module_paths,
     entries,
     program,
-    preregister_errors @ errors @ internal_errors @ cycle_error @ pairing_errors
-  )
+    preregister_errors @ errors @ cycle_error @ pairing_errors )
 
 (* Runs the entry file: the graph is discovered up front (collisions report
    immediately), modules load lazily on first access with load-once

@@ -37,11 +37,13 @@ let scratch_counter = ref 0
 
 let fresh_scratch () =
   incr scratch_counter;
+  (* The process's own pid in the name: the CPU-time counter repeats
+     across runs of the same test sequence, and a leftover directory
+     from an earlier run would merge its files into this run's project
+     — its stale modules reporting into every prepare. *)
   Filename.concat
     (Filename.get_temp_dir_name ())
-    (Printf.sprintf "emo-project-%d-%d"
-       (int_of_float (Sys.time () *. 1000.))
-       !scratch_counter)
+    (Printf.sprintf "emo-project-%d-%d" (Unix.getpid ()) !scratch_counter)
 
 (* Writes files into a fresh scratch project and returns its directory.
    Every project carries a manifest — the root rule makes a package.emo
@@ -554,7 +556,7 @@ let registry_dir =
   let dir =
     Filename.concat
       (Filename.get_temp_dir_name ())
-      (Printf.sprintf "emo-registry-%d" (int_of_float (Sys.time () *. 1000.)))
+      (Printf.sprintf "emo-registry-%d" (Unix.getpid ()))
   in
   let pkg_dir =
     Filename.concat dir

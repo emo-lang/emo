@@ -178,20 +178,29 @@ let internal_type_violation ctx (owner : string list) : bool =
         && List.for_all2 String.equal root
              (List.take (List.length root) ctx.current))
 
-(* Reports a type reference reaching across an internal boundary.
-   Resolution continues — the program is rejected either way — so the
-   narrowing and conformance machinery keeps its data. *)
-let check_internal_type_path ctx span owner name =
+(* The `internal` subtree rule's one seat: the resolver every qualified
+   name flows through reports the violation at its own use site — the
+   message names the owning module, kind-neutral, because the same dot
+   path serves an annotation and a value read alike — and the project
+   graph's module-level privacy pass retired with this coverage: the
+   type-annotation edges the cycle pass needs would otherwise
+   double-report what the use site already names. The graph keeps its
+   cycle job whole. *)
+let check_internal_type_path ctx span owner =
   if internal_type_violation ctx owner then
     report ctx span "E5001"
       (Printf.sprintf
-         "module `%s` cannot reference the type `%s` declared in `%s`: \
-          `internal` is subtree-private"
+         "module `%s` cannot reference `%s`: `internal` is subtree-private"
          (String.concat "." ctx.current)
-         name (String.concat "." owner))
+         (String.concat "." owner))
+
+(* The bare-name shapes (an identifier resolving to a module whole, no
+   dotted path probing types ahead of the value read) ride the same
+   seat. *)
+let check_internal_value_path ctx span (target : string list) =
+  check_internal_type_path ctx span target
 
 (* ---- Module-path resolution (shared by value and type references) ---- *)
-
 (* A module path is known when some declared module lives at or below it. *)
 let module_prefix_known ctx path =
   List.exists
@@ -307,7 +316,7 @@ let resolve_type_ref ctx span (ref_ : string) : t option =
            resolving to itself is not an edge — a self-loop is not a
            cycle. *)
         if owner <> ctx.current then ctx.refs := owner :: !(ctx.refs);
-        check_internal_type_path ctx span owner name;
+        check_internal_type_path ctx span owner;
         let q = qualify_path owner name in
         if Hashtbl.mem ctx.classes q then Some (ClassType q)
         else if Hashtbl.mem ctx.interfaces q then Some (InterfaceType q)
@@ -2165,6 +2174,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
               (* A module reference: the current package's subtree, or a
                  visible absolute module. *)
               ctx.refs := name_path :: !(ctx.refs);
+              check_internal_value_path ctx span name_path;
               Unknown
           | None ->
               if raw_mem_builtin name then
@@ -2224,6 +2234,7 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             match normalize_module ctx [ name ] with
             | Some name_path ->
                 ctx.refs := name_path :: !(ctx.refs);
+                check_internal_value_path ctx span name_path;
                 Unknown
             | None ->
                 if ctx.program_checked then (
@@ -2681,6 +2692,10 @@ and check_apply ctx env span what ft args : t =
    loader raises. *)
 and check_module_member_call ctx env span (mpath : string list) mname args : t =
   ctx.refs := mpath :: !(ctx.refs);
+  (* The qualified call's route never evaluates its receiver as an
+     expression, so the dotted-path seat never ran: the subtree rule
+     reports here. *)
+  check_internal_value_path ctx span mpath;
   let dotted = String.concat "." mpath in
   match Hashtbl.find_opt ctx.pdefs (mpath, mname) with
   | Some ft -> check_apply ctx env span (dotted ^ "." ^ mname) ft args

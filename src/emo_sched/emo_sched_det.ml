@@ -1654,15 +1654,16 @@ and sendmsg_fd_loop state proc
     (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
     (live : live) (deadline : float option) (data : string) (pass_fd : int) :
     outcome =
-  match Emo_eval.emo_stub_sendmsg_fd (Emo_eval.fd_int live.lfd) data pass_fd with
+  match
+    Emo_eval.emo_stub_sendmsg_fd (Emo_eval.fd_int live.lfd) data pass_fd
+  with
   | put when put >= 0 ->
       finish_w finished state proc k
         (Emo_eval.net_ok (Emo_eval.Int64 (Int64.of_int put)))
   | _ ->
       park_fd state proc k finished live.lfd `W ~deadline
         ~timeout_message:
-          (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc)
-        span
+          (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc) span
         (fun st ->
           sendmsg_fd_loop st proc k finished c span live deadline data pass_fd)
   | exception Unix.Unix_error (err, _, _) ->
@@ -1690,10 +1691,8 @@ and recvmsg_fd_loop state proc
   | _ ->
       park_fd state proc k finished live.lfd `R ~deadline
         ~timeout_message:
-          (Printf.sprintf "timed out reading from %s" c.Emo_eval.cdesc)
-        span
-        (fun st ->
-          recvmsg_fd_loop st proc k finished c span live deadline cap)
+          (Printf.sprintf "timed out reading from %s" c.Emo_eval.cdesc) span
+        (fun st -> recvmsg_fd_loop st proc k finished c span live deadline cap)
   | exception Unix.Unix_error (err, _, _) ->
       finish_w finished state proc k
         (Emo_eval.net_error

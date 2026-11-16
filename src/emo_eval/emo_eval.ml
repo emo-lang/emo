@@ -1195,7 +1195,8 @@ type _ Effect.t +=
   | Net_connect_unix : string * float * Emo_support.Span.t -> value Effect.t
   | Net_listen_unix : string * Emo_support.Span.t -> value Effect.t
   | Net_sendmsg_fd :
-      (conn * string * int64 * Emo_support.Span.t) -> value Effect.t
+      (conn * string * int64 * Emo_support.Span.t)
+      -> value Effect.t
   | Net_recvmsg_fd : (conn * int64 * Emo_support.Span.t) -> value Effect.t
   | File_read : string * Emo_support.Span.t -> value Effect.t
   | File_write : string * string * Emo_support.Span.t -> value Effect.t
@@ -1503,6 +1504,7 @@ let expect_raise span message = net_raise span message
 external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
 external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
+
 external emo_stub_sendmsg_fd : int -> string -> int -> int
   = "emo_stub_sendmsg_fd"
 
@@ -4211,7 +4213,9 @@ and apply_runtime_impl span name args =
            silently sharing. *)
         os_result span (fun () ->
             let fd =
-              Unix.openfile path [ Unix.O_CREAT; Unix.O_EXCL; Unix.O_RDWR ] 0o600
+              Unix.openfile path
+                [ Unix.O_CREAT; Unix.O_EXCL; Unix.O_RDWR ]
+                0o600
             in
             (try Unix.unlink path with Unix.Unix_error _ -> ());
             Int64 (Int64.of_int (fd_int fd)))
@@ -4243,11 +4247,9 @@ and apply_runtime_impl span name args =
               if off >= len then total
               else begin
                 let n =
-                  emo_stub_pwrite fd bytes
-                    (Int64.add offset (Int64.of_int off))
+                  emo_stub_pwrite fd bytes (Int64.add offset (Int64.of_int off))
                 in
-                if n <= 0 then
-                  raise (Unix.Unix_error (Unix.EIO, "pwrite", ""))
+                if n <= 0 then raise (Unix.Unix_error (Unix.EIO, "pwrite", ""))
                 else put (off + n) (total + n)
               end
             in
