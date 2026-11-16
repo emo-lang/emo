@@ -2570,7 +2570,7 @@ case http.request_with("GET", "https://localhost:" + listener.port().to_string()
     tc "the stdlib targets are honest: native resolves, wasm refuses" (fun () ->
         let registry = use_workspace_registry () in
         let reg = Emo_pkg.Registry.Fs_dir registry in
-        let index = Emo_pkg.Registry.index reg [ "http"; "net" ] in
+        let index = Emo_pkg.Registry.index reg [ "http"; "net"; "time" ] in
         let roots =
           match Emo_pkg.Version.parse "0.1.0" with
           | Ok v -> [ ("http", v) ]
