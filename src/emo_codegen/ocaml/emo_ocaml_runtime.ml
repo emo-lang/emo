@@ -40,6 +40,30 @@ external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
    interpreter and the c runtime read. *)
 external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
 
+(* The fd passage and the shm tier, the wayland wire's own calls — the
+   same stubs the interpreter's runtime rides (emo_posix_stub.c): one
+   sendmsg carrying one SCM_RIGHTS name, one recvmsg reading the
+   ancillary queue back, one pwrite, one ftruncate. The socket pair
+   answers -2 on would-block (the scheduler parks and re-runs the call)
+   and raises the Unix error otherwise; recvmsg answers the triple
+   (got, data, passed fd) with the fd -1 when the frame carried no
+   name. Unix.file_descr is an int at the C boundary, so the conn's
+   descriptor crosses the stub directly. *)
+external emo_stub_sendmsg_fd : Unix.file_descr -> string -> int -> int
+  = "emo_stub_sendmsg_fd"
+
+external emo_stub_recvmsg_fd : Unix.file_descr -> int -> int * string * int
+  = "emo_stub_recvmsg_fd"
+
+external emo_stub_ftruncate : int -> int64 -> unit = "emo_stub_ftruncate"
+
+external emo_stub_pwrite : int -> bytes -> int64 -> int = "emo_stub_pwrite"
+
+(* Unix.file_descr is an int at the C boundary; the abstract type only
+   guards the OCaml-side discipline. The stubs take the descriptor
+   directly, the shm tier's Int64 fds cross as ints. *)
+let int_of_unix_fd (fd : Unix.file_descr) : int = (Obj.magic fd : int)
+
   (* ---- The value ADT ----
 
      The tagged dynamic representation, reshaped standalone: the
@@ -228,6 +252,8 @@ external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
     | Net_connect_unix : string * float -> value Effect.t
     | Net_listen : string * int -> value Effect.t
     | Net_listen_unix : string -> value Effect.t
+    | Net_sendmsg_fd : conn * string * int64 -> value Effect.t
+    | Net_recvmsg_fd : conn * int64 -> value Effect.t
     | Net_accept : listener -> value Effect.t
     | Net_read_line : conn -> value Effect.t
     | Net_read_exactly : conn * int -> value Effect.t
@@ -1756,6 +1782,64 @@ let pf_hash_float conv minus plus space width prec f =
         error "E3007"
           (Printf.sprintf "`os_getenv` expects (name String), got %d"
              (List.length vs))
+    | "os_shm_open", args when List.length args <> 1 ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_shm_open` expects (name String), got %d arguments"
+             (List.length args))
+    | "os_shm_open", [ String path ] ->
+        (* The pool fd: a private regular file at `path`, unlinked at
+           birth — seekable and mappable on both platforms (macOS's
+           POSIX shm objects refuse read and pwrite outright), the
+           shape the wl_shm pool accepts. The name's whole life is
+           this call: a second open of it refuses (O_EXCL) instead of
+           silently sharing. *)
+        os_result (fun () ->
+            let fd =
+              Unix.openfile path
+                [ Unix.O_CREAT; Unix.O_EXCL; Unix.O_RDWR ]
+                0o600
+            in
+            (try Unix.unlink path with Unix.Unix_error _ -> ());
+            Int64 (Int64.of_int (int_of_unix_fd fd)))
+    | "os_shm_open", _ ->
+        error "E3001" "`os_shm_open` expects (name String)"
+    | "os_ftruncate", args when List.length args <> 2 ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_ftruncate` expects (fd Int64, size Int64), got %d arguments"
+             (List.length args))
+    | "os_ftruncate", [ Int64 fd; Int64 size ] ->
+        os_result (fun () ->
+            emo_stub_ftruncate (Int64.to_int fd) size;
+            Int64 0L)
+    | "os_ftruncate", _ ->
+        error "E3001" "`os_ftruncate` expects (fd Int64, size Int64)"
+    | "os_pwrite", args when List.length args <> 3 ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_pwrite` expects (fd Int64, data String, offset Int64), got \
+              %d             arguments"
+             (List.length args))
+    | "os_pwrite", [ Int64 fd; String data; Int64 offset ] ->
+        os_result (fun () ->
+            let fd = Int64.to_int fd in
+            let bytes = Bytes.of_string data in
+            let len = Bytes.length bytes in
+            let rec put off total =
+              if off >= len then total
+              else begin
+                let n =
+                  emo_stub_pwrite fd bytes (Int64.add offset (Int64.of_int off))
+                in
+                if n <= 0 then raise (Unix.Unix_error (Unix.EIO, "pwrite", ""))
+                else put (off + n) (total + n)
+              end
+            in
+            Int64 (Int64.of_int (put 0 0)))
+    | "os_pwrite", _ ->
+        error "E3001"
+          "`os_pwrite` expects (fd Int64, data String, offset Int64)"
     | "os_setenv", [ String name; String value ] -> (
         (* The reason names `setenv` — the call the c runtime makes —
            not the OCaml putenv underneath. *)
@@ -1823,6 +1907,27 @@ let pf_hash_float conv minus plus space width prec f =
         Effect.perform (Net_listen_unix path)
     | "net_listen_unix", _ ->
         error "E3001" "`net_listen_unix` expects (path String)"
+    | "net_sendmsg_fd", args when List.length args <> 3 ->
+        error "E3007"
+          (Printf.sprintf
+             "`net_sendmsg_fd` expects (conn TcpConn, data String, fd Int64), \
+              got %d             arguments"
+             (List.length args))
+    | "net_sendmsg_fd", [ TcpConn c; String data; Int64 pass_fd ] ->
+        Effect.perform (Net_sendmsg_fd (c, data, pass_fd))
+    | "net_sendmsg_fd", _ ->
+        error "E3001"
+          "`net_sendmsg_fd` expects (conn TcpConn, data String, fd Int64)"
+    | "net_recvmsg_fd", args when List.length args <> 2 ->
+        error "E3007"
+          (Printf.sprintf
+             "`net_recvmsg_fd` expects (conn TcpConn, cap Int64), got %d \
+              arguments"
+             (List.length args))
+    | "net_recvmsg_fd", [ TcpConn c; Int64 cap ] ->
+        Effect.perform (Net_recvmsg_fd (c, cap))
+    | "net_recvmsg_fd", _ ->
+        error "E3001" "`net_recvmsg_fd` expects (conn TcpConn, cap Int64)"
     | "net_tls_connect", args when List.length args <> 3 ->
         error "E3007"
           (Printf.sprintf
@@ -3519,6 +3624,27 @@ module Emo_runtime = struct
                       Effect.Shallow.continue_with k
                         (Emo_eval.net_ok (Emo_eval.TcpListener l))
                         (handler state proc ()))
+          | Emo_eval.Net_sendmsg_fd (c, data, pass_fd) ->
+              Some
+                (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                  conn_entry state proc k c (fun live ->
+                      let finished = ref false in
+                      let deadline = conn_deadline c in
+                      sendmsg_fd_loop state proc k finished c live deadline
+                        data (Int64.to_int pass_fd)))
+          | Emo_eval.Net_recvmsg_fd (c, cap) ->
+              Some
+                (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                  conn_entry state proc k c (fun live ->
+                      let finished = ref false in
+                      let deadline = conn_deadline c in
+                      if cap <= 0L then
+                        finish_w finished state proc k
+                          (Emo_eval.net_error
+                             "os: recvmsg capacity: Invalid argument")
+                      else
+                        recvmsg_fd_loop state proc k finished c live deadline
+                          (Int64.to_int cap)))
           | Emo_eval.Net_udp_bind (host, port) ->
               Some
                 (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -4437,6 +4563,57 @@ module Emo_runtime = struct
     | None when off >= len ->
         finish_w finished state proc k (Emo_eval.net_ok (Emo_eval.TcpConn c))
     | None -> park `W
+
+  (* The fd passage: one sendmsg carrying one SCM_RIGHTS name, one
+     recvmsg reading the ancillary queue back. Would-block (-2) parks on
+     the socket exactly like every conn read and write; the failure is a
+     value, the det scheduler's own texts. The send answers the bytes
+     sent (a partial send its own count); the read answers the flat
+     (R, data, fd) triple, the fd -1 when the frame carried no name, a
+     zero-byte frame data rather than EOF. *)
+  and sendmsg_fd_loop state proc
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+      (finished : bool ref) (c : Emo_eval.conn) (live : live)
+      (deadline : float option) (data : string) (pass_fd : int) :
+      Emo_eval.exit_info option =
+    match Emo_eval.emo_stub_sendmsg_fd live.lfd data pass_fd with
+    | put when put >= 0 ->
+        finish_w finished state proc k
+          (Emo_eval.net_ok (Emo_eval.Int64 (Int64.of_int put)))
+    | _ ->
+        park_fd state proc k finished live.lfd `W ~deadline
+          ~timeout_message:
+            (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc)
+          (fun st ->
+            sendmsg_fd_loop st proc k finished c live deadline data pass_fd)
+    | exception Unix.Unix_error (err, _, _) ->
+        finish_w finished state proc k
+          (Emo_eval.net_error
+             (Printf.sprintf "sendmsg failed: %s" (Unix.error_message err)))
+
+  and recvmsg_fd_loop state proc
+      (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+      (finished : bool ref) (c : Emo_eval.conn) (live : live)
+      (deadline : float option) (cap : int) : Emo_eval.exit_info option =
+    match Emo_eval.emo_stub_recvmsg_fd live.lfd cap with
+    | got, data, passed when got >= 0 ->
+        finish_w finished state proc k
+          (Emo_eval.Tuple
+             [
+               Emo_eval.EnumMember ("R", "ok");
+               Emo_eval.String data;
+               Emo_eval.Int64 (Int64.of_int passed);
+             ])
+    | _ ->
+        park_fd state proc k finished live.lfd `R ~deadline
+          ~timeout_message:
+            (Printf.sprintf "timed out reading from %s" c.Emo_eval.cdesc)
+          (fun st ->
+            recvmsg_fd_loop st proc k finished c live deadline cap)
+    | exception Unix.Unix_error (err, _, _) ->
+        finish_w finished state proc k
+          (Emo_eval.net_error
+             (Printf.sprintf "recvmsg failed: %s" (Unix.error_message err)))
 
   (* Fires due timers, then polls fd readiness once and wakes the parked
      operations whose fd is ready. Waiters that stay parked are
