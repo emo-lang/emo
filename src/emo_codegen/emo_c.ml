@@ -1084,6 +1084,7 @@ and to_str env (e : Emo_ir.expr) : string =
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_box_str(emo_str_from_bool(%s))" v)
   | Emo_check.Char -> Printf.sprintf "emo_cell_from_char(%s)" v
+  | Emo_check.Pid -> Printf.sprintf "emo_cell_from_pid(%s)" v
   | t when is_dyn t -> Printf.sprintf "emo_to_string_cell(%s)" v
   | t ->
       refuse (Printf.sprintf "`%s` values in a string" (Emo_check.to_string t))
@@ -1958,6 +1959,9 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     (* Char *)
     | Emo_check.Char, (Eq | Ne) -> plain (compare_text op)
     | Emo_check.Char, _ -> refuse "this Char operation"
+    (* Pid: the psABI's int64_t, the eq the identity's own number — the
+       checker admits the eq alone, never an order. *)
+    | Emo_check.Pid, (Eq | Ne) -> plain (compare_text op)
     | _ -> refuse "this expression form"
 
 and fresh_c env base =
@@ -2099,6 +2103,7 @@ and emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
         | Emo_check.Bool -> put env "  emo_println_bool(%s);\n" arg
         | Emo_check.Char -> put env "  emo_println_char(%s);\n" arg
         | Emo_check.Byte -> put env "  emo_println_byte(%s);\n" arg
+        | Emo_check.Pid -> put env "  emo_println_pid(%s);\n" arg
         | t ->
             refuse
               (Printf.sprintf "println of `%s` values" (Emo_check.to_string t)))

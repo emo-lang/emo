@@ -119,6 +119,7 @@ void emo_println_f64(double v);
 void emo_println_bool(bool v);
 void emo_println_char(int32_t v);
 void emo_println_byte(uint8_t v);
+void emo_println_pid(int64_t v);
 
 /* The scalar renderings a string interpolation and to_string() lower
    to. The Float64 rule matches the interpreter's emo_to_string:
@@ -354,6 +355,7 @@ emo_value emo_cell_concat(emo_value a, emo_value b);
 emo_value emo_cell_from_i64(int64_t v);
 emo_value emo_cell_from_f64(double v);
 emo_value emo_cell_from_char(int32_t v);
+emo_value emo_cell_from_pid(int64_t v);
 emo_value emo_cell_from_cstr(const char *cs);
 emo_value emo_cell_substring(emo_value s, int64_t start, int64_t len);
 emo_value emo_cell_lower(emo_value s);

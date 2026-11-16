@@ -7056,6 +7056,39 @@ let wasm_run_tests =
               (contains why "emo-wasm: file: cannot read"));
   ]
 
+(* The Pid render family on the seat that carries it: println,
+   interpolation, to_string, and the identity eq — the root's own pid is
+   what the program prints (three renders and the eq), and the interp
+   and the c target both number the root 1 (the pid space's settled
+   rule). The emo-db trail's record ("compares no Pids and renders no
+   Pid in a string") retires with the family's lowering. *)
+let pid_render_source =
+  {|
+def show(pid Pid) {
+  println(pid)
+  println("${pid}")
+  println(pid.to_string())
+  println(pid == pid)
+}
+
+def main() {
+  show(self_pid())
+}
+
+main()
+|}
+
+let pid_render_tests =
+  [
+    tc "c: the Pid render family answers the root's pid" (fun () ->
+        let entry = scratch_entry "pid-render" pid_render_source in
+        let out = Filename.concat (Filename.dirname entry) "main" in
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry out);
+        check_run "c run"
+          (run_cmd (Filename.quote out))
+          "<pid 1>\n<pid 1>\n<pid 1>\ntrue\n");
+  ]
+
 let () =
   let suite =
     [
@@ -7080,6 +7113,7 @@ let () =
       ("root_end", root_end_tests);
       ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
+      ("pid_render", pid_render_tests);
       ("hosted_bindings", hosted_bindings_tests);
       ("atomic_surface", atomic_surface_tests);
       ("atomic_wasm", atomic_wasm_tests);

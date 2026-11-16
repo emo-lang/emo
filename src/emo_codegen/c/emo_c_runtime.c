@@ -391,6 +391,13 @@ emo_value emo_cell_from_i64(int64_t v) {
   return emo_autorelease(emo_box_str((emo_str){n, buf}));
 }
 
+emo_value emo_cell_from_pid(int64_t pid) {
+  /* The interpreter's own Pid render: the tagged identity, `<pid N>`. */
+  char buf[32];
+  int n = snprintf(buf, sizeof buf, "<pid %lld>", (long long)pid);
+  return emo_autorelease(emo_box_str((emo_str){n, buf}));
+}
+
 emo_value emo_cell_from_f64(double v) {
   char buf[48];
   int n = snprintf(buf, sizeof buf, emo_f64_format(v, false), v);
@@ -2286,6 +2293,10 @@ emo_str emo_to_string_dyn(emo_value v) {
 void emo_println_dyn(emo_value v) {
   emo_render_dyn(v, stdout);
   fputc('\n', stdout);
+}
+
+void emo_println_pid(int64_t pid) {
+  fprintf(stdout, "<pid %lld>\n", (long long)pid);
 }
 
 /* ---- Processes and the cooperative scheduler ---- */
