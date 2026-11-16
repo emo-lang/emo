@@ -693,6 +693,27 @@ let rec handler state (proc : Emo_eval.process) () :
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
                 connect_unix_entry state proc k ~path ~timeout span)
+        | Emo_eval.Net_sendmsg_fd (c, data, pass_fd, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                conn_entry state proc k c span (fun live ->
+                    let finished = ref false in
+                    let deadline = conn_deadline c in
+                    sendmsg_fd_loop state proc k finished c span live deadline
+                      data (Int64.to_int pass_fd)))
+        | Emo_eval.Net_recvmsg_fd (c, cap, span) ->
+            Some
+              (fun (k : (a, unit) Effect.Shallow.continuation) ->
+                conn_entry state proc k c span (fun live ->
+                    let finished = ref false in
+                    let deadline = conn_deadline c in
+                    if cap <= 0L then
+                      finish_w finished state proc k
+                        (Emo_eval.net_error
+                           "os: recvmsg capacity: Invalid argument")
+                    else
+                      recvmsg_fd_loop state proc k finished c span live deadline
+                        (Int64.to_int cap)))
         | Emo_eval.Net_listen_unix (path, span) ->
             Some
               (fun (k : (a, unit) Effect.Shallow.continuation) ->
@@ -1622,6 +1643,61 @@ and write_loop state proc
   | None when off >= len ->
       finish_w finished state proc k (Emo_eval.net_ok (Emo_eval.TcpConn c))
   | None -> park `W
+
+(* The fd passage (A18.7): one sendmsg carrying one SCM_RIGHTS name, the
+   call the c runtime runs. A partial send answers its own count;
+   would-block parks on writability like any conn write; the failure
+   reason names the call. The raw fd rides whether or not the conn is
+   TLS — the wire this speaks is a plain unix socket's. *)
+and sendmsg_fd_loop state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
+    (live : live) (deadline : float option) (data : string) (pass_fd : int) :
+    outcome =
+  match Emo_eval.emo_stub_sendmsg_fd (Emo_eval.fd_int live.lfd) data pass_fd with
+  | put when put >= 0 ->
+      finish_w finished state proc k
+        (Emo_eval.net_ok (Emo_eval.Int64 (Int64.of_int put)))
+  | _ ->
+      park_fd state proc k finished live.lfd `W ~deadline
+        ~timeout_message:
+          (Printf.sprintf "timed out writing to %s" c.Emo_eval.cdesc)
+        span
+        (fun st ->
+          sendmsg_fd_loop st proc k finished c span live deadline data pass_fd)
+  | exception Unix.Unix_error (err, _, _) ->
+      finish_w finished state proc k
+        (Emo_eval.net_error
+           (Printf.sprintf "sendmsg failed: %s" (Unix.error_message err)))
+
+(* The passage's read half: one recvmsg, the ancillary queue read back
+   into the triple's fd slot (-1 when the frame carried no name), an
+   empty read still answering (R.ok, "", -1) — the zero-byte frame is
+   data here, not EOF. Would-block parks on readability. *)
+and recvmsg_fd_loop state proc
+    (k : (Emo_eval.value, unit) Effect.Shallow.continuation)
+    (finished : bool ref) (c : Emo_eval.conn) (span : Emo_support.Span.t)
+    (live : live) (deadline : float option) (cap : int) : outcome =
+  match Emo_eval.emo_stub_recvmsg_fd (Emo_eval.fd_int live.lfd) cap with
+  | got, data, passed when got >= 0 ->
+      finish_w finished state proc k
+        (Emo_eval.Tuple
+           [
+             Emo_eval.EnumMember ("R", "ok");
+             Emo_eval.String data;
+             Emo_eval.Int64 (Int64.of_int passed);
+           ])
+  | _ ->
+      park_fd state proc k finished live.lfd `R ~deadline
+        ~timeout_message:
+          (Printf.sprintf "timed out reading from %s" c.Emo_eval.cdesc)
+        span
+        (fun st ->
+          recvmsg_fd_loop st proc k finished c span live deadline cap)
+  | exception Unix.Unix_error (err, _, _) ->
+      finish_w finished state proc k
+        (Emo_eval.net_error
+           (Printf.sprintf "recvmsg failed: %s" (Unix.error_message err)))
 
 (* Fires due timers, then polls fd readiness once and wakes the parked
    operations whose fd is ready. Waiters that stay parked are untouched. *)

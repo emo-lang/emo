@@ -1101,7 +1101,8 @@ let empty_env =
             span = Emo_support.Span.zero;
           } );
         (* The fd passage and the shm tier (A18.7): the c target's
-           runtime only — the interpreter refuses them at runtime. *)
+           runtime and the interpreter's stub leg; the ocaml target
+           still refuses them at runtime. *)
         ( "net_sendmsg_fd",
           {
             vtype =

@@ -27,7 +27,8 @@ case net.connect_unix(path, 5.0) {
 
 `wayland.connect(path, timeout)` 用自己开的套接字包同一套舞步;
 `conn_of` 包装一个已打开的套接字(测试替身起步的形状)。包只声明
-`c`:Unix 套接字、fd 传递、shm 层都在 c target 的运行时里,其余
+`c`:Unix 套接字、fd 传递、shm 层都在 c target 的运行时里——解释器
+在自己的 stub 腿上跑同一批调用(mock 金测双腿逐字节)——其余
 target 在解析期拒绝本包(sqlite3 先例)。
 
 ## 线格式
@@ -140,8 +141,9 @@ smoke 腿往编辑器窗口里打字,在计数器窗口上计数,全部活在 sw
 
 ## 局限
 
-- **只有一个 target。** 只有 `c`;解释器的 fd 传递 stub(OCaml 运行时
-  的 Unix 模块没有 sendmsg)是点名的后续。
+- **只有一个声明 target。** 只有 `c`;解释器在自己的 stub 腿上跑同一
+  批调用(OCaml 运行时的 Unix 模块没有 sendmsg,所以 C stub 随解释器
+  的调度器一起编),ocaml target 仍在运行时拒绝这批 fd 原语。
 - **一条消息一个 fd。** 本包要说的协议恰好都只带一个;哪天某个协议
   要两个,再长这个形状。
 - **keymap 是个专注的读者,不是 xkb。** 解析器取 keycodes 与
