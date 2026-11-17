@@ -76,6 +76,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M47 — The library's manual | 86 | `emo man` reads the standard library's reference pages from inside the binary: `emo man` lists the packages, `emo man <package>` renders one as a man page — NAME from the overview's table, SYNOPSIS from the embedded manifest's pin and `require`, DESCRIPTION with the doc's own sections and examples, SEE ALSO — and `emo man stdlib` renders the overview. The docs stay the source of truth: `docs/stdlib.md` and `docs/stdlib/*.md` are generated into the CLI's page data at build time (the stdlib-source route), so an installed binary answers with nothing beside it; the renderer reads the docs' Markdown subset — body reflowed to `COLUMNS`, code never reflowed, wide tables wrapped cell by cell — `MANPAGER`/`PAGER` is used only when it can run, an unknown name refuses on 65, and `test/emo_cli`'s `man` group pins the list, a page, and the refusal (`plan/step-86-emo-man.md`). |
 | M48 — The WASI host's file half | 87 | `emo wasm run`'s preview1 host reads and writes files inside a granted directory: the preopen table is the grant (`wasm.set_wasi_preopens`, the CLI's `--dir HOST[::GUEST]`), empty by default — no grant, no file system — `fd_prestat_get`/`fd_prestat_dir_name` walk the discovery, `path_open` resolves lexically inside a preopen's root (a climb past it ENOTCAPABLE), and every open rides one os door — read, write (create + truncate, the stdio "w" shape), append — with `fd_read`/`fd_write`/`fd_seek`/`fd_close`/`fd_fdstat_get` grown to file fds. The foundation is the os package's own POSIX semantics, not a second file story, and the ring flushed three pre-existing drifts: the errno table's ENOSYS and ESPIPE were off by one against wasip1.h (51/69 → 52/70), fd_seek's import shape pinned its i64 offset as an i32 (a real module's import refused), and `fd_readdir` now names the fixture's link-refusal probe (`CHECK.md`). |
 | M49 — The file half's rung two | 88 | Directories list, paths stat, and the mutations land: the DIRECTORY oflag opens directories (a stat before the open answers ENOTDIR for a file), the fd table grew the host path and the grant root so every resolution stays confined, `fd_readdir` lists statelessly (the caller's cookie the position, entries whole-only, d_type UNKNOWN with `path_filestat_get` the type channel), `fd_filestat_get`/`path_filestat_get` stat through the new path-shaped `os_stat` door (millisecond times scaled to nanoseconds; stdio answering character device; an unlinked-open's stat answering the miss), and the four path mutations ride the os doors that already exist, the errno text channel grown to EEXIST/ENOTEMPTY/EXDEV/EPERM; the lookupflags' symlink-follow bit is required, and the fixture's link-refusal probe now names `fd_pread` (`CHECK.md`). |
+| M50 — The GC bootstrap | 89 | The machine object model the interpreter run hosts, and the collector in Emo over it: sixteen bare-name doors — the fixed `struct` block, the counted `array` block, the rooted `ref`, and the walk's doors (`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`) — admitted only by the interpreter run (checked as target `interpreter`; every build target refuses by name, E4032), words self-describing by parity (even a shifted scalar, odd a reference, `0` null), slot 0 of every block the collector's header; the `gc` package implements mark-sweep in pure Emo — tagged accessors, the worklist drain, cycles cut by the mark bit — answering the words reclaimed; the weak root registry makes the host collector the liveness oracle and roots the mutator discipline (a handle a collection must respect lives in a `ref`); the goldens: `examples/gc_demo`'s nine lines on the interpreter alone (a rooted chain and a traced array survive the kill of four thousand unrooted nodes; the cycle dies the moment its root drops — the shape reference counting can never reclaim), `gc_heap_tests`, and the `gc_refusal` negative goldens on every refusing target (`CHECK.md`, `docs/gc-heap.md`). |
 
 ## Design gates
 
@@ -5141,3 +5142,42 @@ mutation chain byte for byte; docs EN+zh.
 - [x] **T88.4** — The docs: this section + zh mirror,
       `plan/README.md`'s row, `plan/step-88-wasi-files2.md`,
       `docs/stdlib/wasm.md` + zh mirror, CHECK.md's settle record.
+
+## M50 — The GC bootstrap
+
+### Step 89 — The interpreter's object model: struct, array, ref, and the collector in Emo
+
+**Status:** complete. (`plan/step-89-gc-bootstrap.md` is the step's
+record, `docs/gc-heap.md` the design note.)
+
+- [x] **T89.1** — The checker: the `Ref` type joining the checker's
+      language, the sixteen signatures (`gc_heap_bindings`), the
+      admission gate in `base_env` — the run checks as the target
+      `interpreter`, the one seat where the doors bind — and the
+      E4032 refusal naming the heap and the target, the raw-memory
+      family's shape inverted.
+- [x] **T89.2** — The evaluator: the heap state (the block table, ids
+      from 1, the parity tag, the tombstones for a loud double free),
+      the weak root registry (the host's collector is the liveness
+      oracle; `ref_roots()` forces a major cycle so the root set is
+      exactly the mutator's), the sixteen builtin arms with their
+      loud ends (E3050–E3055), `Ref` crossing a process boundary as
+      its own cell, per-run reset beside the program registries.
+- [x] **T89.3** — The `gc` package (`stdlib/registry/gc/0.1.0`,
+      pure Emo): the tagged accessors (the shift, the `_ref` pair
+      refusing an even nonzero word while null passes), the header
+      dispatch, mark-sweep with the worklist drain — the first
+      fixture run caught the walk stopping one step past the roots,
+      the drain is the fix — and `collect()` answering the words the
+      sweep reclaimed.
+- [x] **T89.4** — The goldens: `examples/gc_demo`'s nine lines
+      byte-for-byte on the interpreter run alone (`gc_demo` joins
+      `test/emo_project` as the interpreter-only leg — every build
+      target refuses, so no binary leg exists); `gc_heap_tests` in
+      the checker suite (admission, typing, the matrix over all seven
+      refusing targets, payload and arity refusals on the admitting
+      seat); the `gc_refusal` negative goldens naming every door on
+      every refusing target.
+- [x] **T89.5** — The docs: `docs/gc-heap.md` + zh-CN mirror,
+      `docs/stdlib.md` + zh's `gc` row, this section + zh mirror,
+      `plan/step-89-gc-bootstrap.md`, CHECK.md's decision record.

@@ -1536,6 +1536,74 @@ peek64()|}
         Alcotest.(check int) "the arity refused" 1 (List.length diagnostics));
   ]
 
+(* The GC heap's doors (docs/gc-heap.md): the interpreter run admits
+   all sixteen and types them; every other target — build targets and
+   `riscv64` alike — refuses by name at the identifier, E4032. *)
+let gc_heap_tests =
+  let check_on target source =
+    match Emo_parser.parse_program ~file:"test.emo" ~source with
+    | items ->
+        let diagnostics, _, _, _ =
+          Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+        in
+        diagnostics
+    | exception Emo_parser.Error d ->
+        Alcotest.fail ("parse failed: " ^ d.Diagnostic.message)
+  in
+  let every_door =
+    {|
+var h = struct_new(2)
+struct_set(h, 0, 1)
+const w = struct_get(h, 0)
+const a = array_new(3)
+array_set(a, 1, 2)
+const n = array_len(a)
+const k = block_kind(h)
+const s = block_size(a)
+const r = ref_new(w)
+ref_write(r, 5)
+const v = ref_read(r)
+const roots = ref_roots()
+const blocks = heap_blocks()
+heap_free(h)
+const total = heap_words()
+println(n + k + s + v + total + roots.length() + blocks.length())|}
+  in
+  [
+    tc "the hosted default refuses every door by name" (fun () ->
+        let diagnostics = check every_door in
+        let all_e4032 =
+          List.for_all (fun d -> d.Diagnostic.code = Some "E4032") diagnostics
+        in
+        Alcotest.(check bool)
+          "every door is one E4032" true
+          (all_e4032 && List.length diagnostics > 0));
+    tc "every build target refuses, riscv64 included" (fun () ->
+        List.iter
+          (fun target ->
+            let diagnostics = check_on target {|const h = struct_new(2)|} in
+            Alcotest.(check bool)
+              ("E4032 on " ^ target) true
+              (List.exists
+                 (fun d -> d.Diagnostic.code = Some "E4032")
+                 diagnostics))
+          [ "ocaml"; "c"; "typescript"; "wasm"; "browser"; "beam"; "riscv64" ]);
+    tc "the interpreter admits the doors and types them" (fun () ->
+        let clean = check_on "interpreter" every_door in
+        Alcotest.(check int) "clean on the interpreter" 0 (List.length clean));
+    tc "the interpreter still refuses payload and arity mistakes" (fun () ->
+        let diagnostics =
+          check_on "interpreter"
+            {|
+struct_new("text")
+struct_get(1, 2, 3)
+ref_read(0)
+ref_write(0, 1)
+ref_new()|}
+        in
+        Alcotest.(check int) "five refusals" 5 (List.length diagnostics));
+  ]
+
 let cross_module_tests =
   [
     tc "a type declaration names another module's type" (fun () ->
@@ -2610,6 +2678,7 @@ let () =
       ("box", box_tests);
       ("atomic", atomic_tests);
       ("raw_memory", raw_memory_tests);
+      ("gc_heap", gc_heap_tests);
       ("array_builder", array_builder_tests);
       ("member_signature", member_signature_tests);
       ("field_type", field_type_tests);

@@ -6987,6 +6987,80 @@ poke32(0)
         Alcotest.(check int) "six refusals" 6 (List.length got));
   ]
 
+(* The GC heap's refusal goldens (docs/gc-heap.md): the negative twin of
+   the raw-memory lanes — here the interpreter run is the one seat that
+   admits, and every build target, `riscv64` included, refuses by name
+   at the identifier. *)
+let gc_refusal_source =
+  {|
+var h = struct_new(2)
+struct_set(h, 0, 1)
+println(struct_get(h, 0))
+println(array_len(array_new(3)))
+println(block_kind(h))
+println(heap_words())
+println(ref_read(ref_new(1)))
+println(ref_roots().length())
+println(heap_blocks().length())
+heap_free(h)
+|}
+
+let gc_refusal_expected target =
+  List.map
+    (fun name ->
+      Printf.sprintf
+        "`%s` reaches the GC heap: only the interpreter run admits it, not `%s`"
+        name target)
+    [
+      "struct_new";
+      "struct_set";
+      "struct_get";
+      "array_len";
+      "array_new";
+      "block_kind";
+      "heap_words";
+      "ref_read";
+      "ref_new";
+      "ref_roots";
+      "heap_blocks";
+      "heap_free";
+    ]
+
+let gc_refusal_tests =
+  let diagnostics target source =
+    let items, parse_diags =
+      Emo_parser.parse_program_with_diagnostics ~file:"main.emo" ~source
+    in
+    (match parse_diags with [] -> () | _ -> Alcotest.fail "parse errors");
+    let diags, _refs, _requires, _types =
+      Emo_check.check_module_typed ~modules:[] ~current:[] ~target items
+    in
+    List.map
+      (fun d ->
+        ( (match d.Emo_support.Diagnostic.code with Some c -> c | None -> ""),
+          d.Emo_support.Diagnostic.message ))
+      diags
+  in
+  [
+    tc "every build target refuses the doors by name" (fun () ->
+        List.iter
+          (fun target ->
+            let expected = gc_refusal_expected target in
+            let got = diagnostics target gc_refusal_source in
+            Alcotest.(check (list string))
+              (target ^ ": the refusals name the heap")
+              expected (List.map snd got);
+            Alcotest.(check (list string))
+              (target ^ ": every refusal is E4032")
+              (List.map (fun _ -> "E4032") expected)
+              (List.map fst got))
+          [ "ocaml"; "c"; "typescript"; "wasm"; "browser"; "beam"; "riscv64" ]);
+    tc "the interpreter admits the doors and checks clean" (fun () ->
+        Alcotest.(check (list (pair string string)))
+          "interpreter: the doors check clean" []
+          (diagnostics "interpreter" gc_refusal_source));
+  ]
+
 (* ---- emo wasm run ----
 
    The artifacts ride as hex, decoded here — no .wasm blob enters the
@@ -7175,6 +7249,7 @@ let () =
       ("atomic_bytes_run", atomic_bytes_run_tests);
       ("strictness_refusal", strictness_refusal_tests);
       ("peek_refusal", peek_refusal_tests);
+      ("gc_refusal", gc_refusal_tests);
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);

@@ -242,7 +242,10 @@ let c_type (t : Emo_check.t) : string option =
   | Emo_check.Bytes
   (* a macro's Syntax never reaches a backend — expansion erases the defs
      before codegen; the arm keeps the match total *)
-  | Emo_check.SyntaxType ->
+  | Emo_check.SyntaxType
+  (* the GC heap's Ref never reaches a backend either — the checker
+     refuses the whole family off the interpreter (E4032) *)
+  | Emo_check.Ref ->
       Some "emo_value"
   | Emo_check.Void -> Some "void"
 

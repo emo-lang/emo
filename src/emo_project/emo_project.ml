@@ -501,7 +501,8 @@ let units_of (p : project) : (string list * Ast.item list) list =
        (fun file path acc -> (path, parse_cached p file) :: acc)
        shortest [])
 
-let check_project ?(entry : string list option = None) (p : project) :
+let check_project ?(entry : string list option = None) ?(target = "c")
+    (p : project) :
     string list list
     * (string list * string list list * (string * Emo_support.Span.t) list) list
     * Emo_check.program_types
@@ -526,7 +527,7 @@ let check_project ?(entry : string list option = None) (p : project) :
         let diagnostics, refs, requires =
           Emo_check.check_module ~modules:module_paths ~packages:p.packages
             ~package_deps:p.package_deps ~aliases:p.aliases ~current:path
-            ~program ~entry items
+            ~program ~target ~entry items
         in
         Hashtbl.replace graph path refs;
         Hashtbl.replace requires_table path requires;
@@ -1871,7 +1872,9 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
   let items = parse_cached p entry_file in
   (if check then
      let _paths, _graph, _program, errors =
-       check_project ~entry:(Some entry) p
+       (* The run checks as the interpreter target: the GC heap family
+          admits here and nowhere else (docs/gc-heap.md). *)
+       check_project ~entry:(Some entry) ~target:"interpreter" p
      in
      match errors with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in

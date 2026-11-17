@@ -1,0 +1,170 @@
+// The gc package: the machine heap's collector (docs/gc-heap.md).
+//
+// Pure Emo over the object-model doors the interpreter run admits —
+// the words, the blocks, the roots — so the algorithm is the
+// language's own and one source serves every host that answers the
+// same doors. The interpreter is the first host; the heap it
+// simulates is the spec.
+//
+// The word discipline, visible in every accessor here:
+//   an even word is a scalar, stored shifted left one bit; an odd
+//   word is a reference — the handle a block answers at allocation;
+//   0 is null. The tag makes every slot self-describing, so a
+//   collector can walk a heap it did not type.
+// The block layout: slot 0 is the collector's header word (the mark
+//   bit lives there), the data sits in slots 1..n. The accessors
+//   below shift so caller field indices start at 0, and slot 0 stays
+//   the collector's.
+// The mutator discipline: a handle a collection must respect lives
+//   in a root (`ref_new`); a collection allocates nothing — the
+//   worklist below is host memory (an ArrayBuilder), never a GC heap
+//   block; and a root that reaches a freed block dies loudly, the
+//   same loud end the doors give every stale handle.
+
+// ---- the word tags ----
+
+// Whether a word is a reference: the odd bit. A slot's kind is the
+// word's kind — that is the whole typing discipline of the heap.
+def is_ref(w Int64) Bool {
+  return (w & 1) == 1
+}
+
+// ---- struct accessors (field indices start at 0; slot 0 is the header) ----
+
+def s_new(fields Int64) Int64 {
+  return struct_new(fields)
+}
+
+def s_set(b Int64, i Int64, v Int64) Void {
+  struct_set(b, i + 1, v << 1)
+}
+
+def s_get(b Int64, i Int64) Int64 {
+  return struct_get(b, i + 1) >> 1
+}
+
+// Null rides the same slots: 0 is a legal reference word (no
+// reference), so the ref accessors refuse only an even nonzero word —
+// a scalar parked where a reference belongs.
+def s_set_ref(b Int64, i Int64, h Int64) Void {
+  if h != 0 && (h & 1) == 0 {
+    raise Exception.new(message: "gc: s_set_ref expects a handle word (odd) or null, got an even word")
+  }
+  struct_set(b, i + 1, h)
+}
+
+def s_get_ref(b Int64, i Int64) Int64 {
+  const w = struct_get(b, i + 1)
+  if w != 0 && (w & 1) == 0 {
+    raise Exception.new(message: "gc: s_get_ref reads a scalar slot as a reference")
+  }
+  return w
+}
+
+// ---- array accessors ----
+
+def a_new(n Int64) Int64 {
+  return array_new(n)
+}
+
+def a_len(a Int64) Int64 {
+  return array_len(a)
+}
+
+def a_set(a Int64, i Int64, v Int64) Void {
+  array_set(a, i + 1, v << 1)
+}
+
+def a_get(a Int64, i Int64) Int64 {
+  return array_get(a, i + 1) >> 1
+}
+
+def a_set_ref(a Int64, i Int64, h Int64) Void {
+  if h != 0 && (h & 1) == 0 {
+    raise Exception.new(message: "gc: a_set_ref expects a handle word (odd) or null, got an even word")
+  }
+  array_set(a, i + 1, h)
+}
+
+def a_get_ref(a Int64, i Int64) Int64 {
+  const w = array_get(a, i + 1)
+  if w != 0 && (w & 1) == 0 {
+    raise Exception.new(message: "gc: a_get_ref reads a scalar slot as a reference")
+  }
+  return w
+}
+
+// ---- the collector: mark-sweep over the doors ----
+
+// The header slot dispatch: a struct's slot 0 reads through
+// struct_get, an array's through array_get — the doors refuse the
+// wrong kind, so the collector asks the block first.
+def header_get(h Int64) Int64 {
+  if block_kind(h) == 1 {
+    return struct_get(h, 0)
+  }
+  return array_get(h, 0)
+}
+
+def header_set(h Int64, v Int64) Void {
+  if block_kind(h) == 1 {
+    struct_set(h, 0, v)
+  } else {
+    array_set(h, 0, v)
+  }
+}
+
+// Marks one block. An already-marked block stops here — that is the
+// cut a cycle needs — and a fresh one takes the mark bit, then every
+// reference word in its data slots joins the worklist.
+def mark_block(h Int64, work ArrayBuilder[Int64]) Void {
+  if header_get(h) != 1 {
+    header_set(h, 1)
+    const size = block_size(h)
+    const kind = block_kind(h)
+    for var i = 1; i <= size; i = i + 1 {
+      var w = 0
+      if kind == 1 {
+        w = struct_get(h, i)
+      } else {
+        w = array_get(h, i)
+      }
+      if (w & 1) == 1 {
+        work.push(w)
+      }
+    }
+  }
+}
+
+// One full collection. Walks the root set the interpreter answers,
+// marks everything reachable (cycles included), sweeps the rest, and
+// answers the number of words the sweep reclaimed.
+def collect() Int64 {
+  const before = heap_words()
+  const work = ArrayBuilder.new()
+  const roots = ref_roots()
+  for var i = 0; i < roots.length(); i = i + 1 {
+    const w = roots[i]
+    if (w & 1) == 1 {
+      mark_block(w, work)
+    }
+  }
+  // The drain: every handle the marks pushed waits in the worklist
+  // until a cursor reaches it — the walk goes as deep as the graph,
+  // not one step past the roots.
+  var cursor = 0
+  while cursor < work.length() {
+    mark_block(work.get(cursor), work)
+    cursor = cursor + 1
+  }
+  const blocks = heap_blocks()
+  for var i = 0; i < blocks.length(); i = i + 1 {
+    const h = blocks[i]
+    if header_get(h) == 1 {
+      header_set(h, 0)
+    } else {
+      heap_free(h)
+    }
+  }
+  return before - heap_words()
+}

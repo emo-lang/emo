@@ -60,6 +60,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
 | [`wayland`](#wayland-包) | Wayland 客户端协议:编解码器、核心与 xdg-shell 接口表、shm | `c` |
 | [`wasm`](wasm-包) | 用 Emo 写的 WebAssembly 运行时:解码、验证、执行、宿主 import | `ocaml`, `c` |
+| [`gc`](gc-包) | GC 堆的收集器:机器对象模型上的打标访问器,带环回收的 mark-sweep | 解释器运行 |
 
 "全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
 

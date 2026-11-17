@@ -1,0 +1,75 @@
+require "gc"
+
+// The GC bootstrap's acceptance (plan/step-89, docs/gc-heap.md): a
+// rooted chain survives the collection that kills the garbage around
+// it, an array block's references trace through the same walk, and a
+// cycle — the one shape reference counting can never reclaim — dies
+// the moment its root drops. Every count below is exact: a block's
+// physical size is its logical size plus the header slot, and the
+// only roots are the refs the mutator holds.
+
+// A list node: field 0 next (a handle or null), field 1 payload.
+def node(payload Int64) Int64 {
+  const n = gc.s_new(2)
+  gc.s_set_ref(n, 0, 0)
+  gc.s_set(n, 1, payload)
+  return n
+}
+
+// Walks a chain, answering the sum of its payloads — the proof the
+// chain's words still answer after a collection.
+def chain_sum(h Int64) Int64 {
+  var sum = 0
+  var cur = h
+  while cur != 0 {
+    sum = sum + gc.s_get(cur, 1)
+    cur = gc.s_get_ref(cur, 0)
+  }
+  return sum
+}
+
+// The chain: six nodes (payloads 10..60), grown from the tail and
+// rooted at the head once the shape stands — the root's binding keeps
+// the ref alive; an unbound ref dies at once and roots nothing.
+var head = node(10)
+for var i = 2; i <= 6; i = i + 1 {
+  const n = node(i * 10)
+  gc.s_set_ref(n, 0, head)
+  head = n
+}
+const root = ref_new(head)
+
+// The garbage: four thousand nodes nothing roots.
+for var i = 0; i < 4000; i = i + 1 {
+  node(i)
+}
+
+// An array block tracing two nodes the chain does not reach.
+var a = gc.a_new(2)
+const aroot = ref_new(a)
+gc.a_set_ref(a, 0, node(7))
+gc.a_set_ref(a, 1, node(8))
+
+println("heap words with garbage: " + heap_words().to_string())
+println("collected: " + gc.collect().to_string())
+println("heap words after: " + heap_words().to_string())
+println("chain sum: " + chain_sum(head).to_string())
+println("array children: " + (gc.s_get(gc.a_get_ref(a, 0), 1) + gc.s_get(gc.a_get_ref(a, 1), 1)).to_string())
+
+// The cycle: two structs pointing at each other through field 0. A
+// collection while the root holds them leaves both alive; the moment
+// the root lets go, the pair is unreachable from everywhere and the
+// next collection takes it.
+const ca = gc.s_new(2)
+const cb = gc.s_new(2)
+const croot = ref_new(ca)
+gc.s_set_ref(ca, 0, cb)
+gc.s_set_ref(cb, 0, ca)
+gc.s_set(ca, 1, 11)
+gc.s_set(cb, 1, 22)
+
+println("cycle collected: " + gc.collect().to_string())
+println("cycle survives: " + gc.s_get(gc.s_get_ref(ca, 0), 1).to_string())
+ref_write(croot, 0)
+println("cycle freed: " + gc.collect().to_string())
+println("heap words at rest: " + heap_words().to_string())
