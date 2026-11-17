@@ -102,6 +102,18 @@ def a_set_byte(a Int64, i Int64, v Byte) Void
 def a_get_byte(a Int64, i Int64) Byte
 ```
 
+## Compaction
+
+```emo
+def compact() Int64          // mark, slide, rewrite references, answer the tail
+def free_ranges() Int64      // ranges in the geometry — one after a compaction
+```
+
+The slide moves every live block to the arena's low end: every
+reference — fields and roots — rewrites through the forwarding map,
+and the free geometry resets to the one range behind it.
+Fragmentation is a state the heap passes through, not one it keeps.
+
 ## The collector
 
 ```emo

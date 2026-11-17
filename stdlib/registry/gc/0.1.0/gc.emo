@@ -42,13 +42,21 @@ def addr_of(h Int64) Int64 {
 
 var by_start = Map.new()
 var by_end = Map.new()
+var arena_words = 0
 
 // The arena, once per run: `heap_new` makes the words, the free list
 // starts as one range covering all of them.
 def arena(words Int64) Void {
   heap_new(words)
+  arena_words = words
   by_start.set(0, words)
   by_end.set(words, 0)
+}
+
+// How many free ranges the geometry holds — one after a compaction,
+// many when the sweeps have punched holes.
+def free_ranges() Int64 {
+  return by_start.length()
 }
 
 // The words the free list holds — the arena's not-yet-carved space.
@@ -269,7 +277,7 @@ def collect() Int64 {
   const work = ArrayBuilder.new()
   const roots = ref_roots()
   for var i = 0; i < roots.length(); i = i + 1 {
-    const w = roots[i]
+    const w = ref_read(roots[i])
     if (w & 1) == 1 {
       mark_block(w, work)
     }
@@ -289,6 +297,83 @@ def collect() Int64 {
     }
   }
   return before - heap_words()
+}
+
+// ---- compaction: the sliding collector ----
+
+// Mark exactly as collect, then slide: the live blocks — address
+// order, destinations from zero — move through `heap_slide`, every
+// reference (fields and roots) rewrites through the forwarding map,
+// and the geometry resets to the one range behind the slide. Answers
+// the words the slide gave back.
+def compact() Int64 {
+  const work = ArrayBuilder.new()
+  const roots = ref_roots()
+  for var i = 0; i < roots.length(); i = i + 1 {
+    const w = ref_read(roots[i])
+    if (w & 1) == 1 {
+      mark_block(w, work)
+    }
+  }
+  var cursor = 0
+  while cursor < work.length() {
+    mark_block(work.get(cursor), work)
+    cursor = cursor + 1
+  }
+  const pairs = ArrayBuilder.new()
+  const blocks = heap_blocks()
+  var next = 0
+  for var i = 0; i < blocks.length(); i = i + 1 {
+    const h = blocks[i]
+    if is_marked(h) {
+      pairs.push(h)
+      pairs.push(next)
+      next = next + block_size(h) + 1
+    }
+  }
+  const moved = heap_slide(pairs.to_array())
+  const fwd = Map.new()
+  for var i = 0; i < moved.length(); i = i + 1 {
+    fwd.set(pairs.get(2 * i), moved[i])
+  }
+  for var i = 0; i < moved.length(); i = i + 1 {
+    const h = moved[i]
+    const kind = block_kind(h)
+    if kind != 3 {
+      const size = block_size(h)
+      for var j = 1; j <= size; j = j + 1 {
+        var w = 0
+        if kind == 1 {
+          w = struct_get(h, j)
+        } else {
+          w = array_get(h, j)
+        }
+        if (w & 1) == 1 && fwd.has(w) {
+          const nw = fwd.get(w)
+          if kind == 1 {
+            struct_set(h, j, nw)
+          } else {
+            array_set(h, j, nw)
+          }
+        }
+      }
+    }
+  }
+  for var i = 0; i < roots.length(); i = i + 1 {
+    const r = roots[i]
+    const w = ref_read(r)
+    if (w & 1) == 1 && fwd.has(w) {
+      ref_write(r, fwd.get(w))
+    }
+  }
+  const tail = arena_words - next
+  by_start = Map.new()
+  by_end = Map.new()
+  if tail > 0 {
+    by_start.set(next, tail)
+    by_end.set(arena_words, next)
+  }
+  return tail
 }
 
 // The sweep's way out: the words leave the binding and rejoin the

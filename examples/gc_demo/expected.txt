@@ -17,3 +17,8 @@ heap words at rest again: 27
 free words at rest: 65509
 floats: 3.5 -2.25
 byte: 200
+ranges before: 2
+compacted: 65496
+ranges after: 1
+survivors: 11 33
+chain after compact: 210

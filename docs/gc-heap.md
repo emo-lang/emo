@@ -64,6 +64,8 @@ borrow either from.
 | `heap_store(addr, w)` | `Int64 → Int64 → Void` | writes one arena word |
 | `heap_carve(addr, n, kind)` | `Int64 → Int64 → Int64 → Int64` | binds a range as a block (writes the header), answers the handle |
 | `heap_release(h)` | `Int64 → Void` | unbinds a block, zeroes its header |
+| `heap_rebind(h, addr)` | `Int64 → Int64 → Int64` | moves one block's binding (the words ride the raw lane) |
+| `heap_slide(pairs)` | `Array[Int64] → Array[Int64]` | the compaction door: every bound block, destination order, moved and rebound in one sequence |
 | `heap_float_bits(f)` | `Float64 → Int64` | the bit-cast: a float's exact 64 bits |
 | `heap_bits_float(w)` | `Int64 → Float64` | the bit-cast back |
 | `float_array_get(a, i)` | `Int64 → Int64 → Int64` | a float array's raw bits, checked |
@@ -77,7 +79,7 @@ borrow either from.
 | `ref_new(w)` | `Int64 → Ref` | creates a root cell holding word `w` |
 | `ref_read(r)` | `Ref → Int64` | reads the root's word |
 | `ref_write(r, w)` | `Ref → Int64 → Void` | re-points the root |
-| `ref_roots()` | `→ Array[Int64]` | the live roots' words, one major cycle later |
+| `ref_roots()` | `→ Array[Ref]` | the live roots, one major cycle later — the moving collector re-points them |
 | `heap_blocks()` | `→ Array[Int64]` | every bound block's handle, address-ordered |
 | `heap_words()` | `→ Int64` | physical words over the bound blocks |
 
@@ -131,6 +133,19 @@ clearing the marked. It answers the words the sweep reclaimed.
 
 A root that reaches a freed block dies loudly at the door — E3050 —
 the same stale-handle end every door gives.
+
+## The compaction (Emo, not the host)
+
+`collect` marks and sweeps; `compact` does all that and then slides.
+The live blocks — address order, destinations from zero — go to
+`heap_slide` as `(handle, offset)` pairs, and the host validates the
+contiguity, moves the words, and rebinds each block in one sequence
+(sliding left keeps every write at or before the next read, so the
+pass cannot clobber a source it has not taken). The package rewrites
+every reference through its forwarding map — fields first, then the
+roots, which is why `ref_roots` answers `Ref` cells — and resets the
+free geometry to the one range behind the slide. Fragmentation is a
+state the heap passes through, not one it keeps.
 
 ## The allocator (Emo, not the host)
 

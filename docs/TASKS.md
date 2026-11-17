@@ -5219,7 +5219,16 @@ collector, and the real-memory hosts.
       package's byte accessors checking the range on read. The
       family is twenty-two doors; the demo reads 3.5 and −2.25 back
       exactly.
-- [ ] **T90.3** — The moving collector: mark-compact, the references
-      rewritten, the arena's tail returned.
+- [x] **T90.3** — The moving collector: mark-compact in the package —
+      mark as collect, then slide the live blocks (address order,
+      destinations from zero) through `heap_slide`, the door that
+      validates the contiguous slide, moves the words, and rebinds in
+      one sequence (`heap_rebind` behind it for one-off moves);
+      `ref_roots` answers `Ref` cells so the sweep re-points roots;
+      every field reference rewrites through the forwarding map; the
+      free geometry resets to the single range behind the slide. The
+      demo's hole (ranges 2 → 1, the tail 65496 words given back)
+      reads 11 and 33 through the new addresses and the chain's 210
+      through its rewritten root. Twenty-four doors.
 - [ ] **T90.4** — The real-memory hosts: the same doors over a
       granted region.

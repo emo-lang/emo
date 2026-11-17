@@ -379,6 +379,8 @@ let global_env () =
       "heap_store";
       "heap_carve";
       "heap_release";
+      "heap_rebind";
+      "heap_slide";
       "heap_float_bits";
       "heap_bits_float";
       "float_array_get";
@@ -1129,6 +1131,103 @@ let gc_release span h =
   !gc_arena.(Int64.to_int b.goffset) <- 0L;
   Hashtbl.remove gc_bound b.goffset
 
+(* The compaction door: the binding moves, the words do not — the
+     collector copies them through the raw lane itself. The new range
+     may overlap the old binding's own words (the slide vacates them)
+     and nothing else. *)
+let gc_rebind span h new_addr =
+  let b = gc_live span "heap_rebind" h in
+  let len = Int64.of_int (Array.length !gc_arena) in
+  let physical = Int64.succ b.gsize in
+  if
+    Int64.compare new_addr 0L < 0
+    || Int64.compare (Int64.add new_addr physical) len > 0
+  then
+    error span "E3052"
+      (Printf.sprintf "`heap_rebind` reaches words %s..%s outside the arena"
+         (Int64.to_string new_addr)
+         (Int64.to_string (Int64.pred (Int64.add new_addr physical))));
+  Hashtbl.iter
+    (fun offset other ->
+      if
+        offset <> b.goffset
+        && Int64.compare new_addr (Int64.add offset other.gsize) <= 0
+        && Int64.compare (Int64.add new_addr b.gsize) offset >= 0
+      then
+        error span "E3056"
+          (Printf.sprintf "`heap_rebind` overlaps the block bound at word %s"
+             (Int64.to_string offset)))
+    gc_bound;
+  let gen = gc_next_gen new_addr in
+  !gc_arena.(Int64.to_int new_addr) <- gc_header_of b.gkind gen b.gsize;
+  !gc_arena.(Int64.to_int b.goffset) <- 0L;
+  Hashtbl.remove gc_bound b.goffset;
+  let nb =
+    { gkind = b.gkind; gsize = b.gsize; ggen = gen; goffset = new_addr }
+  in
+  Hashtbl.replace gc_bound new_addr nb;
+  gc_handle_of new_addr gen
+
+(* The compaction door: the pairs name every bound block in
+     destination order — (handle, new offset), contiguous from zero —
+     and the host validates the slide, moves the words, and rebinds in
+     one sequence. Sliding left keeps every write at or before the
+     next read, so the pass cannot clobber a source it has not taken. *)
+let gc_slide span values =
+  if not !gc_created then
+    error span "E3050" "`heap_slide` reaches a heap no `heap_new` has made";
+  let n = Array.length values in
+  if n mod 2 <> 0 then
+    error span "E3001" "`heap_slide` expects an even count of pairs";
+  let pairs =
+    Array.map
+      (function
+        | Int64 w -> w
+        | _ -> error span "E3001" "`heap_slide` expects (pairs Array[Int64])")
+      values
+  in
+  if Hashtbl.length gc_bound * 2 <> n then
+    error span "E3056"
+      "`heap_slide` must name every bound block, destination order";
+  let len = Int64.of_int (Array.length !gc_arena) in
+  let expected = ref 0L in
+  let moves = ref [] in
+  for i = 0 to (n / 2) - 1 do
+    let h = pairs.(2 * i) in
+    let na = pairs.((2 * i) + 1) in
+    let b = gc_live span "heap_slide" h in
+    let physical = Int64.succ b.gsize in
+    if Int64.equal na !expected then ()
+    else
+      error span "E3056"
+        (Printf.sprintf "`heap_slide` expects the destination word %s, got %s"
+           (Int64.to_string !expected)
+           (Int64.to_string na));
+    if Int64.compare (Int64.add na physical) len > 0 then
+      error span "E3052"
+        (Printf.sprintf "`heap_slide` reaches words %s..%s outside the arena"
+           (Int64.to_string na)
+           (Int64.to_string (Int64.pred (Int64.add na physical))));
+    expected := Int64.add na physical;
+    moves := (b.goffset, b, na) :: !moves
+  done;
+  let moves = List.rev !moves in
+  let results = Array.make (n / 2) 0L in
+  List.iteri
+    (fun i (old_off, b, na) ->
+      let gen = gc_next_gen na in
+      for j = 1 to Int64.to_int b.gsize do
+        !gc_arena.(Int64.to_int na + j) <- !gc_arena.(Int64.to_int old_off + j)
+      done;
+      Hashtbl.remove gc_bound old_off;
+      !gc_arena.(Int64.to_int old_off) <- 0L;
+      !gc_arena.(Int64.to_int na) <- gc_header_of b.gkind gen b.gsize;
+      Hashtbl.replace gc_bound na
+        { gkind = b.gkind; gsize = b.gsize; ggen = gen; goffset = na };
+      results.(i) <- gc_handle_of na gen)
+    moves;
+  results
+
 let gc_slot_load span door h i kind =
   let b = gc_live span door h in
   gc_kind_of span door b kind;
@@ -1141,17 +1240,25 @@ let gc_slot_store span door h i w kind =
   gc_slot span door b i;
   !gc_arena.(Int64.to_int (Int64.add b.goffset i)) <- w
 
-let gc_root_words () =
+let gc_root_cells () =
   (* The host's collector answers first: a root the program dropped
      empties its slot only at a major cycle, so the snapshot forces one —
-     the root set reads exactly what the mutator still holds. *)
+     the root set reads exactly what the mutator still holds. The cells
+     answer as [Ref] values, the moving collector re-pointing them; the
+     order reads their current words, deterministic. *)
   Gc.full_major ();
   let ar = !gc_roots in
   let acc = ref [] in
   for i = 0 to Weak.length ar - 1 do
-    match Weak.get ar i with Some cell -> acc := !cell :: !acc | None -> ()
+    match Weak.get ar i with Some cell -> acc := Ref cell :: !acc | None -> ()
   done;
-  Array.of_list (List.sort Int64.compare !acc)
+  Array.of_list
+    (List.sort
+       (fun x y ->
+         match (x, y) with
+         | Ref a, Ref b -> Int64.compare !a !b
+         | _ -> compare x y)
+       !acc)
 
 let gc_live_handles () =
   let offsets = Hashtbl.fold (fun offset _ acc -> offset :: acc) gc_bound [] in
@@ -4034,6 +4141,13 @@ and apply_builtin span name args =
         gc_release span h;
         Void
     | "heap_release", _ -> error span "E3001" "`heap_release` expects (h Int64)"
+    | "heap_rebind", [ Int64 h; Int64 addr ] -> Int64 (gc_rebind span h addr)
+    | "heap_rebind", _ ->
+        error span "E3001" "`heap_rebind` expects (h Int64, addr Int64)"
+    | "heap_slide", [ Array ps ] ->
+        Array (Array.map (fun w -> Int64 w) (gc_slide span ps))
+    | "heap_slide", _ ->
+        error span "E3001" "`heap_slide` expects (pairs Array[Int64])"
     | "heap_float_bits", [ Float f ] -> Int64 (Int64.bits_of_float f)
     | "heap_float_bits", _ ->
         error span "E3001" "`heap_float_bits` expects (f Float64)"
@@ -4093,7 +4207,7 @@ and apply_builtin span name args =
         Void
     | "ref_write", _ ->
         error span "E3001" "`ref_write` expects (r Ref, w Int64)"
-    | "ref_roots", [] -> Array (Array.map (fun w -> Int64 w) (gc_root_words ()))
+    | "ref_roots", [] -> Array (gc_root_cells ())
     | "ref_roots", vs ->
         error span "E3007"
           (Printf.sprintf "`ref_roots` expects no arguments, got %d"

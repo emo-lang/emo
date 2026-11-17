@@ -23,6 +23,8 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 | `heap_store(addr, w)` | `Int64 → Int64 → Void` | 写一个 arena 词 |
 | `heap_carve(addr, n, kind)` | `Int64 → Int64 → Int64 → Int64` | 把一段范围绑成块(写头词),应答句柄 |
 | `heap_release(h)` | `Int64 → Void` | 解绑一块,清零其头词 |
+| `heap_rebind(h, addr)` | `Int64 → Int64 → Int64` | 只搬绑定(词走裸通道) |
+| `heap_slide(pairs)` | `Array[Int64] → Array[Int64]` | 压缩门:全部绑定块按目的序,一次序列完成搬词与换绑 |
 | `heap_float_bits(f)` | `Float64 → Int64` | 位转换:一个 float 精确的 64 位 |
 | `heap_bits_float(w)` | `Int64 → Float64` | 位转换回读 |
 | `float_array_get(a, i)` | `Int64 → Int64 → Int64` | float 数组的裸位,带检查 |
@@ -36,7 +38,7 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 | `ref_new(w)` | `Int64 → Ref` | 建一个持词 w 的根格 |
 | `ref_read(r)` | `Ref → Int64` | 读根的词 |
 | `ref_write(r, w)` | `Ref → Int64 → Void` | 重指根 |
-| `ref_roots()` | `→ Array[Int64]` | 活根的词,一次 major 周期之后 |
+| `ref_roots()` | `→ Array[Ref]` | 活根,一次 major 周期之后——移动式收集器重指它们 |
 | `heap_blocks()` | `→ Array[Int64]` | 每个绑定块的句柄,按地址序 |
 | `heap_words()` | `→ Int64` | 绑定块的物理词总数 |
 
@@ -55,6 +57,15 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 `collect()` 是 mark-sweep:从根出发沿奇数词标记,头词的位切环;排空工作栈直到游标追上 builder 的长度(行走深入到图的尽头,不只在根旁一步);sweep `heap_blocks()`,释放未标的、清掉已标的。它应答本次 sweep 收回的词数。
 
 指向已释放块的根在门口响亮死去——E3050——和每扇门给陈旧句柄的结局一样。
+
+## 压缩(Emo,不是宿主)
+
+`collect` 标记并清扫;`compact` 全做之后还滑一遍。活块——地址序、
+目的从零——作为 `(句柄, 偏移)` 对交给 `heap_slide`,宿主验证连
+续性、搬词、按一序列换绑(向左滑保证每次写都不越过下一次读,该趟
+不可能踩到尚未取走的源)。包经自己的前向表重写一切引用——先字段,
+后根(`ref_roots` 因此答 `Ref` 格)——并把自由几何重置为滑后背后
+的那一个区间。碎片是堆路过的一种状态,不是它保存的一种状态。
 
 ## 分配器(Emo,不是宿主)
 

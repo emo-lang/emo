@@ -92,6 +92,16 @@ def a_set_byte(a Int64, i Int64, v Byte) Void
 def a_get_byte(a Int64, i Int64) Byte
 ```
 
+## 压缩
+
+```emo
+def compact() Int64          // 标记、滑动、重写引用,应答归还的尾词
+def free_ranges() Int64      // 几何里的区间数——压缩后为一
+```
+
+滑动把全部活块搬到 arena 低端:每个引用——字段与根——经前向表
+重写,自由几何重置为背后的一个区间。碎片是路过状态,不是保存状态。
+
 ## 收集器
 
 ```emo

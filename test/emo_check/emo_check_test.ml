@@ -1567,6 +1567,7 @@ const r = ref_new(w)
 ref_write(r, 5)
 const rv = ref_read(r)
 heap_release(h)
+const slid = heap_slide([a, 20])
 const fb = heap_float_bits(1.5)
 const bf = heap_bits_float(fb)
 const fa = heap_carve(30, 2, 3)
@@ -1608,11 +1609,12 @@ heap_load()
 heap_store(0)
 heap_carve(0, 1)
 heap_bits_float(0.5)
+heap_slide(0)
 ref_read(0)
 ref_write(0, 1)
 ref_new()|}
         in
-        Alcotest.(check int) "eight refusals" 8 (List.length diagnostics));
+        Alcotest.(check int) "nine refusals" 9 (List.length diagnostics));
   ]
 
 let cross_module_tests =

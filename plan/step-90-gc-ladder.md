@@ -2,8 +2,8 @@
 
 **Milestone:** M51 — The GC ladder · **Prereq:** step 89 (the
 bootstrap) · **Related:** `docs/gc-heap.md`, `docs/stdlib/gc.md`,
-`examples/gc_demo/`, `CHECK.md` · **Status:** T90.1–T90.2 done; T90.3–T90.4
-open, one commit each.
+`examples/gc_demo/`, `CHECK.md` · **Status:** T90.1–T90.3 done; T90.4
+open, one commit.
 
 ## Why this step exists
 
@@ -66,13 +66,25 @@ shift) and the package's byte accessors check the range on read.
 The family is twenty-two doors; the demo reads 3.5 and −2.25 back
 exactly.
 
-### T90.3 — The moving collector (open)
+### T90.3 — The moving collector (done)
 
-Mark-compact over the arena: mark as today, compute the sliding,
-rewrite every reference (fields and roots — `ref_roots` answers
-`Ref` cells then, so the sweep can re-point them), move the words,
-`heap_rebind` the metadata. The offset handles make references
-rewritable data — the piece step 89's design left a door open for.
+The hazard the design had to answer: rewriting fields through the
+doors requires the words at their new addresses, and moving words
+through the raw lane requires the new bindings live — any interleaving
+of host-side rebinds with Emo-side copies walks into a clobber. The
+landing is one door that does the whole slide atomically:
+`heap_slide(pairs)` takes every bound block in destination order
+(contiguous from zero, the host validates — a slide that misses a
+block or breaks the order is E3056), moves the words, and rebinds,
+all in one pass whose classic invariant — sliding left keeps every
+write at or before the next read — makes it safe. The package runs
+the policy: mark, compute destinations, call the slide, rewrite
+fields and roots through its forwarding map (`ref_roots` answers
+`Ref` cells now, so roots are re-pointable data), reset the geometry
+to one range. `heap_rebind` stays as the one-block door behind it.
+The demo punches a hole between three rooted allocations, compacts
+(ranges 2 → 1, 65496 tail words back), and reads the survivors and
+the chain through the new addresses. Twenty-four doors.
 
 ### T90.4 — The real-memory hosts (open)
 

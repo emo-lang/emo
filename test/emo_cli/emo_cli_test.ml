@@ -7010,6 +7010,7 @@ println(ref_roots().length())
 println(heap_blocks().length())
 println(heap_words())
 heap_release(h)
+heap_slide([h, 0])
 heap_float_bits(1.5)
 heap_bits_float(1)
 float_array_set(a, 1, heap_float_bits(2.5))
@@ -7041,6 +7042,7 @@ let gc_refusal_expected target =
       "heap_blocks";
       "heap_words";
       "heap_release";
+      "heap_slide";
       "heap_float_bits";
       "heap_bits_float";
       "float_array_set";
