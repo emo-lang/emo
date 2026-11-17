@@ -73,6 +73,25 @@ def a_set_ref(a Int64, i Int64, h Int64) Void     // 存句柄或 null
 def a_get_ref(a Int64, i Int64) Int64             // 读句柄或 null
 ```
 
+## float 数组
+
+```emo
+def fa_new(n Int64) Int64                  // kind 3:全部槽位是裸 Float64 位
+def fa_set(a Int64, i Int64, v Float64) Void   // 精确写
+def fa_get(a Int64, i Int64) Float64           // 精确读
+```
+
+一个 float 的 64 位装不进奇偶标量通道(移位往返只保真最高位重复的
+词),所以 float 有自己的块类型:槽内无奇偶、无引用,收集器追踪块
+但不走它的词。字节走标量通道:
+
+```emo
+def s_set_byte(b Int64, i Int64, v Byte) Void  // 0..255,读取时查范围
+def s_get_byte(b Int64, i Int64) Byte
+def a_set_byte(a Int64, i Int64, v Byte) Void
+def a_get_byte(a Int64, i Int64) Byte
+```
+
 ## 收集器
 
 ```emo

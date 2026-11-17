@@ -64,6 +64,10 @@ borrow either from.
 | `heap_store(addr, w)` | `Int64 → Int64 → Void` | writes one arena word |
 | `heap_carve(addr, n, kind)` | `Int64 → Int64 → Int64 → Int64` | binds a range as a block (writes the header), answers the handle |
 | `heap_release(h)` | `Int64 → Void` | unbinds a block, zeroes its header |
+| `heap_float_bits(f)` | `Float64 → Int64` | the bit-cast: a float's exact 64 bits |
+| `heap_bits_float(w)` | `Int64 → Float64` | the bit-cast back |
+| `float_array_get(a, i)` | `Int64 → Int64 → Int64` | a float array's raw bits, checked |
+| `float_array_set(a, i, w)` | `Int64 → Int64 → Int64 → Void` | writes raw bits, checked |
 | `struct_get(b, i)` | `Int64 → Int64 → Int64` | reads slot `i` (0 header, 1..n data), checked |
 | `struct_set(b, i, w)` | `Int64 → Int64 → Int64 → Void` | writes slot `i`, checked |
 | `array_len(a)` | `Int64 → Int64` | answers the logical word count |
@@ -77,6 +81,14 @@ borrow either from.
 | `heap_blocks()` | `→ Array[Int64]` | every bound block's handle, address-ordered |
 | `heap_words()` | `→ Int64` | physical words over the bound blocks |
 
+**Float arrays (kind 3).** A float's 64 bits cannot ride the parity
+lane — the shift round-trip only preserves words whose top bit
+repeats, so half of all doubles would corrupt. Floats get their own
+block kind: every data slot is raw bits (`heap_float_bits`/
+`heap_bits_float` are the conversions), there are no references
+inside, and the collector traces a float array without walking its
+words. Bytes fit the scalar lane exactly (0..255 round-trips the
+shift); the `gc` package's byte accessors check the range on read.
 `struct_new`/`array_new` retired at step 90: allocation is the
 allocator's — the package's `take` runs first fit over its own free
 ranges and calls `heap_carve` — and a door that minted blocks behind

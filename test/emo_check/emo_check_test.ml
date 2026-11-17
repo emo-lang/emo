@@ -1567,6 +1567,11 @@ const r = ref_new(w)
 ref_write(r, 5)
 const rv = ref_read(r)
 heap_release(h)
+const fb = heap_float_bits(1.5)
+const bf = heap_bits_float(fb)
+const fa = heap_carve(30, 2, 3)
+float_array_set(fa, 1, fb)
+const fv = float_array_get(fa, 1)
 const roots = ref_roots()
 const blocks = heap_blocks()
 const total = heap_words()
@@ -1602,11 +1607,12 @@ heap_new("text")
 heap_load()
 heap_store(0)
 heap_carve(0, 1)
+heap_bits_float(0.5)
 ref_read(0)
 ref_write(0, 1)
 ref_new()|}
         in
-        Alcotest.(check int) "seven refusals" 7 (List.length diagnostics));
+        Alcotest.(check int) "eight refusals" 8 (List.length diagnostics));
   ]
 
 let cross_module_tests =

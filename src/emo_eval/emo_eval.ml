@@ -379,6 +379,10 @@ let global_env () =
       "heap_store";
       "heap_carve";
       "heap_release";
+      "heap_float_bits";
+      "heap_bits_float";
+      "float_array_get";
+      "float_array_set";
       "struct_get";
       "struct_set";
       "array_len";
@@ -942,6 +946,9 @@ let group_registry : (string, (string * value) list) Hashtbl.t ref =
 
 let gc_kind_struct = 1L
 let gc_kind_array = 2L
+let gc_kind_floats = 3L
+(* a float array: every data slot is raw Float64 bits — no parity, no
+   references, and the collector traces the block without walking it *)
 
 (* The word counts: an arena holds at most 2^41 words (the handle's
    offset field), a block at most 2^23 - 1 (the header's size field) —
@@ -1082,8 +1089,8 @@ let gc_next_gen offset =
 let gc_carve span addr n kind =
   if not !gc_created then
     error span "E3050" "`heap_carve` reaches a heap no `heap_new` has made";
-  if kind <> gc_kind_struct && kind <> gc_kind_array then
-    error span "E3051" "`heap_carve` refuses a kind that is not 1 or 2";
+  if kind <> gc_kind_struct && kind <> gc_kind_array && kind <> gc_kind_floats
+  then error span "E3051" "`heap_carve` refuses a kind that is not 1, 2, or 3";
   if Int64.compare n 0L < 0 then
     error span "E3054" "the GC heap refuses a negative size";
   if Int64.compare n gc_block_cap >= 0 then
@@ -4027,6 +4034,22 @@ and apply_builtin span name args =
         gc_release span h;
         Void
     | "heap_release", _ -> error span "E3001" "`heap_release` expects (h Int64)"
+    | "heap_float_bits", [ Float f ] -> Int64 (Int64.bits_of_float f)
+    | "heap_float_bits", _ ->
+        error span "E3001" "`heap_float_bits` expects (f Float64)"
+    | "heap_bits_float", [ Int64 w ] -> Float (Int64.float_of_bits w)
+    | "heap_bits_float", _ ->
+        error span "E3001" "`heap_bits_float` expects (w Int64)"
+    | "float_array_get", [ Int64 h; Int64 i ] ->
+        Int64 (gc_slot_load span "float_array_get" h i gc_kind_floats)
+    | "float_array_get", _ ->
+        error span "E3001" "`float_array_get` expects (a Int64, i Int64)"
+    | "float_array_set", [ Int64 h; Int64 i; Int64 w ] ->
+        gc_slot_store span "float_array_set" h i w gc_kind_floats;
+        Void
+    | "float_array_set", _ ->
+        error span "E3001"
+          "`float_array_set` expects (a Int64, i Int64, w Int64)"
     | "struct_get", [ Int64 h; Int64 i ] ->
         Int64 (gc_slot_load span "struct_get" h i gc_kind_struct)
     | "struct_get", _ ->

@@ -5207,8 +5207,18 @@ collector, and the real-memory hosts.
       and word 12027 — the junk field's and the cycle's address
       space), seventeen lines byte-for-byte, the arena never growing;
       the door tables and refusal goldens grow to eighteen names.
-- [ ] **T90.2** — The payloads: float and byte words packed beside the
-      scalars and the references.
+- [x] **T90.2** — The payloads: floats got their own block kind —
+      kind 3, every slot raw Float64 bits through the bit-cast doors
+      (`heap_float_bits`/`heap_bits_float`, `float_array_get`/
+      `float_array_set`), no parity and no references inside, the
+      collector tracing the block without walking its words. The
+      scalar-lane floats died in the fixture: the shift round-trip
+      only preserves words whose top bit repeats, and 3.5 came back
+      as −3.5 — one slot cannot hold 64 bits plus a parity bit.
+      Bytes ride the scalar lane exactly (0..255 round-trips), the
+      package's byte accessors checking the range on read. The
+      family is twenty-two doors; the demo reads 3.5 and −2.25 back
+      exactly.
 - [ ] **T90.3** — The moving collector: mark-compact, the references
       rewritten, the arena's tail returned.
 - [ ] **T90.4** — The real-memory hosts: the same doors over a

@@ -138,6 +138,45 @@ def s_get_ref(b Int64, i Int64) Int64 {
   return w
 }
 
+// ---- payload accessors: bytes ride the scalar lane, floats get
+// their own arrays ----
+
+// A byte rides as its 0..255 value; reading checks the range the
+// type promises, the loud end past it.
+def s_set_byte(b Int64, i Int64, v Byte) Void {
+  struct_set(b, i + 1, v.to_int64() << 1)
+}
+
+def s_get_byte(b Int64, i Int64) Byte {
+  return Byte.from_int64(struct_get(b, i + 1) >> 1)
+}
+
+def a_set_byte(a Int64, i Int64, v Byte) Void {
+  array_set(a, i + 1, v.to_int64() << 1)
+}
+
+def a_get_byte(a Int64, i Int64) Byte {
+  return Byte.from_int64(array_get(a, i + 1) >> 1)
+}
+
+// ---- float arrays: kind 3, every slot raw Float64 bits ----
+
+// A float's 64 bits cannot ride the parity lane (the shift round-trip
+// only preserves words whose top bit repeats), so floats get their own
+// block kind: no parity on the slots, no references inside, and the
+// collector traces the block without walking its words.
+def fa_new(n Int64) Int64 {
+  return take(n, 3)
+}
+
+def fa_set(a Int64, i Int64, v Float64) Void {
+  float_array_set(a, i + 1, heap_float_bits(v))
+}
+
+def fa_get(a Int64, i Int64) Float64 {
+  return heap_bits_float(float_array_get(a, i + 1))
+}
+
 // ---- array accessors ----
 
 def a_new(n Int64) Int64 {
@@ -205,15 +244,17 @@ def mark_block(h Int64, work ArrayBuilder[Int64]) Void {
     set_mark(h, 1)
     const size = block_size(h)
     const kind = block_kind(h)
-    for var i = 1; i <= size; i = i + 1 {
-      var w = 0
-      if kind == 1 {
-        w = struct_get(h, i)
-      } else {
-        w = array_get(h, i)
-      }
-      if (w & 1) == 1 {
-        work.push(w)
+    if kind != 3 {
+      for var i = 1; i <= size; i = i + 1 {
+        var w = 0
+        if kind == 1 {
+          w = struct_get(h, i)
+        } else {
+          w = array_get(h, i)
+        }
+        if (w & 1) == 1 {
+          work.push(w)
+        }
       }
     }
   }

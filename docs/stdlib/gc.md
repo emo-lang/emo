@@ -81,6 +81,27 @@ def a_set_ref(a Int64, i Int64, h Int64) Void     // store a handle or null
 def a_get_ref(a Int64, i Int64) Int64             // load a handle or null
 ```
 
+## Float arrays
+
+```emo
+def fa_new(n Int64) Int64                  // kind 3: every slot raw Float64 bits
+def fa_set(a Int64, i Int64, v Float64) Void   // exact
+def fa_get(a Int64, i Int64) Float64           // exact
+```
+
+A float's 64 bits cannot ride the parity scalar lane (the shift
+round-trip only preserves words whose top bit repeats), so floats
+have their own block kind: no parity on the slots, no references
+inside, and the collector traces the block without walking its
+words. Bytes ride the scalar lane:
+
+```emo
+def s_set_byte(b Int64, i Int64, v Byte) Void  // 0..255, range-checked on read
+def s_get_byte(b Int64, i Int64) Byte
+def a_set_byte(a Int64, i Int64, v Byte) Void
+def a_get_byte(a Int64, i Int64) Byte
+```
+
 ## The collector
 
 ```emo

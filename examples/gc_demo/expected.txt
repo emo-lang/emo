@@ -15,3 +15,5 @@ second generation reads: 77 and 88
 second generation collected: 6
 heap words at rest again: 27
 free words at rest: 65509
+floats: 3.5 -2.25
+byte: 200

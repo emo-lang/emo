@@ -99,3 +99,15 @@ ref_write(g2root, 0)
 println("second generation collected: " + gc.collect().to_string())
 println("heap words at rest again: " + heap_words().to_string())
 println("free words at rest: " + gc.free_words().to_string())
+
+// The payloads: floats and bytes ride the scalar lane, the bits the
+// field's own kind — the collector never cares, the accessors do.
+const pay = gc.a_new(3)
+const payroot = ref_new(pay)
+gc.a_set_byte(pay, 2, 200B)
+const temps = gc.fa_new(2)
+const tempsroot = ref_new(temps)
+gc.fa_set(temps, 0, 3.5)
+gc.fa_set(temps, 1, -2.25)
+println("floats: " + gc.fa_get(temps, 0).to_string() + " " + gc.fa_get(temps, 1).to_string())
+println("byte: " + gc.a_get_byte(pay, 2).to_int64().to_string())

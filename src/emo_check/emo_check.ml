@@ -1939,6 +1939,34 @@ let gc_heap_bindings =
         depth = 0;
         span = Emo_support.Span.zero;
       } );
+    ( "heap_float_bits",
+      {
+        vtype = FuncType ([ ("f", Float64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "heap_bits_float",
+      {
+        vtype = FuncType ([ ("w", Int64) ], Float64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "float_array_get",
+      {
+        vtype = FuncType ([ ("a", Int64); ("i", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "float_array_set",
+      {
+        vtype = FuncType ([ ("a", Int64); ("i", Int64); ("w", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
     ( "struct_get",
       {
         vtype = FuncType ([ ("b", Int64); ("i", Int64) ], Int64);
@@ -2034,9 +2062,10 @@ let gc_heap_bindings =
 
 let gc_heap_builtin = function
   | "heap_new" | "heap_load" | "heap_store" | "heap_carve" | "heap_release"
-  | "struct_get" | "struct_set" | "array_len" | "array_get" | "array_set"
-  | "block_kind" | "block_size" | "ref_new" | "ref_read" | "ref_write"
-  | "ref_roots" | "heap_blocks" | "heap_words" ->
+  | "heap_float_bits" | "heap_bits_float" | "float_array_get"
+  | "float_array_set" | "struct_get" | "struct_set" | "array_len" | "array_get"
+  | "array_set" | "block_kind" | "block_size" | "ref_new" | "ref_read"
+  | "ref_write" | "ref_roots" | "heap_blocks" | "heap_words" ->
       true
   | _ -> false
 

@@ -2,7 +2,7 @@
 
 **Milestone:** M51 — The GC ladder · **Prereq:** step 89 (the
 bootstrap) · **Related:** `docs/gc-heap.md`, `docs/stdlib/gc.md`,
-`examples/gc_demo/`, `CHECK.md` · **Status:** T90.1 done; T90.2–T90.4
+`examples/gc_demo/`, `CHECK.md` · **Status:** T90.1–T90.2 done; T90.3–T90.4
 open, one commit each.
 
 ## Why this step exists
@@ -50,14 +50,21 @@ growing.
 Found and fixed on the way: `init` is Emo's constructor word — the
 package's entry is `gc.arena`; module-level consts are lower_snake.
 
-### T90.2 — The payloads (open)
+### T90.2 — The payloads (done)
 
-Float and byte words packed beside the scalars and the references.
-The lane stays Int64-with-parity; the plan is bit-cast doors
-(`heap_float_bits`/`heap_bits_float`) and package accessors
-(`s_set_float` and friends) that store the bits as shifted scalars —
-the field's kind stays the mutator's knowledge, the same discipline
-that already splits scalars from references.
+The first design died in its own fixture: floats stored as shifted
+bit-casts in scalar slots corrupt — the shift round-trip only
+preserves words whose top bit repeats (3.5 came back as −3.5), and
+one slot mathematically cannot hold 64 bits plus a parity bit. The
+landing is the real-GC answer: **float arrays as block kind 3** —
+every slot raw Float64 bits through the bit-cast doors
+(`heap_float_bits`/`heap_bits_float`) behind checked access
+(`float_array_get`/`float_array_set`), no parity, no references
+inside, and the collector traces a float array without walking its
+words. Bytes fit the scalar lane exactly (0..255 round-trips the
+shift) and the package's byte accessors check the range on read.
+The family is twenty-two doors; the demo reads 3.5 and −2.25 back
+exactly.
 
 ### T90.3 — The moving collector (open)
 

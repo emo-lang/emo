@@ -23,6 +23,10 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 | `heap_store(addr, w)` | `Int64 → Int64 → Void` | 写一个 arena 词 |
 | `heap_carve(addr, n, kind)` | `Int64 → Int64 → Int64 → Int64` | 把一段范围绑成块(写头词),应答句柄 |
 | `heap_release(h)` | `Int64 → Void` | 解绑一块,清零其头词 |
+| `heap_float_bits(f)` | `Float64 → Int64` | 位转换:一个 float 精确的 64 位 |
+| `heap_bits_float(w)` | `Int64 → Float64` | 位转换回读 |
+| `float_array_get(a, i)` | `Int64 → Int64 → Int64` | float 数组的裸位,带检查 |
+| `float_array_set(a, i, w)` | `Int64 → Int64 → Int64 → Void` | 写裸位,带检查 |
 | `struct_get(b, i)` | `Int64 → Int64 → Int64` | 读槽 i(0 头词,1..n 数据),带检查 |
 | `struct_set(b, i, w)` | `Int64 → Int64 → Int64 → Void` | 写槽 i,带检查 |
 | `array_len(a)` | `Int64 → Int64` | 答逻辑词数 |
@@ -36,7 +40,7 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 | `heap_blocks()` | `→ Array[Int64]` | 每个绑定块的句柄,按地址序 |
 | `heap_words()` | `→ Int64` | 绑定块的物理词总数 |
 
-`struct_new`/`array_new` 在 step 90 退休:分配是分配器的事——包的 `take` 在自己的自由区间上跑首适配、调 `heap_carve`——而绕开自由表铸块的门是个策略漏洞。`heap_free` 随之退休:sweep 经 `heap_release` 释放、把区间亲手还给几何。
+**float 数组(kind 3)。** 一个 float 的 64 位装不进奇偶通道——移位往返只保真最高位重复的词,一半的 double 会被毁。float 有自己的块类型:每个数据槽都是裸位(`heap_float_bits`/`heap_bits_float` 是转换对),内部没有引用,收集器追踪 float 数组但不走它的词。字节在标量通道完全保真(0..255 移位往返无损);`gc` 包的字节访问器在读取时检查范围。`struct_new`/`array_new` 在 step 90 退休:分配是分配器的事——包的 `take` 在自己的自由区间上跑首适配、调 `heap_carve`——而绕开自由表铸块的门是个策略漏洞。`heap_free` 随之退休:sweep 经 `heap_release` 释放、把区间亲手还给几何。
 
 ## 根
 
