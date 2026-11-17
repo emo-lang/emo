@@ -3104,7 +3104,11 @@ and emit_closure env params cbody : int =
       {
         W.ftype_idx = sig_t;
         fparams = names;
-        flocals = List.map (fun t -> (1, t)) env.local_decls;
+        (* the head of local_decls is the params' own entries; only the
+           rest are declared locals *)
+        flocals =
+          List.map (fun t -> (1, t))
+            (List.filteri (fun i _ -> i >= List.length names) env.local_decls);
         fbody = body;
       } )
     :: env.hidden;
@@ -3459,7 +3463,12 @@ and emit_receive_handler env (caps : (string * int) list)
       {
         W.ftype_idx = t_numop;
         fparams = [ "__recv_msg"; "__recv_args" ];
-        flocals = List.map (fun t -> (1, t)) env.local_decls;
+        (* local_decls opens with one entry per parameter; only the rest
+           are declared locals — the head entries are the params' own
+           slots, the convention every other emit point slices by *)
+        flocals =
+          List.map (fun t -> (1, t))
+            (List.filteri (fun i _ -> i >= 2) env.local_decls);
         fbody = body;
       } )
     :: env.hidden;
