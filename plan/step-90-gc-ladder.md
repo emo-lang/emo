@@ -2,8 +2,7 @@
 
 **Milestone:** M51 — The GC ladder · **Prereq:** step 89 (the
 bootstrap) · **Related:** `docs/gc-heap.md`, `docs/stdlib/gc.md`,
-`examples/gc_demo/`, `CHECK.md` · **Status:** T90.1–T90.3 done; T90.4
-open, one commit.
+`examples/gc_demo/`, `CHECK.md` · **Status:** done — all four rungs landed, one commit each.
 
 ## Why this step exists
 
@@ -86,8 +85,23 @@ The demo punches a hole between three rooted allocations, compacts
 (ranges 2 → 1, 65496 tail words back), and reads the survivors and
 the chain through the new addresses. Twenty-four doors.
 
-### T90.4 — The real-memory hosts (open)
+### T90.4 — The real-memory host: `c` (done; riscv64 unmapped)
 
-The same doors over a granted region: a `c` target runtime first,
-the riscv64 tagged-word heap behind it — the consumer the whole
-track exists for. Scope lands when the rung opens.
+The c target admits the doors, and its runtime implements all
+twenty-four over a real malloc'd arena — the same binding, the same
+handle encoding, the same loud ends — with the EMO_REF cell joining
+the refcounted value model: a root's death unlinks it from the
+registry, refcounting being the exact liveness oracle the weak
+registry approximated. Two find-and-fixes carried the rung: the
+doors needed `Emo_ir.is_builtin` (the step-89 skip had its reason —
+the interpreter never lowers through the IR — and the reason ended
+when c began admitting), and the registry's borrowed pointer needed
+its claim (`emo_retain` in `emo_gc_root_link`) — a root cell freed
+by the autorelease pool left the registry reading a reused chunk,
+and the collector marked the wrong block. The fixture's mutator
+bindings became `var`s against a named c-target boundary: script
+consts are memoized, an impure initializer re-runs at the first
+read. The acceptance is the rung's whole point in one line:
+**gc_demo, the same Emo package and the same demo, byte-identical
+between the interpreter's simulated arena and the compiled `c`
+host.** riscv64's tagged-word heap is the next host, unmapped.

@@ -5230,5 +5230,19 @@ collector, and the real-memory hosts.
       demo's hole (ranges 2 → 1, the tail 65496 words given back)
       reads 11 and 33 through the new addresses and the chain's 210
       through its rewritten root. Twenty-four doors.
-- [ ] **T90.4** — The real-memory hosts: the same doors over a
-      granted region.
+- [x] **T90.4** — The real-memory host: the `c` target admits the
+      doors and its runtime implements all twenty-four over a real
+      `malloc`'d arena — the same binding, the same handle encoding
+      (offset + generation), the same loud ends — and the EMO_REF
+      cell joins the refcounted value model, its death unlinking the
+      root (refcounting is the exact liveness oracle the weak
+      registry approximated). `Emo_ir.is_builtin` grows the doors
+      (the admitting targets lower through the IR — the step-89 skip
+      had its reason, the reason ended), the c emitter lowers every
+      door, and `gc_demo` gains the binary leg: **the same Emo
+      package and the same demo, byte-identical between the
+      interpreter's simulated arena and the compiled `c` host.** The
+      fixture's mutator bindings became `var`s — the `c` target
+      memoizes script consts, and an impure initializer re-runs at
+      the first read (CHECK.md names the boundary). riscv64's
+      tagged-word heap stays the next host, unmapped.

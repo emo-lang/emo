@@ -65,7 +65,8 @@ enum emo_kind {
   EMO_LIST,
   EMO_PID,
   EMO_MAP,
-  EMO_BUILDER
+  EMO_BUILDER,
+  EMO_REF
 };
 
 /* A class's compile-time vtable: every generated program defines one
@@ -156,6 +157,34 @@ typedef struct {
 /* Boxing: a native scalar into the dynamic world. String copies its
    bytes into a cell; Bool and Char are immediates. */
 emo_value emo_box_i64(int64_t v);
+
+/* ---- The GC heap's doors (docs/gc-heap.md): the arena, the binding
+   of header offsets to blocks, and the checked access. The allocator
+   and the collector are the gc package's own Emo code. ---- */
+int64_t emo_gc_heap_new(int64_t words);
+int64_t emo_gc_heap_load(int64_t addr);
+void emo_gc_heap_store(int64_t addr, int64_t w);
+int64_t emo_gc_heap_carve(int64_t addr, int64_t n, int64_t kind);
+void emo_gc_heap_release(int64_t h);
+int64_t emo_gc_heap_rebind(int64_t h, int64_t addr);
+emo_value emo_gc_heap_slide(emo_value pairs);
+int64_t emo_gc_heap_float_bits(double f);
+double emo_gc_heap_bits_float(int64_t w);
+int64_t emo_gc_struct_get(int64_t h, int64_t i);
+void emo_gc_struct_set(int64_t h, int64_t i, int64_t w);
+int64_t emo_gc_array_len(int64_t h);
+int64_t emo_gc_array_get(int64_t h, int64_t i);
+void emo_gc_array_set(int64_t h, int64_t i, int64_t w);
+int64_t emo_gc_block_kind(int64_t h);
+int64_t emo_gc_block_size(int64_t h);
+int64_t emo_gc_float_array_get(int64_t h, int64_t i);
+void emo_gc_float_array_set(int64_t h, int64_t i, int64_t w);
+emo_value emo_gc_ref_new(int64_t w);
+int64_t emo_gc_ref_read(emo_value r);
+void emo_gc_ref_write(emo_value r, int64_t w);
+emo_value emo_gc_ref_roots(void);
+emo_value emo_gc_heap_blocks(void);
+int64_t emo_gc_heap_words(void);
 emo_value emo_box_f64(double v);
 emo_value emo_box_str(emo_str s);
 emo_value emo_vbool(bool v);

@@ -169,12 +169,18 @@ manage.
 | Target | the doors |
 | --- | --- |
 | interpreter run | admits — the doors are the run's object model |
-| `c`, `ocaml`, `typescript`, `browser`, `wasm`, `beam`, `riscv64` | refuse by name at check time (E4032) |
+| `c` | admits — the runtime keeps the arena and the binding over real `malloc`'d words (T90.4) |
+| `ocaml`, `typescript`, `browser`, `wasm`, `beam`, `riscv64` | refuse by name at check time (E4032) |
 
 The interpreter run checks as the target `interpreter` (`emo run`'s
-checking passes it; `emo check` and the LSP keep the hosted default,
-so a gc-door program shows its refusal in the editor the way a
-`peek8` program does off `riscv64`). A `Ref` crosses a process
+checking passes it); the `c` target admits in its own checking. The
+other hosted seats and the LSP keep the hosted default, so a gc-door
+program shows its refusal in the editor the way a `peek8` program
+does off `riscv64`. On the `c` host the mutator discipline sharpens
+one rule of its own: a script-level binding that allocates or roots
+is a `var`, never a `const` — the `c` target memoizes script consts,
+and an impure initializer would re-run at the first read, a second
+allocation wearing the first one's name. A `Ref` crosses a process
 boundary as the same cell — the registry is the run's own, and one
 root either way. `heap_words` counts physical words; the interpreter's
 own blocks, boxed values, and builder storage stay the host's memory

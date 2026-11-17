@@ -1263,6 +1263,8 @@ emo_value emo_map_values(emo_value m) {
    kinds — String, Bytes, Enum, Int64, Float64, Pid — hold no cell
    words, so their release is the free alone. */
 
+void emo_gc_root_unlink(emo_value ref);
+
 void emo_release(emo_value v) {
   if (v == 0 || (v & 7) != 0) return;
   if (--*emo_rc_of(v) > 0) return;
@@ -1329,6 +1331,10 @@ void emo_release(emo_value v) {
     /* [header][payload] — the cell owns its contents, as a Box does */
     emo_release(
         (emo_value)__atomic_load_n(p, __ATOMIC_SEQ_CST));
+    break;
+  case EMO_REF:
+    /* [header][the root's word] — dying leaves the registry */
+    emo_gc_root_unlink((emo_value)v);
     break;
   default:
     break; /* String, Bytes, Enum, Int64, Float64, Pid */
@@ -2172,6 +2178,9 @@ static void emo_render_dyn(emo_value v, FILE *out) {
   }
   case EMO_BOX:
     fputs("<box>", out);
+    return;
+  case EMO_REF:
+    fputs("<ref>", out);
     return;
   case EMO_ATOMIC:
     fputs("<atomic>", out);
@@ -5842,4 +5851,369 @@ emo_value emo_dynamic_builtin(emo_value recv, const char *name, int64_t arity,
   fprintf(stderr, "runtime error: message not understood: %s/%lld\n", name,
           (long long)arity);
   exit(70);
+}
+
+/* ---- The GC heap (docs/gc-heap.md) ----
+
+   One arena of words; the machine object model the collector in Emo
+   manages. Blocks are bound ranges the allocator — the gc package's
+   own free list, in Emo, compiled by this same compiler — carves and
+   releases through these doors. A handle carries the header's offset
+   and the block's generation: (gen << 42) | (offset << 1) | 1. The
+   header word at slot 0 packs magic, kind, generation, the mark bit,
+   and the logical size; the data sits in slots 1..n. The refcounting
+   runtime needs no weak registry: a Ref cell that dies unlinks itself
+   at its release, and the root set is exact. */
+
+#define EMO_GC_KIND_STRUCT 1
+#define EMO_GC_KIND_ARRAY 2
+#define EMO_GC_KIND_FLOATS 3
+#define EMO_GC_ARENA_CAP (1ll << 41)
+#define EMO_GC_BLOCK_CAP (1ll << 23)
+#define EMO_GC_MAGIC ((int64_t)0xC0DE << 48)
+#define EMO_GC_MARK_BIT (1ll << 23)
+#define EMO_GC_SIZE_MASK ((1ll << 23) - 1)
+#define EMO_GC_GEN_MASK ((1ll << 22) - 1)
+#define EMO_GC_OFFSET_MASK ((1ll << 41) - 1)
+
+static int64_t *emo_gc_arena = NULL;
+static int64_t emo_gc_arena_len = 0;
+
+typedef struct {
+  int64_t offset, kind, size, gen;
+} emo_gc_block_t;
+
+static emo_gc_block_t *emo_gc_bound = NULL;
+static int64_t emo_gc_bound_n = 0, emo_gc_bound_cap = 0;
+
+static emo_value *emo_gc_roots = NULL;
+static int64_t emo_gc_roots_n = 0, emo_gc_roots_cap = 0;
+
+static void emo_gc_fail(const char *msg) {
+  emo_raise(emo_make_exception(emo_cell_from_cstr(msg)));
+}
+
+static void emo_gc_root_link(emo_value r) {
+  if (emo_gc_roots_n == emo_gc_roots_cap) {
+    emo_gc_roots_cap = emo_gc_roots_cap ? emo_gc_roots_cap * 2 : 16;
+    emo_gc_roots = realloc(emo_gc_roots, emo_gc_roots_cap * sizeof(emo_value));
+  }
+  emo_retain(r); /* the registry's own claim keeps the cell alive */
+  emo_gc_roots[emo_gc_roots_n++] = r;
+}
+
+void emo_gc_root_unlink(emo_value r) {
+  for (int64_t i = 0; i < emo_gc_roots_n; i++) {
+    if (emo_gc_roots[i] == r) {
+      emo_gc_roots[i] = emo_gc_roots[--emo_gc_roots_n];
+      emo_release(r); /* the registry's claim drops */
+      return;
+    }
+  }
+}
+
+static int64_t emo_gc_bound_find(int64_t offset) {
+  for (int64_t i = 0; i < emo_gc_bound_n; i++)
+    if (emo_gc_bound[i].offset == offset) return i;
+  return -1;
+}
+
+/* inserts keeping the array sorted by offset — heap_blocks answers
+   the address order, and the overlap checks stay a neighbor scan */
+static int64_t emo_gc_bound_insert(emo_gc_block_t b) {
+  if (emo_gc_bound_n == emo_gc_bound_cap) {
+    emo_gc_bound_cap = emo_gc_bound_cap ? emo_gc_bound_cap * 2 : 16;
+    emo_gc_bound = realloc(emo_gc_bound, emo_gc_bound_cap * sizeof(emo_gc_block_t));
+  }
+  int64_t i = emo_gc_bound_n;
+  while (i > 0 && emo_gc_bound[i - 1].offset > b.offset) {
+    emo_gc_bound[i] = emo_gc_bound[i - 1];
+    i--;
+  }
+  emo_gc_bound[i] = b;
+  emo_gc_bound_n++;
+  return i;
+}
+
+static void emo_gc_bound_remove_at(int64_t i) {
+  for (int64_t j = i + 1; j < emo_gc_bound_n; j++)
+    emo_gc_bound[j - 1] = emo_gc_bound[j];
+  emo_gc_bound_n--;
+}
+
+static int64_t emo_gc_handle_of(int64_t offset, int64_t gen) {
+  return (gen << 42) | (offset << 1) | 1;
+}
+
+static int64_t emo_gc_next_gen(int64_t offset) {
+  int64_t i = emo_gc_bound_find(offset);
+  if (i < 0) return 1;
+  int64_t g = emo_gc_bound[i].gen + 1;
+  return g > EMO_GC_GEN_MASK ? 1 : g;
+}
+
+/* resolves a handle to its bound block, loudly otherwise */
+static emo_gc_block_t *emo_gc_live(int64_t h) {
+  if ((h & 1) == 0)
+    emo_gc_fail("the heap refuses an even word — a handle is odd");
+  int64_t offset = ((uint64_t)h >> 1) & EMO_GC_OFFSET_MASK;
+  int64_t gen = (uint64_t)h >> 42;
+  int64_t i = emo_gc_bound_find(offset);
+  if (i < 0) emo_gc_fail("the heap refuses a handle that names no live block");
+  if (emo_gc_bound[i].gen != gen)
+    emo_gc_fail("the heap refuses a stale handle — the binding has moved on");
+  return &emo_gc_bound[i];
+}
+
+static int64_t emo_gc_header_of(int64_t kind, int64_t gen, int64_t size) {
+  return EMO_GC_MAGIC | (kind << 46) | (gen << 24) | size;
+}
+
+int64_t emo_gc_heap_new(int64_t words) {
+  if (emo_gc_arena != NULL)
+    emo_gc_fail("heap_new makes one arena per run");
+  if (words < 0) emo_gc_fail("the GC heap refuses a negative size");
+  if (words >= EMO_GC_ARENA_CAP)
+    emo_gc_fail("the arena is past the GC heap's size guard");
+  emo_gc_arena = calloc((size_t)words, sizeof(int64_t));
+  emo_gc_arena_len = words;
+  return words;
+}
+
+int64_t emo_gc_heap_load(int64_t addr) {
+  if (emo_gc_arena == NULL || addr < 0 || addr >= emo_gc_arena_len)
+    emo_gc_fail("heap_load reaches a word outside the arena");
+  return emo_gc_arena[addr];
+}
+
+void emo_gc_heap_store(int64_t addr, int64_t w) {
+  if (emo_gc_arena == NULL || addr < 0 || addr >= emo_gc_arena_len)
+    emo_gc_fail("heap_store reaches a word outside the arena");
+  emo_gc_arena[addr] = w;
+}
+
+int64_t emo_gc_heap_carve(int64_t addr, int64_t n, int64_t kind) {
+  if (emo_gc_arena == NULL)
+    emo_gc_fail("heap_carve reaches a heap no heap_new has made");
+  if (kind != EMO_GC_KIND_STRUCT && kind != EMO_GC_KIND_ARRAY &&
+      kind != EMO_GC_KIND_FLOATS)
+    emo_gc_fail("heap_carve refuses a kind that is not 1, 2, or 3");
+  if (n < 0) emo_gc_fail("the GC heap refuses a negative size");
+  if (n >= EMO_GC_BLOCK_CAP)
+    emo_gc_fail("the block is past the GC heap's size guard");
+  int64_t physical = n + 1;
+  if (addr < 0 || addr + physical > emo_gc_arena_len)
+    emo_gc_fail("heap_carve reaches words outside the arena");
+  for (int64_t i = 0; i < emo_gc_bound_n; i++) {
+    int64_t off = emo_gc_bound[i].offset;
+    if (addr <= off + emo_gc_bound[i].size && addr + n >= off)
+      emo_gc_fail("heap_carve overlaps a bound block");
+  }
+  int64_t gen = emo_gc_next_gen(addr);
+  emo_gc_arena[addr] = emo_gc_header_of(kind, gen, n);
+  emo_gc_block_t b = {addr, kind, n, gen};
+  emo_gc_bound_insert(b);
+  return emo_gc_handle_of(addr, gen);
+}
+
+void emo_gc_heap_release(int64_t h) {
+  emo_gc_block_t *b = emo_gc_live(h);
+  emo_gc_arena[b->offset] = 0; /* the magic breaks: stale handles die */
+  int64_t i = emo_gc_bound_find(b->offset);
+  emo_gc_bound_remove_at(i);
+}
+
+int64_t emo_gc_heap_rebind(int64_t h, int64_t addr) {
+  emo_gc_block_t *b = emo_gc_live(h);
+  int64_t physical = b->size + 1;
+  if (addr < 0 || addr + physical > emo_gc_arena_len)
+    emo_gc_fail("heap_rebind reaches words outside the arena");
+  for (int64_t i = 0; i < emo_gc_bound_n; i++) {
+    int64_t off = emo_gc_bound[i].offset;
+    if (off != b->offset && addr <= off + emo_gc_bound[i].size &&
+        addr + b->size >= off)
+      emo_gc_fail("heap_rebind overlaps a bound block");
+  }
+  int64_t gen = emo_gc_next_gen(addr);
+  int64_t old_off = b->offset, sz = b->size, kind = b->kind;
+  emo_gc_arena[addr] = emo_gc_header_of(kind, gen, sz);
+  emo_gc_arena[old_off] = 0;
+  emo_gc_bound_remove_at(emo_gc_bound_find(old_off));
+  emo_gc_block_t nb = {addr, kind, sz, gen};
+  emo_gc_bound_insert(nb);
+  return emo_gc_handle_of(addr, gen);
+}
+
+emo_value emo_gc_heap_slide(emo_value pairs) {
+  if (emo_gc_arena == NULL)
+    emo_gc_fail("heap_slide reaches a heap no heap_new has made");
+  int64_t n = (int64_t)emo_payload(pairs)[0];
+  if (n % 2 != 0) emo_gc_fail("heap_slide expects an even count of pairs");
+  if (emo_gc_bound_n * 2 != n)
+    emo_gc_fail("heap_slide must name every bound block, destination order");
+  int64_t expected = 0;
+  emo_gc_block_t *moves = malloc((size_t)(n / 2) * sizeof(emo_gc_block_t));
+  int64_t *dests = malloc((size_t)(n / 2) * sizeof(int64_t));
+  for (int64_t i = 0; i < n / 2; i++) {
+    int64_t h = emo_unbox_i64((emo_value)emo_payload(pairs)[1 + i * 2]);
+    int64_t na = emo_unbox_i64((emo_value)emo_payload(pairs)[2 + i * 2]);
+    emo_gc_block_t *b = emo_gc_live(h);
+    int64_t physical = b->size + 1;
+    if (na != expected)
+      emo_gc_fail("heap_slide expects the destinations contiguous from zero");
+    if (na + physical > emo_gc_arena_len)
+      emo_gc_fail("heap_slide reaches words outside the arena");
+    expected = na + physical;
+    moves[i] = *b;
+    dests[i] = na;
+  }
+  emo_value *answers = malloc((size_t)(n / 2 ? (size_t)(n / 2) : 1) *
+                              sizeof(emo_value));
+  for (int64_t i = 0; i < n / 2; i++) {
+    emo_gc_block_t *b = &moves[i];
+    int64_t na = dests[i];
+    int64_t gen = emo_gc_next_gen(na);
+
+
+    for (int64_t j = 1; j <= b->size; j++)
+      emo_gc_arena[na + j] = emo_gc_arena[b->offset + j];
+    emo_gc_bound_remove_at(emo_gc_bound_find(b->offset));
+    emo_gc_arena[b->offset] = 0;
+    emo_gc_arena[na] = emo_gc_header_of(b->kind, gen, b->size);
+    emo_gc_block_t nb = {na, b->kind, b->size, gen};
+    emo_gc_bound_insert(nb);
+    answers[i] = emo_box_i64(emo_gc_handle_of(na, gen));
+  }
+  free(moves);
+  free(dests);
+  emo_value out = emo_array_new(n / 2, answers);
+  for (int64_t i = 0; i < n / 2; i++) emo_release(answers[i]);
+  free(answers);
+  return out;
+}
+
+int64_t emo_gc_heap_float_bits(double f) {
+  union {
+    double d;
+    int64_t i;
+  } u;
+  u.d = f;
+  return u.i;
+}
+
+double emo_gc_heap_bits_float(int64_t w) {
+  union {
+    double d;
+    int64_t i;
+  } u;
+  u.i = w;
+  return u.d;
+}
+
+static emo_gc_block_t *emo_gc_checked(int64_t h, int64_t want_kind, int64_t i,
+                                      const char *door) {
+  emo_gc_block_t *b = emo_gc_live(h);
+  if (b->kind != want_kind) {
+    char buf[256];
+    snprintf(buf, sizeof buf, "%s reaches a %s block", door,
+             b->kind == EMO_GC_KIND_ARRAY ? "array"
+             : b->kind == EMO_GC_KIND_FLOATS ? "float array"
+                                             : "struct");
+    emo_gc_fail(buf);
+  }
+  if (i < 0 || i > b->size) {
+    char buf[256];
+    snprintf(buf, sizeof buf,
+             "%s reaches slot %lld, but the block holds slots 0..%lld", door,
+             (long long)i, (long long)b->size);
+    emo_gc_fail(buf);
+  }
+  return b;
+}
+
+int64_t emo_gc_struct_get(int64_t h, int64_t i) {
+  emo_gc_block_t *b = emo_gc_checked(h, EMO_GC_KIND_STRUCT, i, "struct_get");
+  return emo_gc_arena[b->offset + i];
+}
+
+void emo_gc_struct_set(int64_t h, int64_t i, int64_t w) {
+  emo_gc_block_t *b = emo_gc_checked(h, EMO_GC_KIND_STRUCT, i, "struct_set");
+  emo_gc_arena[b->offset + i] = w;
+}
+
+int64_t emo_gc_array_len(int64_t h) {
+  emo_gc_block_t *b = emo_gc_live(h);
+  if (b->kind != EMO_GC_KIND_ARRAY)
+    emo_gc_fail("array_len reaches a non-array block");
+  return b->size;
+}
+
+int64_t emo_gc_array_get(int64_t h, int64_t i) {
+  emo_gc_block_t *b = emo_gc_checked(h, EMO_GC_KIND_ARRAY, i, "array_get");
+  return emo_gc_arena[b->offset + i];
+}
+
+void emo_gc_array_set(int64_t h, int64_t i, int64_t w) {
+  emo_gc_block_t *b = emo_gc_checked(h, EMO_GC_KIND_ARRAY, i, "array_set");
+  emo_gc_arena[b->offset + i] = w;
+}
+
+int64_t emo_gc_block_kind(int64_t h) { return emo_gc_live(h)->kind; }
+
+int64_t emo_gc_block_size(int64_t h) { return emo_gc_live(h)->size; }
+
+int64_t emo_gc_float_array_get(int64_t h, int64_t i) {
+  emo_gc_block_t *b = emo_gc_checked(h, EMO_GC_KIND_FLOATS, i, "float_array_get");
+  return emo_gc_arena[b->offset + i];
+}
+
+void emo_gc_float_array_set(int64_t h, int64_t i, int64_t w) {
+  emo_gc_block_t *b = emo_gc_checked(h, EMO_GC_KIND_FLOATS, i, "float_array_set");
+  emo_gc_arena[b->offset + i] = w;
+}
+
+emo_value emo_gc_ref_new(int64_t w) {
+  emo_value r = emo_cell_new(EMO_REF, 1);
+  *emo_payload(r) = (uintptr_t)w;
+  emo_gc_root_link(r);
+  return r;
+}
+
+int64_t emo_gc_ref_read(emo_value r) {
+  r = emo_expect_kind(r, EMO_REF);
+  return (int64_t)*emo_payload(r);
+}
+
+void emo_gc_ref_write(emo_value r, int64_t w) {
+  r = emo_expect_kind(r, EMO_REF);
+  *emo_payload(r) = (uintptr_t)w;
+}
+
+emo_value emo_gc_ref_roots(void) {
+  emo_value *elems = malloc((size_t)(emo_gc_roots_n ? emo_gc_roots_n : 1) *
+                            sizeof(emo_value));
+  for (int64_t i = 0; i < emo_gc_roots_n; i++)
+    elems[i] = emo_retain(emo_gc_roots[i]);
+  emo_value out = emo_array_new(emo_gc_roots_n, elems);
+  for (int64_t i = 0; i < emo_gc_roots_n; i++) emo_release(elems[i]);
+  free(elems);
+  return out;
+}
+
+emo_value emo_gc_heap_blocks(void) {
+  emo_value *elems =
+      malloc((size_t)(emo_gc_bound_n ? emo_gc_bound_n : 1) * sizeof(emo_value));
+  for (int64_t i = 0; i < emo_gc_bound_n; i++)
+    elems[i] = emo_box_i64(emo_gc_handle_of(emo_gc_bound[i].offset,
+                                            emo_gc_bound[i].gen));
+  emo_value out = emo_array_new(emo_gc_bound_n, elems);
+  for (int64_t i = 0; i < emo_gc_bound_n; i++) emo_release(elems[i]);
+  free(elems);
+  return out;
+}
+
+int64_t emo_gc_heap_words(void) {
+  int64_t total = 0;
+  for (int64_t i = 0; i < emo_gc_bound_n; i++) total += emo_gc_bound[i].size + 1;
+  return total;
 }

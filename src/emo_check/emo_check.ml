@@ -2108,6 +2108,10 @@ let base_env target =
     { empty_env with bindings = raw_mem_bindings @ empty_env.bindings }
   else if target = "interpreter" then
     { empty_env with bindings = gc_heap_bindings @ empty_env.bindings }
+  else if target = "c" then
+    (* the c target is the heap's first real-memory host (T90.4): its
+       runtime keeps the arena, the binding, and the doors *)
+    { empty_env with bindings = gc_heap_bindings @ empty_env.bindings }
   else empty_env
 
 let lookup_env env name = List.assoc_opt name env.bindings
@@ -2554,8 +2558,8 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
               else if gc_heap_builtin name then
                 report ctx span "E4032"
                   (Printf.sprintf
-                     "`%s` reaches the GC heap: only the interpreter run \
-                      admits it, not `%s`"
+                     "`%s` reaches the GC heap: only the interpreter run and \
+                      the `c` target admit it, not `%s`"
                      name ctx.target)
               else if out_of_scope ctx name then
                 report ctx span "E5008"

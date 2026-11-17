@@ -320,6 +320,15 @@ def compact() Int64 {
     mark_block(work.get(cursor), work)
     cursor = cursor + 1
   }
+  // the sweep runs first: the slide names every bound block, so the
+  // unreached ones must already be back in the geometry
+  const dead = heap_blocks()
+  for var i = 0; i < dead.length(); i = i + 1 {
+    const h = dead[i]
+    if !is_marked(h) {
+      give_back(h)
+    }
+  }
   const pairs = ArrayBuilder.new()
   const blocks = heap_blocks()
   var next = 0

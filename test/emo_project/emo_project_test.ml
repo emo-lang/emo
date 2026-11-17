@@ -4083,9 +4083,9 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "crypto_sign")
           "crypto_sign" "main.emo");
-    tc "gc_demo runs its golden on the interpreter alone" (fun () ->
+    tc "gc_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
-        run_interpreted_example
+        bootstrap_example
           (Filename.concat (examples_dir ()) "gc_demo")
           "gc_demo" "main.emo");
     tc "crypto_ecdh compiles to a binary with the interpreter's output"

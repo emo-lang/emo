@@ -169,7 +169,16 @@ let is_builtin = function
   | "expect_true" | "expect_false" | "expect_fail" | "peek8" | "poke8"
   | "peek64" | "poke64" | "peek32" | "poke32" | "device_wait" | "device_wake"
   | "ecall" | "user_spawn" | "gate_reply" | "gate_post" | "pid_num" | "pid_at"
-  | "sfence" ->
+  | "sfence"
+  (* the GC heap's doors (docs/gc-heap.md): the admitting targets
+     lower their calls through the IR, the refusing ones never reach
+     the lowering — the checker's E4032 is upstream *)
+  | "heap_new" | "heap_load" | "heap_store" | "heap_carve" | "heap_release"
+  | "heap_rebind" | "heap_slide" | "heap_float_bits" | "heap_bits_float"
+  | "struct_get" | "struct_set" | "array_len" | "array_get" | "array_set"
+  | "block_kind" | "block_size" | "float_array_get" | "float_array_set"
+  | "ref_new" | "ref_read" | "ref_write" | "ref_roots" | "heap_blocks"
+  | "heap_words" ->
       true
   | _ -> false
 

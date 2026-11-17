@@ -78,9 +78,10 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 | Target | 门 |
 | --- | --- |
 | 解释器运行 | 准入——门就是这个运行的对象模型 |
-| `c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64` | 在检查期按名拒绝(E4032) |
+| `c` | 准入——运行时在真实 `malloc` 的词上持有 arena 与绑定(T90.4) |
+| `ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64` | 在检查期按名拒绝(E4032) |
 
-解释器运行以 target `interpreter` 检查(`emo run` 的检查传入它;`emo check` 与 LSP 保持宿主默认,所以 gc 门的程序在编辑器里显示拒绝,与 `peek8` 程序在 `riscv64` 之外的样子相同)。`Ref` 跨进程边界传递同一个格——注册表是这个运行自己的,一个根怎么算都是一个。`heap_words` 数物理词;解释器自己的块、装箱值、builder 存储仍是宿主的内存,没有门为它们命名。
+解释器运行以 target `interpreter` 检查(`emo run` 的检查传入它);`c` target 在自己的检查里准入。其余托管席位与 LSP 保持宿主默认,gc 门的程序在编辑器里显示拒绝,与 `peek8` 程序在 `riscv64` 之外的样子相同。在 `c` 宿主上,变异者纪律多了一条自己的规则:分配或生根的脚本级绑定是 `var`,绝不是 `const`——`c` target 会记忆化脚本 const,含副作用的初始化器会在首次读取时重跑,顶着第一个名字的第二次分配。所以 gc 门的程序在编辑器里显示拒绝,与 `peek8` 程序在 `riscv64` 之外的样子相同)。`Ref` 跨进程边界传递同一个格——注册表是这个运行自己的,一个根怎么算都是一个。`heap_words` 数物理词;解释器自己的块、装箱值、builder 存储仍是宿主的内存,没有门为它们命名。
 
 ## 错误
 

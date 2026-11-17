@@ -177,6 +177,27 @@ let refuse what =
     (Emo_ir.Lower_error
        (Printf.sprintf "the c target does not support %s yet" what))
 
+(* The GC heap's doors (docs/gc-heap.md): the c runtime keeps the
+   arena and the binding, the gc package's Emo code drives them. The
+   Int64 lane lowers native, the Ref lane rides the dynamic word. *)
+let gc_heap_door = function
+  | "heap_new" | "heap_load" | "heap_store" | "heap_carve" | "heap_release"
+  | "heap_rebind" | "heap_slide" | "heap_float_bits" | "heap_bits_float"
+  | "struct_get" | "struct_set" | "array_len" | "array_get" | "array_set"
+  | "block_kind" | "block_size" | "float_array_get" | "float_array_set"
+  | "ref_new" | "ref_read" | "ref_write" | "ref_roots" | "heap_blocks"
+  | "heap_words" ->
+      true
+  | _ -> false
+
+let gc_door_return = function
+  | "heap_store" | "struct_set" | "array_set" | "float_array_set"
+  | "heap_release" | "ref_write" ->
+      `Void
+  | "heap_bits_float" -> `Float64
+  | "heap_blocks" | "heap_slide" | "ref_roots" | "ref_new" -> `Array
+  | _ -> `Int64
+
 (* ---- Literals and types ---- *)
 
 (* A C string literal: printable ASCII verbatim, everything else as
@@ -257,7 +278,7 @@ let is_dyn (t : Emo_check.t) : bool =
   | Emo_check.ArrayType _ | Emo_check.MapType _ | Emo_check.BoxType _
   | Emo_check.AtomicType _ | Emo_check.ListType _ | Emo_check.BuilderType _
   | Emo_check.ClassType _ | Emo_check.InterfaceType _ | Emo_check.EnumType _
-  | Emo_check.FuncType _ | Emo_check.Bytes ->
+  | Emo_check.FuncType _ | Emo_check.Bytes | Emo_check.Ref ->
       true
   | _ -> false
 
@@ -910,6 +931,22 @@ and emit_expr env (e : Emo_ir.expr) : string =
       (* the exact barrier, sequential consistency; the statement path
          emits it, a value use refuses like `halt` *)
       refuse "`fence` in a value position"
+  | Builtin { name; args } when gc_heap_door name -> (
+      (* the GC heap's doors: the Int64 and Float64 lanes answer
+         native, wrapped when the use site wants the dynamic word;
+         the array doors answer the dynamic word itself *)
+      let v = gc_door_call env name args in
+      match gc_door_return name with
+      | `Void -> refuse (Printf.sprintf "`%s` in a value position" name)
+      | `Int64 ->
+          if is_dyn e.Emo_ir.ety then
+            wrap_owned e.Emo_ir.ety (Printf.sprintf "emo_box_i64(%s)" v)
+          else v
+      | `Float64 ->
+          if is_dyn e.Emo_ir.ety then
+            wrap_owned e.Emo_ir.ety (Printf.sprintf "emo_box_f64(%s)" v)
+          else v
+      | `Array -> if is_dyn e.Emo_ir.ety then wrap_owned e.Emo_ir.ety v else v)
   | Builtin { name; _ } -> emit_builtin_unsupported name
   | Runtime_impl { name; args } ->
       let v = emit_runtime_impl env e.Emo_ir.ety name args in
@@ -2128,7 +2165,57 @@ and emit_builtin env (name : string) (args : Emo_ir.expr list) : unit =
   | "self_pid", [] -> put env "  (void)(emo_box_pid(emo_process_self_pid()));\n"
   | "fence", [] -> put env "  emo_atomic_fence();\n"
   | "fence", _ -> refuse "`fence` with arguments"
+  | name, args when gc_heap_door name ->
+      (* the Void doors discard; a value-returning door used as a
+         statement discards its answer the way every effect does *)
+      put env "  (void)(%s);\n" (gc_door_call env name args)
   | name, _ -> put env "  (void)(%s);\n" (emit_builtin_unsupported name)
+
+(* The GC heap's doors lower to their runtime functions: the Int64
+   lane native, the Ref and array lanes the dynamic word. *)
+and gc_door_call env (name : string) (args : Emo_ir.expr list) : string =
+  let i64 arg = as_native env arg Emo_check.Int64 in
+  let f64 arg = as_native env arg Emo_check.Float64 in
+  let dyn arg = as_dyn env arg in
+  match (name, args) with
+  | "heap_new", [ a ] -> Printf.sprintf "emo_gc_heap_new(%s)" (i64 a)
+  | "heap_load", [ a ] -> Printf.sprintf "emo_gc_heap_load(%s)" (i64 a)
+  | "heap_store", [ a; w ] ->
+      Printf.sprintf "emo_gc_heap_store(%s, %s)" (i64 a) (i64 w)
+  | "heap_carve", [ a; n; k ] ->
+      Printf.sprintf "emo_gc_heap_carve(%s, %s, %s)" (i64 a) (i64 n) (i64 k)
+  | "heap_release", [ h ] -> Printf.sprintf "emo_gc_heap_release(%s)" (i64 h)
+  | "heap_rebind", [ h; a ] ->
+      Printf.sprintf "emo_gc_heap_rebind(%s, %s)" (i64 h) (i64 a)
+  | "heap_slide", [ p ] -> Printf.sprintf "emo_gc_heap_slide(%s)" (dyn p)
+  | "heap_float_bits", [ f ] ->
+      Printf.sprintf "emo_gc_heap_float_bits(%s)" (f64 f)
+  | "heap_bits_float", [ w ] ->
+      Printf.sprintf "emo_gc_heap_bits_float(%s)" (i64 w)
+  | "struct_get", [ b; i ] ->
+      Printf.sprintf "emo_gc_struct_get(%s, %s)" (i64 b) (i64 i)
+  | "struct_set", [ b; i; w ] ->
+      Printf.sprintf "emo_gc_struct_set(%s, %s, %s)" (i64 b) (i64 i) (i64 w)
+  | "array_len", [ a ] -> Printf.sprintf "emo_gc_array_len(%s)" (i64 a)
+  | "array_get", [ a; i ] ->
+      Printf.sprintf "emo_gc_array_get(%s, %s)" (i64 a) (i64 i)
+  | "array_set", [ a; i; w ] ->
+      Printf.sprintf "emo_gc_array_set(%s, %s, %s)" (i64 a) (i64 i) (i64 w)
+  | "block_kind", [ h ] -> Printf.sprintf "emo_gc_block_kind(%s)" (i64 h)
+  | "block_size", [ h ] -> Printf.sprintf "emo_gc_block_size(%s)" (i64 h)
+  | "float_array_get", [ a; i ] ->
+      Printf.sprintf "emo_gc_float_array_get(%s, %s)" (i64 a) (i64 i)
+  | "float_array_set", [ a; i; w ] ->
+      Printf.sprintf "emo_gc_float_array_set(%s, %s, %s)" (i64 a) (i64 i)
+        (i64 w)
+  | "ref_new", [ w ] -> Printf.sprintf "emo_gc_ref_new(%s)" (i64 w)
+  | "ref_read", [ r ] -> Printf.sprintf "emo_gc_ref_read(%s)" (dyn r)
+  | "ref_write", [ r; w ] ->
+      Printf.sprintf "emo_gc_ref_write(%s, %s)" (dyn r) (i64 w)
+  | "ref_roots", [] -> "emo_gc_ref_roots()"
+  | "heap_blocks", [] -> "emo_gc_heap_blocks()"
+  | "heap_words", [] -> "emo_gc_heap_words()"
+  | _ -> refuse (Printf.sprintf "the GC heap door `%s` here" name)
 
 (* A tail call becomes a parameter rebind and a jump: the arguments
    land in fresh temporaries first, so one rebind cannot observe

@@ -12,6 +12,12 @@ require "gc"
 // A finite arena is the point — after the collections below, the
 // second generation's allocations can only come from the words the
 // sweep gave back.
+//
+// Every binding that allocates or roots is a `var`, not a `const`:
+// the c target memoizes script consts, and an impure initializer
+// would re-run at the first read — a second allocation wearing the
+// first one's name. The interpreter evaluates in order; the demo
+// stays eager on both hosts.
 gc.arena(65536)
 
 // A list node: field 0 next (a handle or null), field 1 payload.
@@ -39,11 +45,11 @@ def chain_sum(h Int64) Int64 {
 // the ref alive; an unbound ref dies at once and roots nothing.
 var head = node(10)
 for var i = 2; i <= 6; i = i + 1 {
-  const n = node(i * 10)
+  var n = node(i * 10)
   gc.s_set_ref(n, 0, head)
   head = n
 }
-const root = ref_new(head)
+var root = ref_new(head)
 
 // The garbage: four thousand nodes nothing roots.
 for var i = 0; i < 4000; i = i + 1 {
@@ -52,7 +58,7 @@ for var i = 0; i < 4000; i = i + 1 {
 
 // An array block tracing two nodes the chain does not reach.
 var a = gc.a_new(2)
-const aroot = ref_new(a)
+var aroot = ref_new(a)
 gc.a_set_ref(a, 0, node(7))
 gc.a_set_ref(a, 1, node(8))
 
@@ -66,9 +72,9 @@ println("array children: " + (gc.s_get(gc.a_get_ref(a, 0), 1) + gc.s_get(gc.a_ge
 // collection while the root holds them leaves both alive; the moment
 // the root lets go, the pair is unreachable from everywhere and the
 // next collection takes it.
-const ca = gc.s_new(2)
-const cb = gc.s_new(2)
-const croot = ref_new(ca)
+var ca = gc.s_new(2)
+var cb = gc.s_new(2)
+var croot = ref_new(ca)
 gc.s_set_ref(ca, 0, cb)
 gc.s_set_ref(cb, 0, ca)
 gc.s_set(ca, 1, 11)
@@ -86,11 +92,11 @@ println("heap words at rest: " + heap_words().to_string())
 // final collection takes them back. The counts move, the arena does
 // not grow.
 println("free words: " + gc.free_words().to_string())
-const g1 = gc.s_new(2)
+var g1 = gc.s_new(2)
 gc.s_set(g1, 1, 77)
-const g2 = gc.s_new(2)
+var g2 = gc.s_new(2)
 gc.s_set(g2, 1, 88)
-const g2root = ref_new(g2)
+var g2root = ref_new(g2)
 println("second generation at words: " + gc.addr_of(g1).to_string() + " and " + gc.addr_of(g2).to_string())
 println("heap words second generation: " + heap_words().to_string())
 println("free words after: " + gc.free_words().to_string())
@@ -102,11 +108,11 @@ println("free words at rest: " + gc.free_words().to_string())
 
 // The payloads: floats and bytes ride the scalar lane, the bits the
 // field's own kind — the collector never cares, the accessors do.
-const pay = gc.a_new(3)
-const payroot = ref_new(pay)
+var pay = gc.a_new(3)
+var payroot = ref_new(pay)
 gc.a_set_byte(pay, 2, 200B)
-const temps = gc.fa_new(2)
-const tempsroot = ref_new(temps)
+var temps = gc.fa_new(2)
+var tempsroot = ref_new(temps)
 gc.fa_set(temps, 0, 3.5)
 gc.fa_set(temps, 1, -2.25)
 println("floats: " + gc.fa_get(temps, 0).to_string() + " " + gc.fa_get(temps, 1).to_string())
@@ -115,13 +121,13 @@ println("byte: " + gc.a_get_byte(pay, 2).to_int64().to_string())
 // The compaction: three allocations with a dead one in the middle —
 // the sweep leaves a hole, the slide takes the tail back, and every
 // reference the roots and fields hold reads through the new addresses.
-const c1 = gc.s_new(2)
+var c1 = gc.s_new(2)
 gc.s_set(c1, 1, 11)
-const c1r = ref_new(c1)
-const mid = gc.s_new(2)
-const c3 = gc.s_new(2)
+var c1r = ref_new(c1)
+var mid = gc.s_new(2)
+var c3 = gc.s_new(2)
 gc.s_set(c3, 1, 33)
-const c3r = ref_new(c3)
+var c3r = ref_new(c3)
 gc.collect()
 println("ranges before: " + gc.free_ranges().to_string())
 println("compacted: " + gc.compact().to_string())

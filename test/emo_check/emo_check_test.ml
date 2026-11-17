@@ -1536,9 +1536,10 @@ peek64()|}
         Alcotest.(check int) "the arity refused" 1 (List.length diagnostics));
   ]
 
-(* The GC heap's doors (docs/gc-heap.md): the interpreter run admits
-   all sixteen and types them; every other target — build targets and
-   `riscv64` alike — refuses by name at the identifier, E4032. *)
+(* The GC heap's doors (docs/gc-heap.md): the interpreter run and the
+   `c` target admit them and type them; every other target — build
+   targets and `riscv64` alike — refuses by name at the identifier,
+   E4032. *)
 let gc_heap_tests =
   let check_on target source =
     match Emo_parser.parse_program ~file:"test.emo" ~source with
@@ -1579,15 +1580,11 @@ const total = heap_words()
 println(v + n + k + s + rv + total + roots.length() + blocks.length())|}
   in
   [
-    tc "the hosted default refuses every door by name" (fun () ->
+    tc "the hosted default (c) admits every door" (fun () ->
         let diagnostics = check every_door in
-        let all_e4032 =
-          List.for_all (fun d -> d.Diagnostic.code = Some "E4032") diagnostics
-        in
-        Alcotest.(check bool)
-          "every door is one E4032" true
-          (all_e4032 && List.length diagnostics > 0));
-    tc "every build target refuses, riscv64 included" (fun () ->
+        Alcotest.(check int)
+          "clean on the hosted default" 0 (List.length diagnostics));
+    tc "every other build target refuses, riscv64 included" (fun () ->
         List.iter
           (fun target ->
             let diagnostics = check_on target {|const h = heap_new(2)|} in
@@ -1596,7 +1593,7 @@ println(v + n + k + s + rv + total + roots.length() + blocks.length())|}
               (List.exists
                  (fun d -> d.Diagnostic.code = Some "E4032")
                  diagnostics))
-          [ "ocaml"; "c"; "typescript"; "wasm"; "browser"; "beam"; "riscv64" ]);
+          [ "ocaml"; "typescript"; "wasm"; "browser"; "beam"; "riscv64" ]);
     tc "the interpreter admits the doors and types them" (fun () ->
         let clean = check_on "interpreter" every_door in
         Alcotest.(check int) "clean on the interpreter" 0 (List.length clean));

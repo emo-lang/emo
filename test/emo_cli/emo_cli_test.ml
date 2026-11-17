@@ -7021,7 +7021,8 @@ let gc_refusal_expected target =
   List.map
     (fun name ->
       Printf.sprintf
-        "`%s` reaches the GC heap: only the interpreter run admits it, not `%s`"
+        "`%s` reaches the GC heap: only the interpreter run and the `c` target \
+         admit it, not `%s`"
         name target)
     [
       "heap_new";
@@ -7078,11 +7079,15 @@ let gc_refusal_tests =
               (target ^ ": every refusal is E4032")
               (List.map (fun _ -> "E4032") expected)
               (List.map fst got))
-          [ "ocaml"; "c"; "typescript"; "wasm"; "browser"; "beam"; "riscv64" ]);
-    tc "the interpreter admits the doors and checks clean" (fun () ->
-        Alcotest.(check (list (pair string string)))
-          "interpreter: the doors check clean" []
-          (diagnostics "interpreter" gc_refusal_source));
+          [ "ocaml"; "typescript"; "wasm"; "browser"; "beam"; "riscv64" ]);
+    tc "the admitting seats check clean" (fun () ->
+        List.iter
+          (fun target ->
+            Alcotest.(check (list (pair string string)))
+              (target ^ ": the doors check clean")
+              []
+              (diagnostics target gc_refusal_source))
+          [ "interpreter"; "c" ]);
   ]
 
 (* ---- emo wasm run ----

@@ -5,10 +5,11 @@ written in pure Emo over the object-model doors the interpreter run
 admits ([`docs/gc-heap.md`](../gc-heap.md) is the design note). The
 arena is the host's; everything on top of it — the carving, the free
 geometry with its split and merge, the tracing, the sweep — is this
-package. One source serves every host that answers the same doors; the
-interpreter run is the first, and on every build target the whole
-family refuses at check time (E4032) — this package resolves there and
-its doors refuse in the program, so the honest seat is the run alone.
+package. One source serves every host that answers the same doors; two
+hosts answer them today — the interpreter run (a simulated arena) and
+the `c` target (real `malloc`'d words), byte-identical between them —
+and on every other build target the whole family refuses at check time
+(E4032), so the honest seats are those two.
 
 ## Using the package
 
