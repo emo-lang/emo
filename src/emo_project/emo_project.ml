@@ -1870,7 +1870,9 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
   in
   let items = parse_cached p entry_file in
   (if check then
-     let _paths, _graph, _program, errors = check_project ~entry:(Some entry) p in
+     let _paths, _graph, _program, errors =
+       check_project ~entry:(Some entry) p
+     in
      match errors with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
   (* Host-injected bindings: the CLI's internal tooling (publish's uploader)

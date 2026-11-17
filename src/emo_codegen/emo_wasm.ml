@@ -3107,7 +3107,8 @@ and emit_closure env params cbody : int =
         (* the head of local_decls is the params' own entries; only the
            rest are declared locals *)
         flocals =
-          List.map (fun t -> (1, t))
+          List.map
+            (fun t -> (1, t))
             (List.filteri (fun i _ -> i >= List.length names) env.local_decls);
         fbody = body;
       } )
@@ -3467,7 +3468,8 @@ and emit_receive_handler env (caps : (string * int) list)
            are declared locals — the head entries are the params' own
            slots, the convention every other emit point slices by *)
         flocals =
-          List.map (fun t -> (1, t))
+          List.map
+            (fun t -> (1, t))
             (List.filteri (fun i _ -> i >= 2) env.local_decls);
         fbody = body;
       } )
