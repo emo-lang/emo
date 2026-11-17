@@ -74,6 +74,8 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M45 — The configuration format | 84 | The `toml` package: TOML 1.1.0 decoded into a `Toml` value tree mirroring the json and yaml design — seven kinds, no null (TOML has none), the four date-time forms one `TomlDateTime` class whose `datetime_kind()` names the form and whose `to_text()` renders the canonical text back — pure Emo over the shared runtimes, the float package's exact-decimal constructor under every number; decode covers the full 1.1 surface (the `\e` and `\xHH` escapes, seconds omittable, lowercase `t`/`z`, the space delimiter try-and-see, multi-line inline tables and trailing commas) and the strict redefinition rules, assembling while it parses over origin-tagged nodes (dotted keys close their tables to headers, inline tables close at the brace, `[[x]]` appends only to arrays and a deeper header descends into the latest element, implicit supertables declare at most once); `inf`/`nan` and out-of-range integers refuse like every malformed input as `(R.error, reason)` with the byte offset; encode is the document form, scalars first, `decode(encode(v)) == v`; the edge battery flushed seven package bugs — the string fill answering the write length where the next index belongs, hex escape digits with the wrong weights, the float buffer counting the underscores, the exponent value eating the underscores, `doc_inline?` answering true for all-table arrays, section lines rendering the full dotted path, and the date-time class missing the interface — and the compiled goldens flushed three backend bugs, each pre-existing on the tree and each invisible until a package leaned on the shape it breaks: the TypeScript Void tail-call driver had no exit (every Void tail recursion spun forever on TS — json's `fill_spaces` included — the whole ts_golden suite burning CPU), the BEAM runtime dispatch bound its builtin arm through a clobberable map (chains two interfaces deep refused by erlc on an unbound variable — json_demo's single-level chains never hit it), and the wasm `deep_eq` had no tuple arm (any class field of `Array[(A, B)]` compared unequal to its own twin — the toml root table, json's `JsonObject`, latent until a golden compared a decoded tree) (`CHECK.md`). |
 | M46 — The wasm target speaks WASI 0.3 | 85 | `emo build --target wasm --wasi` wraps the WasmGC module in a WASI 0.3 command component (`wasi:cli/run@0.3.0`) wasmtime 46+ (`-S cli`) executes: stdout/stderr ride the native stream cycles through `wasi:cli/stdout`+`stderr`, the exit code through `wasi:cli/exit`, the import table remapped from the eighteen `emo.*` doors to twenty-seven standard ones — `wasi:filesystem` (descriptor as a `(sub resource)` export, open-at, the directory-entry stream, the one-string mutations), `wasi:filesystem/preopens` (the table the path resolution anchors on), `wasi:random/random`, `wasi:cli/environment`; the provider module grew the canonical realloc the host-written lists allocate through, sharing the bump cursor cell with the guest; the store operand order (value before address) fixed at five sites; the file chain's last mile fixed at T85.7 (the provider realloc's cursor store with its operands swapped, two bare loops exiting through the enclosing block's label, the write cycle reading the error-code cell on the ok case, `os_write`'s fd dispatch reading an always-false conjunction, the directory door's missing `read-dir-entries` import, and the bubble pass swapping descending); the guest-side `%g` float formatter (fixed and exponent forms) fixed at T85.8; `wasi_examples` — 66 goldens byte-identical with the Node list — and wasmtime-smoke's execution rung pin the doors (`CHECK.md`). |
 | M47 — The library's manual | 86 | `emo man` reads the standard library's reference pages from inside the binary: `emo man` lists the packages, `emo man <package>` renders one as a man page — NAME from the overview's table, SYNOPSIS from the embedded manifest's pin and `require`, DESCRIPTION with the doc's own sections and examples, SEE ALSO — and `emo man stdlib` renders the overview. The docs stay the source of truth: `docs/stdlib.md` and `docs/stdlib/*.md` are generated into the CLI's page data at build time (the stdlib-source route), so an installed binary answers with nothing beside it; the renderer reads the docs' Markdown subset — body reflowed to `COLUMNS`, code never reflowed, wide tables wrapped cell by cell — `MANPAGER`/`PAGER` is used only when it can run, an unknown name refuses on 65, and `test/emo_cli`'s `man` group pins the list, a page, and the refusal (`plan/step-86-emo-man.md`). |
+| M48 — The WASI host's file half | 87 | `emo wasm run`'s preview1 host reads and writes files inside a granted directory: the preopen table is the grant (`wasm.set_wasi_preopens`, the CLI's `--dir HOST[::GUEST]`), empty by default — no grant, no file system — `fd_prestat_get`/`fd_prestat_dir_name` walk the discovery, `path_open` resolves lexically inside a preopen's root (a climb past it ENOTCAPABLE), and every open rides one os door — read, write (create + truncate, the stdio "w" shape), append — with `fd_read`/`fd_write`/`fd_seek`/`fd_close`/`fd_fdstat_get` grown to file fds. The foundation is the os package's own POSIX semantics, not a second file story, and the ring flushed three pre-existing drifts: the errno table's ENOSYS and ESPIPE were off by one against wasip1.h (51/69 → 52/70), fd_seek's import shape pinned its i64 offset as an i32 (a real module's import refused), and `fd_readdir` now names the fixture's link-refusal probe (`CHECK.md`). |
+| M49 — The file half's rung two | 88 | Directories list, paths stat, and the mutations land: the DIRECTORY oflag opens directories (a stat before the open answers ENOTDIR for a file), the fd table grew the host path and the grant root so every resolution stays confined, `fd_readdir` lists statelessly (the caller's cookie the position, entries whole-only, d_type UNKNOWN with `path_filestat_get` the type channel), `fd_filestat_get`/`path_filestat_get` stat through the new path-shaped `os_stat` door (millisecond times scaled to nanoseconds; stdio answering character device; an unlinked-open's stat answering the miss), and the four path mutations ride the os doors that already exist, the errno text channel grown to EEXIST/ENOTEMPTY/EXDEV/EPERM; the lookupflags' symlink-follow bit is required, and the fixture's link-refusal probe now names `fd_pread` (`CHECK.md`). |
 
 ## Design gates
 
@@ -5070,3 +5072,72 @@ an unknown name refuses on 65; docs EN+zh.
 - [x] **T86.4** — The docs: `docs/toolchain.md` and `docs/stdlib.md`
       + zh-CN mirrors, `plan/README.md`'s milestone bullet and status
       row, this section + zh mirror, CHECK.md's settle record.
+
+## M48 — The WASI host's file half
+
+### Step 87 — WASI's file half: preopens and path_open
+
+**Prereq:** step 77 (WASI preview1), the os package's fd half.
+**Done when:** the host answers the file functions a real
+file-touching module imports — `fd_prestat_get` and
+`fd_prestat_dir_name` for the discovery walk, `path_open` for the
+open, `fd_read` for the bytes — with the grants explicit
+(`wasm.set_wasi_preopens`, the CLI's `--dir`), empty by default; the
+lexical confinement refuses the escape; the errno numbering matches
+wasip1.h; the fixture pins every verdict byte for byte; docs EN+zh.
+
+- [x] **T87.1** — The `os_lseek` door: the checker's table, the
+      interpreter's frame binding and dispatch arm, the c emitter and
+      runtime, and the ocaml target's runtime — the five hosted
+      spots, `(fd, offset, whence) -> (R, Int64)`.
+- [x] **T87.2** — The host: the preopen and fd tables in
+      `internal/wasi.emo` (`set_preopens` the grant,
+      `clear_wasi_files` on the fresh-run reset), `path_open`'s
+      lexical resolution and one-door-per-direction opens, `fd_read`'s
+      single read and scatter, `fd_write`/`fd_close`/`fd_seek`/
+      `fd_fdstat_get` grown to file fds, the prestat pair, the
+      ENOTCAPABLE confinement, and the errno table's two drifted
+      values corrected against wasip1.h; `fd_seek`'s import shape
+      fixed (the i64 offset), and the fixture's link-refusal probe
+      moved to `fd_readdir`.
+- [x] **T87.3** — The fixture: the sandbox built through the os doors,
+      one preopen, and five hand-encoded modules walking no-grant,
+      discovery, open/read/seek/close, create-write, the escape, and
+      the tty seek — every verdict pinned byte for byte.
+- [x] **T87.4** — The CLI: `emo wasm run --dir HOST[::GUEST]`
+      (repeatable) threaded through the embedded driver's `__dirs` to
+      the same `set_wasi_preopens` table.
+- [x] **T87.5** — The docs: this section + zh mirror,
+      `plan/README.md`'s row, `plan/step-87-wasi-files.md`,
+      `docs/stdlib/wasm.md` + zh mirror, CHECK.md's settle record.
+
+## M49 — The file half's rung two
+
+### Step 88 — Listing, stats, and the mutations
+
+**Prereq:** step 87 (preopens and path_open). **Done when:** the host
+answers the functions a real file-touching module still needs —
+`fd_readdir` (the cookie walk, whole entries, UNKNOWN d_type),
+`fd_filestat_get` and `path_filestat_get` (size and filetype through
+the `os_stat` door), and the four path mutations — with directories
+opening through the DIRECTORY oflag, every resolution confined by the
+grant root the fd carries, and the errno text channel covering the
+mutation misses; the fixture pins the listing, the stats, and the
+mutation chain byte for byte; docs EN+zh.
+
+- [x] **T88.1** — The `os_stat` door: the checker's table, the
+      interpreter's frame binding and dispatch arm, the c emitter and
+      runtime, the ocaml target's runtime —
+      `(path) -> (R, (is_dir, size, atime_ms, mtime_ms, ctime_ms))`.
+- [x] **T88.2** — The host: the six-wide fd table, `resolve_under`
+      (the confinement walk seeded from the base, the grant root the
+      floor), DIRECTORY opens with their stat-before-open,
+      `fd_readdir`'s cookie walk, `write_filestat`, the two filestats,
+      and the four mutations.
+- [x] **T88.3** — The fixture: the stat pair, the root listing by
+      cookie, the made-and-listed directory, the rename/unlink/rmdir
+      chain, and the `fd_pread` refusal probe — every verdict pinned
+      byte for byte.
+- [x] **T88.4** — The docs: this section + zh mirror,
+      `plan/README.md`'s row, `plan/step-88-wasi-files2.md`,
+      `docs/stdlib/wasm.md` + zh mirror, CHECK.md's settle record.

@@ -2109,6 +2109,7 @@ def reset_all() Int64 {
   user_host_fns = []
   pending_hosts = []
   wasi_args = []
+  internal.wasi.clear_wasi_files()
   spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
   spectest_memory = internal.store.mem_new(1, 2, true)
   return 0

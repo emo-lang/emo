@@ -5157,6 +5157,36 @@ emo_value emo_os_open_append(emo_str path) {
   return emo_os_ok(emo_box_i64(fd));
 }
 
+emo_value emo_os_lseek(int64_t fd, int64_t offset, int64_t whence) {
+  if (whence < 0 || whence > 2) {
+    return emo_os_fail("lseek", "bad whence");
+  }
+  int how = whence == 0 ? SEEK_SET : (whence == 1 ? SEEK_CUR : SEEK_END);
+  off_t at = lseek((int)fd, (off_t)offset, how);
+  if (at == (off_t)-1) {
+    return emo_os_fail("lseek", "");
+  }
+  return emo_os_ok(emo_box_i64((int64_t)at));
+}
+
+emo_value emo_os_stat(emo_str path) {
+  char *p = emo_cstr_owned(path);
+  struct stat st;
+  if (stat(p, &st) != 0) {
+    emo_value out = emo_os_fail("stat", p);
+    free(p);
+    return out;
+  }
+  free(p);
+  emo_value elems[5];
+  elems[0] = emo_box_i64(S_ISDIR(st.st_mode) ? 1 : 0);
+  elems[1] = emo_box_i64((int64_t)st.st_size);
+  elems[2] = emo_box_i64((int64_t)st.st_atime * 1000);
+  elems[3] = emo_box_i64((int64_t)st.st_mtime * 1000);
+  elems[4] = emo_box_i64((int64_t)st.st_ctime * 1000);
+  return emo_os_ok(emo_tuple_new(5, elems));
+}
+
 emo_value emo_os_read(int64_t fd, int64_t n) {
   if (n <= 0)
     return emo_os_ok(emo_box_str((emo_str){0, ""}));

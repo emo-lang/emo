@@ -1592,6 +1592,44 @@ let pf_hash_float conv minus plus space width prec f =
         error "E3007"
           (Printf.sprintf "`os_open_append` expects (path String), got %d"
              (List.length vs))
+    | "os_lseek", [ Int64 fd; Int64 offset; Int64 whence ] ->
+        if whence < 0L || whence > 2L then
+          error "E3007" "`os_lseek` expects whence 0, 1, or 2"
+        else
+          os_result
+            (fun () ->
+              let mode =
+                if whence = 0L then Unix.SEEK_SET
+                else if whence = 1L then Unix.SEEK_CUR
+                else Unix.SEEK_END
+              in
+              Int64
+                (Int64.of_int
+                   (Unix.lseek
+                      (Obj.magic (Int64.to_int fd) : Unix.file_descr)
+                      (Int64.to_int offset)
+                      mode)))
+    | "os_lseek", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_lseek` expects (fd Int64, offset Int64, whence Int64), got %d"
+             (List.length vs))
+    | "os_stat", [ String path ] ->
+        os_result
+          (fun () ->
+            let s = Unix.stat path in
+            let kind = if s.Unix.st_kind = Unix.S_DIR then 1L else 0L in
+            let ms t = Int64.of_int (Float.to_int (t *. 1000.0)) in
+            Tuple
+              [ Int64 kind;
+                Int64 (Int64.of_int s.Unix.st_size);
+                Int64 (ms s.Unix.st_atime);
+                Int64 (ms s.Unix.st_mtime);
+                Int64 (ms s.Unix.st_ctime) ])
+    | "os_stat", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_stat` expects (path String), got %d"
+             (List.length vs))
     | "os_read", [ Int64 fd; Int64 n ] ->
         if n < 0L then
           error "E3007" "`os_read` expects a non-negative count"

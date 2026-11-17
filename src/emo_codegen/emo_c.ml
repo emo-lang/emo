@@ -700,6 +700,10 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
       Printf.sprintf "emo_os_open_write(%s)" (arg 0 Emo_check.String)
   | "os_open_append" ->
       Printf.sprintf "emo_os_open_append(%s)" (arg 0 Emo_check.String)
+  | "os_lseek" ->
+      Printf.sprintf "emo_os_lseek(%s, %s, %s)" (arg 0 Emo_check.Int64)
+        (arg 1 Emo_check.Int64) (arg 2 Emo_check.Int64)
+  | "os_stat" -> Printf.sprintf "emo_os_stat(%s)" (arg 0 Emo_check.String)
   | "os_read" ->
       Printf.sprintf "emo_os_read(%s, %s)" (arg 0 Emo_check.Int64)
         (arg 1 Emo_check.Int64)

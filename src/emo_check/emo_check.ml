@@ -1528,6 +1528,30 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
+        ( "os_lseek",
+          {
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("offset", Int64); ("whence", Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "os_stat",
+          {
+            vtype =
+              FuncType
+                ( [ ("path", String) ],
+                  TupleType
+                    [
+                      EnumType "R";
+                      TupleType [ Int64; Int64; Int64; Int64; Int64 ];
+                    ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_list_dir",
           {
             vtype =
@@ -2213,11 +2237,11 @@ and scan_script_dep_stmt (names : string list) (s : Ast.stmt) : bool =
   | Ast.Return (Some e) -> scan_script_dep names e
   | Ast.Return None | Ast.Break | Ast.Continue -> false
   | Ast.Raise e -> scan_script_dep names e
-  | Ast.If { cond; then_body; else_body } ->
+  | Ast.If { cond; then_body; else_body } -> (
       scan_script_dep names cond
       || scan_script_dep_stmts names then_body
       ||
-      (match else_body with
+      match else_body with
       | None -> false
       | Some b -> scan_script_dep_stmts names b)
   | Ast.While { cond; body } ->
@@ -2233,8 +2257,8 @@ and scan_script_dep_stmt (names : string list) (s : Ast.stmt) : bool =
   | Ast.Send { target; message } ->
       scan_script_dep names target || scan_script_dep names message
 
-and scan_script_dep_branches (names : string list)
-    (bs : Ast.branch list) : bool =
+and scan_script_dep_branches (names : string list) (bs : Ast.branch list) : bool
+    =
   List.exists
     (fun b ->
       let guarded =
@@ -2262,13 +2286,13 @@ let script_binding (ctx : ctx) (name : string) (info : var_info) : bool =
 let refuse_script_binding ctx span name =
   report ctx span "E5016"
     (Printf.sprintf
-       "`%s` is a top-level binding of the entry script; a def cannot \
-        reach it — the script's statement scope is not visible to a \
-        def's body"
+       "`%s` is a top-level binding of the entry script; a def cannot reach it \
+        — the script's statement scope is not visible to a def's body"
        name)
-    ~hint:"pass the value as an argument, or bind it inside the def; a \
-           top-level const whose initializer reads another script binding \
-           (or a `do`) cannot become the module const a def could call"
+    ~hint:
+      "pass the value as an argument, or bind it inside the def; a top-level \
+       const whose initializer reads another script binding (or a `do`) cannot \
+       become the module const a def could call"
 
 let rec check_expr ctx env (e : Ast.expr) : t =
   let span = e.Ast.span in
@@ -4736,7 +4760,7 @@ let check_items ctx (items : Ast.item list) : unit =
                     name);
              ctx.requires := (name, item.Ast.item_span) :: !(ctx.requires);
              env
-         | Ast.Item_stmt s -> (
+         | Ast.Item_stmt s ->
              let env = check_stmt ctx env s in
              (match s.Ast.stmt_desc with
              | Ast.Binding { mutable_; pattern; init; _ } when script_module
@@ -4753,7 +4777,7 @@ let check_items ctx (items : Ast.item list) : unit =
                        (fun (n, sp) -> script_bind n sp)
                        (pattern_bound pattern))
              | _ -> ());
-             env)
+             env
          | Ast.Item_def d ->
              (* the compile-time window opens for a macro's own body *)
              let was = !(ctx.macro_ok) in
@@ -5223,8 +5247,8 @@ let check_module ~(modules : string list list)
     ?(packages : string list list = [])
     ?(package_deps : (string list * string list) list = [])
     ?(aliases : (string list * string list) list = []) ~(current : string list)
-    ?(program : program_types option)
-    ?(entry : string list option = None) (items : Ast.item list) :
+    ?(program : program_types option) ?(entry : string list option = None)
+    (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list =

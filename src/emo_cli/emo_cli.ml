@@ -2059,6 +2059,14 @@ let wasm_run =
             "Arguments the module reads through WASI's args_get (argv[0] is \
              the artifact's name).")
   in
+  let dirs =
+    Arg.(
+      value & opt_all string []
+      & info [ "dir" ] ~docv:"HOST[::GUEST]"
+          ~doc:
+            "Grant a directory through WASI's preopens (repeatable; the guest \
+             name defaults to \"/\"). No grant, no file system.")
+  in
   (* proc_exit is the module's own exit decision: its code becomes the
      command's, silently — the code speaks. *)
   let proc_exit_code why =
@@ -2090,7 +2098,7 @@ let wasm_run =
             then None
             else Some (int_of_string digits))
   in
-  let run artifact extra =
+  let run artifact dirs extra =
     let abs_artifact =
       if Filename.is_relative artifact then
         Filename.concat (Sys.getcwd ()) artifact
@@ -2138,7 +2146,7 @@ let wasm_run =
             in
             (before, Some (int_of_string digits))
     in
-    match Emo_project.run_wasm_cli ~artifact:abs_artifact ~args:extra with
+    match Emo_project.run_wasm_cli ~artifact:abs_artifact ~args:extra ~dirs with
     | Ok body -> (
         let body, code = split_exit body in
         print_string body;
@@ -2158,7 +2166,7 @@ let wasm_run =
   Cmd.v
     (Cmd.info "run"
        ~doc:"Run a WebAssembly artifact with the Emo-written runtime.")
-    Term.(const run $ artifact $ extra)
+    Term.(const run $ artifact $ dirs $ extra)
 
 let wasm =
   Cmd.group

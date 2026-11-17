@@ -1816,11 +1816,8 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
       let rec live_uniq acc = function
         | [] -> List.rev acc
         | name :: tl ->
-            if
-              List.mem name acc
-              || temp_key name
-              || List.mem name tl
-            then live_uniq acc tl
+            if List.mem name acc || temp_key name || List.mem name tl then
+              live_uniq acc tl
             else live_uniq (name :: acc) tl
       in
       let live = live_uniq [] (List.map fst env.local_map) in
@@ -1993,9 +1990,7 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     | [] -> List.rev acc
     | name :: tl ->
         if
-          List.mem name acc
-          || temp_key name
-          || List.mem name frees
+          List.mem name acc || temp_key name || List.mem name frees
           || match header with Some h -> name = h | None -> false
         then live_uniq acc tl
         else live_uniq (name :: acc) tl
