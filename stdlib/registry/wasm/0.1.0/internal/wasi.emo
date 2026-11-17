@@ -1,10 +1,12 @@
 require "rand"
+require "time"
 
 // The wasi_snapshot_preview1 host (step 77): the twelve preview1
 // functions a real toolchain's module touches to start, print, seed
-// its hashes, and exit. Everything else in the namespace link-refuses
-// with the function's name — no silent stubs, no fakes. The errno
-// values are the preview1 numbering; the fixture pins them.
+// its hashes, read the clock, and exit. Everything else in the
+// namespace link-refuses with the function's name — no silent stubs,
+// no fakes. The errno values are the preview1 numbering; the fixture
+// pins them.
 //
 // `dispatch` runs inside execution, where the caller instance's
 // linear memory is live: it takes memory 0 and the instance's argv as
@@ -188,7 +190,7 @@ def dispatch(id Int64, args Array[(Int64, Int64)], mem (Box[Bytes], Int64, Bool)
     return (random_get(mem, args), "")
   }
   if id == f_clock_time_get {
-    return (e_nosys, "")
+    return (clock_time_get(mem, args), "")
   }
   return (e_nosys, "")
 }
@@ -365,4 +367,28 @@ def random_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 
       return e_success
     }
   }
+}
+
+// The clock: realtime is the wall door's epoch milliseconds scaled to
+// nanoseconds — the door's own resolution, the last six digits zero,
+// which the precision parameter exists to name — and monotonic is the
+// nanosecond reading as it stands. An unknown clock id (the cpu clocks
+// among them — the doors carry no process time) is the guest's
+// mistake and answers EINVAL, like a result pointer out of bounds.
+def clock_time_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const clock = internal.value.sign32(args[0][1])
+  if clock != 0 && clock != 1 {
+    return e_inval
+  }
+  var nanos = 0
+  if clock == 0 {
+    nanos = time.now().unix_ms() * 1000000
+  }
+  if clock == 1 {
+    nanos = time.mono()
+  }
+  if !store_u64(mem, args[2][1], nanos)[0] {
+    return e_inval
+  }
+  return e_success
 }

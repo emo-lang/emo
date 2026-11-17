@@ -189,7 +189,7 @@ link-refuses with the function's name — no silent stubs:
 | `fd_close`, `fd_seek` | no-op success / ESPIPE on 1 and 2, EBADF elsewhere |
 | `fd_fdstat_get` | fd 1/2 answer character device with full rights (what wasi-libc's tty check reads at startup) |
 | `random_get` | OS entropy through the `rand` package (Rust's `RandomState` seeds through it even in a hello world) |
-| `clock_time_get` | ENOSYS — the fixture pins the refusal; the `time` package carries its own clock imports |
+| `clock_time_get` | realtime answers epoch nanoseconds — the wall door's millisecond resolution, the last six digits zero — and monotonic the nanosecond reading as it stands; an unknown clock id (the cpu clocks among them) and a result pointer out of bounds answer EINVAL |
 | `sched_yield` | success |
 
 Resolution order: the explicit host table first (a caller may override
