@@ -501,7 +501,7 @@ let units_of (p : project) : (string list * Ast.item list) list =
        (fun file path acc -> (path, parse_cached p file) :: acc)
        shortest [])
 
-let check_project (p : project) :
+let check_project ?(entry : string list option = None) (p : project) :
     string list list
     * (string list * string list list * (string * Emo_support.Span.t) list) list
     * Emo_check.program_types
@@ -526,7 +526,7 @@ let check_project (p : project) :
         let diagnostics, refs, requires =
           Emo_check.check_module ~modules:module_paths ~packages:p.packages
             ~package_deps:p.package_deps ~aliases:p.aliases ~current:path
-            ~program items
+            ~program ~entry items
         in
         Hashtbl.replace graph path refs;
         Hashtbl.replace requires_table path requires;
@@ -1830,7 +1830,7 @@ let compile_inputs ~entry_file ~target ~profile :
         let diags, _refs, _requires, types =
           Emo_check.check_module_typed ~modules:module_paths
             ~packages:p.packages ~package_deps:p.package_deps ~aliases:p.aliases
-            ~current:path ~program ~target items
+            ~current:path ~program ~target ~entry:(Some entry) items
         in
         diagnostics := !diagnostics @ diags;
         { Emo_ir.mpath = path; mitems = items; mtypes = types } :: acc)
@@ -1843,9 +1843,9 @@ let compile_inputs ~entry_file ~target ~profile :
    dependency side, without evaluating. *)
 let check_entry ~entry_file : Emo_support.Diagnostic.t list =
   let p, (manifest, dir) = prepare () in
-  ignore (entry_module_in_project p entry_file);
+  let entry = entry_module_in_project p entry_file in
   ignore (load_deps ~manifest ~manifest_dir:dir ~target:"c" p);
-  let _paths, _graph, _program, errors = check_project p in
+  let _paths, _graph, _program, errors = check_project ~entry:(Some entry) p in
   diagnostics p @ errors
 
 (* How the entry's evaluation is scheduled. [`Sequential] runs under the
@@ -1870,7 +1870,7 @@ let run_entry ~entry_file ?(check = false) ?(sched = Sequential)
   in
   let items = parse_cached p entry_file in
   (if check then
-     let _paths, _graph, _program, errors = check_project p in
+     let _paths, _graph, _program, errors = check_project ~entry:(Some entry) p in
      match errors with [] -> () | ds -> raise (Static_errors ds));
   let env = Emo_eval.global_env () in
   (* Host-injected bindings: the CLI's internal tooling (publish's uploader)

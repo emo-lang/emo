@@ -75,6 +75,25 @@ let beam_temps =
     "case";
   ]
 
+(* Whether a local-map key names a temp in any of its forms. The usual
+   key is the pre-sanitize name fresh_var pushes (`__inst_recv`), which
+   the exact list above answers. A run-time dispatch binds its already-
+   fresh name as the key instead — the arm resolves through that key —
+   and that key is the fresh form: an underscore over the sanitized temp
+   plus the fresh number. It must never thread any more than the temp
+   itself would. *)
+let temp_key (name : string) : bool =
+  List.mem name beam_temps
+  || List.exists
+       (fun t ->
+         let s = "_" ^ Emo_ir.sanitize_ident t in
+         String.starts_with ~prefix:s name
+         && String.for_all
+              (fun c -> c >= '0' && c <= '9')
+              (String.sub name (String.length s)
+                 (String.length name - String.length s)))
+       beam_temps
+
 let fresh_var env name =
   env.fresh <- env.fresh + 1;
   let v = Printf.sprintf "_%s%d" (Emo_ir.sanitize_ident name) env.fresh in
@@ -1797,7 +1816,10 @@ and emit_loop_body env ~(tail : bool) ~(leaf : unit -> unit)
       let rec live_uniq acc = function
         | [] -> List.rev acc
         | name :: tl ->
-            if List.mem name acc || List.mem name beam_temps || List.mem name tl
+            if
+              List.mem name acc
+              || temp_key name
+              || List.mem name tl
             then live_uniq acc tl
             else live_uniq (name :: acc) tl
       in
@@ -1971,7 +1993,9 @@ and emit_loop env ~(tail : bool) ~(leaf : unit -> unit) (loop : Emo_ir.stmt)
     | [] -> List.rev acc
     | name :: tl ->
         if
-          List.mem name acc || List.mem name beam_temps || List.mem name frees
+          List.mem name acc
+          || temp_key name
+          || List.mem name frees
           || match header with Some h -> name = h | None -> false
         then live_uniq acc tl
         else live_uniq (name :: acc) tl

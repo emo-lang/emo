@@ -153,6 +153,24 @@ type ctx = {
          def` per target (CHECK.md) — `c` honors Int64 directly on
          the C ABI, the OCaml-emitting backend marshals
          Float64/String/Bool through generated stubs *)
+  entry : string list option;
+      (* the program's entry module path, when the caller knows it: the
+         script-only bindings refuse only there *)
+  script_only : (string * Emo_support.Span.t) list ref;
+      (* the entry module's plain top-level bindings as (name, span): a
+         `var`, a const whose initializer reads another script binding or
+         a `do`, and every destructured pattern's names. None of them
+         becomes a thunk or a module cell — the lowering keeps each a
+         statement-scope local of the entry body — so a def cannot read
+         one; the interpreter's dynamic scope is the only lens that could,
+         and every compiled target answers with a build or runtime
+         failure of its own (E5016 refuses at the read instead). *)
+  in_def : bool ref;
+      (* true while a def, class member, or group member body is being
+         checked: the only place reading a script-only binding is the
+         mistake. A closure written in the script's own statements still
+         captures them — it runs in the entry's frame — so the flag stays
+         false there. *)
 }
 
 let report ?hint ctx span code message =
@@ -839,6 +857,9 @@ let analyze ~file ~(source : string) : ctx * Ast.item list =
       macro_ok = ref false;
       macro_names = Hashtbl.create 4;
       target = "c";
+      entry = None;
+      script_only = ref [];
+      in_def = ref false;
     }
   in
   seed_r_enum ctx.enums;
@@ -2131,6 +2152,124 @@ let rec pattern_bound_names (p : Ast.pattern) : string list =
   | Ast.Tuple_pattern ps -> List.concat_map pattern_bound_names ps
   | Ast.Enum_member _ | Ast.Pattern_literal _ | Ast.Wildcard -> []
 
+(* The same walk, with each name's own span: the script-only table keys a
+   binding by the span the environment carries it under, so a def-local
+   of the same name (its own span) never answers for the script's. *)
+let rec pattern_bound (p : Ast.pattern) : (string * Emo_support.Span.t) list =
+  match p.Ast.pattern_desc with
+  | Ast.Pattern_binding n -> [ (n, p.Ast.pattern_span) ]
+  | Ast.Tuple_pattern ps -> List.concat_map pattern_bound ps
+  | Ast.Enum_member _ | Ast.Pattern_literal _ | Ast.Wildcard -> []
+
+(* Whether an expression mentions any of [names] or contains a `do`: the
+   two shapes that keep an entry-script const off the thunk path (the
+   lowering's own dependency scan), so the binding stays a
+   statement-scope local of the entry body — a thunk is a function of its
+   own and could see neither. *)
+let rec scan_script_dep (names : string list) (e : Ast.expr) : bool =
+  match e.Ast.desc with
+  | Ast.Ident n | Ast.Type_ident n -> List.mem n names
+  | Ast.Int64 _ | Ast.Byte _ | Ast.Float _ | Ast.Char _ | Ast.Bool _
+  | Ast.String _ | Ast.Self ->
+      false
+  | Ast.Interpolated parts ->
+      List.exists
+        (function
+          | Ast.Literal_text _ -> false
+          | Ast.Part_expr x -> scan_script_dep names x)
+        parts
+  | Ast.Member (inner, _) -> scan_script_dep names inner
+  | Ast.Index (a, b) -> scan_script_dep names a || scan_script_dep names b
+  | Ast.Call (f, args) ->
+      scan_script_dep names f
+      || List.exists
+           (fun (a : Ast.arg) -> scan_script_dep names a.Ast.arg_value)
+           args
+  | Ast.Arrow_block (_, body) -> scan_script_dep_stmts names body
+  | Ast.Tuple es | Ast.Array_literal es ->
+      List.exists (scan_script_dep names) es
+  | Ast.Map_literal pairs ->
+      List.exists
+        (fun (k, v) -> scan_script_dep names k || scan_script_dep names v)
+        pairs
+  | Ast.Unary (_, x) -> scan_script_dep names x
+  | Ast.Do _ -> true
+  | Ast.Binary (_, l, r) -> scan_script_dep names l || scan_script_dep names r
+  | Ast.If_expr { cond; then_expr; else_expr } ->
+      scan_script_dep names cond
+      || scan_script_dep names then_expr
+      || scan_script_dep names else_expr
+  | Ast.Quote _ -> false
+
+and scan_script_dep_stmts (names : string list) (ss : Ast.stmt list) : bool =
+  List.exists (scan_script_dep_stmt names) ss
+
+and scan_script_dep_stmt (names : string list) (s : Ast.stmt) : bool =
+  match s.Ast.stmt_desc with
+  | Ast.Expr_stmt e -> scan_script_dep names e
+  | Ast.Binding { init; _ } -> scan_script_dep names init
+  | Ast.Assign { target; value } ->
+      scan_script_dep names target || scan_script_dep names value
+  | Ast.Return (Some e) -> scan_script_dep names e
+  | Ast.Return None | Ast.Break | Ast.Continue -> false
+  | Ast.Raise e -> scan_script_dep names e
+  | Ast.If { cond; then_body; else_body } ->
+      scan_script_dep names cond
+      || scan_script_dep_stmts names then_body
+      ||
+      (match else_body with
+      | None -> false
+      | Some b -> scan_script_dep_stmts names b)
+  | Ast.While { cond; body } ->
+      scan_script_dep names cond || scan_script_dep_stmts names body
+  | Ast.For { init; cond; post; body } ->
+      scan_script_dep_stmt names init
+      || scan_script_dep names cond
+      || scan_script_dep_stmt names post
+      || scan_script_dep_stmts names body
+  | Ast.Case { scrutinee; branches } ->
+      scan_script_dep names scrutinee || scan_script_dep_branches names branches
+  | Ast.Receive branches -> scan_script_dep_branches names branches
+  | Ast.Send { target; message } ->
+      scan_script_dep names target || scan_script_dep names message
+
+and scan_script_dep_branches (names : string list)
+    (bs : Ast.branch list) : bool =
+  List.exists
+    (fun b ->
+      let guarded =
+        match b.Ast.guard with
+        | None -> false
+        | Some g -> scan_script_dep names g
+      in
+      guarded || scan_script_dep_stmts names b.Ast.body)
+    bs
+
+(* The E5016 test: the name resolved to an entry-script binding no def
+   can reach. The table keys each binding by the very span the
+   environment carries it under, so a def-local of the same name (its
+   own span) never answers for the script's. *)
+let script_binding (ctx : ctx) (name : string) (info : var_info) : bool =
+  !(ctx.in_def)
+  && List.exists
+       (fun (n, s) ->
+         String.equal n name
+         && String.equal s.Emo_support.Span.file info.span.Emo_support.Span.file
+         && s.Emo_support.Span.start = info.span.Emo_support.Span.start
+         && s.Emo_support.Span.stop = info.span.Emo_support.Span.stop)
+       !(ctx.script_only)
+
+let refuse_script_binding ctx span name =
+  report ctx span "E5016"
+    (Printf.sprintf
+       "`%s` is a top-level binding of the entry script; a def cannot \
+        reach it — the script's statement scope is not visible to a \
+        def's body"
+       name)
+    ~hint:"pass the value as an argument, or bind it inside the def; a \
+           top-level const whose initializer reads another script binding \
+           (or a `do`) cannot become the module const a def could call"
+
 let rec check_expr ctx env (e : Ast.expr) : t =
   let span = e.Ast.span in
   let result = check_expr_desc ctx env span e.Ast.desc in
@@ -2167,6 +2306,8 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             report ctx span "E4301"
               "`Syntax` is a compile-time namespace — it is named only inside \
                a `// #macro` def";
+          if script_binding ctx name info then
+            refuse_script_binding ctx span name;
           info.vtype
       | None -> (
           match normalize_module ctx [ name ] with
@@ -3854,6 +3995,9 @@ and check_stmt ctx env (s : Ast.stmt) : env =
       match target.Ast.desc with
       | Ast.Ident name -> (
           match lookup_env env name with
+          | Some info when script_binding ctx name info ->
+              refuse_script_binding ctx span name;
+              env
           | Some info when info.is_var ->
               if not (conforms ctx vt info.vtype) then
                 report ctx span "E4004"
@@ -4511,6 +4655,32 @@ let check_directive_args ctx (item : Ast.item) : unit =
     item.Ast.directives
 
 let check_items ctx (items : Ast.item list) : unit =
+  (* The entry script's plain bindings: names a def cannot reach (E5016).
+     The lowering keeps each one a statement-scope local of the entry body
+     — a `var`, a const whose initializer reads a destructured name or a
+     `do` (the lowering's own thunk-unsafe rule), and a destructuring's
+     names. The scan mirrors it: the destructured names first, every
+     item's, because the const rule answers membership regardless of the
+     order the file declares them in. *)
+  let script_module =
+    match ctx.entry with Some e -> e = ctx.current | None -> false
+  in
+  let script_destructured =
+    if not script_module then []
+    else
+      List.concat_map
+        (fun item ->
+          match item.Ast.item_desc with
+          | Ast.Item_stmt { stmt_desc = Ast.Binding { pattern; _ }; _ } -> (
+              match pattern.Ast.pattern_desc with
+              | Ast.Pattern_binding _ -> []
+              | _ -> pattern_bound_names pattern)
+          | _ -> [])
+        items
+  in
+  let script_bind name span =
+    ctx.script_only := (name, span) :: !(ctx.script_only)
+  in
   (* Every def's signature binds before any body is checked: closures
      resolve names at call time, so a forward reference works at runtime
      and the checker admits it too. *)
@@ -4566,7 +4736,24 @@ let check_items ctx (items : Ast.item list) : unit =
                     name);
              ctx.requires := (name, item.Ast.item_span) :: !(ctx.requires);
              env
-         | Ast.Item_stmt s -> check_stmt ctx env s
+         | Ast.Item_stmt s -> (
+             let env = check_stmt ctx env s in
+             (match s.Ast.stmt_desc with
+             | Ast.Binding { mutable_; pattern; init; _ } when script_module
+               -> (
+                 match pattern.Ast.pattern_desc with
+                 | Ast.Pattern_binding name ->
+                     if mutable_ || scan_script_dep script_destructured init
+                     then script_bind name s.Ast.stmt_span
+                 | _ ->
+                     (* A destructured binding stays a statement-scope
+                        local whatever its initializer reads; every name
+                        it introduces is script-only. *)
+                     List.iter
+                       (fun (n, sp) -> script_bind n sp)
+                       (pattern_bound pattern))
+             | _ -> ());
+             env)
          | Ast.Item_def d ->
              (* the compile-time window opens for a macro's own body *)
              let was = !(ctx.macro_ok) in
@@ -4574,11 +4761,15 @@ let check_items ctx (items : Ast.item list) : unit =
                List.exists
                  (fun d -> d.Ast.directive_desc = Ast.Role_macro)
                  item.Ast.directives;
+             ctx.in_def := true;
              check_fun_def ctx env d;
+             ctx.in_def := false;
              ctx.macro_ok := was;
              env
          | Ast.Item_class c ->
+             ctx.in_def := true;
              check_class ctx env c;
+             ctx.in_def := false;
              env
          | Ast.Item_emo_group g ->
              (* register the members, then check the bodies with the
@@ -4610,6 +4801,10 @@ let check_items ctx (items : Ast.item list) : unit =
                      })
                  env defs
              in
+             (* The members lower as thunks and separate functions of
+                their own, so a group const's initializer is as blind to
+                the script's statement scope as a member body is. *)
+             ctx.in_def := true;
              let consts, env =
                List.fold_left
                  (fun (acc, env) (_, cname, cexpr) ->
@@ -4627,7 +4822,9 @@ let check_items ctx (items : Ast.item list) : unit =
                  ([], env) g.Ast.group_consts
              in
              let consts = List.rev consts in
+             ctx.in_def := true;
              List.iter (fun d -> check_fun_def ctx env d) g.Ast.group_defs;
+             ctx.in_def := false;
              Hashtbl.replace ctx.groups g.Ast.group_name (defs, consts);
              env
          | _ -> env)
@@ -4702,6 +4899,9 @@ let preregister_ctx tables diagnostics ~current ~modules ~packages ~package_deps
     macro_ok = ref false;
     macro_names = Hashtbl.create 4;
     target = "c";
+    entry = None;
+    script_only = ref [];
+    in_def = ref false;
   }
 
 (* Collects every unit's classes, interfaces, and enums into one table
@@ -4952,7 +5152,8 @@ let check_module_typed ~(modules : string list list)
     ?(packages : string list list = [])
     ?(package_deps : (string list * string list) list = [])
     ?(aliases : (string list * string list) list = []) ~(current : string list)
-    ?(program : program_types option) ?(target = "c") (items : Ast.item list) :
+    ?(program : program_types option) ?(target = "c")
+    ?(entry : string list option = None) (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list
@@ -5004,6 +5205,9 @@ let check_module_typed ~(modules : string list list)
       macro_ok = ref false;
       macro_names = Hashtbl.create 4;
       target;
+      entry;
+      script_only = ref [];
+      in_def = ref false;
     }
   in
   seed_r_enum ctx.enums;
@@ -5019,13 +5223,14 @@ let check_module ~(modules : string list list)
     ?(packages : string list list = [])
     ?(package_deps : (string list * string list) list = [])
     ?(aliases : (string list * string list) list = []) ~(current : string list)
-    ?(program : program_types option) (items : Ast.item list) :
+    ?(program : program_types option)
+    ?(entry : string list option = None) (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list =
   let diagnostics, refs, requires, _types =
     check_module_typed ~modules ~packages ~package_deps ~aliases ~current
-      ?program items
+      ?program ~entry items
   in
   (diagnostics, refs, requires)
 
