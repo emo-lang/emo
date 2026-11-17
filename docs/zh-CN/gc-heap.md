@@ -1,26 +1,30 @@
-# GC 堆 —— `struct`、`array`、`ref`,与用 Emo 写的收集器
+# GC 堆 —— arena、对象模型,与用 Emo 写的收集器
 
 ## 决策
 
-GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨道:一个用 Emo 写的垃圾收集器,如同 wasm 运行时那样。解释器运行(`emo run`)是第一个宿主。它把机器的对象模型——定长 **struct** 块、带计数的 **array** 块、被追踪的 **ref**——作为裸名门加入语言,`gc` 包在门上用纯 Emo 实现 mark-sweep。一份源码服务每一个应答相同门的宿主;解释器模拟的堆就是 spec,内存真实的 target 用真实的词实现同样的门。
+GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨道:一个用 Emo 写的垃圾收集器,如同 wasm 运行时那样。解释器运行(`emo run`)是第一个宿主。Step 90 把机器的最后一块拼图放进了位:堆是**一个 arena** 的词,分配器——`gc` 包自己的自由表——通过 `heap_carve`/`heap_release` 刻块与释放,词走裸 `heap_load`/`heap_store` 通道。arena 之上的对象模型——定长 **struct** 块、带计数的 **array** 块、被追踪的 **ref**、mark-sweep、带切分与合并的自由表——全是 Emo 代码。一份源码服务每一个应答相同门的宿主;解释器模拟的 arena 就是 spec,内存真实的 target 在被授予的区域上实现同样的门(plan/step-90-gc-ladder.md 记录阶梯:分配器、载荷装箱、压缩收集、真实内存宿主)。
 
 本轨道不翻 T23.5 的案。宿主运行时的回收模型——identity 对象引用计数、值语义走 arena——原样成立;本轨道是自带托管堆的库,不改任何运行时的值模型。它先回答的是回收模型答不了的诉求:一个能走环的收集器(引用计数永远收不回环),以及 freestanding target 缺的那块拼图——`runtime-and-freestanding.md` 把「分配器、垃圾收集器」列为运行时自己的工作,金属上没有宿主可借。
 
 ## 对象模型
 
-- **一个词靠奇偶自描述。** 偶数词是标量,左移一位存储;奇数词是引用,即分配时块应答的句柄;`0` 是 null,可入引用槽。这个打标就是堆的全部类型纪律:收集器能走一个它没有类型过的堆,而同一条位规则正是 riscv64 动态值模型的规则——spec 可平移。
-- **块只有两种。** `struct`(kind 1)定长,`array`(kind 2)自带词数。id 从 1 起;句柄词是 `(id << 1) | 1`。
-- **槽 0 是收集器的头词。** 数据在槽 `1..n`;`block_size` 答逻辑尺寸 `n`,物理槽位是 `0..n`。头词里的标记位是收集器的私有状态——真实宿主会携带物理头词,解释器的块表是同一契约的实现。
-- **门是裸槽语义。** 访问器不平移、边界不宽恕:槽索引就是物理槽,越界响亮报错。
+- **一个 arena。** `heap_new(words)` 造它,每轮运行一次;真实宿主改为授予一个区域。分配器工作的一切地址都是 arena 内的词偏移。
+- **一个词靠奇偶自描述。** 偶数词是标量,左移一位存储;奇数词是引用,即刻块时应答的句柄;`0` 是 null,可入引用槽。这个打标就是堆的全部类型纪律:收集器能走一个它没有类型过的堆,而同一条位规则正是 riscv64 动态值模型的规则——spec 可平移。
+- **句柄携带地址与代数:`(gen << 42) | (offset << 1) | 1`。** 代数随偏移的每次绑定增长,所以释放前铸的句柄在同一批词的下一次绑定处响亮死去——陈旧句柄的结局穿过 arena 依然成立,无需墓碑。
+- **槽 0 是头词。** 它打包 magic(位 63:48)、kind(47:46——1 struct,2 array)、代数(45:24)、收集器的标记位(23)、逻辑尺寸(22:0,至多 2^23 词)。数据在槽 1..n;`gc` 包的访问器做了平移,调用者的字段索引从 0 起。
+- **门按职责分。** 宿主持有 arena、偏移到块的绑定、以及带检查的字段访问(`struct_get` 等验证 kind、代数与边界)。分配器的裸通道——`heap_load`/`heap_store`,arena 内不检查——是自由表和标记位工作的通道;变异者永不碰它,与「槽 0 归收集器」同一条纪律。
 
 ## 门
 
 | 门 | 签名 | 作用 |
 | --- | --- | --- |
-| `struct_new(n)` | `Int64 → Int64` | 分配 n 字段 struct,应答句柄 |
-| `array_new(n)` | `Int64 → Int64` | 分配 n 词 array,应答句柄 |
-| `struct_get(b, i)` | `Int64 → Int64 → Int64` | 读槽 i(0 头词,1..n 数据) |
-| `struct_set(b, i, w)` | `Int64 → Int64 → Int64 → Void` | 写槽 i |
+| `heap_new(words)` | `Int64 → Int64` | 造 arena,每轮一次;应答词数 |
+| `heap_load(addr)` | `Int64 → Int64` | 读一个 arena 词——分配器的裸通道 |
+| `heap_store(addr, w)` | `Int64 → Int64 → Void` | 写一个 arena 词 |
+| `heap_carve(addr, n, kind)` | `Int64 → Int64 → Int64 → Int64` | 把一段范围绑成块(写头词),应答句柄 |
+| `heap_release(h)` | `Int64 → Void` | 解绑一块,清零其头词 |
+| `struct_get(b, i)` | `Int64 → Int64 → Int64` | 读槽 i(0 头词,1..n 数据),带检查 |
+| `struct_set(b, i, w)` | `Int64 → Int64 → Int64 → Void` | 写槽 i,带检查 |
 | `array_len(a)` | `Int64 → Int64` | 答逻辑词数 |
 | `array_get(a, i)` / `array_set(a, i, w)` | — | array 的槽,同规则 |
 | `block_kind(h)` | `Int64 → Int64` | 1 struct,2 array |
@@ -29,9 +33,10 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 | `ref_read(r)` | `Ref → Int64` | 读根的词 |
 | `ref_write(r, w)` | `Ref → Int64 → Void` | 重指根 |
 | `ref_roots()` | `→ Array[Int64]` | 活根的词,一次 major 周期之后 |
-| `heap_blocks()` | `→ Array[Int64]` | 每个活块的句柄,按 id 序 |
-| `heap_free(h)` | `Int64 → Void` | 释放一个块(sweep 的唯一出口) |
-| `heap_words()` | `→ Int64` | 活块的物理词总数 |
+| `heap_blocks()` | `→ Array[Int64]` | 每个绑定块的句柄,按地址序 |
+| `heap_words()` | `→ Int64` | 绑定块的物理词总数 |
+
+`struct_new`/`array_new` 在 step 90 退休:分配是分配器的事——包的 `take` 在自己的自由区间上跑首适配、调 `heap_carve`——而绕开自由表铸块的门是个策略漏洞。`heap_free` 随之退休:sweep 经 `heap_release` 释放、把区间亲手还给几何。
 
 ## 根
 
@@ -46,6 +51,10 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 `collect()` 是 mark-sweep:从根出发沿奇数词标记,头词的位切环;排空工作栈直到游标追上 builder 的长度(行走深入到图的尽头,不只在根旁一步);sweep `heap_blocks()`,释放未标的、清掉已标的。它应答本次 sweep 收回的词数。
 
 指向已释放块的根在门口响亮死去——E3050——和每扇门给陈旧句柄的结局一样。
+
+## 分配器(Emo,不是宿主)
+
+自由几何是 `gc` 包自己的数据:两张 Map,`by_start`(start → size)与 `by_end`(end → start)。分配是首适配——take 切开选中的区间、留下余量——释放则与两张 Map 点名的邻居合并,无需扫描。arena 有限(`heap_new` 说出存在多少词),没有区间能应答的分配就是响亮的结局:`gc: the arena has no free range for the request`。`gc.arena(words)` 开启一轮运行,`gc.free_words()` 读几何,`gc.addr_of(h)` 解码句柄的偏移——demo 印出的复用是分配器的地址回答,不是一个计数。
 
 ## per-target 矩阵
 
@@ -62,16 +71,19 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 
 | 代码 | 含义 |
 | --- | --- |
-| E3050 | 不是活块:偶数词、未知 id、陈旧(已释放)句柄 |
+| E3050 | 不是活块:偶数词、未绑定偏移、陈旧代数、未经 `heap_new` 的堆 |
 | E3051 | kind 错:struct 门落在 array 块上,或反之 |
-| E3052 | 槽越出块的 `0..n` |
-| E3053 | `heap_free` 重复释放 |
+| E3052 | 槽越出块的 `0..n`,或 arena 词越过 arena |
 | E3054 | 负数尺寸 |
-| E3055 | 块越过尺寸护栏(2^26 词) |
+| E3055 | 块或 arena 越过尺寸护栏(2^23 / 2^41 词) |
+| E3056 | `heap_carve` 与绑定块重叠 |
+| E3057 | `heap_new` 造第二个 arena |
 | E4032 | 检查期拒绝,每门一条,解释器之外 |
+
+E3053(重复释放)随 `heap_free` 在 step 90 退休——已释放的块即未绑定,第二次释放与一切陈旧句柄同为 E3050。
 
 ## 收口
 
-自举的证明:收集器是 Emo 代码,解释器是第一个宿主,`examples/gc_demo` 是验收——有根的链和被穿透标记的 array 活过杀死四千个无根节点的收集,环(引用计数永远收不回的形状)在根松手的瞬间死去。金测:demo 的九行在解释器运行上逐字节,checker 套件里的 `gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测。
+自举的证明,随阶梯成长:分配器与收集器都是 Emo 代码,解释器是它们的宿主,`examples/gc_demo` 是验收——有根的链和被穿透标记的 array 活过杀死四千个无根节点的收集,环(引用计数永远收不回的形状)在根松手的瞬间死去,而**第二代分配落进 sweep 还回来的词里**(word 18 与 word 12027——junk 区和环自己的地址空间),arena 从不增长。金测:demo 的十七行在解释器运行上逐字节,checker 套件里的 `gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测。
 
-本步只命名不建造的阶梯:Emo 侧的分配器自由表(门目前从解释器的表分配)、float 与 byte 载荷装箱、`Ref` 间接格已留好门的移动式/压缩收集器、以及真实内存宿主——c target 运行时、riscv64 tagged-word 堆——用真实的词应答同样的门,同样的 Emo 收集器编译进去。
+前方阶梯(plan/step-90-gc-ladder.md):float 与 byte 载荷装箱(T90.2)、偏移句柄已经让引用可重写的移动式/压缩收集器(T90.3)、以及真实内存宿主——c target 运行时、riscv64 tagged-word 堆——在被授予的区域上应答同样的门,同一份 Emo 分配器与收集器编译进去(T90.4)。

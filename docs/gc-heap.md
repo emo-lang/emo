@@ -1,16 +1,21 @@
-# The GC heap — `struct`, `array`, `ref`, and the collector in Emo
+# The GC heap — the arena, the object model, and the collector in Emo
 
 ## The decision
 
 The GC bootstrap (plan/step-89) opens the track the runtime-independence
 principle has been waiting for: a garbage collector written in Emo, the
-way the wasm runtime is. The interpreter run is the first host. It
-grows the machine's object model — the fixed **struct** block, the
-counted **array** block, and the rooted **ref** — as bare-name doors,
-and the `gc` package implements mark-sweep over them in pure Emo. One
-source serves every host that answers the same doors; the heap the
-interpreter simulates *is* the spec, and a target whose memory is real
-implements the same doors over real words.
+way the wasm runtime is. The interpreter run is the first host. Step 90
+moved the last piece of the machine into place: the heap is one **arena**
+of words, the allocator — the `gc` package's own free list — carves and
+releases blocks through `heap_carve`/`heap_release`, and the words move
+through the raw `heap_load`/`heap_store` lane. The object model above
+the arena — the fixed **struct** block, the counted **array** block,
+the rooted **ref**, mark-sweep, the free list with its split and
+coalesce — is Emo code. One source serves every host that answers the
+same doors; the arena the interpreter simulates *is* the spec, and a
+target whose memory is real implements the same doors over a granted
+region (plan/step-90-gc-ladder.md names the ladder: allocator, payload
+packing, the compacting collector, the real-memory hosts).
 
 This does not reopen T23.5. The hosted runtime's reclamation model —
 reference counting for identity objects, arena for value families —
@@ -24,31 +29,43 @@ borrow either from.
 
 ## The object model
 
+- **One arena.** `heap_new(words)` makes it, once per run; a real host
+  grants a region instead. Every address the allocator works in is a
+  word offset into that arena.
 - **A word is self-describing by parity.** An even word is a scalar,
-  stored shifted left one bit; an odd word is a reference, the handle a
-  block answers at allocation; `0` is null and rides reference slots.
+  stored shifted left one bit; an odd word is a reference, the handle
+  a block answers at carve; `0` is null and rides reference slots.
   The tag is the heap's entire typing discipline: a collector can walk
   a heap it did not type, and the same bit rule is the riscv64 dynamic
   value model's — the spec transfers.
-- **A block is one of two kinds.** `struct` (kind 1) is fixed length,
-  `array` (kind 2) carries its count. Ids grow from 1; a handle word is
-  `(id << 1) | 1`.
-- **Slot 0 is the collector's header.** The data sits in slots `1..n`;
-  `block_size` answers the logical size `n`, and the physical slot run
-  is `0..n`. The header's mark bit is the collector's private state —
-  a real host would carry a physical header word, the interpreter's
-  block table is its implementation of the same contract.
-- **The doors are raw.** No accessor shifts, no bounds forgiveness: a
-  slot index is a physical slot, checked loudly.
+- **A handle carries the address and the generation:**
+  `(gen << 42) | (offset << 1) | 1`. The generation grows with every
+  binding of an offset, so a handle minted before a release dies
+  loudly at the next binding of the same words — the stale-handle end
+  survives the arena, no tombstones needed.
+- **Slot 0 is the header word.** It packs the magic (bits 63:48), the
+  kind (47:46 — 1 struct, 2 array), the generation (45:24), the
+  collector's mark bit (23), and the logical size (22:0, at most 2^23
+  words). The data sits in slots 1..n; the accessors in the `gc`
+  package shift so caller field indices start at 0.
+- **The doors split by duty.** The host keeps the arena, the binding
+  of offsets to blocks, and the checked field access (`struct_get` and
+  friends validate kind, generation, and bounds). The allocator's raw
+  lane — `heap_load`/`heap_store`, unchecked inside the arena — is
+  what the free list and the mark bit work through; the mutator never
+  touches it, the same discipline that keeps slot 0 the collector's.
 
 ## The doors
 
 | Door | Signature | What it does |
 | --- | --- | --- |
-| `struct_new(n)` | `Int64 → Int64` | allocates an `n`-field struct, answers the handle |
-| `array_new(n)` | `Int64 → Int64` | allocates an `n`-word array, answers the handle |
-| `struct_get(b, i)` | `Int64 → Int64 → Int64` | reads slot `i` (0 header, 1..n data) |
-| `struct_set(b, i, w)` | `Int64 → Int64 → Int64 → Void` | writes slot `i` |
+| `heap_new(words)` | `Int64 → Int64` | makes the arena, once per run; answers its word count |
+| `heap_load(addr)` | `Int64 → Int64` | reads one arena word — the allocator's raw lane |
+| `heap_store(addr, w)` | `Int64 → Int64 → Void` | writes one arena word |
+| `heap_carve(addr, n, kind)` | `Int64 → Int64 → Int64 → Int64` | binds a range as a block (writes the header), answers the handle |
+| `heap_release(h)` | `Int64 → Void` | unbinds a block, zeroes its header |
+| `struct_get(b, i)` | `Int64 → Int64 → Int64` | reads slot `i` (0 header, 1..n data), checked |
+| `struct_set(b, i, w)` | `Int64 → Int64 → Int64 → Void` | writes slot `i`, checked |
 | `array_len(a)` | `Int64 → Int64` | answers the logical word count |
 | `array_get(a, i)` / `array_set(a, i, w)` | — | the array's slots, same rule |
 | `block_kind(h)` | `Int64 → Int64` | 1 struct, 2 array |
@@ -57,9 +74,15 @@ borrow either from.
 | `ref_read(r)` | `Ref → Int64` | reads the root's word |
 | `ref_write(r, w)` | `Ref → Int64 → Void` | re-points the root |
 | `ref_roots()` | `→ Array[Int64]` | the live roots' words, one major cycle later |
-| `heap_blocks()` | `→ Array[Int64]` | every live block's handle, id-ordered |
-| `heap_free(h)` | `Int64 → Void` | frees one block (the sweep's only way out) |
-| `heap_words()` | `→ Int64` | physical words over the live blocks |
+| `heap_blocks()` | `→ Array[Int64]` | every bound block's handle, address-ordered |
+| `heap_words()` | `→ Int64` | physical words over the bound blocks |
+
+`struct_new`/`array_new` retired at step 90: allocation is the
+allocator's — the package's `take` runs first fit over its own free
+ranges and calls `heap_carve` — and a door that minted blocks behind
+the free list's back was a policy hole. `heap_free` retired with them:
+the sweep releases through `heap_release` and hands the range back to
+the geometry itself.
 
 ## The roots
 
@@ -97,6 +120,19 @@ clearing the marked. It answers the words the sweep reclaimed.
 A root that reaches a freed block dies loudly at the door — E3050 —
 the same stale-handle end every door gives.
 
+## The allocator (Emo, not the host)
+
+The free geometry is the `gc` package's own data: two maps, `by_start`
+(start → size) and `by_end` (end → start). Allocation is first fit —
+the take splits the range it chooses and leaves the remainder — and a
+release merges with whichever neighbor the two maps name, no scan. The
+arena is finite (`heap_new` says how many words exist) and an
+allocation no range can answer is the loud end: `gc: the arena has no
+free range for the request`. `gc.arena(words)` starts the run,
+`gc.free_words()` reads the geometry, `gc.addr_of(h)` decodes a
+handle's offset — the reuse the demo prints is the allocator's
+address answer, not a count.
+
 ## The per-target matrix
 
 The admission principle is the raw-memory family's turned around: a
@@ -121,29 +157,37 @@ and are nobody's door to name.
 
 | Code | Reads |
 | --- | --- |
-| E3050 | not a live block: an even word, an unknown id, a stale (freed) handle |
+| E3050 | not a live block: an even word, an unbound offset, a stale generation, a heap no `heap_new` has made |
 | E3051 | the wrong kind: a struct door on an array block or the reverse |
-| E3052 | the slot is out of the block's `0..n` |
-| E3053 | `heap_free` frees a block twice |
+| E3052 | a slot out of the block's `0..n`, or an arena word past the arena |
 | E3054 | a negative size |
-| E3055 | a block past the size guard (2^26 words) |
+| E3055 | a block or arena past the size guards (2^23 / 2^41 words) |
+| E3056 | `heap_carve` overlapping a bound block |
+| E3057 | `heap_new` making a second arena |
 | E4032 | the check-time refusal, one per door, off the interpreter |
+
+E3053 (the double free) retired with `heap_free` at step 90 — a
+released block is unbound, and the second release is E3050 like any
+stale handle.
 
 ## What this closes
 
-The bootstrap proof: the collector is Emo code, the interpreter is its
-first host, and `examples/gc_demo` is the acceptance — a rooted chain
-and a traced array survive the collection that kills four thousand
-unrooted nodes, and the cycle (the shape reference counting can never
-reclaim) dies the moment its root lets go. The goldens: the demo's
-nine lines byte-for-byte on the interpreter run, `gc_heap_tests` in
-the checker suite, and the `gc_refusal` negative goldens naming every
-door on every refusing target.
+The bootstrap proof, grown by the ladder: the allocator and the
+collector are Emo code, the interpreter is their host, and
+`examples/gc_demo` is the acceptance — a rooted chain and a traced
+array survive the collection that kills four thousand unrooted nodes,
+the cycle (the shape reference counting can never reclaim) dies the
+moment its root lets go, and the second generation's allocations land
+*inside the words the sweep gave back* (word 18 and word 12027 — the
+junk field's and the cycle's own address space) with the arena never
+growing. The goldens: the demo's seventeen lines byte-for-byte on the
+interpreter run, `gc_heap_tests` in the checker suite, and the
+`gc_refusal` negative goldens naming every door on every refusing
+target.
 
-The ladder this step names but does not build: the allocator's free
-list in Emo (the doors currently allocate from the interpreter's
-table), float and byte payload packing, the moving or compacting
-collector the `Ref` indirection already leaves room for, and the
-real-memory hosts — a `c` target runtime, the riscv64 tagged-word
-heap — answering the same doors over real words with the same Emo
-collector compiled in.
+The ladder ahead (plan/step-90-gc-ladder.md): float and byte payload
+packing (T90.2), the moving/compacting collector the offset handles
+already make rewritable (T90.3), and the real-memory hosts — a `c`
+target runtime, the riscv64 tagged-word heap — answering the same
+doors over a granted region with the same Emo allocator and collector
+compiled in (T90.4).

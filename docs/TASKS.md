@@ -77,6 +77,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M48 — The WASI host's file half | 87 | `emo wasm run`'s preview1 host reads and writes files inside a granted directory: the preopen table is the grant (`wasm.set_wasi_preopens`, the CLI's `--dir HOST[::GUEST]`), empty by default — no grant, no file system — `fd_prestat_get`/`fd_prestat_dir_name` walk the discovery, `path_open` resolves lexically inside a preopen's root (a climb past it ENOTCAPABLE), and every open rides one os door — read, write (create + truncate, the stdio "w" shape), append — with `fd_read`/`fd_write`/`fd_seek`/`fd_close`/`fd_fdstat_get` grown to file fds. The foundation is the os package's own POSIX semantics, not a second file story, and the ring flushed three pre-existing drifts: the errno table's ENOSYS and ESPIPE were off by one against wasip1.h (51/69 → 52/70), fd_seek's import shape pinned its i64 offset as an i32 (a real module's import refused), and `fd_readdir` now names the fixture's link-refusal probe (`CHECK.md`). |
 | M49 — The file half's rung two | 88 | Directories list, paths stat, and the mutations land: the DIRECTORY oflag opens directories (a stat before the open answers ENOTDIR for a file), the fd table grew the host path and the grant root so every resolution stays confined, `fd_readdir` lists statelessly (the caller's cookie the position, entries whole-only, d_type UNKNOWN with `path_filestat_get` the type channel), `fd_filestat_get`/`path_filestat_get` stat through the new path-shaped `os_stat` door (millisecond times scaled to nanoseconds; stdio answering character device; an unlinked-open's stat answering the miss), and the four path mutations ride the os doors that already exist, the errno text channel grown to EEXIST/ENOTEMPTY/EXDEV/EPERM; the lookupflags' symlink-follow bit is required, and the fixture's link-refusal probe now names `fd_pread` (`CHECK.md`). |
 | M50 — The GC bootstrap | 89 | The machine object model the interpreter run hosts, and the collector in Emo over it: sixteen bare-name doors — the fixed `struct` block, the counted `array` block, the rooted `ref`, and the walk's doors (`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`) — admitted only by the interpreter run (checked as target `interpreter`; every build target refuses by name, E4032), words self-describing by parity (even a shifted scalar, odd a reference, `0` null), slot 0 of every block the collector's header; the `gc` package implements mark-sweep in pure Emo — tagged accessors, the worklist drain, cycles cut by the mark bit — answering the words reclaimed; the weak root registry makes the host collector the liveness oracle and roots the mutator discipline (a handle a collection must respect lives in a `ref`); the goldens: `examples/gc_demo`'s nine lines on the interpreter alone (a rooted chain and a traced array survive the kill of four thousand unrooted nodes; the cycle dies the moment its root drops — the shape reference counting can never reclaim), `gc_heap_tests`, and the `gc_refusal` negative goldens on every refusing target (`CHECK.md`, `docs/gc-heap.md`). |
+| M51 — The GC ladder | 90 | The heap grows its own allocator and its wings: step 90 lands the arena — `heap_new` makes it, the raw `heap_load`/`heap_store` lane moves words, `heap_carve`/`heap_release` bind and unbind ranges — and the `gc` package's free list (first fit over two maps, split and neighbor-merge) becomes the only allocator, `struct_new`/`array_new`/`heap_free` retiring with the doors' blessing; handles carry offset + generation so a stale handle dies loudly without tombstones; the header word packs magic/kind/generation/mark/size; the demo's second generation lands inside the sweep's own words, the arena never growing (`CHECK.md`). |
 
 ## Design gates
 
@@ -5181,3 +5182,34 @@ record, `docs/gc-heap.md` the design note.)
 - [x] **T89.5** — The docs: `docs/gc-heap.md` + zh-CN mirror,
       `docs/stdlib.md` + zh's `gc` row, this section + zh mirror,
       `plan/step-89-gc-bootstrap.md`, CHECK.md's decision record.
+
+## M51 — The GC ladder
+
+### Step 90 — The GC heap's ladder: the allocator, the payloads, the compaction, the hosts
+
+**Prereq:** step 89 (the bootstrap). **Done when:** the four rungs of
+`plan/step-90-gc-ladder.md` land one commit each — the arena and the
+Emo-owned allocator, the float and byte payload packing, the moving
+collector, and the real-memory hosts.
+
+- [x] **T90.1** — The arena and the allocator: `heap_new` (once per
+      run, at most 2^41 words), the raw `heap_load`/`heap_store` lane,
+      `heap_carve`/`heap_release` binding header offsets to blocks
+      with a generation per offset (the stale-handle end survives the
+      arena, no tombstones — E3053 retired, E3056/E3057 added); the
+      header word packs magic/kind/generation/mark/size at slot 0; the
+      `gc` package owns the free geometry — two maps (`by_start`,
+      `by_end`), first fit, split, and neighbor merge through
+      `gc.arena`/`take`/`ranges_free` — and `struct_new`/`array_new`/
+      `heap_free` retire: a door that minted blocks behind the free
+      list's back was a policy hole. The acceptance: the demo's
+      second generation lands inside the sweep's own words (word 18
+      and word 12027 — the junk field's and the cycle's address
+      space), seventeen lines byte-for-byte, the arena never growing;
+      the door tables and refusal goldens grow to eighteen names.
+- [ ] **T90.2** — The payloads: float and byte words packed beside the
+      scalars and the references.
+- [ ] **T90.3** — The moving collector: mark-compact, the references
+      rewritten, the arena's tail returned.
+- [ ] **T90.4** — The real-memory hosts: the same doors over a
+      granted region.

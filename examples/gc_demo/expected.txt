@@ -7,3 +7,11 @@ cycle collected: 0
 cycle survives: 22
 cycle freed: 6
 heap words at rest: 27
+free words: 65509
+second generation at words: 18 and 12027
+heap words second generation: 33
+free words after: 65503
+second generation reads: 77 and 88
+second generation collected: 6
+heap words at rest again: 27
+free words at rest: 65509

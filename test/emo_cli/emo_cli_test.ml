@@ -6993,16 +6993,23 @@ poke32(0)
    at the identifier. *)
 let gc_refusal_source =
   {|
-var h = struct_new(2)
-struct_set(h, 0, 1)
-println(struct_get(h, 0))
-println(array_len(array_new(3)))
+heap_new(1024)
+heap_store(0, 1)
+println(heap_load(0))
+var h = heap_carve(2, 1, 1)
+struct_set(h, 1, 2)
+println(struct_get(h, 1))
+const a = heap_carve(5, 3, 2)
+println(array_len(a))
+println(array_get(a, 1))
+array_set(a, 1, 2)
 println(block_kind(h))
-println(heap_words())
+println(block_size(a))
 println(ref_read(ref_new(1)))
 println(ref_roots().length())
 println(heap_blocks().length())
-heap_free(h)
+println(heap_words())
+heap_release(h)
 |}
 
 let gc_refusal_expected target =
@@ -7012,18 +7019,24 @@ let gc_refusal_expected target =
         "`%s` reaches the GC heap: only the interpreter run admits it, not `%s`"
         name target)
     [
-      "struct_new";
+      "heap_new";
+      "heap_store";
+      "heap_load";
+      "heap_carve";
       "struct_set";
       "struct_get";
+      "heap_carve";
       "array_len";
-      "array_new";
+      "array_get";
+      "array_set";
       "block_kind";
-      "heap_words";
+      "block_size";
       "ref_read";
       "ref_new";
       "ref_roots";
       "heap_blocks";
-      "heap_free";
+      "heap_words";
+      "heap_release";
     ]
 
 let gc_refusal_tests =

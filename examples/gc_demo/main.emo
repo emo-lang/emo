@@ -8,6 +8,12 @@ require "gc"
 // physical size is its logical size plus the header slot, and the
 // only roots are the refs the mutator holds.
 
+// The arena, once per run: 65536 words the allocator carves from.
+// A finite arena is the point — after the collections below, the
+// second generation's allocations can only come from the words the
+// sweep gave back.
+gc.arena(65536)
+
 // A list node: field 0 next (a handle or null), field 1 payload.
 def node(payload Int64) Int64 {
   const n = gc.s_new(2)
@@ -73,3 +79,23 @@ println("cycle survives: " + gc.s_get(gc.s_get_ref(ca, 0), 1).to_string())
 ref_write(croot, 0)
 println("cycle freed: " + gc.collect().to_string())
 println("heap words at rest: " + heap_words().to_string())
+
+// The reuse proof: the words the sweep gave back are the only words
+// left. Two fresh nodes carve from the freed geometry — first fit
+// takes the lowest range, the junk field's own address space — and a
+// final collection takes them back. The counts move, the arena does
+// not grow.
+println("free words: " + gc.free_words().to_string())
+const g1 = gc.s_new(2)
+gc.s_set(g1, 1, 77)
+const g2 = gc.s_new(2)
+gc.s_set(g2, 1, 88)
+const g2root = ref_new(g2)
+println("second generation at words: " + gc.addr_of(g1).to_string() + " and " + gc.addr_of(g2).to_string())
+println("heap words second generation: " + heap_words().to_string())
+println("free words after: " + gc.free_words().to_string())
+println("second generation reads: " + gc.s_get(g1, 1).to_string() + " and " + gc.s_get(g2, 1).to_string())
+ref_write(g2root, 0)
+println("second generation collected: " + gc.collect().to_string())
+println("heap words at rest again: " + heap_words().to_string())
+println("free words at rest: " + gc.free_words().to_string())

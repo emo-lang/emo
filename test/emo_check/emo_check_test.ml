@@ -1552,22 +1552,25 @@ let gc_heap_tests =
   in
   let every_door =
     {|
-var h = struct_new(2)
-struct_set(h, 0, 1)
-const w = struct_get(h, 0)
-const a = array_new(3)
-array_set(a, 1, 2)
+heap_new(1024)
+heap_store(0, 5)
+const w = heap_load(0)
+const h = heap_carve(10, 2, 1)
+struct_set(h, 1, 6)
+const v = struct_get(h, 1)
+const a = heap_carve(20, 3, 2)
+array_set(a, 1, 7)
 const n = array_len(a)
 const k = block_kind(h)
 const s = block_size(a)
 const r = ref_new(w)
 ref_write(r, 5)
-const v = ref_read(r)
+const rv = ref_read(r)
+heap_release(h)
 const roots = ref_roots()
 const blocks = heap_blocks()
-heap_free(h)
 const total = heap_words()
-println(n + k + s + v + total + roots.length() + blocks.length())|}
+println(v + n + k + s + rv + total + roots.length() + blocks.length())|}
   in
   [
     tc "the hosted default refuses every door by name" (fun () ->
@@ -1581,7 +1584,7 @@ println(n + k + s + v + total + roots.length() + blocks.length())|}
     tc "every build target refuses, riscv64 included" (fun () ->
         List.iter
           (fun target ->
-            let diagnostics = check_on target {|const h = struct_new(2)|} in
+            let diagnostics = check_on target {|const h = heap_new(2)|} in
             Alcotest.(check bool)
               ("E4032 on " ^ target) true
               (List.exists
@@ -1595,13 +1598,15 @@ println(n + k + s + v + total + roots.length() + blocks.length())|}
         let diagnostics =
           check_on "interpreter"
             {|
-struct_new("text")
-struct_get(1, 2, 3)
+heap_new("text")
+heap_load()
+heap_store(0)
+heap_carve(0, 1)
 ref_read(0)
 ref_write(0, 1)
 ref_new()|}
         in
-        Alcotest.(check int) "five refusals" 5 (List.length diagnostics));
+        Alcotest.(check int) "seven refusals" 7 (List.length diagnostics));
   ]
 
 let cross_module_tests =

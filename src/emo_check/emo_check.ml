@@ -1892,25 +1892,49 @@ let raw_mem_bindings =
       } );
   ]
 
-(* The GC heap's object model (docs/gc-heap.md, plan/step-89): the
-   machine's block kinds — the fixed struct, the counted array — and the
-   rooted ref, the one construct ordinary code cannot express because it
-   needs the host to know which words the mutator still holds. Words are
-   Int64s, self-describing by parity: even is a scalar (shifted), odd is
-   a reference to a block id. Slot 0 of every block is the collector's
-   header word; the data sits in slots 1..n. *)
+(* The GC heap's object model (docs/gc-heap.md, plan/step-90): one
+   arena of words, the machine's object model on top of it. The host
+   keeps the arena and the binding of header offsets to blocks; the
+   allocator — the gc package's own free list, in Emo — carves and
+   releases through `heap_carve`/`heap_release`, and the words move
+   through the raw `heap_load`/`heap_store` lane. A handle word
+   carries the header's offset and the block's generation; the header
+   word packs magic, kind, generation, the collector's mark bit, and
+   the logical size, with the data in slots 1..n. *)
 let gc_heap_bindings =
   [
-    ( "struct_new",
+    ( "heap_new",
       {
-        vtype = FuncType ([ ("n", Int64) ], Int64);
+        vtype = FuncType ([ ("words", Int64) ], Int64);
         is_var = false;
         depth = 0;
         span = Emo_support.Span.zero;
       } );
-    ( "array_new",
+    ( "heap_load",
       {
-        vtype = FuncType ([ ("n", Int64) ], Int64);
+        vtype = FuncType ([ ("addr", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "heap_store",
+      {
+        vtype = FuncType ([ ("addr", Int64); ("w", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "heap_carve",
+      {
+        vtype =
+          FuncType ([ ("addr", Int64); ("n", Int64); ("kind", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "heap_release",
+      {
+        vtype = FuncType ([ ("h", Int64) ], Void);
         is_var = false;
         depth = 0;
         span = Emo_support.Span.zero;
@@ -1999,13 +2023,6 @@ let gc_heap_bindings =
         depth = 0;
         span = Emo_support.Span.zero;
       } );
-    ( "heap_free",
-      {
-        vtype = FuncType ([ ("h", Int64) ], Void);
-        is_var = false;
-        depth = 0;
-        span = Emo_support.Span.zero;
-      } );
     ( "heap_words",
       {
         vtype = FuncType ([], Int64);
@@ -2016,10 +2033,10 @@ let gc_heap_bindings =
   ]
 
 let gc_heap_builtin = function
-  | "struct_new" | "array_new" | "struct_get" | "struct_set" | "array_len"
-  | "array_get" | "array_set" | "block_kind" | "block_size" | "ref_new"
-  | "ref_read" | "ref_write" | "ref_roots" | "heap_blocks" | "heap_free"
-  | "heap_words" ->
+  | "heap_new" | "heap_load" | "heap_store" | "heap_carve" | "heap_release"
+  | "struct_get" | "struct_set" | "array_len" | "array_get" | "array_set"
+  | "block_kind" | "block_size" | "ref_new" | "ref_read" | "ref_write"
+  | "ref_roots" | "heap_blocks" | "heap_words" ->
       true
   | _ -> false
 

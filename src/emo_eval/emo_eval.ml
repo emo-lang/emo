@@ -374,8 +374,11 @@ let global_env () =
       Hashtbl.replace env.frame name
         { bound = BuiltinFn name; mutable_ = false })
     [
-      "struct_new";
-      "array_new";
+      "heap_new";
+      "heap_load";
+      "heap_store";
+      "heap_carve";
+      "heap_release";
       "struct_get";
       "struct_set";
       "array_len";
@@ -388,7 +391,6 @@ let global_env () =
       "ref_write";
       "ref_roots";
       "heap_blocks";
-      "heap_free";
       "heap_words";
     ];
   Hashtbl.replace env.frame "expect_equal"
@@ -925,33 +927,43 @@ let group_registry : (string, (string * value) list) Hashtbl.t ref =
    runs reset inline. *)
 (* ---- The GC heap (docs/gc-heap.md) ----
 
-   The machine object model the collector in Emo manages. Blocks live in
-   a table keyed by id; a block's words are raw Int64s — even is a
-   scalar (shifted), odd is a reference to a block id. Slot 0 of every
-   block is the collector's header word, the data sits in slots 1..n.
-   The interpreter's table is its implementation of the spec; a target
-   whose memory is real (riscv64's tagged-word heap) will answer the
-   same doors over real words. *)
+   One arena of words; the machine object model the collector in Emo
+   manages. Blocks are bound ranges the allocator — the gc package's
+   own free list, in Emo — carves and releases through the doors; the
+   interpreter keeps the arena, the binding of header offsets to
+   blocks, and the checked field access. A handle word carries the
+   header's offset and the block's generation:
+   [gen << 42 | offset << 1 | 1] — odd is a reference, as everywhere,
+   and the generation makes a stale handle the loud end even after
+   the space it named was released and bound again. The header word
+   at slot 0 packs magic, kind, generation, the collector's mark bit,
+   and the logical size; the data sits in slots 1..n. A target whose
+   memory is real answers the same doors over a granted region. *)
 
 let gc_kind_struct = 1L
 let gc_kind_array = 2L
 
-(* One block's size guard: 2^26 words is half a gibibyte — far past any
-   honest allocation, the loud end otherwise. *)
-let gc_block_cap = Int64.shift_left 1L 26
+(* The word counts: an arena holds at most 2^41 words (the handle's
+   offset field), a block at most 2^23 - 1 (the header's size field) —
+   the loud end past either. *)
+let gc_arena_cap = Int64.shift_left 1L 41
+let gc_block_cap = Int64.shift_left 1L 23
+let gc_magic = 0xC0DEL
+let gc_mark_bit = Int64.shift_left 1L 23
+let gc_size_mask = Int64.pred (Int64.shift_left 1L 23)
+let gc_gen_mask = Int64.pred (Int64.shift_left 1L 22)
+let gc_offset_mask = Int64.pred (Int64.shift_left 1L 41)
 
 type gc_block = {
   mutable gkind : int64; (* gc_kind_struct or gc_kind_array *)
-  mutable gsize : int64; (* the data words; slot 0 rides on top *)
-  mutable gwords : int64 array; (* slots 0..gsize *)
+  mutable gsize : int64; (* the data words; the header rides on top *)
+  mutable ggen : int64;
+  mutable goffset : int64; (* the header's word offset in the arena *)
 }
 
-let gc_blocks : (int64, gc_block) Hashtbl.t = Hashtbl.create 64
-
-(* The collector's tombstones: a freed id stays here so a second free is
-   the loud E3053, and a stale read names itself as stale. *)
-let gc_freed : (int64, unit) Hashtbl.t = Hashtbl.create 16
-let gc_next_id : int64 ref = ref 0L
+let gc_created : bool ref = ref false
+let gc_arena : int64 array ref = ref [||]
+let gc_bound : (int64, gc_block) Hashtbl.t = Hashtbl.create 64
 
 (* The roots: every [Ref] value's cell, weakly held. The host's own
    collector is the liveness oracle — when the program drops its last
@@ -987,36 +999,41 @@ let gc_root_add cell =
 
 (* (Re)initializes the GC heap for one program run. *)
 let reset_gc_heap () =
-  Hashtbl.reset gc_blocks;
-  Hashtbl.reset gc_freed;
-  gc_next_id := 0L;
+  gc_created := false;
+  gc_arena := [||];
+  Hashtbl.reset gc_bound;
   gc_roots := Weak.create 64
 
-let gc_kind_name = function 1L -> "struct" | 2L -> "array" | _ -> "block"
+let gc_handle_of offset gen =
+  Int64.logor
+    (Int64.logor (Int64.shift_left gen 42) (Int64.shift_left offset 1))
+    1L
 
-(* Resolves a handle word to its live block, loudly otherwise. *)
+(* Decodes a handle to its bound block, loudly otherwise: an even
+   word, an unknown offset, and a generation the binding outgrew are
+   the same stale-handle end. *)
 let gc_live span door w =
   if Int64.logand w 1L = 0L then
     error span "E3050"
       (Printf.sprintf
          "`%s` does not name a block: the word is even, but a handle is odd"
          door);
-  let id = Int64.shift_right_logical w 1 in
-  match Hashtbl.find_opt gc_blocks id with
-  | Some b -> b
+  let offset = Int64.logand (Int64.shift_right_logical w 1) gc_offset_mask in
+  let gen = Int64.shift_right_logical w 42 in
+  match Hashtbl.find_opt gc_bound offset with
+  | Some b when b.ggen = gen -> b
+  | Some _ ->
+      error span "E3050"
+        (Printf.sprintf "`%s` reaches a stale handle — the binding has moved on"
+           door)
   | None ->
-      if Hashtbl.mem gc_freed id then
-        error span "E3050"
-          (Printf.sprintf "`%s` reaches a freed block — the handle is stale"
-             door)
-      else
-        error span "E3050"
-          (Printf.sprintf "`%s` does not name a live block" door)
+      error span "E3050" (Printf.sprintf "`%s` does not name a live block" door)
 
 let gc_kind_of span door b want =
   if b.gkind <> want then
     error span "E3051"
-      (Printf.sprintf "`%s` reaches a %s block" door (gc_kind_name b.gkind))
+      (Printf.sprintf "`%s` reaches a %s block" door
+         (if b.gkind = gc_kind_array then "array" else "struct"))
 
 (* Slots are raw: 0 is the header, the data sits in 1..n. The struct and
    array accessors in the gc package shift, the doors stay honest. *)
@@ -1026,45 +1043,96 @@ let gc_slot span door b i =
       (Printf.sprintf "`%s` reaches slot %s, but the block holds slots 0..%s"
          door (Int64.to_string i) (Int64.to_string b.gsize))
 
-let gc_alloc span kind n =
+let gc_word_load span door addr =
+  if
+    (not !gc_created)
+    || Int64.compare addr 0L < 0
+    || Int64.compare addr (Int64.of_int (Array.length !gc_arena)) >= 0
+  then
+    error span "E3052"
+      (Printf.sprintf "`%s` reaches word %s outside the arena" door
+         (Int64.to_string addr));
+  !gc_arena.(Int64.to_int addr)
+
+let gc_word_store span door addr w =
+  if
+    (not !gc_created)
+    || Int64.compare addr 0L < 0
+    || Int64.compare addr (Int64.of_int (Array.length !gc_arena)) >= 0
+  then
+    error span "E3052"
+      (Printf.sprintf "`%s` reaches word %s outside the arena" door
+         (Int64.to_string addr));
+  !gc_arena.(Int64.to_int addr) <- w
+
+let gc_header_of kind gen size =
+  Int64.logor gc_magic
+    (Int64.logor (Int64.shift_left kind 46)
+       (Int64.logor (Int64.shift_left gen 24) size))
+
+(* The generation grows with every binding of an offset, so a handle
+   minted before a release dies at the next binding of the same words. *)
+let gc_next_gen offset =
+  match Hashtbl.find_opt gc_bound offset with
+  | Some old ->
+      let g = Int64.add old.ggen 1L in
+      if Int64.compare g gc_gen_mask > 0 then 1L else g
+  | None -> 1L
+
+let gc_carve span addr n kind =
+  if not !gc_created then
+    error span "E3050" "`heap_carve` reaches a heap no `heap_new` has made";
+  if kind <> gc_kind_struct && kind <> gc_kind_array then
+    error span "E3051" "`heap_carve` refuses a kind that is not 1 or 2";
   if Int64.compare n 0L < 0 then
     error span "E3054" "the GC heap refuses a negative size";
-  if Int64.compare n gc_block_cap > 0 then
+  if Int64.compare n gc_block_cap >= 0 then
     error span "E3055" "the block is past the GC heap's size guard";
-  let id = Int64.succ !gc_next_id in
-  gc_next_id := id;
-  let b =
-    { gkind = kind; gsize = n; gwords = Array.make (Int64.to_int n + 1) 0L }
-  in
-  Hashtbl.replace gc_blocks id b;
-  Int64.logor (Int64.shift_left id 1) 1L
+  let len = Int64.of_int (Array.length !gc_arena) in
+  let physical = Int64.succ n in
+  if
+    Int64.compare addr 0L < 0 || Int64.compare (Int64.add addr physical) len > 0
+  then
+    error span "E3052"
+      (Printf.sprintf "`heap_carve` reaches words %s..%s outside the arena"
+         (Int64.to_string addr)
+         (Int64.to_string (Int64.pred (Int64.add addr physical))));
+  (* The range must not overlap a bound block — the allocator's free
+     list never proposes one, the check keeps the discipline loud. *)
+  Hashtbl.iter
+    (fun offset b ->
+      if
+        Int64.compare addr (Int64.add offset b.gsize) <= 0
+        && Int64.compare (Int64.add addr n) offset >= 0
+      then
+        error span "E3056"
+          (Printf.sprintf "`heap_carve` overlaps the block bound at word %s"
+             (Int64.to_string offset)))
+    gc_bound;
+  let gen = gc_next_gen addr in
+  !gc_arena.(Int64.to_int addr) <- gc_header_of kind gen n;
+  let b = { gkind = kind; gsize = n; ggen = gen; goffset = addr } in
+  Hashtbl.replace gc_bound addr b;
+  gc_handle_of addr gen
 
-let gc_load span door h i kind =
+let gc_release span h =
+  let b = gc_live span "heap_release" h in
+  (* Zeroing the header breaks the magic: a stale handle to these
+     words dies at the door even before the allocator reuses them. *)
+  !gc_arena.(Int64.to_int b.goffset) <- 0L;
+  Hashtbl.remove gc_bound b.goffset
+
+let gc_slot_load span door h i kind =
   let b = gc_live span door h in
   gc_kind_of span door b kind;
   gc_slot span door b i;
-  b.gwords.(Int64.to_int i)
+  !gc_arena.(Int64.to_int (Int64.add b.goffset i))
 
-let gc_store span door h i w kind =
+let gc_slot_store span door h i w kind =
   let b = gc_live span door h in
   gc_kind_of span door b kind;
   gc_slot span door b i;
-  b.gwords.(Int64.to_int i) <- w
-
-let gc_free span h =
-  let door = "heap_free" in
-  if Int64.logand h 1L = 0L then
-    error span "E3050"
-      (Printf.sprintf
-         "`%s` does not name a block: the word is even, but a handle is odd"
-         door);
-  let id = Int64.shift_right_logical h 1 in
-  if not (Hashtbl.mem gc_blocks id) then
-    if Hashtbl.mem gc_freed id then
-      error span "E3053" "`heap_free` frees a block twice"
-    else error span "E3050" "`heap_free` does not name a live block";
-  Hashtbl.remove gc_blocks id;
-  Hashtbl.replace gc_freed id ()
+  !gc_arena.(Int64.to_int (Int64.add b.goffset i)) <- w
 
 let gc_root_words () =
   (* The host's collector answers first: a root the program dropped
@@ -1079,13 +1147,17 @@ let gc_root_words () =
   Array.of_list (List.sort Int64.compare !acc)
 
 let gc_live_handles () =
-  let ids = Hashtbl.fold (fun id _ acc -> id :: acc) gc_blocks [] in
+  let offsets = Hashtbl.fold (fun offset _ acc -> offset :: acc) gc_bound [] in
   Array.of_list
     (List.sort Int64.compare
-       (List.map (fun id -> Int64.logor (Int64.shift_left id 1) 1L) ids))
+       (List.map
+          (fun offset ->
+            let b = Hashtbl.find gc_bound offset in
+            gc_handle_of offset b.ggen)
+          offsets))
 
 let gc_live_words () =
-  Hashtbl.fold (fun _ b acc -> Int64.add acc (Int64.succ b.gsize)) gc_blocks 0L
+  Hashtbl.fold (fun _ b acc -> Int64.add acc (Int64.succ b.gsize)) gc_bound 0L
 
 let reset_program_registries () =
   Hashtbl.reset interface_registry;
@@ -3924,19 +3996,43 @@ and apply_builtin span name args =
              "`%s` reaches the kernel's service machinery: only the `riscv64` \
               target admits it, not the interpreter"
              name)
-    (* ---- The GC heap's doors (docs/gc-heap.md). Raw slot semantics:
-       slot 0 of every block is the collector's header, the gc package's
-       accessors shift, these doors stay honest. ---- *)
-    | "struct_new", [ Int64 n ] -> Int64 (gc_alloc span gc_kind_struct n)
-    | "struct_new", _ -> error span "E3001" "`struct_new` expects (n Int64)"
-    | "array_new", [ Int64 n ] -> Int64 (gc_alloc span gc_kind_array n)
-    | "array_new", _ -> error span "E3001" "`array_new` expects (n Int64)"
+    (* ---- The GC heap's doors (docs/gc-heap.md). The arena is the
+       host's; the free list is the gc package's. heap_load/store are
+       the allocator's raw lane — the mutator reads and writes fields
+       through the checked accessors, never here. ---- *)
+    | "heap_new", [ Int64 n ] ->
+        if !gc_created then
+          error span "E3057" "`heap_new` makes one arena per run";
+        if Int64.compare n 0L < 0 then
+          error span "E3054" "the GC heap refuses a negative size";
+        if Int64.compare n gc_arena_cap >= 0 then
+          error span "E3055" "the arena is past the GC heap's size guard";
+        gc_arena := Array.make (Int64.to_int n) 0L;
+        gc_created := true;
+        Int64 n
+    | "heap_new", _ -> error span "E3001" "`heap_new` expects (words Int64)"
+    | "heap_load", [ Int64 addr ] -> Int64 (gc_word_load span "heap_load" addr)
+    | "heap_load", _ -> error span "E3001" "`heap_load` expects (addr Int64)"
+    | "heap_store", [ Int64 addr; Int64 w ] ->
+        gc_word_store span "heap_store" addr w;
+        Void
+    | "heap_store", _ ->
+        error span "E3001" "`heap_store` expects (addr Int64, w Int64)"
+    | "heap_carve", [ Int64 addr; Int64 n; Int64 kind ] ->
+        Int64 (gc_carve span addr n kind)
+    | "heap_carve", _ ->
+        error span "E3001"
+          "`heap_carve` expects (addr Int64, n Int64, kind Int64)"
+    | "heap_release", [ Int64 h ] ->
+        gc_release span h;
+        Void
+    | "heap_release", _ -> error span "E3001" "`heap_release` expects (h Int64)"
     | "struct_get", [ Int64 h; Int64 i ] ->
-        Int64 (gc_load span "struct_get" h i gc_kind_struct)
+        Int64 (gc_slot_load span "struct_get" h i gc_kind_struct)
     | "struct_get", _ ->
         error span "E3001" "`struct_get` expects (b Int64, i Int64)"
     | "struct_set", [ Int64 h; Int64 i; Int64 w ] ->
-        gc_store span "struct_set" h i w gc_kind_struct;
+        gc_slot_store span "struct_set" h i w gc_kind_struct;
         Void
     | "struct_set", _ ->
         error span "E3001" "`struct_set` expects (b Int64, i Int64, w Int64)"
@@ -3946,11 +4042,11 @@ and apply_builtin span name args =
         Int64 b.gsize
     | "array_len", _ -> error span "E3001" "`array_len` expects (a Int64)"
     | "array_get", [ Int64 h; Int64 i ] ->
-        Int64 (gc_load span "array_get" h i gc_kind_array)
+        Int64 (gc_slot_load span "array_get" h i gc_kind_array)
     | "array_get", _ ->
         error span "E3001" "`array_get` expects (a Int64, i Int64)"
     | "array_set", [ Int64 h; Int64 i; Int64 w ] ->
-        gc_store span "array_set" h i w gc_kind_array;
+        gc_slot_store span "array_set" h i w gc_kind_array;
         Void
     | "array_set", _ ->
         error span "E3001" "`array_set` expects (a Int64, i Int64, w Int64)"
@@ -3985,10 +4081,6 @@ and apply_builtin span name args =
         error span "E3007"
           (Printf.sprintf "`heap_blocks` expects no arguments, got %d"
              (List.length vs))
-    | "heap_free", [ Int64 h ] ->
-        gc_free span h;
-        Void
-    | "heap_free", _ -> error span "E3001" "`heap_free` expects (h Int64)"
     | "heap_words", [] -> Int64 (gc_live_words ())
     | "heap_words", vs ->
         error span "E3007"
