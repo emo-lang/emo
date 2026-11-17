@@ -119,21 +119,27 @@ emo wasm run demo.wasm
 
 ## WASI:其他工具链的模块赖以运行的一环
 
-内建宿主长出了 `wasi_snapshot_preview1`——真实工具链(clang/wasi-sdk、`rustc --target wasm32-wasip1`)发射的表面。十二个函数已实现;命名空间里其余一切在链接时以函数名拒绝——没有哑根:
+内建宿主长出了 `wasi_snapshot_preview1`——真实工具链(clang/wasi-sdk、`rustc --target wasm32-wasip1`)发射的表面。十六个函数已实现;命名空间里其余一切在链接时以函数名拒绝——没有哑根:
 
 | 函数 | 应答 |
 | --- | --- |
 | `args_sizes_get`、`args_get` | argv(`emo wasm run` 的多余实参;argv[0] 是工件名) |
 | `environ_sizes_get`、`environ_get` | 空环境 |
 | `proc_exit(code)` | 解卷;CLI 把代码映射为退出码 |
-| `fd_write` | fd 1 和 2 走进程输出通道,iovec 字节原样;其余 fd EBADF |
-| `fd_close`、`fd_seek` | 1/2 上无操作成功 / ESPIPE,其余 EBADF |
-| `fd_fdstat_get` | fd 1/2 应答字符设备带全权(wasi-libc 启动时的 tty 探测读的就是它) |
+| `fd_write` | fd 1 和 2 走进程输出通道,iovec 字节原样;已打开文件走 os 门;preopen 目录 EISDIR |
+| `fd_read` | 按 iovec 总长做一次 os 读,字节按序散回;preopen 目录 EISDIR,fd 1/2 EBADF,fd 0 读进程 stdin |
+| `fd_close` | stdio 成功;preopen 的槽位打洞(授予只是名字映射);已打开文件经 os 门关闭 |
+| `fd_seek` | stdio ESPIPE;已打开文件经 `os_lseek` 门寻位(whence 0/1/2) |
+| `fd_fdstat_get` | fd 0/1/2 应答字符设备带全权;preopen 应答 directory,已打开文件应答 regular file 带其 append 旗标 |
 | `random_get` | 经 `rand` 包的 OS 熵(真 hello world 里 Rust 的 `RandomState` 就靠它播种) |
 | `clock_time_get` | realtime 应答纪元纳秒——墙钟 door 的毫秒分辨率,末六位为零——monotonic 应答 `time.mono()` 的纳秒读数原样;未知 clock id(含 cpu 时钟)与越界结果指针 EINVAL |
 | `sched_yield` | 成功 |
+| `fd_prestat_get`、`fd_prestat_dir_name` | preopen 表的发现环:`{pr_type, pr_name_len}`,然后授予的 guest 名;合法但非 preopen 的 fd 回 ENOTDIR |
+| `path_open` | 在 preopen 树内打开——只读、写(建+截断,即 stdio 的 "w" 形状)或追加;词法解析,越出根即 ENOTCAPABLE;双向打开、DIRECTORY/EXCL、APPEND 之外的 fdflags 位一律 EINVAL |
 
-解析序:显式宿主表最先(调用者可覆盖任何 `wasi_snapshot_preview1` import),然后 wasi 宿主,再 register 命名空间,再 `spectest`。import 签名对着表逐项检查——签错的 import 什么都绑不上。errno 值是 preview1 的编号(EBADF 8、EINVAL 28、ENOSYS 51、ESPIPE 69),由包的 fixture 钉死。
+文件系统就是 preopen 授予,而授予是显式的:`emo wasm run app.wasm --dir HOST[::GUEST]`(可重复,guest 名默认 `/`),或嵌入方的 `wasm.set_wasi_preopens`——默认为空,不授予就没有文件系统。解析在 preopen 根内做词法走查:".." 爬不出根(越界答 ENOTCAPABLE),不点名任何 preopen 的绝对路径同样拒绝。每个打开骑一扇 os 门——读、写(建+截断,即 stdio 的 "w" 形状)或追加——所以基座是 os 包自己的 POSIX 语义,不是第二套文件故事;编译到 wasm 的方向经 `wasi:filesystem`(`emo build --target wasm --wasi`)说同一套语义。
+
+解析序:显式宿主表最先(调用者可覆盖任何 `wasi_snapshot_preview1` import),然后 wasi 宿主,再 register 命名空间,再 `spectest`。import 签名对着表逐项检查——签错的 import 什么都绑不上。errno 值是 preview1 的编号,按 `wasi/wasip1.h` 的拼法(EBADF 8、EINVAL 28、EISDIR 31、ENAMETOOLONG 37、ENOENT 44、ENOSYS 52、ENOTDIR 54、ESPIPE 70、ENOTCAPABLE 76),由包的 fixture 钉死——落地文件半边的这一环同时纠正了 ENOSYS 与 ESPIPE,它们此前对真表偏了一位。
 
 梯子曾点名的 `emo` 宿主模块继续缓议:没有生产者点名它——外来模块不可能,它不认识 Emo——而一个构造要落地需要具体的消费者。想要 Emo 宿主表面的模块走显式宿主表,Emo 程序点名什么模块名它就伺候什么。
 

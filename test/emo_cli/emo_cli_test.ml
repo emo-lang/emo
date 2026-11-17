@@ -7023,7 +7023,7 @@ let wasm_run_tests =
     tc "emo wasm run answers an export's results in the runtime's format"
       (fun () ->
         match
-          Emo_project.run_wasm_cli ~args:[]
+          Emo_project.run_wasm_cli ~args:[] ~dirs:[]
             ~artifact:
               (write_artifact "wasm-run-start.wasm"
                  "0061736d010000000105016000017e03020100070a01065f737461727400000a0b01090042cb89ec8ff7230b")
@@ -7036,7 +7036,7 @@ let wasm_run_tests =
     tc "emo wasm run answers the summary for a module with only a start"
       (fun () ->
         match
-          Emo_project.run_wasm_cli ~args:[]
+          Emo_project.run_wasm_cli ~args:[] ~dirs:[]
             ~artifact:
               (write_artifact "wasm-run-only-start.wasm"
                  "0061736d01000000010401600000030201000701000801000a040102000b")
@@ -7048,7 +7048,7 @@ let wasm_run_tests =
               (contains body "start=0"));
     tc "emo wasm run answers a trap as the error verdict" (fun () ->
         match
-          Emo_project.run_wasm_cli ~args:[]
+          Emo_project.run_wasm_cli ~args:[] ~dirs:[]
             ~artifact:
               (write_artifact "wasm-run-trap.wasm"
                  "0061736d0100000001040160000003020100070a01065f737461727400000a05010300000b")
@@ -7060,7 +7060,7 @@ let wasm_run_tests =
               (contains why "emo-wasm: _start: unreachable"));
     tc "emo wasm run answers a failed link with the import's name" (fun () ->
         match
-          Emo_project.run_wasm_cli ~args:[]
+          Emo_project.run_wasm_cli ~args:[] ~dirs:[]
             ~artifact:
               (write_artifact "wasm-run-link.wasm"
                  "0061736d01000000010401600000020b0103656e76036c6f670000030201000a040102000b")
@@ -7073,7 +7073,7 @@ let wasm_run_tests =
     tc "emo wasm run refuses a malformed artifact in the decode phase"
       (fun () ->
         match
-          Emo_project.run_wasm_cli ~args:[]
+          Emo_project.run_wasm_cli ~args:[] ~dirs:[]
             ~artifact:(write_artifact "wasm-run-malformed.wasm" "0061736d")
         with
         | Ok body -> Alcotest.fail ("expected the refusal, got: " ^ body)
@@ -7083,7 +7083,7 @@ let wasm_run_tests =
               (contains why "emo-wasm: malformed"));
     tc "emo wasm run maps proc_exit's code, and stdout survives it" (fun () ->
         match
-          Emo_project.run_wasm_cli ~args:[ "a"; "b" ]
+          Emo_project.run_wasm_cli ~args:[ "a"; "b" ] ~dirs:[]
             ~artifact:
               (write_artifact "wasm-run-procexit.wasm"
                  "0061736d0100000001160460047f7f7f7f017f60027f7f017f60017f00600000026e0316776173695f736e617073686f745f70726576696577310866645f7772697465000016776173695f736e617073686f745f70726576696577310e617267735f73697a65735f676574000116776173695f736e617073686f745f70726576696577310970726f635f657869740002030201030503010001070a01065f737461727400030a20011e00410141204101413010001a41c00041c80010011a41c00028020010020b0b1f020041100b0c6265666f726520657869740a0041200b08100000000c000000")
@@ -7099,7 +7099,7 @@ let wasm_run_tests =
     tc "emo wasm run answers a missing artifact with the read's reason"
       (fun () ->
         match
-          Emo_project.run_wasm_cli ~args:[]
+          Emo_project.run_wasm_cli ~args:[] ~dirs:[]
             ~artifact:(Filename.concat scratch "wasm-run-missing.wasm")
         with
         | Ok body -> Alcotest.fail ("expected the refusal, got: " ^ body)

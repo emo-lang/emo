@@ -2220,8 +2220,28 @@ def call_entry(inst Int64, name String) Bool {
   }
 }
 
+// The preopen grants: each __dirs entry is "host::guest" — the guest
+// name "/" when the operator wrote only the host side — decoded into
+// the (guest, host) pairs the host's table takes, one grant at the
+// end. Empty entries mean no grant at all.
+def set_grants(entries Array[String], i Int64, acc Array[(String, String)]) Int64 {
+  if i >= entries.length() {
+    return wasm.set_wasi_preopens(acc)
+  }
+  const e = entries[i]
+  const cut = e.index_of("::")
+  var guest = "/"
+  var host = e
+  if cut >= 0 {
+    guest = e.substring(cut + 2, e.length() - cut - 2)
+    host = e.substring(0, cut)
+  }
+  return set_grants(entries, i + 1, acc.append((guest, host)))
+}
+
 def run() Int64 {
   wasm.set_wasi_args(__args)
+  set_grants(__dirs, 0, [])
   case file.read(__artifact) {
     (R.error, why) then {
       raise Exception.new(message: "emo-wasm: " + why)
@@ -2259,8 +2279,8 @@ def run() Int64 {
 run()
 |}
 
-let run_wasm_cli ~(artifact : string) ~(args : string list) :
-    (string, string * string) result =
+let run_wasm_cli ~(artifact : string) ~(args : string list)
+    ~(dirs : string list) : (string, string * string) result =
   let argv = Filename.basename artifact :: args in
   let result, partial =
     run_embedded_deps_out ~tag:"wasm-run" ~deps:[ "wasm"; "file" ]
@@ -2270,6 +2290,9 @@ let run_wasm_cli ~(artifact : string) ~(args : string list) :
           ( "__args",
             Emo_eval.Array
               (Array.map (fun a -> Emo_eval.String a) (Array.of_list argv)) );
+          ( "__dirs",
+            Emo_eval.Array
+              (Array.map (fun d -> Emo_eval.String d) (Array.of_list dirs)) );
         ]
       ~program:wasm_cli_driver
   in

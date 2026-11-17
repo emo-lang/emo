@@ -177,7 +177,7 @@ doctor's wasm line names the command; it needs no external tools.
 
 The built-in host grew `wasi_snapshot_preview1` — the surface real
 toolchains emit (clang/wasi-sdk, `rustc --target wasm32-wasip1`).
-Twelve functions are implemented; everything else in the namespace
+Sixteen functions are implemented; everything else in the namespace
 link-refuses with the function's name — no silent stubs:
 
 | function | answers |
@@ -185,19 +185,38 @@ link-refuses with the function's name — no silent stubs:
 | `args_sizes_get`, `args_get` | the argv (`emo wasm run`'s extra arguments; argv[0] is the artifact's name) |
 | `environ_sizes_get`, `environ_get` | an empty environment |
 | `proc_exit(code)` | unwinds; the CLI maps the code to its exit code |
-| `fd_write` | fds 1 and 2 write through the process output channel, iovec bytes raw; other fds EBADF |
-| `fd_close`, `fd_seek` | no-op success / ESPIPE on 1 and 2, EBADF elsewhere |
-| `fd_fdstat_get` | fd 1/2 answer character device with full rights (what wasi-libc's tty check reads at startup) |
+| `fd_write` | fds 1 and 2 write through the process output channel, iovec bytes raw; opened files write through the os door; a preopen directory EISDIR |
+| `fd_read` | one os read at the iovecs' total length, the bytes scattered back in order; a preopen directory EISDIR, fds 1/2 EBADF, fd 0 the process's stdin |
+| `fd_close` | stdio success; a preopen's slot holes out (the grant is a name mapping); an opened file closes through the os door |
+| `fd_seek` | stdio ESPIPE; an opened file seeks through the `os_lseek` door (whence 0/1/2) |
+| `fd_fdstat_get` | fds 0/1/2 answer character device with full rights; preopens answer directory, opened files regular file with their append flag |
 | `random_get` | OS entropy through the `rand` package (Rust's `RandomState` seeds through it even in a hello world) |
 | `clock_time_get` | realtime answers epoch nanoseconds — the wall door's millisecond resolution, the last six digits zero — and monotonic the nanosecond reading as it stands; an unknown clock id (the cpu clocks among them) and a result pointer out of bounds answer EINVAL |
 | `sched_yield` | success |
+| `fd_prestat_get`, `fd_prestat_dir_name` | the preopen table's discovery: `{pr_type, pr_name_len}`, then the grant's guest name; a valid fd that is not a preopen ENOTDIR |
+| `path_open` | the open inside a preopen's tree — read-only, write (create + truncate, the stdio "w" shape), or append; the walk is lexical, a climb past the root ENOTCAPABLE; a two-direction open, DIRECTORY/EXCL, and any fdflags bit past APPEND EINVAL |
+
+The file system is the preopen grant, and the grant is explicit:
+`emo wasm run app.wasm --dir HOST[::GUEST]` (repeatable, the guest
+name defaulting to `/`), or `wasm.set_wasi_preopens` from an embedder
+— empty by default, so no grant means no file system. Resolution is
+lexical inside the preopen's root: ".." cannot climb past it (the
+escape answers ENOTCAPABLE), and an absolute path naming no preopen is
+the same refusal. Every open rides one os door — read, write (create +
+truncate, the stdio "w" shape), or append — so the foundation is the
+os package's own POSIX semantics, not a second file story; the same
+semantics the compiled-to-wasm direction speaks through
+`wasi:filesystem` (`emo build --target wasm --wasi`).
 
 Resolution order: the explicit host table first (a caller may override
 any `wasi_snapshot_preview1` import), then the wasi host, then the
 register namespace, then `spectest`. Import signatures are checked
 against the table's shape — a mistyped import binds to nothing. The
-errno values are preview1's numbering (EBADF 8, EINVAL 28, ENOSYS 51,
-ESPIPE 69), pinned by the package's fixture.
+errno values are preview1's numbering as `wasi/wasip1.h` spells it
+(EBADF 8, EINVAL 28, EISDIR 31, ENAMETOOLONG 37, ENOENT 44, ENOSYS 52,
+ENOTDIR 54, ESPIPE 70, ENOTCAPABLE 76), pinned by the package's
+fixture — the ring that landed the file half also corrected ENOSYS and
+ESPIPE, which had drifted one off the real table.
 
 The `emo` host module the ladder once named stays deferred: no
 producer names it — a foreign module cannot, it does not know Emo —

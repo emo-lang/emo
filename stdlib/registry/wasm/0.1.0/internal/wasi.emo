@@ -1,12 +1,13 @@
 require "rand"
 require "time"
 
-// The wasi_snapshot_preview1 host (step 77): the twelve preview1
-// functions a real toolchain's module touches to start, print, seed
-// its hashes, read the clock, and exit. Everything else in the
+// The wasi_snapshot_preview1 host (step 77): the preview1 functions a
+// real toolchain's module touches to start, print, seed its hashes,
+// read the clock, and — since step 87 — open, read, write, seek, and
+// close files inside a granted directory. Everything else in the
 // namespace link-refuses with the function's name — no silent stubs,
-// no fakes. The errno values are the preview1 numbering; the fixture
-// pins them.
+// no fakes. The errno values are the preview1 numbering (wasip1.h);
+// the fixture pins them.
 //
 // `dispatch` runs inside execution, where the caller instance's
 // linear memory is live: it takes memory 0 and the instance's argv as
@@ -15,13 +16,28 @@ require "time"
 // memory in place. The signal carries proc_exit's verdict to the trap
 // channel; "" is the normal answer. A guest pointer that runs out of
 // bounds is the guest's mistake and answers EINVAL, not a raise.
+//
+// The file half (step 87) is the os package's own POSIX semantics
+// projected onto preview1: the preopen table is the grant (no default
+// — the wasmtime posture, no grant means no file system), path_open
+// resolves lexically inside a preopen's root (a climb past the root is
+// ENOTCAPABLE), and every open rides one os door — open_read,
+// open_write (create + truncate, the stdio "w" shape), or open_append.
+// The doors' only failure channel is the reason text, so the errnos a
+// real module acts on (no entry, is-a-directory, illegal seek) match
+// their shared normalized phrases and the rest answers EIO.
 
 const e_success = 0
 const e_io = 29
 const e_badf = 8
 const e_inval = 28
-const e_nosys = 51
-const e_spipe = 69
+const e_isdir = 31
+const e_nametoolong = 37
+const e_noent = 44
+const e_nosys = 52
+const e_notdir = 54
+const e_spipe = 70
+const e_notcapable = 76
 
 const f_args_sizes_get = 0
 const f_args_get = 1
@@ -35,8 +51,40 @@ const f_fd_fdstat_get = 8
 const f_random_get = 9
 const f_clock_time_get = 10
 const f_sched_yield = 11
+const f_prestat_get = 12
+const f_prestat_dir_name = 13
+const f_path_open = 14
+const f_fd_read = 15
 
 const max_random = 1048576
+
+// The preopen table: (guest name, host path) pairs granted through
+// `set_preopens` before instantiate. Empty by default — the operator's
+// grant is the whole file system, the wasmtime posture.
+var preopens = []
+
+// The fd table: slot = guest fd - 3. fds 0/1/2 are stdio and never sit
+// here; the grants land first (in order), then the opens. An entry is
+// (kind, host_fd, guest name, host root, fdflags): kind 1 a preopen
+// directory (no host fd — the grant is a name mapping), kind 2 an
+// opened file; kind -1 the hole a close left.
+var fds = []
+
+// The grants: replaces the table and drops every fd the previous
+// grants produced — a new grant is a new file system.
+def set_preopens(entries Array[(String, String)]) Int64 {
+  preopens = entries
+  fds = []
+  return 0
+}
+
+// The fresh-run reset: `internal.instance.reset_all` calls this beside
+// its own state clears.
+def clear_wasi_files() Int64 {
+  preopens = []
+  fds = []
+  return 0
+}
 
 // The namespace's id table: -1 for a name this rung does not serve,
 // which the link turns into a refusal naming the function.
@@ -77,12 +125,24 @@ def func_id(name String) Int64 {
   if name == "sched_yield" {
     return f_sched_yield
   }
+  if name == "fd_prestat_get" {
+    return f_prestat_get
+  }
+  if name == "fd_prestat_dir_name" {
+    return f_prestat_dir_name
+  }
+  if name == "path_open" {
+    return f_path_open
+  }
+  if name == "fd_read" {
+    return f_fd_read
+  }
   return 0 - 1
 }
 
-// Every preview1 parameter is an i32 save clock_time_get's precision,
-// an i64; the results are one i32, save proc_exit's none. The import
-// check compares these against the import's declared type, so a
+// Every preview1 parameter is an i32 save the i64 widths: the clock's
+// precision, fd_seek's offset, and path_open's two rights masks. The
+// import check compares these against the import's declared type, so a
 // mistyped import binds to nothing.
 def params_ok(id Int64, kinds Array[Int64], i Int64) Bool {
   if i >= kinds.length() {
@@ -90,6 +150,12 @@ def params_ok(id Int64, kinds Array[Int64], i Int64) Bool {
   }
   var want = 127
   if id == f_clock_time_get && i == 1 {
+    want = 126
+  }
+  if id == f_fd_seek && i == 1 {
+    want = 126
+  }
+  if id == f_path_open && (i == 4 || i == 5) {
     want = 126
   }
   if kinds[i] != want {
@@ -132,6 +198,18 @@ def param_count(id Int64) Int64 {
   if id == f_clock_time_get {
     return 3
   }
+  if id == f_prestat_get {
+    return 2
+  }
+  if id == f_prestat_dir_name {
+    return 3
+  }
+  if id == f_path_open {
+    return 9
+  }
+  if id == f_fd_read {
+    return 4
+  }
   return 0
 }
 
@@ -170,18 +248,10 @@ def dispatch(id Int64, args Array[(Int64, Int64)], mem (Box[Bytes], Int64, Bool)
     return (fd_write(mem, args), "")
   }
   if id == f_fd_close {
-    const fd = internal.value.sign32(args[0][1])
-    if fd == 1 || fd == 2 {
-      return (e_success, "")
-    }
-    return (e_badf, "")
+    return (fd_close(mem, args), "")
   }
   if id == f_fd_seek {
-    const fd = internal.value.sign32(args[0][1])
-    if fd == 1 || fd == 2 {
-      return (e_spipe, "")
-    }
-    return (e_badf, "")
+    return (fd_seek(mem, args), "")
   }
   if id == f_fd_fdstat_get {
     return (fdstat(mem, args), "")
@@ -191,6 +261,18 @@ def dispatch(id Int64, args Array[(Int64, Int64)], mem (Box[Bytes], Int64, Bool)
   }
   if id == f_clock_time_get {
     return (clock_time_get(mem, args), "")
+  }
+  if id == f_prestat_get {
+    return (prestat_get(mem, args), "")
+  }
+  if id == f_prestat_dir_name {
+    return (prestat_dir_name(mem, args), "")
+  }
+  if id == f_path_open {
+    return (path_open(mem, args), "")
+  }
+  if id == f_fd_read {
+    return (fd_read(mem, args), "")
   }
   return (e_nosys, "")
 }
@@ -227,6 +309,16 @@ def write_bytes(mem (Box[Bytes], Int64, Bool), addr Int64, data Bytes) Bool {
   }
   internal.store.copy_bytes(internal.store.mem_bytes(mem), data, internal.value.mask32(addr), n)
   return true
+}
+
+def copy_out(b Bytes, at Int64, n Int64) Bytes {
+  const out = Bytes.new(n)
+  var i = 0
+  while i < n {
+    out.set(i, b.get(at + i))
+    i = i + 1
+  }
+  return out
 }
 
 // The argv sizes answer: argc, then the buffer's byte count — one nul
@@ -269,15 +361,70 @@ def args_get(mem (Box[Bytes], Int64, Bool), argv Array[String], args Array[(Int6
   return e_success
 }
 
-// The iovec walk: `{buf_ptr u32, buf_len u32}` pairs, the bytes
-// gathered in order, the total written back through `nwritten`. The
-// output rides the process output channel raw — no newline
-// translation, the guest's bytes as they are.
-def fd_write(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
-  const fd = internal.value.sign32(args[0][1])
-  if fd != 1 && fd != 2 {
-    return e_badf
+// ---- the fd table ----
+
+// The fd's entry: (ok, entry). fds 0/1/2 answer stdio without a table
+// slot; the slot is fd - 3. A closed hole or a slot past the table is
+// not-ok, and every caller answers EBADF on it.
+def fd_entry(fd Int64) (Bool, (Int64, Int64, String, String, Int64)) {
+  if fd == 0 || fd == 1 || fd == 2 {
+    return (true, (0, fd, "", "", 0))
   }
+  const slot = fd - 3
+  if slot < 0 || slot >= fds.length() {
+    return (false, (0 - 1, 0 - 1, "", "", 0))
+  }
+  const e = fds[slot]
+  if e[0] < 0 {
+    return (false, e)
+  }
+  return (true, e)
+}
+
+// The lowest free slot: a close's hole first, else the table grows.
+def fd_alloc() Int64 {
+  var i = 0
+  while i < fds.length() {
+    if fds[i][0] < 0 {
+      return i + 3
+    }
+    i = i + 1
+  }
+  fds = fds.append((0 - 1, 0 - 1, "", "", 0))
+  return i + 3
+}
+
+def fd_put(slot Int64, e (Int64, Int64, String, String, Int64)) Int64 {
+  fds[slot] = e
+  return 0
+}
+
+// ---- the iovec walk ----
+
+// The iovecs' total buffer length: (ok, bytes). A negative length is
+// the guest's mistake.
+def iov_sizes(mem (Box[Bytes], Int64, Bool), iovs Int64, count Int64) (Bool, Int64) {
+  var total = 0
+  var i = 0
+  while i < count {
+    const l = load_u32(mem, iovs + i * 8 + 4)
+    if !l[0] {
+      return (false, 0)
+    }
+    const len = internal.value.sign32(l[1])
+    if len < 0 {
+      return (false, 0)
+    }
+    total = total + len
+    i = i + 1
+  }
+  return (true, total)
+}
+
+// The iovec walk writing through the process output channel: fds 1
+// and 2, the fixture-pinned shape from step 77 — the guest's bytes
+// raw, no newline translation.
+def fd_write_tty(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   const iovs = args[1][1]
   const count = internal.value.sign32(args[2][1])
   if count < 0 {
@@ -315,34 +462,232 @@ def fd_write(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   return e_success
 }
 
-def copy_out(b Bytes, at Int64, n Int64) Bytes {
+// The iovec walk at its `{buf_ptr u32, buf_len u32}` pairs, gathered
+// in order. fds 1 and 2 stay the raw output channel; a preopen
+// directory answers EISDIR; an opened file writes through the os
+// door, one iovec per call, the counts summed into `nwritten`.
+def fd_write(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  if fd == 1 || fd == 2 {
+    return fd_write_tty(mem, args)
+  }
+  const e = fd_entry(fd)
+  if !e[0] {
+    return e_badf
+  }
+  if e[1][0] != 2 {
+    return e_isdir
+  }
+  const iovs = args[1][1]
+  const count = internal.value.sign32(args[2][1])
+  if count < 0 {
+    return e_inval
+  }
+  var total = 0
+  var i = 0
+  while i < count {
+    const base = iovs + i * 8
+    const p = load_u32(mem, base)
+    if !p[0] {
+      return e_inval
+    }
+    const l = load_u32(mem, base + 4)
+    if !l[0] {
+      return e_inval
+    }
+    const len = internal.value.sign32(l[1])
+    if len < 0 || !range_ok(mem, p[1], len) {
+      return e_inval
+    }
+    if len > 0 {
+      const b = internal.store.mem_bytes(mem)
+      const chunk = copy_out(b, internal.value.mask32(p[1]), len)
+      case os_write(e[1][1], chunk.to_string()) {
+        (R.error, _) then {
+          return e_io
+        }
+        (R.ok, _) then {
+          total = total + len
+        }
+      }
+    }
+    i = i + 1
+  }
+  if !store_u32(mem, args[3][1], total)[0] {
+    return e_inval
+  }
+  return e_success
+}
+
+// The read: one os door call at the iovecs' total length, the bytes
+// scattered back in order. An empty vector answers nread 0 without
+// the call; a preopen directory answers EISDIR; fds 1 and 2 are write
+// ends and answer EBADF; fd 0 reads the process's stdin.
+def fd_read(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  const e = fd_entry(fd)
+  if !e[0] {
+    return e_badf
+  }
+  if e[1][0] == 1 {
+    return e_isdir
+  }
+  if fd == 1 || fd == 2 {
+    return e_badf
+  }
+  const iovs = args[1][1]
+  const count = internal.value.sign32(args[2][1])
+  if count < 0 {
+    return e_inval
+  }
+  const sizes = iov_sizes(mem, iovs, count)
+  if !sizes[0] {
+    return e_inval
+  }
+  if sizes[1] == 0 {
+    if !store_u32(mem, args[3][1], 0)[0] {
+      return e_inval
+    }
+    return e_success
+  }
+  case os_read(e[1][1], sizes[1]) {
+    (R.error, why) then {
+      return read_errno(why)
+    }
+    (R.ok, text) then {
+      const data = text.to_bytes()
+      if !scatter(mem, iovs, count, data) {
+        return e_inval
+      }
+      if !store_u32(mem, args[3][1], data.length())[0] {
+        return e_inval
+      }
+      return e_success
+    }
+  }
+}
+
+// The scatter: the read lands across the iovecs in order, each
+// clipping at its own length.
+def scatter(mem (Box[Bytes], Int64, Bool), iovs Int64, count Int64, data Bytes) Bool {
+  var at = 0
+  var i = 0
+  while i < count {
+    if at >= data.length() {
+      return true
+    }
+    const base = iovs + i * 8
+    const p = load_u32(mem, base)
+    if !p[0] {
+      return false
+    }
+    const l = load_u32(mem, base + 4)
+    if !l[0] {
+      return false
+    }
+    const len = internal.value.sign32(l[1])
+    var take = data.length() - at
+    if take > len {
+      take = len
+    }
+    if !write_bytes(mem, p[1], sub_bytes(data, at, take)) {
+      return false
+    }
+    at = at + take
+    i = i + 1
+  }
+  return true
+}
+
+def sub_bytes(data Bytes, at Int64, n Int64) Bytes {
   const out = Bytes.new(n)
   var i = 0
   while i < n {
-    out.set(i, b.get(at + i))
+    out.set(i, data.get(at + i))
     i = i + 1
   }
   return out
 }
 
-// The fdstat answer for fd 1 and 2: a character device with full
-// rights — what wasi-libc's tty check and Rust's `is_terminal` probe
-// read at startup. Layout: filetype u8, flags u16 at 2, then the two
-// u64 rights words at 8 and 16 (24 bytes).
-def fdstat(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+// The close: stdio answers success; a preopen's slot holes out (the
+// grant is a name mapping, there is no host fd to release); an opened
+// file rides the os door, its verdict going the way of the slot — the
+// fd is gone from the guest's view either way.
+def fd_close(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   const fd = internal.value.sign32(args[0][1])
-  if fd != 1 && fd != 2 {
+  if fd == 0 || fd == 1 || fd == 2 {
+    return e_success
+  }
+  const slot = fd - 3
+  if slot < 0 || slot >= fds.length() {
     return e_badf
   }
-  const at = args[1][1]
-  if !store_u32(mem, at, 2)[0] {
+  const e = fds[slot]
+  if e[0] < 0 {
+    return e_badf
+  }
+  if e[0] == 2 {
+    os_close(e[1][1])
+  }
+  fd_put(slot, (0 - 1, 0 - 1, "", "", 0))
+  return e_success
+}
+
+// The seek: whence 0/1/2, the os door on an opened file; stdio and
+// the preopens answer ESPIPE (70 — the wasip1.h number; the table's
+// two drifted values were corrected at this ring).
+def fd_seek(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  const e = fd_entry(fd)
+  if !e[0] {
+    return e_badf
+  }
+  const whence = internal.value.sign32(args[2][1])
+  if whence < 0 || whence > 2 {
     return e_inval
   }
-  const all = 0 - 1
-  if !store_u64(mem, at + 8, all)[0] {
+  if e[1][0] != 2 {
+    return e_spipe
+  }
+  case os_lseek(e[1][1], args[1][1], whence) {
+    (R.error, why) then {
+      return read_errno(why)
+    }
+    (R.ok, at) then {
+      if !store_u64(mem, args[3][1], at)[0] {
+        return e_inval
+      }
+      return e_success
+    }
+  }
+}
+
+// The fdstat answer: the filetype byte plus the fdflags' append bit at
+// +0/+2, the two full rights words at +8/+16 — full rights the trust
+// posture the grant already took. fds 0/1/2 are character devices,
+// preopens directories, opens regular files.
+def fdstat(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  const e = fd_entry(fd)
+  if !e[0] {
+    return e_badf
+  }
+  var ftype = 2
+  var flags = 0
+  if e[1][0] == 1 {
+    ftype = 3
+  }
+  if e[1][0] == 2 {
+    ftype = 4
+    flags = e[1][4] & 1
+  }
+  if !store_u32(mem, args[1][1], ftype + flags * 65536)[0] {
     return e_inval
   }
-  if !store_u64(mem, at + 16, all)[0] {
+  if !store_u64(mem, args[1][1] + 8, 0 - 1)[0] {
+    return e_inval
+  }
+  if !store_u64(mem, args[1][1] + 16, 0 - 1)[0] {
     return e_inval
   }
   return e_success
@@ -391,4 +736,229 @@ def clock_time_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) In
     return e_inval
   }
   return e_success
+}
+
+// ---- the preopen discovery ----
+
+// prestat_get: the preopen table's shape answer — `{pr_type u8 = 0,
+// pr_name_len u32}` at the guest's pointer. A valid fd that is not a
+// preopen answers ENOTDIR, the walk-stopper wasi-libc reads.
+def prestat_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  const e = fd_entry(fd)
+  if !e[0] {
+    return e_badf
+  }
+  if e[1][0] != 1 {
+    return e_notdir
+  }
+  const n = e[1][2].to_bytes().length()
+  if !store_u32(mem, args[1][1], 0)[0] {
+    return e_inval
+  }
+  if !store_u32(mem, args[1][1] + 4, n)[0] {
+    return e_inval
+  }
+  return e_success
+}
+
+// prestat_dir_name: the preopen's guest name, whole or ENAMETOOLONG.
+def prestat_dir_name(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  const e = fd_entry(fd)
+  if !e[0] {
+    return e_badf
+  }
+  if e[1][0] != 1 {
+    return e_notdir
+  }
+  const name = e[1][2].to_bytes()
+  const len = internal.value.sign32(args[2][1])
+  if len < name.length() {
+    return e_nametoolong
+  }
+  if !write_bytes(mem, args[1][1], name) {
+    return e_inval
+  }
+  return e_success
+}
+
+// ---- the open ----
+
+// The open: the guest's path inside a preopen's tree. dirfd must be a
+// preopen (std io and opened files answer ENOTDIR); the path may name
+// the preopen's guest prefix ("/data/x" under "data") or ride as the
+// tail relative to it ("x") — the root preopen ("/") takes both. The
+// walk is lexical, "." and "" skip, ".." pops, and a pop past the root
+// is the escape: ENOTCAPABLE. An absolute path under no preopen is the
+// same refusal. The doors serve one direction per open — read-only,
+// write (create + truncate, the stdio "w" shape: the CREAT and TRUNC
+// oflags land on it), or append (the APPEND fdflag) — so a
+// two-direction open, the DIRECTORY and EXCL oflags, a truncating
+// read, an append without write, and any fdflags bit past APPEND all
+// refuse EINVAL. This rung opens files, not directories: the preopen
+// root itself is EINVAL too.
+def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const dirfd = internal.value.sign32(args[0][1])
+  const e = fd_entry(dirfd)
+  if !e[0] {
+    return e_badf
+  }
+  if e[1][0] != 1 {
+    return e_notdir
+  }
+  const plen = internal.value.sign32(args[3][1])
+  if plen < 0 || !range_ok(mem, args[2][1], plen) {
+    return e_inval
+  }
+  const b = internal.store.mem_bytes(mem)
+  const path = copy_out(b, internal.value.mask32(args[2][1]), plen).to_string()
+  const oflags = internal.value.sign32(args[4][1])
+  const rights = args[5][1]
+  const fdflags = internal.value.sign32(args[7][1])
+  if (oflags & (0 - 16)) != 0 {
+    return e_inval
+  }
+  if (fdflags & (0 - 2)) != 0 {
+    return e_inval
+  }
+  if (oflags & 6) != 0 {
+    return e_inval
+  }
+  const want_read = (rights & 2) != 0
+  const want_write = (rights & 64) != 0
+  if want_read && want_write {
+    return e_inval
+  }
+  if !want_read && !want_write {
+    return e_inval
+  }
+  if want_read && (oflags & 9) != 0 {
+    return e_inval
+  }
+  const append = (fdflags & 1) != 0
+  if append && !want_write {
+    return e_inval
+  }
+  const guest = e[1][2]
+  const root = e[1][3]
+  var rel = path
+  if rel.starts_with("/") {
+    if guest == "/" {
+      rel = rel.substring(1, rel.length() - 1)
+    } else {
+      if rel == guest {
+        rel = ""
+      } else {
+        const gpre = guest + "/"
+        if rel.starts_with(gpre) {
+          rel = rel.substring(gpre.length(), rel.length() - gpre.length())
+        } else {
+          return e_notcapable
+        }
+      }
+    }
+  }
+  if rel == "" {
+    return e_inval
+  }
+  const w = walk_comps(rel.split("/"), 0, [])
+  if w[0] {
+    return e_notcapable
+  }
+  var host = root
+  var j = 0
+  while j < w[1].length() {
+    host = host + "/" + w[1][j]
+    j = j + 1
+  }
+  var hfd = 0 - 1
+  if append {
+    case os_open_append(host) {
+      (R.error, why) then {
+        return open_errno(why)
+      }
+      (R.ok, v) then {
+        hfd = v
+      }
+    }
+  } else {
+    if want_write {
+      case os_open_write(host) {
+        (R.error, why) then {
+          return open_errno(why)
+        }
+        (R.ok, v) then {
+          hfd = v
+        }
+      }
+    } else {
+      case os_open_read(host) {
+        (R.error, why) then {
+          return open_errno(why)
+        }
+        (R.ok, v) then {
+          hfd = v
+        }
+      }
+    }
+  }
+  const gfd = fd_alloc()
+  fd_put(gfd - 3, (2, hfd, "", "", fdflags))
+  if !store_u32(mem, args[8][1], gfd)[0] {
+    return e_inval
+  }
+  return e_success
+}
+
+// The lexical walk: "." and empty components skip, ".." pops — a pop
+// past the stack is the escape — anything else pushes. (escaped, stack)
+def walk_comps(comps Array[String], i Int64, stack Array[String]) (Bool, Array[String]) {
+  if i >= comps.length() {
+    return (false, stack)
+  }
+  const c = comps[i]
+  if c == "" || c == "." {
+    return walk_comps(comps, i + 1, stack)
+  }
+  if c == ".." {
+    if stack.length() == 0 {
+      return (true, stack)
+    }
+    return walk_comps(comps, i + 1, drop_last(stack, 0, []))
+  }
+  return walk_comps(comps, i + 1, stack.append(c))
+}
+
+def drop_last(xs Array[String], i Int64, acc Array[String]) Array[String] {
+  if i >= xs.length() - 1 {
+    return acc
+  }
+  return drop_last(xs, i + 1, acc.append(xs[i]))
+}
+
+// ---- the os doors' failure channel ----
+
+// The doors answer `(R.error, reason)` and the reason's only machine
+// content is the shared normalized text both runtimes print ("os:
+// open <path>: <strerror>"). The branches a real module acts on match
+// their phrases; everything else answers EIO.
+def open_errno(why String) Int64 {
+  if why.index_of("No such file or directory") >= 0 {
+    return e_noent
+  }
+  if why.index_of("Is a directory") >= 0 {
+    return e_isdir
+  }
+  return e_io
+}
+
+def read_errno(why String) Int64 {
+  if why.index_of("Is a directory") >= 0 {
+    return e_isdir
+  }
+  if why.index_of("Illegal seek") >= 0 {
+    return e_spipe
+  }
+  return e_io
 }

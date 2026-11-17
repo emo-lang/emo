@@ -1528,6 +1528,16 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
+        ( "os_lseek",
+          {
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("offset", Int64); ("whence", Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_list_dir",
           {
             vtype =

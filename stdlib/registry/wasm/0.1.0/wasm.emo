@@ -86,6 +86,15 @@ def set_wasi_args(args Array[String]) Int64 {
   return internal.instance.set_wasi_args(args)
 }
 
+// The preopen grants (step 87): the (guest name, host path) pairs the
+// preview1 file functions resolve against — set before instantiate,
+// no default grant, the wasmtime posture: no grant, no file system.
+// A new grant replaces the table and drops every fd the previous
+// grants produced.
+def set_wasi_preopens(entries Array[(String, String)]) Int64 {
+  return internal.wasi.set_preopens(entries)
+}
+
 // A one-line count summary of a loaded module.
 def describe(module Int64) String {
   return internal.instance.describe(module)

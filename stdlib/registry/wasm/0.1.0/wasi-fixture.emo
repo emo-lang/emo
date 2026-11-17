@@ -16,7 +16,12 @@ const clock_hex = "0061736d01000000010c0260037f7e7f017f6000017f02290116776173695
 const mono_hex = "0061736d01000000010c0260037f7e7f017f6000017f02290116776173695f736e617073686f745f70726576696577310e636c6f636b5f74696d655f676574000003020101050301000107060102676f00010a170115004101420041c00010001a4101420041c80010000b"
 const badid_hex = "0061736d01000000010c0260037f7e7f017f6000017f02290116776173695f736e617073686f745f70726576696577310e636c6f636b5f74696d655f676574000003020101050301000107060102676f00010a0d010b004102420041c00010000b"
 const badptr_hex = "0061736d01000000010c0260037f7e7f017f6000017f02290116776173695f736e617073686f745f70726576696577310e636c6f636b5f74696d655f676574000003020101050301000107060102676f00010a0e010c00410042004180800410000b"
-const pathopen_hex = "0061736d01000000010d0260057f7f7f7f7f017f60000002240116776173695f736e617073686f745f707265766965773109706174685f6f70656e000003020101050301000107060102676f00010a040102000b"
+const prestat_hex = "0061736d0100000001120360027f7f017f60037f7f7f017f6000017f02560216776173695f736e617073686f745f70726576696577310e66645f707265737461745f676574000016776173695f736e617073686f745f70726576696577311366645f707265737461745f6469725f6e616d65000103020102050301000107060102676f00020a16011400410341c00010001a410341e00041c00010010b"
+const openread_hex = "0061736d0100000001270560097f7f7f7f7f7e7e7f7f017f60047f7f7f7f017f60017f017f60047f7e7f7f017f6000017f0288010416776173695f736e617073686f745f707265766965773109706174685f6f70656e000016776173695f736e617073686f745f70726576696577310766645f72656164000116776173695f736e617073686f745f70726576696577310866645f636c6f7365000216776173695f736e617073686f745f70726576696577310766645f7365656b0003030504040404040503010001071c0402676f00040472656164000505636c6f73650006047365656b00070a4a0418004103410041c0004108410042024200410041c00110000b120041c00128020041e000410141c80110010b0a0041c00128020010020b110041c0012802004200410041d00110030b0b1d020041c0000b086e6f74652e7478740041e0000b088000000040000000"
+const writefile_hex = "0061736d01000000011f0460097f7f7f7f7f7e7e7f7f017f60047f7f7f7f017f60017f017f6000017f02680316776173695f736e617073686f745f707265766965773109706174685f6f70656e000016776173695f736e617073686f745f70726576696577310866645f7772697465000116776173695f736e617073686f745f70726576696577310866645f636c6f736500020304030303030503000107120302676f0003037075740004036f666600050a390319004103410041c0004109410942c0004200410041c00110000b120041c00128020041e000410141c80110010b0a0041c00128020010020b0b26030041c0000b0968656c6c6f2e7478740041e0000b088000000002000000004180010b025859"
+const escape_hex = "0061736d0100000001120260097f7f7f7f7f7e7e7f7f017f6000017f02240116776173695f736e617073686f745f707265766965773109706174685f6f70656e000003020101050301000107060102676f00010a1a0118004103410041c000410a410042004200410041c00110000b0b11010041c0000b0a2e2e2f6f757473696465"
+const seekpipe_hex = "0061736d01000000010d0260047f7e7f7f017f6000017f02220116776173695f736e617073686f745f70726576696577310766645f7365656b000003020101050301000107060102676f00010a0f010d0041014200410041c00010000b"
+const pathopen_hex = "0061736d01000000010d0260057f7f7f7f7f017f60000002250116776173695f736e617073686f745f70726576696577310a66645f72656164646972000003020101050301000107060102676f00010a040102000b"
 const random_hex = "0061736d01000000010b0260027f7f017f6000017f02250116776173695f736e617073686f745f70726576696577310a72616e646f6d5f676574000003020101050301000107060102676f00010a0b01090041c000411010000b"
 const fdstat_hex = "0061736d01000000010b0260027f7f017f6000017f02280116776173695f736e617073686f745f70726576696577310d66645f6664737461745f676574000003020101050301000107060102676f00010a0b010900410141c00010000b"
 const mistyped_hex = "0061736d0100000001080260017f0060000002230116776173695f736e617073686f745f70726576696577310866645f7772697465000003020101050301000107060102676f00010a040102000b"
@@ -81,6 +86,19 @@ def yesno(b Bool) String {
     return "yes"
   }
   return "no"
+}
+
+// The sandbox's directory: an existing one is the normal second-run
+// shape, so the mkdir verdict goes either way.
+def ensure_dir(path String) Int64 {
+  case os_mkdir(path) {
+    (R.error, _) then {
+      return 0
+    }
+    (R.ok, _) then {
+      return 0
+    }
+  }
 }
 
 def run() Int64 {
@@ -187,6 +205,240 @@ def run() Int64 {
 
   // The honest refusal: a closed fd's EBADF.
   println("ebadf " + errno_of(call_go(load_hex(ebadf_hex))).to_string())
+
+  // The file half (step 87). Before any grant, the open answers EBADF
+  // — no grant, no file system.
+  println("noopen " + errno_of(call_go(load_hex(escape_hex))).to_string())
+
+  // The sandbox the fixture grants: one directory, two files, built
+  // through the os doors themselves.
+  ensure_dir(".emo-deps-cache")
+  const root = ".emo-deps-cache/wasi-files"
+  ensure_dir(root)
+  case os_open_write(root + "/note.txt") {
+    (R.error, why) then {
+      println("mknote " + why)
+      failed = failed + 1
+    }
+    (R.ok, fd) then {
+      case os_write(fd, "hello wasi") {
+        (R.error, why) then {
+          println("wrnote " + why)
+          failed = failed + 1
+        }
+        (R.ok, _) then {}
+      }
+      case os_close(fd) {
+        (R.error, why) then {
+          println("clnote " + why)
+          failed = failed + 1
+        }
+        (R.ok, _) then {}
+      }
+    }
+  }
+  wasm.set_wasi_preopens([("/", root)])
+
+  // Discovery: the preopen's shape answer and its guest name.
+  case wasm.instantiate(load_hex(prestat_hex), []) {
+    (R.error, why) then {
+      println("inst " + why)
+      failed = failed + 1
+    }
+    (R.ok, inst) then {
+      case wasm.call(inst, "go", []) {
+        (R.error, why) then {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, results) then {
+          const errno = errno_value(results)
+          if errno != 0 {
+            failed = failed + 1
+          }
+          case wasm.read_memory(inst, 68, 4) {
+            (R.error, why) then {
+              println("read " + why)
+              failed = failed + 1
+            }
+            (R.ok, nl) then {
+              const n = nl.get_u32_le(0)
+              println("prestat " + errno.to_string() + " namelen " + n.to_string())
+              case wasm.read_memory(inst, 96, n) {
+                (R.error, why) then {
+                  println("read " + why)
+                  failed = failed + 1
+                }
+                (R.ok, name) then {
+                  println("prename " + name.to_string())
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Open, read, seek, close: the module's exports share its one table
+  // slot, the guest's bytes pinned at every step.
+  case wasm.instantiate(load_hex(openread_hex), []) {
+    (R.error, why) then {
+      println("inst " + why)
+      failed = failed + 1
+    }
+    (R.ok, inst) then {
+      case wasm.call(inst, "go", []) {
+        (R.error, why) then {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, results) then {
+          println("open " + errno_value(results).to_string())
+        }
+      }
+      case wasm.read_memory(inst, 192, 4) {
+        (R.error, why) then {
+          println("read " + why)
+          failed = failed + 1
+        }
+        (R.ok, slot) then {
+          println("guestfd " + slot.get_u32_le(0).to_string())
+        }
+      }
+      case wasm.call(inst, "read", []) {
+        (R.error, why) then {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, results) then {
+          println("read " + errno_value(results).to_string())
+        }
+      }
+      case wasm.read_memory(inst, 200, 4) {
+        (R.error, why) then {
+          println("read " + why)
+          failed = failed + 1
+        }
+        (R.ok, nr) then {
+          println("nread " + nr.get_u32_le(0).to_string())
+        }
+      }
+      case wasm.read_memory(inst, 128, 10) {
+        (R.error, why) then {
+          println("read " + why)
+          failed = failed + 1
+        }
+        (R.ok, data) then {
+          println("data " + data.to_string())
+        }
+      }
+      case wasm.call(inst, "seek", []) {
+        (R.error, why) then {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, results) then {
+          println("seek " + errno_value(results).to_string())
+        }
+      }
+      case wasm.read_memory(inst, 208, 8) {
+        (R.error, why) then {
+          println("read " + why)
+          failed = failed + 1
+        }
+        (R.ok, pos) then {
+          const at = pos.get_u32_le(4) * 4294967296 + pos.get_u32_le(0)
+          println("pos " + at.to_string())
+        }
+      }
+      case wasm.call(inst, "close", []) {
+        (R.error, why) then {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, results) then {
+          println("close " + errno_value(results).to_string())
+        }
+      }
+    }
+  }
+
+  // Create-write: CREAT|TRUNC through the write door, then the bytes
+  // read back through the fixture's own doors.
+  case wasm.instantiate(load_hex(writefile_hex), []) {
+    (R.error, why) then {
+      println("inst " + why)
+      failed = failed + 1
+    }
+    (R.ok, inst) then {
+      case wasm.call(inst, "go", []) {
+        (R.error, why) then {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, results) then {
+          println("write " + errno_value(results).to_string())
+        }
+      }
+      case wasm.call(inst, "put", []) {
+        (R.error, why) then {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, results) then {
+          println("put " + errno_value(results).to_string())
+        }
+      }
+      case wasm.call(inst, "off", []) {
+        (R.error, why) then {
+          println("go " + why)
+          failed = failed + 1
+        }
+        (R.ok, results) then {
+          println("wclose " + errno_value(results).to_string())
+        }
+      }
+    }
+  }
+  case os_open_read(root + "/hello.txt") {
+    (R.error, why) then {
+      println("reread " + why)
+      failed = failed + 1
+    }
+    (R.ok, fd) then {
+      case os_read(fd, 8) {
+        (R.error, why) then {
+          println("reread " + why)
+          failed = failed + 1
+        }
+        (R.ok, text) then {
+          println("content " + text)
+        }
+      }
+      case os_close(fd) {
+        (R.error, why) then {
+          println("recl " + why)
+          failed = failed + 1
+        }
+        (R.ok, _) then {}
+      }
+    }
+  }
+
+  // The corrected fd_seek import shape links, and the tty answers the
+  // wasip1.h ESPIPE — 70, not the drifted 69.
+  println("seekpipe " + errno_of(call_go(load_hex(seekpipe_hex))).to_string())
+
+  // The escape: ".." past the root is ENOTCAPABLE.
+  println("escape " + errno_of(call_go(load_hex(escape_hex))).to_string())
+
+  wasm.set_wasi_preopens([])
+
+  // The sandbox goes away with the probe.
+  os_unlink(root + "/note.txt")
+  os_unlink(root + "/hello.txt")
+  os_rmdir(root)
 
   // The clock answers. Realtime must sit inside the host's own wall
   // bracket — a time.now() reading taken before the call and one taken
