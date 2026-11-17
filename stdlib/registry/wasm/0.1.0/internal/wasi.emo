@@ -71,11 +71,20 @@ var preopens = []
 var fds = []
 
 // The grants: replaces the table and drops every fd the previous
-// grants produced — a new grant is a new file system.
+// grants produced — a new grant is a new file system. Each grant
+// materializes as the preopen directory's own fd, the discovery
+// walk's subject.
 def set_preopens(entries Array[(String, String)]) Int64 {
   preopens = entries
-  fds = []
+  fds = grant_entries(entries, 0, [])
   return 0
+}
+
+def grant_entries(entries Array[(String, String)], i Int64, acc Array[(Int64, Int64, String, String, Int64)]) Array[(Int64, Int64, String, String, Int64)] {
+  if i >= entries.length() {
+    return acc
+  }
+  return grant_entries(entries, i + 1, acc.append((1, 0 - 1, entries[i][0], entries[i][1], 0)))
 }
 
 // The fresh-run reset: `internal.instance.reset_all` calls this beside
@@ -155,7 +164,7 @@ def params_ok(id Int64, kinds Array[Int64], i Int64) Bool {
   if id == f_fd_seek && i == 1 {
     want = 126
   }
-  if id == f_path_open && (i == 4 || i == 5) {
+  if id == f_path_open && (i == 5 || i == 6) {
     want = 126
   }
   if kinds[i] != want {
@@ -475,8 +484,11 @@ def fd_write(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   if !e[0] {
     return e_badf
   }
-  if e[1][0] != 2 {
+  if e[1][0] == 1 {
     return e_isdir
+  }
+  if e[1][0] == 0 {
+    return e_badf
   }
   const iovs = args[1][1]
   const count = internal.value.sign32(args[2][1])
@@ -627,7 +639,7 @@ def fd_close(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
     return e_badf
   }
   if e[0] == 2 {
-    os_close(e[1][1])
+    os_close(e[1])
   }
   fd_put(slot, (0 - 1, 0 - 1, "", "", 0))
   return e_success
