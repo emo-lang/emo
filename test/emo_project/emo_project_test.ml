@@ -3816,6 +3816,41 @@ let build_example root entry name =
    compiled binary agree with the example's golden text. [root] is the
    project root — the example's own directory, which holds its
    package.emo. *)
+(* The GC heap's fixture runs nowhere but the interpreter run — every
+   build target refuses the doors (E4032) — so its acceptance is the
+   golden alone, no binary leg. *)
+let run_interpreted_example root name entry =
+  let golden =
+    let nested = Filename.concat (Filename.concat root name) "expected.txt" in
+    if Sys.file_exists nested then Emo_project.read_file nested
+    else Emo_project.read_file (Filename.concat root "expected.txt")
+  in
+  Sys.chdir root;
+  let interpreted =
+    capture_program_output (fun () ->
+        match
+          Emo_project.run_entry ~entry_file:entry ~check:true
+            ~sched:Emo_project.Own ()
+        with
+        | _project -> ()
+        | exception Emo_project.Static_errors ds ->
+            Alcotest.fail
+              (String.concat "\n"
+                 (List.map
+                    (fun d ->
+                      Printf.sprintf "%s at %s: %s"
+                        (match d.Emo_support.Diagnostic.code with
+                        | Some c -> c
+                        | None -> "?")
+                        (Emo_support.Span.to_string
+                           d.Emo_support.Diagnostic.span)
+                        d.Emo_support.Diagnostic.message)
+                    ds)))
+  in
+  Alcotest.(check string)
+    (name ^ ": interpreter matches golden")
+    golden interpreted
+
 let bootstrap_example root name entry =
   let golden =
     (* Root projects keep their golden beside the entry inside
@@ -4048,6 +4083,11 @@ let bootstrap_tests =
         bootstrap_example
           (Filename.concat (examples_dir ()) "crypto_sign")
           "crypto_sign" "main.emo");
+    tc "gc_demo runs its golden on the interpreter alone" (fun () ->
+        use_workspace_registry () |> ignore;
+        run_interpreted_example
+          (Filename.concat (examples_dir ()) "gc_demo")
+          "gc_demo" "main.emo");
     tc "crypto_ecdh compiles to a binary with the interpreter's output"
       (fun () ->
         use_workspace_registry () |> ignore;

@@ -17,6 +17,7 @@ type t =
   | String
   | Bytes
   | Pid
+  | Ref (* the GC heap's rooted cell (docs/gc-heap.md) *)
   | TcpConn
   | TcpListener
   | UdpSocket
@@ -48,6 +49,7 @@ let rec to_string = function
   | Bytes -> "Bytes"
   | SyntaxType -> "Syntax"
   | Pid -> "Pid"
+  | Ref -> "Ref"
   | TcpConn -> "TcpConn"
   | TcpListener -> "TcpListener"
   | UdpSocket -> "UdpSocket"
@@ -375,6 +377,7 @@ let rec decl_to_type ?(lenient = false) ctx
   | Ast.Named_type "String" -> String
   | Ast.Named_type "Bytes" -> Bytes
   | Ast.Named_type "Pid" -> Pid
+  | Ast.Named_type "Ref" -> Ref
   | Ast.Named_type "TcpConn" -> TcpConn
   | Ast.Named_type "TcpListener" -> TcpListener
   | Ast.Named_type "UdpSocket" -> UdpSocket
@@ -1889,6 +1892,137 @@ let raw_mem_bindings =
       } );
   ]
 
+(* The GC heap's object model (docs/gc-heap.md, plan/step-89): the
+   machine's block kinds — the fixed struct, the counted array — and the
+   rooted ref, the one construct ordinary code cannot express because it
+   needs the host to know which words the mutator still holds. Words are
+   Int64s, self-describing by parity: even is a scalar (shifted), odd is
+   a reference to a block id. Slot 0 of every block is the collector's
+   header word; the data sits in slots 1..n. *)
+let gc_heap_bindings =
+  [
+    ( "struct_new",
+      {
+        vtype = FuncType ([ ("n", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "array_new",
+      {
+        vtype = FuncType ([ ("n", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "struct_get",
+      {
+        vtype = FuncType ([ ("b", Int64); ("i", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "struct_set",
+      {
+        vtype = FuncType ([ ("b", Int64); ("i", Int64); ("w", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "array_len",
+      {
+        vtype = FuncType ([ ("a", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "array_get",
+      {
+        vtype = FuncType ([ ("a", Int64); ("i", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "array_set",
+      {
+        vtype = FuncType ([ ("a", Int64); ("i", Int64); ("w", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "block_kind",
+      {
+        vtype = FuncType ([ ("h", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "block_size",
+      {
+        vtype = FuncType ([ ("h", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "ref_new",
+      {
+        vtype = FuncType ([ ("w", Int64) ], Ref);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "ref_read",
+      {
+        vtype = FuncType ([ ("r", Ref) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "ref_write",
+      {
+        vtype = FuncType ([ ("r", Ref); ("w", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "ref_roots",
+      {
+        vtype = FuncType ([], ArrayType Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "heap_blocks",
+      {
+        vtype = FuncType ([], ArrayType Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "heap_free",
+      {
+        vtype = FuncType ([ ("h", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "heap_words",
+      {
+        vtype = FuncType ([], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+  ]
+
+let gc_heap_builtin = function
+  | "struct_new" | "array_new" | "struct_get" | "struct_set" | "array_len"
+  | "array_get" | "array_set" | "block_kind" | "block_size" | "ref_new"
+  | "ref_read" | "ref_write" | "ref_roots" | "heap_blocks" | "heap_free"
+  | "heap_words" ->
+      true
+  | _ -> false
+
 let raw_mem_builtin = function
   | "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
   | "device_wait" | "device_wake" | "ecall" | "user_spawn" | "gate_reply"
@@ -1902,9 +2036,17 @@ let raw_mem_what = function
   | "ecall" -> "the machine's gate"
   | _ -> "raw memory"
 
+(* The admission matrix, one row per machine-owned memory family: a
+   target admits a family iff the target's memory is the program's to
+   manage. Raw memory rides with `riscv64` (the program owns the address
+   space); the GC heap rides with the interpreter run, whose memory is
+   the collector's to manage — every other target refuses by name at the
+   identifier (E4028 / E4032). *)
 let base_env target =
   if target = "riscv64" then
     { empty_env with bindings = raw_mem_bindings @ empty_env.bindings }
+  else if target = "interpreter" then
+    { empty_env with bindings = gc_heap_bindings @ empty_env.bindings }
   else empty_env
 
 let lookup_env env name = List.assoc_opt name env.bindings
@@ -2348,6 +2490,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
                      "`%s` reaches %s: only the `riscv64` target admits it, \
                       not `%s`"
                      name (raw_mem_what name) ctx.target)
+              else if gc_heap_builtin name then
+                report ctx span "E4032"
+                  (Printf.sprintf
+                     "`%s` reaches the GC heap: only the interpreter run \
+                      admits it, not `%s`"
+                     name ctx.target)
               else if out_of_scope ctx name then
                 report ctx span "E5008"
                   (Printf.sprintf "%s does not declare `%s` in its deps"
@@ -5242,19 +5390,21 @@ let check_module_typed ~(modules : string list list)
     List.rev !(ctx.requires),
     ctx.types )
 
-(* The plain entry: same checking, types discarded. *)
+(* The plain entry: same checking, types discarded. The target rides
+   through to the typed entry — the interpreter run checks as
+   `interpreter` (docs/gc-heap.md), every other caller keeps `c`. *)
 let check_module ~(modules : string list list)
     ?(packages : string list list = [])
     ?(package_deps : (string list * string list) list = [])
     ?(aliases : (string list * string list) list = []) ~(current : string list)
-    ?(program : program_types option) ?(entry : string list option = None)
-    (items : Ast.item list) :
+    ?(program : program_types option) ?(target = "c")
+    ?(entry : string list option = None) (items : Ast.item list) :
     Emo_support.Diagnostic.t list
     * string list list
     * (string * Emo_support.Span.t) list =
   let diagnostics, refs, requires, _types =
     check_module_typed ~modules ~packages ~package_deps ~aliases ~current
-      ?program ~entry items
+      ?program ~target ~entry items
   in
   (diagnostics, refs, requires)
 

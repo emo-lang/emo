@@ -68,6 +68,7 @@
 | M47 — 库的手册 | 86 | `emo man` 从二进制内部读取标准库的参考页:`emo man` 列出各包,`emo man <package>` 把一页渲染成 man page——NAME 取自总览表格,SYNOPSIS 取自内嵌 manifest 的版本钉与 `require`,DESCRIPTION 带着文档自己的各小节与示例,外加 SEE ALSO——`emo man stdlib` 渲染总览。文档仍是唯一权威来源:`docs/stdlib.md` 与 `docs/stdlib/*.md` 在构建时生成进 CLI 的页面数据(与标准库源码相同的内嵌路线),所以装好的二进制旁边不需要任何文件;渲染器读取文档所用的 Markdown 子集——正文折行到 `COLUMNS`,代码不折行,过宽表格逐单元格折行——`MANPAGER`/`PAGER` 只在能运行时使用,未知名字以 65 拒绝,`test/emo_cli` 的 `man` 组钉住列表、一个页面与拒绝(`plan/step-86-emo-man.md`)。 |
 | M48 — WASI 宿主的文件半边 | 87 | `emo wasm run` 的 preview1 宿主能在被授予的目录里读写文件:preopen 表就是授予(`wasm.set_wasi_preopens`、CLI 的 `--dir HOST[::GUEST]`),默认为空——不授予就没有文件系统——`fd_prestat_get`/`fd_prestat_dir_name` 走发现环,`path_open` 在 preopen 根内做词法解析(越出根即 ENOTCAPABLE),每个打开都骑一扇 os 门——读、写(建+截断,即 stdio 的 "w" 形状)、追加——`fd_read`/`fd_write`/`fd_seek`/`fd_close`/`fd_fdstat_get` 长出文件 fd。基座是 os 包自己的 POSIX 语义,不是第二套文件故事;本环还冲出三处既有漂移:errno 表的 ENOSYS 与 ESPIPE 对 wasip1.h 偏了一位(51/69 → 52/70),fd_seek 的导入形状把 i64 偏移钉成了 i32(真模块的导入会被拒),fixture 的链接拒绝探针换名 `fd_readdir`(`CHECK.md`)。 |
 | M49 — 文件半边的第二环 | 88 | 目录可列、路径可 stat、突变落地:DIRECTORY oflag 打开目录(开前一次 stat,对文件答 ENOTDIR),fd 表长出宿主路径与授予根使每次解析都被围住,`fd_readdir` 无状态列出(调用者的 cookie 即位置,整条目入缓冲,d_type UNKNOWN、类型通道交给 `path_filestat_get`),`fd_filestat_get`/`path_filestat_get` 经新的路径形 `os_stat` 门取 stat(毫秒时间放大到纳秒;stdio 答字符设备;开后被删的文件如实答 miss),四个路径突变(建目录/删目录/解链/改名)骑既有的 os 门,errno 文本通道补 EEXIST/ENOTEMPTY/EXDEV/EPERM;lookupflags 的 symlink-follow 位必带,fixture 的链接拒绝探针换名 `fd_pread`(`CHECK.md`)。 |
+| M50 — GC 自举 | 89 | 解释器运行承载的机器对象模型,与 Emo 写的收集器:十六个裸名门——定长 `struct` 块、带计数的 `array` 块、有根的 `ref`,以及行走所需(`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`)——只由解释器运行准入(以 target `interpreter` 检查;所有 build target 按名拒绝,E4032),词靠奇偶自描述(偶数为移位标量,奇数为引用,`0` 为 null),每块的槽 0 是收集器的头词;`gc` 包用纯 Emo 实现 mark-sweep——打标访问器、工作栈排空、标记位切环——应答收回的词数;弱注册的根表让宿主收集器当活性 oracle,根立起变异者纪律(要被收集尊重的句柄放进 `ref`);金测:`examples/gc_demo` 的九行只在解释器运行上(有根的链与被穿透标记的 array 活过四千个无根节点的清除;环在根松手的瞬间死去——引用计数永远收不回的形状)、`gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测(`CHECK.md`、`docs/gc-heap.md`)。 |
 
 ## 设计闸门
 
@@ -2403,3 +2404,35 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
 - [x] **T88.4** — 文档:本节 + zh 镜像、`plan/README.md` 的行、
       `plan/step-88-wasi-files2.md`、`docs/stdlib/wasm.md` + zh 镜像、
       CHECK.md 的定案记录。
+
+## M50 — GC 自举
+
+### Step 89 — 解释器的对象模型:struct、array、ref,与 Emo 写的收集器
+
+**Status:** complete。(`plan/step-89-gc-bootstrap.md` 是本步的
+记录,`docs/gc-heap.md` 是设计笔记。)
+
+- [x] **T89.1** — 检查器:`Ref` 类型加入检查器的类型语言,十六个
+      签名(`gc_heap_bindings`),`base_env` 里的准入门——运行以
+      target `interpreter` 检查,是门绑定的唯一席位——以及点名堆
+      与 target 的 E4032 拒绝,裸内存家族的形状反转。
+- [x] **T89.2** — 求值器:堆状态(块表、id 从 1 起、奇偶打标、
+      为响亮 double free 准备的墓碑表),弱注册的根表(宿主的
+      收集器当活性 oracle;`ref_roots()` 强制一次 major 周期,根集
+      恰为变异者所持),十六个 builtin 臂与各自的响亮结局
+      (E3050–E3055),`Ref` 跨进程边界传递自身的格,每轮运行随
+      程序注册表一起重置。
+- [x] **T89.3** — `gc` 包(`stdlib/registry/gc/0.1.0`,纯 Emo):
+      打标访问器(移位;`_ref` 一对拒绝偶数非零词而放行 null),
+      头词分派,带工作栈排空的 mark-sweep——首轮 fixture 抓到行走
+      在根旁一步就停,排空循环是修复——`collect()` 应答 sweep
+      收回的词数。
+- [x] **T89.4** — 金测:`examples/gc_demo` 的九行只在解释器运行上
+      逐字节(`gc_demo` 以 interpreter-only 腿加入
+      `test/emo_project`——所有 build target 拒绝,不存在二进制
+      腿);checker 套件里的 `gc_heap_tests`(准入、类型推断、
+      七个拒绝 target 的矩阵、准入席位上的载荷与 arity 拒绝);
+      在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测。
+- [x] **T89.5** — 文档:`docs/gc-heap.md` + zh-CN 镜像,
+      `docs/stdlib.md` + zh 的 `gc` 行,本节 + zh 镜像,
+      `plan/step-89-gc-bootstrap.md`,CHECK.md 的决策记录。

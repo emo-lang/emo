@@ -1,0 +1,9 @@
+heap words with garbage: 12027
+collected: 12000
+heap words after: 27
+chain sum: 210
+array children: 15
+cycle collected: 0
+cycle survives: 22
+cycle freed: 6
+heap words at rest: 27
