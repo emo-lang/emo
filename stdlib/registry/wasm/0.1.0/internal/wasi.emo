@@ -31,12 +31,16 @@ const e_success = 0
 const e_io = 29
 const e_badf = 8
 const e_inval = 28
+const e_exist = 20
 const e_isdir = 31
 const e_nametoolong = 37
 const e_noent = 44
 const e_nosys = 52
 const e_notdir = 54
+const e_notempty = 55
+const e_perm = 63
 const e_spipe = 70
+const e_xdev = 75
 const e_notcapable = 76
 
 const f_args_sizes_get = 0
@@ -55,6 +59,13 @@ const f_prestat_get = 12
 const f_prestat_dir_name = 13
 const f_path_open = 14
 const f_fd_read = 15
+const f_fd_readdir = 16
+const f_fd_filestat_get = 17
+const f_path_filestat_get = 18
+const f_path_create_directory = 19
+const f_path_remove_directory = 20
+const f_path_unlink_file = 21
+const f_path_rename = 22
 
 const max_random = 1048576
 
@@ -65,9 +76,11 @@ var preopens = []
 
 // The fd table: slot = guest fd - 3. fds 0/1/2 are stdio and never sit
 // here; the grants land first (in order), then the opens. An entry is
-// (kind, host_fd, guest name, host root, fdflags): kind 1 a preopen
-// directory (no host fd — the grant is a name mapping), kind 2 an
-// opened file; kind -1 the hole a close left.
+// (kind, host_fd, guest name, host path, confinement root, fdflags):
+// kind 1 a preopen directory (no host fd — the grant is a name
+// mapping; host and root are the same path), kind 2 an opened file,
+// kind 3 an opened directory (host its path, root the grant it came
+// from); kind -1 the hole a close left.
 var fds = []
 
 // The grants: replaces the table and drops every fd the previous
@@ -80,11 +93,11 @@ def set_preopens(entries Array[(String, String)]) Int64 {
   return 0
 }
 
-def grant_entries(entries Array[(String, String)], i Int64, acc Array[(Int64, Int64, String, String, Int64)]) Array[(Int64, Int64, String, String, Int64)] {
+def grant_entries(entries Array[(String, String)], i Int64, acc Array[(Int64, Int64, String, String, String, Int64)]) Array[(Int64, Int64, String, String, String, Int64)] {
   if i >= entries.length() {
     return acc
   }
-  return grant_entries(entries, i + 1, acc.append((1, 0 - 1, entries[i][0], entries[i][1], 0)))
+  return grant_entries(entries, i + 1, acc.append((1, 0 - 1, entries[i][0], entries[i][1], entries[i][1], 0)))
 }
 
 // The fresh-run reset: `internal.instance.reset_all` calls this beside
@@ -146,6 +159,27 @@ def func_id(name String) Int64 {
   if name == "fd_read" {
     return f_fd_read
   }
+  if name == "fd_readdir" {
+    return f_fd_readdir
+  }
+  if name == "fd_filestat_get" {
+    return f_fd_filestat_get
+  }
+  if name == "path_filestat_get" {
+    return f_path_filestat_get
+  }
+  if name == "path_create_directory" {
+    return f_path_create_directory
+  }
+  if name == "path_remove_directory" {
+    return f_path_remove_directory
+  }
+  if name == "path_unlink_file" {
+    return f_path_unlink_file
+  }
+  if name == "path_rename" {
+    return f_path_rename
+  }
   return 0 - 1
 }
 
@@ -165,6 +199,9 @@ def params_ok(id Int64, kinds Array[Int64], i Int64) Bool {
     want = 126
   }
   if id == f_path_open && (i == 5 || i == 6) {
+    want = 126
+  }
+  if id == f_fd_readdir && i == 3 {
     want = 126
   }
   if kinds[i] != want {
@@ -218,6 +255,27 @@ def param_count(id Int64) Int64 {
   }
   if id == f_fd_read {
     return 4
+  }
+  if id == f_fd_readdir {
+    return 5
+  }
+  if id == f_fd_filestat_get {
+    return 2
+  }
+  if id == f_path_filestat_get {
+    return 5
+  }
+  if id == f_path_create_directory {
+    return 3
+  }
+  if id == f_path_remove_directory {
+    return 3
+  }
+  if id == f_path_unlink_file {
+    return 3
+  }
+  if id == f_path_rename {
+    return 6
   }
   return 0
 }
@@ -282,6 +340,27 @@ def dispatch(id Int64, args Array[(Int64, Int64)], mem (Box[Bytes], Int64, Bool)
   }
   if id == f_fd_read {
     return (fd_read(mem, args), "")
+  }
+  if id == f_fd_readdir {
+    return (fd_readdir(mem, args), "")
+  }
+  if id == f_fd_filestat_get {
+    return (fd_filestat_get(mem, args), "")
+  }
+  if id == f_path_filestat_get {
+    return (path_filestat_get(mem, args), "")
+  }
+  if id == f_path_create_directory {
+    return (path_create_directory(mem, args), "")
+  }
+  if id == f_path_remove_directory {
+    return (path_remove_directory(mem, args), "")
+  }
+  if id == f_path_unlink_file {
+    return (path_unlink_file(mem, args), "")
+  }
+  if id == f_path_rename {
+    return (path_rename(mem, args), "")
   }
   return (e_nosys, "")
 }
@@ -375,13 +454,13 @@ def args_get(mem (Box[Bytes], Int64, Bool), argv Array[String], args Array[(Int6
 // The fd's entry: (ok, entry). fds 0/1/2 answer stdio without a table
 // slot; the slot is fd - 3. A closed hole or a slot past the table is
 // not-ok, and every caller answers EBADF on it.
-def fd_entry(fd Int64) (Bool, (Int64, Int64, String, String, Int64)) {
+def fd_entry(fd Int64) (Bool, (Int64, Int64, String, String, String, Int64)) {
   if fd == 0 || fd == 1 || fd == 2 {
-    return (true, (0, fd, "", "", 0))
+    return (true, (0, fd, "", "", "", 0))
   }
   const slot = fd - 3
   if slot < 0 || slot >= fds.length() {
-    return (false, (0 - 1, 0 - 1, "", "", 0))
+    return (false, (0 - 1, 0 - 1, "", "", "", 0))
   }
   const e = fds[slot]
   if e[0] < 0 {
@@ -399,11 +478,11 @@ def fd_alloc() Int64 {
     }
     i = i + 1
   }
-  fds = fds.append((0 - 1, 0 - 1, "", "", 0))
+  fds = fds.append((0 - 1, 0 - 1, "", "", "", 0))
   return i + 3
 }
 
-def fd_put(slot Int64, e (Int64, Int64, String, String, Int64)) Int64 {
+def fd_put(slot Int64, e (Int64, Int64, String, String, String, Int64)) Int64 {
   fds[slot] = e
   return 0
 }
@@ -641,7 +720,7 @@ def fd_close(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   if e[0] == 2 {
     os_close(e[1])
   }
-  fd_put(slot, (0 - 1, 0 - 1, "", "", 0))
+  fd_put(slot, (0 - 1, 0 - 1, "", "", "", 0))
   return e_success
 }
 
@@ -691,7 +770,7 @@ def fdstat(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   }
   if e[1][0] == 2 {
     ftype = 4
-    flags = e[1][4] & 1
+    flags = e[1][5] & 1
   }
   if !store_u32(mem, args[1][1], ftype + flags * 65536)[0] {
     return e_inval
@@ -797,19 +876,21 @@ def prestat_dir_name(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) 
 
 // ---- the open ----
 
-// The open: the guest's path inside a preopen's tree. dirfd must be a
-// preopen (std io and opened files answer ENOTDIR); the path may name
-// the preopen's guest prefix ("/data/x" under "data") or ride as the
-// tail relative to it ("x") — the root preopen ("/") takes both. The
-// walk is lexical, "." and "" skip, ".." pops, and a pop past the root
-// is the escape: ENOTCAPABLE. An absolute path under no preopen is the
-// same refusal. The doors serve one direction per open — read-only,
-// write (create + truncate, the stdio "w" shape: the CREAT and TRUNC
-// oflags land on it), or append (the APPEND fdflag) — so a
-// two-direction open, the DIRECTORY and EXCL oflags, a truncating
-// read, an append without write, and any fdflags bit past APPEND all
-// refuse EINVAL. This rung opens files, not directories: the preopen
-// root itself is EINVAL too.
+// The open: the guest's path inside a directory fd's tree. dirfd must
+// be directory-class — a preopen or an opened directory (std io and
+// opened files answer ENOTDIR); the path may name the preopen's guest
+// prefix ("/data/x" under "data") or ride as the tail relative to it
+// ("x") — the root preopen ("/") takes both. The walk is lexical, "."
+// and "" skip, ".." pops, and a pop past the grant's root is the
+// escape: ENOTCAPABLE. An absolute path under no preopen is the same
+// refusal. The doors serve one direction per open — read-only, write
+// (create + truncate, the stdio "w" shape: the CREAT and TRUNC oflags
+// land on it), or append (the APPEND fdflag) — so a two-direction
+// open, the EXCL oflag, a truncating read, an append without write,
+// and any fdflags bit past APPEND all refuse EINVAL. The DIRECTORY
+// oflag opens the directory itself — a stat before the open answers
+// ENOTDIR for a file — read-only, and such fds list through
+// fd_readdir.
 def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   const dirfd = internal.value.sign32(args[0][1])
   const e = fd_entry(dirfd)
@@ -834,7 +915,7 @@ def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   if (fdflags & (0 - 2)) != 0 {
     return e_inval
   }
-  if (oflags & 6) != 0 {
+  if (oflags & 4) != 0 {
     return e_inval
   }
   const want_read = (rights & 2) != 0
@@ -852,37 +933,28 @@ def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   if append && !want_write {
     return e_inval
   }
-  const guest = e[1][2]
-  const root = e[1][3]
-  var rel = path
-  if rel.starts_with("/") {
-    if guest == "/" {
-      rel = rel.substring(1, rel.length() - 1)
-    } else {
-      if rel == guest {
-        rel = ""
-      } else {
-        const gpre = guest + "/"
-        if rel.starts_with(gpre) {
-          rel = rel.substring(gpre.length(), rel.length() - gpre.length())
-        } else {
-          return e_notcapable
+  const dir_open = (oflags & 2) != 0
+  if dir_open {
+    if !want_read || append || (oflags & 9) != 0 {
+      return e_inval
+    }
+  }
+  const r = resolve_under(e, path)
+  if r[0] != 0 {
+    return r[0]
+  }
+  const host = r[1]
+  if dir_open {
+    case os_stat(host) {
+      (R.error, why) then {
+        return open_errno(why)
+      }
+      (R.ok, st) then {
+        if st[0] != 1 {
+          return e_notdir
         }
       }
     }
-  }
-  if rel == "" {
-    return e_inval
-  }
-  const w = walk_comps(rel.split("/"), 0, [])
-  if w[0] {
-    return e_notcapable
-  }
-  var host = root
-  var j = 0
-  while j < w[1].length() {
-    host = host + "/" + w[1][j]
-    j = j + 1
   }
   var hfd = 0 - 1
   if append {
@@ -916,7 +988,11 @@ def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
     }
   }
   const gfd = fd_alloc()
-  fd_put(gfd - 3, (2, hfd, "", "", fdflags))
+  var kind = 2
+  if dir_open {
+    kind = 3
+  }
+  fd_put(gfd - 3, (kind, hfd, "", host, e[1][4], fdflags))
   if !store_u32(mem, args[8][1], gfd)[0] {
     return e_inval
   }
@@ -924,22 +1000,24 @@ def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
 }
 
 // The lexical walk: "." and empty components skip, ".." pops — a pop
-// past the stack is the escape — anything else pushes. (escaped, stack)
-def walk_comps(comps Array[String], i Int64, stack Array[String]) (Bool, Array[String]) {
+// at or below the floor is the escape — anything else pushes. The
+// seed is the base path's own components; the floor is the grant
+// root's depth. (escaped, stack)
+def walk_comps(comps Array[String], i Int64, floor Int64, stack Array[String]) (Bool, Array[String]) {
   if i >= comps.length() {
     return (false, stack)
   }
   const c = comps[i]
   if c == "" || c == "." {
-    return walk_comps(comps, i + 1, stack)
+    return walk_comps(comps, i + 1, floor, stack)
   }
   if c == ".." {
-    if stack.length() == 0 {
+    if stack.length() <= floor {
       return (true, stack)
     }
-    return walk_comps(comps, i + 1, drop_last(stack, 0, []))
+    return walk_comps(comps, i + 1, floor, drop_last(stack, 0, []))
   }
-  return walk_comps(comps, i + 1, stack.append(c))
+  return walk_comps(comps, i + 1, floor, stack.append(c))
 }
 
 def drop_last(xs Array[String], i Int64, acc Array[String]) Array[String] {
@@ -947,6 +1025,346 @@ def drop_last(xs Array[String], i Int64, acc Array[String]) Array[String] {
     return acc
   }
   return drop_last(xs, i + 1, acc.append(xs[i]))
+}
+
+// The path components a path string carries, "" skipped — the seed a
+// walk starts from and the measure a floor counts.
+def comps_of(parts Array[String], i Int64, acc Array[String]) Array[String] {
+  if i >= parts.length() {
+    return acc
+  }
+  if parts[i] == "" {
+    return comps_of(parts, i + 1, acc)
+  }
+  return comps_of(parts, i + 1, acc.append(parts[i]))
+}
+
+// The resolution every directory-class fd shares: the guest's path
+// against the fd's own base, confined by the grant root the fd
+// carries. Preopens keep the guest-prefix strip ("/data/x" and "x"
+// both land); an opened directory takes the tail only, an absolute
+// path under it being the escape. The root itself resolves to the
+// fd's base. (errno, host path — errno 0 is ok)
+def resolve_under(e (Bool, (Int64, Int64, String, String, String, Int64)), path String) (Int64, String) {
+  if !e[0] {
+    return (e_badf, "")
+  }
+  if e[1][0] != 1 && e[1][0] != 3 {
+    return (e_notdir, "")
+  }
+  const base = e[1][3]
+  const floor = comps_of(e[1][4].split("/"), 0, []).length()
+  var rel = path
+  if e[1][0] == 1 {
+    if rel.starts_with("/") {
+      if e[1][2] == "/" {
+        rel = rel.substring(1, rel.length() - 1)
+      } else {
+        if rel == e[1][2] {
+          rel = ""
+        } else {
+          const gpre = e[1][2] + "/"
+          if rel.starts_with(gpre) {
+            rel = rel.substring(gpre.length(), rel.length() - gpre.length())
+          } else {
+            return (e_notcapable, "")
+          }
+        }
+      }
+    }
+  } else {
+    if rel.starts_with("/") {
+      return (e_notcapable, "")
+    }
+  }
+  if rel == "" {
+    return (e_inval, "")
+  }
+  const w = walk_comps(rel.split("/"), 0, floor, comps_of(base.split("/"), 0, []))
+  if w[0] {
+    return (e_notcapable, "")
+  }
+  if w[1].length() == 0 {
+    return (0, base)
+  }
+  var host = ""
+  var j = 0
+  while j < w[1].length() {
+    if j > 0 {
+      host = host + "/"
+    }
+    host = host + w[1][j]
+    j = j + 1
+  }
+  return (0, host)
+}
+
+// The guest's path out of linear memory: (errno, text) — EINVAL when
+// the length is negative or the range runs out.
+def guest_path(mem (Box[Bytes], Int64, Bool), ptr Int64, len Int64) (Int64, String) {
+  if len < 0 || !range_ok(mem, ptr, len) {
+    return (e_inval, "")
+  }
+  const b = internal.store.mem_bytes(mem)
+  return (0, copy_out(b, internal.value.mask32(ptr), len).to_string())
+}
+
+// ---- the listing and the stats (step 88) ----
+
+// The read of a directory: the fd's entries, sorted, as 24-byte
+// dirents (d_next, d_ino 0, d_namlen, d_type UNKNOWN) with the name
+// riding after, whole entries only — what fits the buffer lands, and
+// the caller's cookie (the d_next it saw last, 0 to start) says where
+// this call resumes. Stateless: the sorted list is walked fresh every
+// call. A file fd answers ENOTDIR.
+def fd_readdir(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  const e = fd_entry(fd)
+  if !e[0] {
+    return e_badf
+  }
+  if e[1][0] != 1 && e[1][0] != 3 {
+    return e_notdir
+  }
+  const buf = args[1][1]
+  const cap = internal.value.sign32(args[2][1])
+  if cap < 0 || !range_ok(mem, buf, cap) {
+    return e_inval
+  }
+  const cookie = args[3][1]
+  case os_list_dir(e[1][3]) {
+    (R.error, why) then {
+      return read_errno(why)
+    }
+    (R.ok, names) then {
+      if cookie < 0 || cookie >= names.length() {
+        if !store_u32(mem, args[4][1], 0)[0] {
+          return e_inval
+        }
+        return e_success
+      }
+      var pos = 0
+      var idx = cookie
+      while idx < names.length() {
+        const nb = names[idx].to_bytes()
+        const need = 24 + nb.length()
+        if pos + need > cap {
+          break
+        }
+        const head = Bytes.new(24)
+        var k = 0
+        while k < 24 {
+          head.set(k, 0)
+          k = k + 1
+        }
+        var v = idx + 1
+        k = 0
+        while k < 8 {
+          head.set(k, v & 255)
+          v = v >> 8
+          k = k + 1
+        }
+        v = nb.length()
+        k = 16
+        while k < 20 {
+          head.set(k, v & 255)
+          v = v >> 8
+          k = k + 1
+        }
+        if !write_bytes(mem, buf + pos, head) {
+          return e_inval
+        }
+        if !write_bytes(mem, buf + pos + 24, nb) {
+          return e_inval
+        }
+        pos = pos + need
+        idx = idx + 1
+      }
+      if !store_u32(mem, args[4][1], pos)[0] {
+        return e_inval
+      }
+      return e_success
+    }
+  }
+}
+
+// The 64-byte filestat: filetype u8 and the fdflags' append bit at
+// +0/+2, the size at +8, and the three times (the wall door's
+// millisecond resolution scaled to nanoseconds) at +16/+24/+32.
+def write_filestat(mem (Box[Bytes], Int64, Bool), at Int64, ftype Int64, flags Int64, size Int64, atime Int64, mtime Int64, ctime Int64) Int64 {
+  if !store_u32(mem, at, ftype + flags * 65536)[0] {
+    return e_inval
+  }
+  if !store_u64(mem, at + 8, size)[0] {
+    return e_inval
+  }
+  if !store_u64(mem, at + 16, atime * 1000000)[0] {
+    return e_inval
+  }
+  if !store_u64(mem, at + 24, mtime * 1000000)[0] {
+    return e_inval
+  }
+  if !store_u64(mem, at + 32, ctime * 1000000)[0] {
+    return e_inval
+  }
+  return e_success
+}
+
+// The fd's stat: stdio answers character device with no size and no
+// times; everything else stats the host path the fd carries — an
+// fd whose file was unlinked after the open answers the miss.
+def fd_filestat_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const fd = internal.value.sign32(args[0][1])
+  const e = fd_entry(fd)
+  if !e[0] {
+    return e_badf
+  }
+  if e[1][0] == 0 {
+    return write_filestat(mem, args[1][1], 2, 0, 0, 0, 0, 0)
+  }
+  case os_stat(e[1][3]) {
+    (R.error, why) then {
+      return open_errno(why)
+    }
+    (R.ok, st) then {
+      var ftype = 4
+      if st[0] == 1 {
+        ftype = 3
+      }
+      return write_filestat(mem, args[1][1], ftype, e[1][5] & 1, st[1], st[2], st[3], st[4])
+    }
+  }
+}
+
+// The stat by path, resolved under the dirfd like every path call.
+// The lookupflags' symlink-follow bit is required — the doors carry
+// no lstat, so a no-follow lookup refuses EINVAL rather than follow
+// silently.
+def path_filestat_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const e = fd_entry(internal.value.sign32(args[0][1]))
+  const flags = internal.value.sign32(args[1][1])
+  if (flags & 1) == 0 {
+    return e_inval
+  }
+  const p = guest_path(mem, args[2][1], internal.value.sign32(args[3][1]))
+  if p[0] != 0 {
+    return p[0]
+  }
+  const r = resolve_under(e, p[1])
+  if r[0] != 0 {
+    return r[0]
+  }
+  case os_stat(r[1]) {
+    (R.error, why) then {
+      return open_errno(why)
+    }
+    (R.ok, st) then {
+      var ftype = 4
+      if st[0] == 1 {
+        ftype = 3
+      }
+      return write_filestat(mem, args[4][1], ftype, 0, st[1], st[2], st[3], st[4])
+    }
+  }
+}
+
+// ---- the mutations (step 88) ----
+
+// Create the directory: the os door at the resolved path.
+def path_create_directory(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const e = fd_entry(internal.value.sign32(args[0][1]))
+  const p = guest_path(mem, args[1][1], internal.value.sign32(args[2][1]))
+  if p[0] != 0 {
+    return p[0]
+  }
+  const r = resolve_under(e, p[1])
+  if r[0] != 0 {
+    return r[0]
+  }
+  case os_mkdir(r[1]) {
+    (R.error, why) then {
+      return mut_errno(why)
+    }
+    (R.ok, _) then {
+      return e_success
+    }
+  }
+}
+
+// Remove the directory: empty only, the door's own verdict.
+def path_remove_directory(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const e = fd_entry(internal.value.sign32(args[0][1]))
+  const p = guest_path(mem, args[1][1], internal.value.sign32(args[2][1]))
+  if p[0] != 0 {
+    return p[0]
+  }
+  const r = resolve_under(e, p[1])
+  if r[0] != 0 {
+    return r[0]
+  }
+  case os_rmdir(r[1]) {
+    (R.error, why) then {
+      return mut_errno(why)
+    }
+    (R.ok, _) then {
+      return e_success
+    }
+  }
+}
+
+// Unlink the file: the os door; a directory answers the errno the
+// host's unlink names (EISDIR or EPERM, per platform — both in the
+// map).
+def path_unlink_file(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const e = fd_entry(internal.value.sign32(args[0][1]))
+  const p = guest_path(mem, args[1][1], internal.value.sign32(args[2][1]))
+  if p[0] != 0 {
+    return p[0]
+  }
+  const r = resolve_under(e, p[1])
+  if r[0] != 0 {
+    return r[0]
+  }
+  case os_unlink(r[1]) {
+    (R.error, why) then {
+      return mut_errno(why)
+    }
+    (R.ok, _) then {
+      return e_success
+    }
+  }
+}
+
+// The rename: both sides resolve under their own dirfds, one os door
+// between them — same file system is the door's own contract, a
+// crossing answering EXDEV.
+def path_rename(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
+  const oe = fd_entry(internal.value.sign32(args[0][1]))
+  const p1 = guest_path(mem, args[1][1], internal.value.sign32(args[2][1]))
+  if p1[0] != 0 {
+    return p1[0]
+  }
+  const r1 = resolve_under(oe, p1[1])
+  if r1[0] != 0 {
+    return r1[0]
+  }
+  const ne = fd_entry(internal.value.sign32(args[3][1]))
+  const p2 = guest_path(mem, args[4][1], internal.value.sign32(args[5][1]))
+  if p2[0] != 0 {
+    return p2[0]
+  }
+  const r2 = resolve_under(ne, p2[1])
+  if r2[0] != 0 {
+    return r2[0]
+  }
+  case os_rename(r1[1], r2[1]) {
+    (R.error, why) then {
+      return mut_errno(why)
+    }
+    (R.ok, _) then {
+      return e_success
+    }
+  }
 }
 
 // ---- the os doors' failure channel ----
@@ -969,8 +1387,38 @@ def read_errno(why String) Int64 {
   if why.index_of("Is a directory") >= 0 {
     return e_isdir
   }
+  if why.index_of("Not a directory") >= 0 {
+    return e_notdir
+  }
   if why.index_of("Illegal seek") >= 0 {
     return e_spipe
+  }
+  return e_io
+}
+
+// The mutations' map: the phrases a create/remove/unlink/rename miss
+// carries, the branches a real module acts on.
+def mut_errno(why String) Int64 {
+  if why.index_of("File exists") >= 0 {
+    return e_exist
+  }
+  if why.index_of("No such file or directory") >= 0 {
+    return e_noent
+  }
+  if why.index_of("Directory not empty") >= 0 {
+    return e_notempty
+  }
+  if why.index_of("Not a directory") >= 0 {
+    return e_notdir
+  }
+  if why.index_of("Is a directory") >= 0 {
+    return e_isdir
+  }
+  if why.index_of("Cross-device link") >= 0 {
+    return e_xdev
+  }
+  if why.index_of("Operation not permitted") >= 0 {
+    return e_perm
   }
   return e_io
 }

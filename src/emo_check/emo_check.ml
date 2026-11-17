@@ -1538,6 +1538,20 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
+        ( "os_stat",
+          {
+            vtype =
+              FuncType
+                ( [ ("path", String) ],
+                  TupleType
+                    [
+                      EnumType "R";
+                      TupleType [ Int64; Int64; Int64; Int64; Int64 ];
+                    ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_list_dir",
           {
             vtype =
