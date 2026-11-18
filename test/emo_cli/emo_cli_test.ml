@@ -5486,7 +5486,7 @@ let manifest_entry_tests =
    typescript arrives as a snapshot, an Int64 pattern literal compares as
    a big integer, a String on typescript is counted in UTF-8 bytes, a
    `for` loop in a class `init` keeps its value on beam, a module-level
-   `var` is refused cleanly where it is not implemented, and `ocaml`
+   `var` counts and reads on the compiled targets, and `ocaml`
    evaluates operands in source order. *)
 let cross_target_tests =
   [
@@ -5753,18 +5753,21 @@ main()
                 "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
                 (Filename.quote dir)))
           "built\n");
-    tc "a module-level var is refused with exit 65, not an internal error"
-      (fun () ->
+    tc "a module-level var counts and reads on the compiled targets" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
         let entry =
-          scratch_entry "module-var-refusal"
+          scratch_entry "module-var-compiled"
             {|def main() {
   println(counter.bump())
+  println(counter.bump())
+  println(counter.count)
 }
 main()
 |}
         in
+        let dir = Filename.dirname entry in
         write_file
-          (Filename.concat (Filename.dirname entry) "counter.emo")
+          (Filename.concat dir "counter.emo")
           {|var count = 0
 
 def bump() Int64 {
@@ -5772,17 +5775,51 @@ def bump() Int64 {
   return count
 }
 |};
-        (* Exit 65 is the CLI's rendering of Lower_error; a `failwith`
-           escaping the emitter would exit 125. *)
-        List.iter
-          (fun target ->
-            let out =
-              Filename.concat (Filename.dirname entry) ("out-" ^ target)
-            in
-            Alcotest.(check int)
-              (target ^ " build exit") 65
-              (build_entry ~target entry out))
-          [ "typescript"; "wasm"; "beam" ]);
+        let expected = "1\n2\n2\n" in
+        (* the interpreter *)
+        let out = Buffer.create 64 in
+        Emo_eval.set_output (Buffer.add_string out);
+        let run_exit =
+          Fun.protect
+            ~finally:(fun () ->
+              Emo_eval.set_output (fun s ->
+                  print_string s;
+                  flush stdout))
+            (fun () ->
+              in_dir dir (fun () ->
+                  Emo_cli.run_file ~file:"main.emo" ~color:false ~error_limit:20))
+        in
+        Alcotest.(check int) "interpreter exit" 0 run_exit;
+        Alcotest.(check string)
+          "interpreter output" expected (Buffer.contents out);
+        let out_ts = Filename.concat dir "main" in
+        Alcotest.(check int)
+          "typescript build exit" 0
+          (build_entry ~target:"typescript" entry out_ts);
+        check_run "typescript"
+          (run_cmd ("node " ^ Filename.quote (out_ts ^ ".ts")))
+          expected;
+        let out_wasm = Filename.concat dir "mainwasm.wasm" in
+        Alcotest.(check int)
+          "wasm build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote out_wasm)))
+          expected;
+        if beam_enabled && Lazy.force erl_available then (
+          let out_beam = Filename.concat dir "mainapp" in
+          Alcotest.(check int)
+            "beam build exit" 0
+            (build_entry ~target:"beam" entry out_beam);
+          check_run "beam"
+            (run_cmd
+               (Printf.sprintf
+                  "erl -noshell -pa %s -eval 'mainapp:main(), erlang:halt(0).'"
+                  (Filename.quote dir)))
+            expected));
     tc "ocaml evaluates operands left to right" (fun () ->
         let entry =
           scratch_entry "ocaml-eval-order"
@@ -6046,6 +6083,37 @@ println(lib.bump())
 println(lib.bump())
 |}
           "hi\n1\n2\n3\n");
+    tc "a module-level var is one cell across a spawn on every hosted target"
+      (fun () ->
+        check_hosted "hosted-module-var-spawn"
+          ~files:
+            [
+              ( "counter.emo",
+                {|var count = 0
+
+def bump() Int64 {
+  count = count + 1
+  return count
+}
+|}
+              );
+            ]
+          {|
+def worker(reply_to Pid) {
+  counter.bump()
+  counter.bump()
+  reply_to <- counter.count
+}
+
+def main() {
+  const w = do worker(self_pid())
+  receive {
+    t then { println(t) }
+  }
+}
+main()
+|}
+          "2\n");
     tc "an enum interpolates as its bare tag on every hosted target" (fun () ->
         check_hosted "hosted-enum-display"
           {|enum Color { red, green }

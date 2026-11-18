@@ -112,6 +112,12 @@ let binary_lit (s : string) : string =
 
 let atom s = "'" ^ s ^ "'"
 
+(* A module-level `var`'s persistent_term key: the same shape the const
+   memo's key takes, so two programs on one node keep separate slots.
+   The slot is node-global shared storage — every process the program
+   spawns reads and writes the same cell, the c target's static cell. *)
+let global_key env g = Printf.sprintf "{%s, %s}" (atom env.module_name) (atom g)
+
 (* Runs [body] for its emission and hands the text back, leaving the
    buffer as it was — the way an arm of a run-time dispatch is built
    from code written in the imperative style. *)
@@ -269,10 +275,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Const (L_char c) -> put env (one_byte_lit (Char.code c))
   | Const (L_string s) -> put env (binary_lit s)
   | Type_ref a -> put env ("'" ^ a ^ "'")
-  | Emo_ir.Global_var _ ->
-      raise
-        (Emo_ir.Lower_error
-           "the beam target does not support module-level `var` yet")
+  | Emo_ir.Global_var g ->
+      (* No Emo value is ever the bare undefined atom (bools are
+         'true'/'false', instances are tagged tuples), so 'undefined'
+         stays the not-yet-initialized sentinel, the const memo's own
+         rule — the root body fills every slot before any read runs. *)
+      put env
+        ("call 'persistent_term':'get'(" ^ global_key env g ^ ", 'undefined')")
   | Var name -> (
       match List.assoc_opt name env.local_map with
       | Some v -> put env v
@@ -1459,10 +1468,13 @@ and stmt env (s : Emo_ir.stmt) : unit =
       put env value_code;
       put env "\nin ";
       put env v
-  | Emo_ir.Set_global_var _ ->
-      raise
-        (Emo_ir.Lower_error
-           "the beam target does not support module-level `var` yet")
+  | Emo_ir.Set_global_var { name; value } ->
+      (* The put's argument evaluates before the put runs, so a
+         self-referencing write (`n = n + 1`) reads the slot's old
+         value — the c target's write-barrier order, for free. *)
+      put env ("call 'persistent_term':'put'(" ^ global_key env name ^ ", ");
+      expr env value;
+      put env ")"
   | Emo_ir.Set_field { self_; name; value } ->
       let call = set_field_call env self_ name value in
       let v = fresh_var env "self" in
@@ -5326,6 +5338,17 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   env.fname <- "main";
   env.local_map <- [];
   let before = Buffer.length buf in
+  (* The module-level `var`s initialize in declaration order before the
+     entry's own top level, mirroring the interpreter: each initializer
+     evaluates once, and the slot keeps the value it lands. *)
+  List.iter
+    (fun (g, init) ->
+      put env
+        ("        do call 'persistent_term':'put'(" ^ global_key env g
+       ^ ",\n           ");
+      expr env init;
+      put env ")\n")
+    program.Emo_ir.pglobals;
   stmts env program.Emo_ir.pinit;
   let body = Buffer.sub buf before (Buffer.length buf - before) in
   Buffer.truncate buf before;
