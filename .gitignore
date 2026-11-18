@@ -83,6 +83,13 @@ projects/emo-os/.dnd.ppm
 projects/emo-os/.supp.ppm
 projects/emo-os/.cal.ppm
 projects/emo-os/.calshut.ppm
+projects/emo-os/.deskw1.ppm
+projects/emo-os/.deskw2.ppm
+projects/emo-os/.deskw3.ppm
+projects/emo-os/.deskw4.ppm
+projects/emo-os/.deskp1.ppm
+projects/emo-os/.deskp2.ppm
+projects/emo-os/.deskp3.ppm
 projects/emo-os/.ride.log
 projects/emo-os/.blk.img.gdb
 *.wasm-art

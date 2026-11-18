@@ -75,6 +75,9 @@ undocumented ever acts.
 | 27 | `notify(title, title_len, body, body_len)` | a notification raised: the title's `title_len` bytes at `title` (1 to 64) and the body's `body_len` at `body` (0 to 192) go into the notification service's pending queue (eight entries, nothing evicted) and the answer is the notification's id, the service's monotonic number (1 or more; 0 the empty sentinel). A full queue is reason 5; an out-of-bounds, unwritable or oversized buffer is reason 4, 2 or 3 (emo-desktop M25, EmoOS T11.2, below) |
 | 28 | `notify_take(buf, cap)` | one packed notification lands at `buf` and the answer is its packed size — the 24-byte head (the id at 0, the title's length at 8, the body's at 16) then the bytes; 0 is the empty queue, the cheap poll, a `cap` under 24 bytes reason 4, and a `cap` under the first entry's packed size reason 4 without consuming (the caller retries with a bigger buffer). The first taker names the notification center's owner; every later taker another pid is reason 3 (emo-desktop M25, EmoOS T11.2, below) |
 | 29 | `time()` | the wall clock: the seconds since the Unix epoch (UTC), the board's goldfish RTC read by the gate itself — no service between, one register page and two loads; the gate never refuses it (emo-desktop M26, EmoOS T12.1, below) |
+| 30 | `win_workspace(grant, desk)` | the owner's toplevel carries another desk: the walk paints it only on the desk it now names, the shown desk's painted rect the pixels the move unmakes, the arrival's desk the pixels it makes, the focused one moved off losing the focus the minimize's fall answers. The desk's bounds are 0..3; a grant that is no toplevel is reason 4, a grant another process owns is reason 3 (emo-desktop M27, EmoOS T13.2, below) |
+| 31 | `desk_show(desk)` | the shell's switch: the named desk's windows on the display, the outgoing desk's focus remembered, the incoming desk's own restored — falling to its top toplevel when it remembers none — the whole mode the damage the switch's composition repaints. The caller must own a panel (the desktop's authority, the desktop's open's own rule); a desk past the bound is reason 4, an app's call reason 3; showing the shown desk answers plainly, nothing composed (emo-desktop M27, EmoOS T13.2, below) |
+| 32 | `desk_workspace()` | the desks asked: one packed word, the active desk in the low byte and the occupancy above it — a bit set while a live toplevel carries the desk, the minimized alive where they are. The gate never refuses it (emo-desktop M27, EmoOS T13.2, below) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -129,6 +132,18 @@ page's head, the high word at +4 — and the answer is the seconds since
 the Unix epoch, UTC. No service, no slot, no route: the read is two
 loads inside the trap, and the page is mapped with the UART's own
 alias.
+
+Verbs 30, 31 and 32 (emo-desktop M27, EmoOS T13.2) are the
+workspaces', the compositor's own feature: the assignment and the
+switch ride the compositor's mailbox at ops 30 and 31, and the query
+rides op 29 — 32 itself would decode as seat 1's op 0, the request
+word packing the seat at thirty-two, so the query's request carries
+the one number the compositor's own arm answers. The trap's decode
+passes the family's ops to the compositor's arm the
+notification-maybe shape test already reads (3, 4 and 2 — nobody's
+notification), and each verb's composition is on the wire before the
+answer, the walk's news the pixels already carry when the caller
+wakes.
 
 Verbs 6 to 9 (T7.2) are the filesystem service's; the format, the
 name rules (1 to 24 bytes, no NUL, no newline — reason 4 otherwise),

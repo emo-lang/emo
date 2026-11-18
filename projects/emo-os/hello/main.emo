@@ -888,6 +888,41 @@ def desk_line(word Int64) Void {
   gate_line(p)
 }
 
+// The assignment's line (emo-desktop M27, EmoOS T13.2): `desk assign
+// <letter> <desk>` — the owner's verb said on the wire, the window and
+// the desk it now carries.
+def desk_assign_line(letter Int64, desk Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 105) // i
+  p = byte_at(p, 103) // g
+  p = byte_at(p, 110) // n
+  p = byte_at(p, 32)
+  p = byte_at(p, letter)
+  p = byte_at(p, 32)
+  p = num_at(desk, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The desk pass's own word line (emo-desktop M27, EmoOS T13.2): `desk
+// word <n>` — the packed state the query answered, the assignment
+// dance's provenance. The `word ` prefix keeps the line apart from the
+// desktop's bare `desk <word>` and from the exit's `desk 0`.
+def desk_word_line(word Int64) Void {
+  var p = desk_at()
+  p = byte_at(p, 119) // w
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 32)
+  p = num_at(word, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
 def desk_range_line(mx Int64, my Int64) Void {
   var p = desk_at()
   p = byte_at(p, 114) // r
@@ -2003,6 +2038,9 @@ if peek64(desk_cell) != 0 {
   var top = gb
   var keys_a = 0
   var keys_b = 0
+  // The assignment dance's phase (emo-desktop M27, EmoOS T13.2): the
+  // run's hand advances it one `w` at a time.
+  var wphase = 0
   ui_fb_win.paint(wa, tf, ui_fb_win.title_a(), false, keys_a)
   wa.present()
   ui_fb_win.paint(wb, tf, ui_fb_win.title_b(), false, keys_b)
@@ -2073,6 +2111,48 @@ if peek64(desk_cell) != 0 {
           ui_fb_win.paint(wb, tf, ui_fb_win.title_b(), true, keys_b)
           wb.present()
           desk_key_line(gb, keys_b)
+        }
+      }
+      // The workspace beats (emo-desktop M27, EmoOS T13.2, A27.3): the
+      // run's hand walks the assignment one `w` at a time — alpha to
+      // desk 1, desk 1 shown, alpha back to desk 0, desk 0 shown —
+      // each phase its verb (the owner's and the panel authority's,
+      // the strip's grant the panel check answers), the assign's own
+      // line, and the packed word the query answers, the state the
+      // screendumps read. The composition rides the verb's decode —
+      // the comp line is on the wire before the answer — so the
+      // phase's lines follow pixels already set.
+      if b == 119 {
+        if wphase == 0 {
+          case syscall.win_workspace(ga, 1) {
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
+          }
+          desk_assign_line(97, 1)
+        }
+        if wphase == 1 {
+          case syscall.desk_show(1) {
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
+          }
+        }
+        if wphase == 2 {
+          case syscall.win_workspace(ga, 0) {
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
+          }
+          desk_assign_line(97, 0)
+        }
+        if wphase == 3 {
+          case syscall.desk_show(0) {
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
+          }
+        }
+        wphase = wphase + 1
+        case syscall.desk_workspace() {
+          (R.error, _) then { mark() }
+          (R.ok, d) then { desk_word_line(d) }
         }
       }
     }

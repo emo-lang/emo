@@ -946,7 +946,7 @@ additions-only, and the trap's decode already passes the family's ops
 to the compositor (the notify-maybe shape test reads 3, 4 and 2 —
 nobody's notification).
 
-- [ ] **T13.1** — The comp page's words and the walk's filter: the
+- [x] **T13.1** — The comp page's words and the walk's filter: the
   workspace word per stack slot (beside the hidden words, the
   `comp_hidden` precedent — no entry stride changed), the
   active-workspace cell, the four words of the focus each workspace
@@ -955,8 +955,12 @@ nobody's notification).
   the wallpaper always), `win_new`'s landing on the shown workspace,
   the focus's memory on a switch and its fall to the top toplevel when
   the workspace remembers none, and `win_desk_open`'s follow to the
-  window's own workspace first.
-- [ ] **T13.2** — The verbs end to end and the golden's beat: the
+  window's own workspace first. **complete 2026-11-14** — the words
+  landed past the stash (+3360 up, the first draft's +3264 walking
+  over the stash's twelve seats and zeroing its request words, the
+  parked callers the metal's way of saying so); the walk's filter the
+  one skip past the hidden's.
+- [x] **T13.2** — The verbs end to end and the golden's beat: the
   gate's dispatch arms for 30 `win_workspace`, 31 `desk_show` and 32
   `desk_workspace` (the owner's check the stack verbs' own, the panel
   authority verb 26's, the routes −1030, −1031 and −1029 — the query's
@@ -965,4 +969,12 @@ nobody's notification).
   the move, the show's whole-mode damage, the query's packed answer),
   the stub's three, and `run.sh`'s workspace beats — windows on two
   workspaces, the pager's switch, an assignment moving a window —
-  graded ×3 double transport byte-identical beside the desktop's A27.3.
+  graded ×3 double transport byte-identical beside the desktop's
+  A27.3. **complete 2026-11-18** — the beats landed at both eras (the
+  desk pass's `w`-byte assignment dance, the desktop's pager switch
+  and the launch-onto and the follow-back), every word the dances say
+  unique so no minute tick answers an await early; each verb's
+  composition prints its `comp` line inside the decode before the
+  answer, and the sequence pins that order. The grade ×3 double
+  transport byte-identical; the docs (desktop-abi, syscalls rows
+  30–32, the READMEs, CHECK.md) ride the desktop's A27.3.

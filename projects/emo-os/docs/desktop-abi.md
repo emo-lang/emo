@@ -196,6 +196,33 @@ callers refused with reason 5, the slots and the stash cleared) and
 keeps the owner's claim — the page outlives the instances, the
 filesystem's own rule.
 
+## The workspaces (emo-desktop M27, EmoOS T13.2)
+
+The compositor's own feature (D18): four desks, the count the
+protocol's bound (the roles' precedent). Every window carries its desk
+by construction — `win_new` lands the new toplevel on the shown one —
+and the walk paints a toplevel iff it is not hidden and its desk is the
+shown one, the popups and the subsurfaces riding their parents, the
+panels and the wallpaper always. **The assignment** (verb 30,
+`win_workspace(grant, desk)`): the owner's toplevel carries another
+desk — the shown desk's painted rect the pixels the move unmakes, the
+arrival's desk the pixels it makes; the focused one moved off loses
+the focus the minimize's fall answers, its popups folding with it, the
+children riding the parent the walk's own way. **The switch** (verb
+31, `desk_show(desk)`): the shell's — the panel authority the
+desktop's open answers to, the scan for a panel the caller owns; the
+outgoing desk remembers the focus it held, the incoming desk shows its
+own again, falling to its top toplevel when it remembers none; the
+whole mode the damage, and a show of the shown desk the quiet answer,
+nothing composed. **The query** (verb 32, `desk_workspace()`): the
+packed word — the active desk in the low byte, the occupancy above, a
+bit set while a live toplevel carries the desk (the minimized are
+alive where they are) — the pager's per-paint read, the clock's own
+habit. The query's request rides mailbox op 29 (32 itself would decode
+as seat 1's op 0 — the request word packs the seat at thirty-two), and
+the desktop's open (verb 26) follows the window: a window of another
+desk shows that desk first, the switch and the focus the verb's own.
+
 ## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
 
 The pointer's sprite is the desktop's — a Wayland client's cursor is

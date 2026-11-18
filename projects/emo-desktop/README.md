@@ -44,6 +44,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M24 — The apps become windows | a launch stands the app up as its own toplevel, the seat's focus routes its words | complete |
 | M25 — Notifications | the `notify` verb family and the notification service, the shell as the center — the toast, the history, do-not-disturb | complete |
 | M26 — The clock | the board's RTC as the time verb, the bar's clock and the calendar panel reading wall time in UTC | complete |
+| M27 — Workspaces | four desks the compositor's own: the window's assignment verb, the shell's switch, the bar's pager reading the packed state per paint | complete |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 

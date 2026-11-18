@@ -2124,7 +2124,7 @@ line — the `clock <epoch>` twin, the golden's provenance. Hidden stays
 hidden across a switch (the minimize's own memory); a frame callback is
 a composition's completion whatever the walk painted.
 
-- [ ] **A27.1** — The verbs and the walk: the comp page's words (the
+- [x] **A27.1** — The verbs and the walk: the comp page's words (the
   workspace word per stack slot, the active-workspace cell, the four
   words of the focus each workspace remembers — the `comp_hidden`
   precedent, beside the entries, no stride changed), the three verbs
@@ -2133,7 +2133,27 @@ a composition's completion whatever the walk painted.
   0..3; 31 `desk_show` the panel's authority; 32 `desk_workspace` the
   active and the occupancy packed), the walk's filter, the focus's
   memory and fall, `win_new`'s landing on the shown workspace, and
-  `win_desk_open`'s follow to the window's own.
+  `win_desk_open`'s follow to the window's own. **complete 2026-11-14
+  (kernel side); the metal grade 2026-11-18** — the comp page grew the
+  family whole: the workspace word per stack slot beside the hidden
+  words, the active-desk cell and the four focus-memory words past the
+  stash (the page map's own lesson applied — every new constant
+  grepped against the whole file's `comp_page +` declarations before
+  it landed), the assignment decoding with both sides' pixels marked
+  and the focus's fall the minimize's own radius, the switch the
+  panel-scanned authority with the whole mode the damage and the
+  show-of-shown the quiet answer, the query packing the active desk in
+  the low byte and the occupancy above, the walk's filter the one skip
+  past the hidden's (a toplevel of another desk paints nothing, its
+  children riding its iteration), `win_new` landing on the shown desk,
+  and `win_desk_open` following the window — a window of another desk
+  shown first, the switch and the focus the verb's own. The family's
+  route numbers live the comp op domain's mod-32 arithmetic: the
+  query's request rides op 29, 32 itself decoding as seat 1's op 0.
+  The stash collision the first landing made (+3264 walking over the
+  stash's twelve seats) the metal caught and the fix moved the
+  workspaces' words past it — the compositor's requests stopped
+  dying in their parked callers. The grade rides A27.3's beats below.
 - [x] **A27.2** — The bar's pager: the query read per paint, the four
   cells (the active the accent's ground, the occupied inked, the empty
   dimmed), the press showing the named workspace and saying
@@ -2164,10 +2184,32 @@ a composition's completion whatever the walk painted.
   env-gated suite the default runtest never builds), now feeding a
   fixed epoch and the quiet word; the locks pinning `emo_desktop`
   (the golden, hello, winbuf, the three apps, wayland) re-resolved.
-- [ ] **A27.3** — The metal beats and the docs: `run.sh`'s
+- [x] **A27.3** — The metal beats and the docs: `run.sh`'s
   choreography grows the workspace beats (windows opened on two
   workspaces, the pager's switch, an assignment moving a window, the
   screendumps' digests naming each state) ×3 double transport
   byte-identical; `desktop-abi.md`'s workspace family (both
   languages), `syscalls.md`'s rows 30–32 and the numbering's note, the
-  READMEs, CHECK.md's entries, and the zh mirrors.
+  READMEs, CHECK.md's entries, and the zh mirrors. **complete
+  2026-11-18** — the golden grew the beats at both eras: the desk
+  pass's assignment dance (the run's hand one `w` byte at a time —
+  alpha to desk 1, desk 1 shown, alpha home, desk 0 shown — each
+  phase its verb, `desk assign <letter> <desk>` and `desk word <n>`
+  the lines the phases say, the four screendumps the states' eyes:
+  beta alone with alpha's rectangle the bare ground, alpha alone on
+  its new desk, the empty desk 1, both home) and the desktop's pager
+  beats (desk 1 shown quiet, the counter launched onto it — verb 10's
+  landing on the shown desk, the word `desk 513` — desk 2 shown
+  without it, the dock's tile lit on, the strip's tile the desktop's
+  open following the window back, the quit emptying desk 1, the pager
+  walking home; every word the dance says unique, so the minute's
+  tick can never answer an await early). The model grew the
+  here-flags — a window whose desk is not the shown one paints
+  nothing, its rectangle checked against the bare ground — and the
+  frame ledger's +135/+134 is the second counter exec's round trip
+  (the handoff page's documented +1, twice over), the pin re-aimed.
+  The docs: the workspaces family in `desktop-abi.md` EN+zh, rows
+  30–32 and the op-29 note in `syscalls.md` EN+zh, the READMEs' M27
+  rows, CHECK.md's entry, the noctalia ladder's first step retired
+  (EN+zh), the EmoOS tracker's T13 half closed. Verified: `run.sh`
+  exits 0 on both transports, three runs byte for byte.
