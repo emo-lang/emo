@@ -1,0 +1,225 @@
+// The host-reentry fixture (the re-entrancy rung): a host closure
+// calls back into the package while an outer call is live. Three
+// shapes ride the saved machine state — a re-entrant `call` on another
+// instance (the callee's store views swap in and out around the
+// caller's live frame), a re-entrant `call` from a start function
+// (the instantiate-side save), and same-instance recursion through
+// the host (the inner frame builds at the caller's sp, three levels
+// deep, every live local exactly where the outer frame left it).
+
+// (type (func (result i32)))
+// (func (export "answer") (result i32) (i32.const 42))
+const answer_hex = "0061736d010000000105016000017f03020100070a0106616e7377657200000a06010400412a0b"
+
+// (type (func (result i32)))
+// (func (import "env" "cb") (result i32))
+// (func (export "run") (result i32) (call 0))
+const run_hex = "0061736d010000000105016000017f020a0103656e760263620000030201000707010372756e00010a0601040010000b"
+
+// (type (func) (func (result i32)))
+// (func (import "env" "cb") (result i32))
+// (func (type 0) (call 0) (drop))   ; the start
+// (func (export "get") (result i32) (i32.const 7))
+// (start 1)
+const start_hex = "0061736d010000000108026000006000017f020a0103656e76026362000103030200010707010367657400020801010a0c02050010001a0b040041070b"
+
+// (type (func (param i32) (result i32)))
+// (func (import "env" "cb") (param i32) (result i32))
+// (func (export "down") (param i32) (result i32)
+//   local.get 0
+//   i32.eqz
+//   if (result i32)
+//     i32.const 100
+//   else
+//     local.get 0
+//     call 0
+//   end)
+const deep_hex = "0061736d0100000001060160017f017f020a0103656e7602636200000302010007080104646f776e00010a12011000200045047f41e40005200010000b0b"
+
+def run() Int64 {
+  var failed = 0
+  // The deep module's handle lands after its instantiate takes the
+  // closure that re-enters it — the var and the closure share this
+  // block, so the capture is the escape rule's accepted shape, and
+  // the closure reads the handle only once the calls begin.
+  var deep_inst = -1
+  const step = -> (args Array[(Int64, Int64)]) {
+    case wasm.call(deep_inst, "down", [wasm.i32(args[0][1] - 1)]) {
+      (R.error, why) then {
+        println("step " + why)
+        return wasm.i32(0)
+      }
+      (R.ok, results) then {
+        case wasm.as_i32(results[0]) {
+          (R.error, why) then {
+            println("step " + why)
+            return wasm.i32(0)
+          }
+          (R.ok, v) then {
+            return wasm.i32(v + 1)
+          }
+        }
+      }
+    }
+  }
+  case wasm.load(internal.corpus.decode_hex(answer_hex)) {
+    (R.error, why) then {
+      println("load answer " + why)
+      failed = failed + 1
+    }
+    (R.ok, answer_mod) then {
+      case wasm.instantiate(answer_mod, []) {
+        (R.error, why) then {
+          println("inst answer " + why)
+          failed = failed + 1
+        }
+        (R.ok, answer) then {
+          // One: a host closure re-enters `call` on another instance
+          // while `run`'s frame is live on this one.
+          case wasm.load(internal.corpus.decode_hex(run_hex)) {
+            (R.error, why) then {
+              println("load run " + why)
+              failed = failed + 1
+            }
+            (R.ok, run_mod) then {
+              const reenter = -> (args Array[(Int64, Int64)]) {
+                case wasm.call(answer, "answer", []) {
+                  (R.error, why) then {
+                    println("reenter " + why)
+                    return wasm.i32(0)
+                  }
+                  (R.ok, results) then {
+                    return results[0]
+                  }
+                }
+              }
+              case wasm.instantiate(run_mod, [("env", "cb", reenter)]) {
+                (R.error, why) then {
+                  println("inst run " + why)
+                  failed = failed + 1
+                }
+                (R.ok, runner) then {
+                  case wasm.call(runner, "run", []) {
+                    (R.error, why) then {
+                      println("run " + why)
+                      failed = failed + 1
+                    }
+                    (R.ok, results) then {
+                      case wasm.as_i32(results[0]) {
+                        (R.error, why) then {
+                          println("run " + why)
+                          failed = failed + 1
+                        }
+                        (R.ok, v) then {
+                          println("run " + v.to_string())
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              // Two: a start function's host closure re-enters `call`
+              // while `instantiate` holds the machine.
+              case wasm.load(internal.corpus.decode_hex(start_hex)) {
+                (R.error, why) then {
+                  println("load start " + why)
+                  failed = failed + 1
+                }
+                (R.ok, start_mod) then {
+                  const seed = -> (args Array[(Int64, Int64)]) {
+                    case wasm.call(answer, "answer", []) {
+                      (R.error, why) then {
+                        println("seed " + why)
+                        return wasm.i32(0)
+                      }
+                      (R.ok, results) then {
+                        case wasm.as_i32(results[0]) {
+                          (R.error, why) then {
+                            println("seed " + why)
+                            return wasm.i32(0)
+                          }
+                          (R.ok, v) then {
+                            println("seed " + v.to_string())
+                            return wasm.i32(v)
+                          }
+                        }
+                      }
+                    }
+                  }
+                  case wasm.instantiate(start_mod, [("env", "cb", seed)]) {
+                    (R.error, why) then {
+                      println("inst start " + why)
+                      failed = failed + 1
+                    }
+                    (R.ok, starter) then {
+                      case wasm.call(starter, "get", []) {
+                        (R.error, why) then {
+                          println("get " + why)
+                          failed = failed + 1
+                        }
+                        (R.ok, results) then {
+                          case wasm.as_i32(results[0]) {
+                            (R.error, why) then {
+                              println("get " + why)
+                              failed = failed + 1
+                            }
+                            (R.ok, v) then {
+                              println("get " + v.to_string())
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  // Three: the same instance re-enters itself through the host, three
+  // levels deep — the inner frame builds at the caller's sp and the
+  // outer frame's local survives every trip.
+  case wasm.load(internal.corpus.decode_hex(deep_hex)) {
+    (R.error, why) then {
+      println("load deep " + why)
+      failed = failed + 1
+    }
+    (R.ok, deep_mod) then {
+      case wasm.instantiate(deep_mod, [("env", "cb", step)]) {
+        (R.error, why) then {
+          println("inst deep " + why)
+          failed = failed + 1
+        }
+        (R.ok, inst) then {
+          deep_inst = inst
+        }
+      }
+    }
+  }
+  if deep_inst >= 0 {
+    case wasm.call(deep_inst, "down", [wasm.i32(3)]) {
+      (R.error, why) then {
+        println("deep " + why)
+        failed = failed + 1
+      }
+      (R.ok, results) then {
+        case wasm.as_i32(results[0]) {
+          (R.error, why) then {
+            println("deep " + why)
+            failed = failed + 1
+          }
+          (R.ok, v) then {
+            println("deep " + v.to_string())
+          }
+        }
+      }
+    }
+  }
+  println("failed " + failed.to_string())
+  return failed
+}
+
+run()

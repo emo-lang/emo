@@ -396,6 +396,31 @@
  (action
   (diff host-user-fixture.expected.txt host-user-fixture.actual)))
 
+; The host-reentry fixture (the re-entrancy rung).
+
+(rule
+ (alias runtest)
+ (deps
+  (:emo %{workspace_root}/_build/default/src/emo_cli/emo.exe)
+  host-reentry-fixture.emo
+  wasm.emo
+  cli.emo
+  (source_tree .)
+  package.emo)
+ (action
+  (with-stdout-to
+   host-reentry-fixture.actual
+   (setenv
+    EMO_CACHE_DIR
+    ".emo-deps-cache"
+    (run %{emo} run host-reentry-fixture.emo)))))
+
+(rule
+ (alias runtest)
+ (deps host-reentry-fixture.actual host-reentry-fixture.expected.txt)
+ (action
+  (diff host-reentry-fixture.expected.txt host-reentry-fixture.actual)))
+
 ; The wasi fixture (T77.4).
 
 (rule

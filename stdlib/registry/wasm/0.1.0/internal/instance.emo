@@ -760,16 +760,15 @@ var wasi_args = []
 var spectest_table = internal.store.tbl_new(10, 20, true, 112, (112, -1))
 var spectest_memory = internal.store.mem_new(1, 2, true)
 
-def reset_machine() Int64 {
+// The arena is the one piece of machine state a surface entry may
+// still have to create; the rest is saved and handed back per call
+// (re-entrancy: a host closure may re-enter through the surface while
+// an outer call's frame is live, so nothing resets to zero — the
+// inner call builds at the caller's sp, call_other's discipline).
+def ensure_arena() Int64 {
   if arena.length() == 0 {
     arena = Bytes.new(4194304)
   }
-  sp = 0
-  mems = []
-  tables = []
-  globals_store = []
-  datalist = []
-  elemlist = []
   return 0
 }
 
@@ -2053,7 +2052,19 @@ def call(handle Int64, name String, args Array[(Int64, Int64)]) (Bool, Array[(In
   }
   const fidx = m.exports[ei].idx
   const ft = m.types[func_type_idx(m, fidx)]
-  reset_machine()
+  // The machine rides out the call: a host closure may re-enter
+  // through this surface while an outer call's frame is live, so the
+  // inner call builds its frame at the caller's sp (nothing resets to
+  // zero) and every global the walker reads comes back after —
+  // call_other's discipline, the operand stack included.
+  ensure_arena()
+  const save_sp = sp
+  const save_inst = cur_inst
+  const save_mems = mems
+  const save_tables = tables
+  const save_globals = globals_store
+  const save_data = datalist
+  const save_elem = elemlist
   cur_inst = handle
   mems = inst.mems
   tables = inst.tables
@@ -2064,9 +2075,11 @@ def call(handle Int64, name String, args Array[(Int64, Int64)]) (Bool, Array[(In
   const r = call_func(m, fidx)
   instances = inst_replace(instances, handle, Instance.new(inst.module, mems, tables, globals_store, inst.targets, inst.start, datalist, elemlist))
   if !r[0] {
+    hand_back(save_sp, save_inst, save_mems, save_tables, save_globals, save_data, save_elem)
     return (false, [], r[1])
   }
   const out = collect_results(sp - ft.results.length(), ft.results.length(), [])
+  hand_back(save_sp, save_inst, save_mems, save_tables, save_globals, save_data, save_elem)
   return (true, out, "")
 }
 
@@ -2449,6 +2462,22 @@ def mem_write(mem (Box[Bytes], Int64, Bool), at Int64, bytes Bytes) Bool {
 // ---- instantiate ----
 
 // The instance's store, switched in around a cross-instance call.
+// Hand the machine back to whoever was interrupted: the operand top
+// and the six store views the walker reads, saved before the call and
+// returned after it — the shape `call_other` spells by hand, lifted
+// here because the surface's `call` and the start run save the same
+// eight words (the re-entrancy rung).
+def hand_back(sp_at Int64, inst_at Int64, mems_at Array[(Box[Bytes], Int64, Bool)], tables_at Array[(Box[Array[(Int64, Int64)]], Int64, Bool, Int64)], globals_at Array[(Box[(Int64, Int64)], Bool)], data_at Array[Bytes], elems_at Array[Array[(Int64, Int64)]]) Int64 {
+  sp = sp_at
+  cur_inst = inst_at
+  mems = mems_at
+  tables = tables_at
+  globals_store = globals_at
+  datalist = data_at
+  elemlist = elems_at
+  return 0
+}
+
 def call_other(h Int64, fidx Int64) (Bool, String) {
   const save_mems = mems
   const save_tables = tables
@@ -2516,21 +2545,34 @@ def instantiate_with(handle Int64, hosts Array[(String, String, Block)]) (Bool, 
     return (false, d[1], -1)
   }
   instances = inst_replace(instances, h, Instance.new(m, mems0, e[2], g[2], r[5], m.start, d[3], e[3]))
+  // The start run takes the machine the same way a `call` does: the
+  // state the walker reads rides out, and a host closure the start
+  // function calls may re-enter through the surface. (The old reset
+  // cleared `datalist`/`elemlist` here, so a start function's bulk
+  // memory ops walked empty lists — the store views now stay set.)
+  const save_sp = sp
+  const save_inst = cur_inst
+  const save_mems = mems
+  const save_tables = tables
+  const save_globals = globals_store
+  const save_data = datalist
+  const save_elem = elemlist
   datalist = d[3]
   elemlist = e[3]
-  // the start function
   if m.start >= 0 {
-    reset_machine()
+    ensure_arena()
     cur_inst = h
     mems = mems0
     tables = e[2]
     globals_store = g[2]
     const sr = call_func(m, m.start)
+    instances = inst_replace(instances, h, Instance.new(m, mems, tables, globals_store, r[5], m.start, d[3], e[3]))
     if !sr[0] {
+      hand_back(save_sp, save_inst, save_mems, save_tables, save_globals, save_data, save_elem)
       return (false, sr[1], -1)
     }
-    instances = inst_replace(instances, h, Instance.new(m, mems, tables, globals_store, r[5], m.start, d[3], e[3]))
   }
+  hand_back(save_sp, save_inst, save_mems, save_tables, save_globals, save_data, save_elem)
   return (true, "", h)
 }
 

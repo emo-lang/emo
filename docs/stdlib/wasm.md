@@ -124,10 +124,19 @@ the module being instantiated — an entry that names nothing is the
 caller's typo, and the link refuses it (`host function `env.log`
 matches no import of this module`) instead of carrying it silently.
 
-One refusal is part of the contract: a host closure must not call back
-into this package. Re-entrancy would ride through the interpreter's
-machine state (the operand stack, the current instance, the store) —
-the rung records it, a later one may lift it.
+Re-entrancy is part of the contract: a host closure may call back into
+the package while an outer call is live. Every surface entry that
+drives the machine — `call`, and `instantiate`'s start run — saves the
+interpreter's machine state (the operand stack top, the current
+instance, the store views) before the run and hands it back after, so
+a re-entrant call builds its frame at the caller's operand top and the
+outer call's frame survives untouched; the discipline the
+cross-instance import call already ran on. Same-instance recursion
+through a host closure is the deep shape, and it works (`host-reentry-fixture.emo`).
+
+One entry point stays closed: during `instantiate`'s import-resolution
+walk no code runs, so a host closure supplied there is never called —
+there is nothing to re-enter through.
 
 ## Memory
 
@@ -263,8 +272,6 @@ package's `testdata/README.md`.
   the five extensions above — function references, SIMD, GC, threads,
   and memory64 stay out. The GC proposal is the exit sign: when it
   lands, the runtime runs the output of `emo build --target wasm`.
-- **No re-entrancy.** A host closure calling back into the package
-  corrupts the machine state; refused this rung.
 - **`["ocaml", "c"]` only, honestly.** The interpreter consumes the
   package wherever it runs; the two compiled targets are the ones
   verified byte-for-byte (the demo's golden is identical on both).

@@ -41,9 +41,10 @@ def load(data Bytes) (R, Int64) {
 // (`Array[(Int64, Int64)]`) and answers one value, and an import whose
 // signature has no result sees its return dropped. Every entry must
 // name an import of this module — an unused entry is a typo, and the
-// link refuses rather than carrying it. A host closure must not call
-// back into this package (re-entrancy would ride through the
-// interpreter's machine state); that refusal is part of the contract.
+// link refuses rather than carrying it. A host closure may re-enter
+// this package freely once the module runs — `call` and the start run
+// save the machine state and hand it back — only the import-resolution
+// walk itself runs no code, so nothing can re-enter through it.
 def instantiate(module Int64, imports Array[(String, String, Block)]) (R, Int64) {
   const r = internal.instance.instantiate_with(module, imports)
   if !r[0] {
