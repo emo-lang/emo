@@ -32,28 +32,32 @@ def main() {
   println("frame ${ui_fb_frame.digest(strip)}")
   emo_desktop.paint(strip, f, 1920, 40, 1040, ["a", "b"], 1, 0)
   println("frame ${ui_fb_frame.digest(strip)}")
-  // the desktop era's residency, the launcher's own three tiles: the
-  // masks the era lives in its order — the empty strip, the counter's
-  // tile, two, all three, then the quits' way back down (the counter
-  // out, the browser out) and the session's end, every dot out again
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 0)
+  // the desktop era's residency, the launcher's four tiles: the
+  // launcher's own first (emo-desktop M28, A28.1 — the `s` tile the
+  // panel's door, the app tiles one slot right, the residency's bits
+  // shifted with them), the masks the era lives in its order — the
+  // empty strip, the counter's tile, two, all three, then the quits'
+  // way back down (the counter out, the browser out) and the session's
+  // end, every dot out again
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 0)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 1)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 2)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 3)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 6)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 7)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 14)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 6)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 12)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 4)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 8)
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["c", "f", "e"], -1, 0)
+  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 0)
   println("frame ${ui_fb_frame.digest(strip)}")
   println("tile ${emo_desktop.press(100, 200, 1920, 1080, 2)}")
-  println("tile ${emo_desktop.press(24, 1060, 1920, 1080, 3)}")
-  println("tile ${emo_desktop.press(64, 1060, 1920, 1080, 3)}")
-  println("tile ${emo_desktop.press(110, 1060, 1920, 1080, 3)}")
+  println("tile ${emo_desktop.press(24, 1060, 1920, 1080, 4)}")
+  println("tile ${emo_desktop.press(64, 1060, 1920, 1080, 4)}")
+  println("tile ${emo_desktop.press(110, 1060, 1920, 1080, 4)}")
+  println("tile ${emo_desktop.press(150, 1060, 1920, 1080, 4)}")
 
   // The desktop's own canvas (emo-desktop A13): the wallpaper whole on
   // a quarter-mode canvas — the gradient's rows, the three ribbons —
@@ -154,6 +158,42 @@ def main() {
   println("hit ${emo_desktop.icon_hit(1750, 107, 2, 1920, 1080)}")
   println("hit ${emo_desktop.icon_hit(1816, 108, 2, 1920, 1080)}")
   println("hit ${emo_desktop.icon_hit(100, 400, 2, 1920, 1080)}")
+  // The launcher (emo-desktop M28, A28.1): the slab at its own size —
+  // the catalog whole with the bare line, the narrowed face with its
+  // one survivor selected, the blank face a line nothing matches — a
+  // canvas a state, the ground's alpha blending over whatever the
+  // canvas holds. The filter's verdicts and the hit test's beside, the
+  // geometry's pins with them: the panel centered above the dock, the
+  // search line no row's, a press past the survivors' count no row
+  // either.
+  const apps = ["counter.elf", "files.elf", "editor.elf", "spin.elf"]
+  const l1 = ui_fb_canvas.canvas(emo_desktop.launch_w(1920), emo_desktop.launch_h())
+  emo_desktop.paint_launcher(l1, f, "", apps, 4, -1)
+  println("launch ${ui_fb_frame.digest(l1)}")
+  const l2 = ui_fb_canvas.canvas(emo_desktop.launch_w(1920), emo_desktop.launch_h())
+  emo_desktop.paint_launcher(l2, f, "ed", ["editor.elf"], 1, 0)
+  println("launch ${ui_fb_frame.digest(l2)}")
+  const l3 = ui_fb_canvas.canvas(emo_desktop.launch_w(1920), emo_desktop.launch_h())
+  emo_desktop.paint_launcher(l3, f, "zz", apps, 0, -1)
+  println("launch ${ui_fb_frame.digest(l3)}")
+  const l4 = ui_fb_canvas.canvas(emo_desktop.launch_w(1920), emo_desktop.launch_h())
+  emo_desktop.paint_launcher(l4, f, "e", apps, 3, 2)
+  println("launch ${ui_fb_frame.digest(l4)}")
+  println("lgeom ${emo_desktop.launch_x(1920)} ${emo_desktop.launch_y(1080)} ${emo_desktop.launch_h()}")
+  println("app ${emo_desktop.is_app_name("counter.elf")}")
+  println("app ${emo_desktop.is_app_name("boot.txt")}")
+  println("app ${emo_desktop.is_app_name(".elf")}")
+  println("app ${emo_desktop.is_app_name("elf")}")
+  println("match ${emo_desktop.line_matches("ed", "editor.elf")}")
+  println("match ${emo_desktop.line_matches("ounter", "counter.elf")}")
+  println("match ${emo_desktop.line_matches("zz", "files.elf")}")
+  println("match ${emo_desktop.line_matches("", "spin.elf")}")
+  println("lhit ${emo_desktop.launch_hit(1920, 1080, 960, 836, 4)}")
+  println("lhit ${emo_desktop.launch_hit(1920, 1080, 960, 908, 4)}")
+  println("lhit ${emo_desktop.launch_hit(1920, 1080, 960, 792, 4)}")
+  println("lhit ${emo_desktop.launch_hit(1920, 1080, 960, 1028, 4)}")
+  println("lhit ${emo_desktop.launch_hit(1920, 1080, 600, 836, 4)}")
+  println("lhit ${emo_desktop.launch_hit(1920, 1080, 960, 900, 1)}")
 }
 
 main()

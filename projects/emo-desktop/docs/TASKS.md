@@ -2213,3 +2213,81 @@ a composition's completion whatever the walk painted.
   rows, CHECK.md's entry, the noctalia ladder's first step retired
   (EN+zh), the EmoOS tracker's T13 half closed. Verified: `run.sh`
   exits 0 on both transports, three runs byte for byte.
+
+## M28 — the launcher's enumeration and the lock (opened 2026-11-18)
+
+The system-data layer's fourth and fifth modules (D19 decided
+2026-11-12): the launcher enumerates the disk's Emo packages and names
+them to a search face, and the lock screen takes the session behind a
+hash file — no PAM anywhere, the metal's permanent answer. The kernel
+half is empty by construction: the filesystem's list and write verbs
+and the ordinary panel-grant shape carry the whole milestone, so
+EmoOS's tracker adds no step — the shell's own two modules, both
+painted direct for the reason the dock is.
+
+The dock grows the launcher's tile: the strip's first tile is the
+launcher's own — `s`, the search face's initial — and the app tiles
+follow one slot right; `press` counts the launcher (tile 0 the
+launcher's, the shell mapping 1.. to its apps), and the desk era's
+strip grows the tile with its era (the desk pass's mapping shifts, the
+tile itself inert there — the desk era predates the desktop). The
+catalog is the volume's `.elf` names through the filesystem's list
+verb, filtered by the suffix, the names' bound the filesystem's own
+(24 bytes); `desktop apps <n>` says the count on the wire, the icons
+line's twin. The search face is the panel above the dock, centered:
+the line at its top, the survivors under it — a substring match, the
+survivors in the catalog's order; Enter launches the selected row (the
+pointer names rows too), a launch closes the panel, Esc closes, a
+press outside closes first and is then consumed (the popover's rule);
+the bytes the open panel consumes are the shell's while it stands, the
+popover's rule grown its keyboard half. A launch rides the tiles' own
+path when the name matches a slot — the dot, the exit line, residency
+is the tiles' — and a foreign name a plain exec whose death is the
+drain's silent drop (documented; the launcher is the general door, the
+tiles the fixed seats).
+
+The lock (D19): the account file `lock.hash` carries the raw 32-byte
+SHA-256 of the secret — the stdlib's own crypto, whose targets grow
+`riscv64` for it (pure Emo over Int64 and Bytes; the sha256 closure
+checks clean on the machine's target, the pinned locks re-resolve).
+`passwd <secret>` writes the file (an empty secret refused, the Unix
+way of overwriting), `lock` takes the session behind a full-screen
+toplevel — the newest creation, the walk's top — and no account file
+is no lock (the refusal names it, the strictness). The typed bytes are
+invisible: no echo, no dots — not even the length is the screen's
+business. Enter checks the line against the file through
+`constant_time_compare`: a match closes the panel and the session
+resumes, a miss clears the line and stays (no counter, no hint — the
+file's verdict is the whole answer). Backspace works; Esc does nothing
+(there is no cancel — locked is locked). The machine lives under the
+lock: the clock's minute repaints the bar it hides behind, the
+spinner's beats go on; the lock's press is the raise's own, the
+topmost toplevel keeping itself there. The beats' discipline holds:
+every new wire word unique, the minute's tick never answers an await
+early.
+
+- [ ] **A28.1** — The launcher's enumeration and search face in the
+  package: the dock's launcher tile (`press` grown the count, the app
+  tiles one slot right, the desk era's labels grown), the catalog
+  arithmetic (the `.elf` suffix's filter, the substring's match, the
+  survivors in order), the search face's geometry and paint (the line,
+  the rows, the selection), and the golden's pins — the strip's states
+  with the launcher tile, the filter's verdicts, the panel's frames —
+  across the five hosted targets byte-identically.
+- [ ] **A28.2** — The lock in the package, and the crypto's ground:
+  the account file's format (32 raw bytes) and its check
+  (`constant_time_compare` over `sha2.sha256`), the lock face's paint
+  (the wordmark, the blind line), the crypto package's targets grown
+  `riscv64` with the pinned locks re-resolved, and the golden's pins —
+  the hash vectors, the compare's verdicts, the face's frames — five
+  targets byte-identically.
+- [ ] **A28.3** — The shell's side and the metal: `hello`'s
+  enumeration (`desktop apps <n>`), the launcher tile's press opening
+  the panel, the bytes feeding the line, the launches riding the
+  slots' own path; `passwd` and `lock` in the shell's commands, the
+  lock session (the full-screen panel, the blind line, the check, the
+  resume); `run.sh`'s beats — the enumeration said, the panel opened
+  and filtered and launched, the account written, the lock taken, a
+  miss clearing, the secret lifting — ×3 double transport
+  byte-identical; the READMEs, the ladder's step, CHECK.md's entry,
+  and the TASKS' boxes.

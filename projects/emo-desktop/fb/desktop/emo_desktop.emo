@@ -819,3 +819,139 @@ def paint_icon_folder(s ui_fb.Surface, cx Int64, cy Int64, selected Bool) Void {
   s.rounded(ix + 6, iy + 8, 16, 9, 3, 0xFF4098E0, 0xFF4098E0)
   s.rounded(ix + 4, iy + 13, 36, 25, 4, 0xFF5FA8E8, 0xFF327FC2)
 }
+
+// ---- the launcher (emo-desktop M28, A28.1) ----
+//
+// The dock's first tile in the desktop era is the launcher's own —
+// `s`, the search face's initial — the app tiles one slot right, the
+// shell mapping tile 0 to the panel and 1.. to its apps; the desk
+// era's strip keeps its own two tiles, the launcher the desktop's
+// module. The catalog arithmetic and the search face's geometry are
+// the package's, the panel painted direct like the dock's own slab: a
+// slab centered above the dock, the search line at its top, the
+// survivors under it — the volume's packages are few (the
+// filesystem's own bound, 24 bytes a name), so the face's row bound
+// is the face's own eight.
+
+def launch_w(w Int64) Int64 {
+  if w >= 600 {
+    return 560
+  }
+  return w - 40
+}
+
+def launch_line_h() Int64 {
+  return 40
+}
+
+def launch_row_h() Int64 {
+  return 24
+}
+
+def launch_rows() Int64 {
+  return 8
+}
+
+def launch_pad() Int64 {
+  return 12
+}
+
+def launch_h() Int64 {
+  return launch_line_h() + launch_rows() * launch_row_h() + launch_pad() * 2
+}
+
+def launch_x(w Int64) Int64 {
+  return (w - launch_w(w)) / 2
+}
+
+def launch_y(h Int64) Int64 {
+  return h - strip_height() - 12 - launch_h()
+}
+
+// An app name ends in `.elf` with a stem to show — `.elf` alone is
+// no app's name.
+def is_app_name(s String) Bool {
+  const n = s.length()
+  if n <= 4 {
+    return false
+  }
+  return s.substring(n - 4, 4) == ".elf"
+}
+
+// A search line matches a name when it is one of the name's own
+// substrings; the empty line matches everything — the face's opening
+// state is the catalog whole.
+def line_matches(line String, s String) Bool {
+  const m = line.length()
+  if m == 0 {
+    return true
+  }
+  const n = s.length()
+  if m > n {
+    return false
+  }
+  var i = 0
+  while i <= n - m {
+    if s.substring(i, m) == line {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+// The row a press names: the panel's own coordinates derived from the
+// mode, the search line no row's, the rows 0-based from the line's
+// band, a press past the survivors' count no row either.
+def launch_hit(w Int64, h Int64, px Int64, py Int64, n Int64) Int64 {
+  const x0 = launch_x(w)
+  const y0 = launch_y(h)
+  if px < x0 || px >= x0 + launch_w(w) || py < y0 {
+    return -1
+  }
+  const top = y0 + launch_line_h() + launch_pad()
+  if py < top {
+    return -1
+  }
+  const row = (py - top) / launch_row_h()
+  if row >= n || row >= launch_rows() {
+    return -1
+  }
+  return row
+}
+
+// The launcher panel whole: the slab (the calendar's own shape, the
+// grades the launcher's own), the search line's text with the caret
+// block after it, and the survivors' rows — the selected row the
+// selection's band, every row the name's text. The rows are the
+// caller's survivors already; the count shown the face's bound.
+def launch_ground_top() Int64 {
+  return 0xE6424E62
+}
+
+def launch_ground_bottom() Int64 {
+  return 0xE6323C4A
+}
+
+def paint_launcher(s ui_fb.Surface, f ui_fb.raster.Strike, line String,
+                   names Array[String], n Int64, sel Int64) Void {
+  const w = s.width()
+  const h = s.height()
+  s.shadow(0, 0, w, h, 12, 8, 0x80000000)
+  s.rounded(0, 0, w, h, 12, launch_ground_top(), launch_ground_bottom())
+  ui_fb.text(f, line, launch_pad(), (launch_line_h() - f.line_height()) / 2,
+    0xF8F8F0, s)
+  const caret = launch_pad() + ui_fb.text_width(f, line) + 4
+  s.fill(caret, (launch_line_h() - 18) / 2, 2, 18, ink())
+  var i = 0
+  while i < n && i < launch_rows() {
+    const ry = launch_line_h() + launch_pad() + i * launch_row_h()
+    if i == sel {
+      s.fill(launch_pad() / 2, ry + 1, w - launch_pad(), launch_row_h() - 2,
+        select_ink())
+    }
+    ui_fb.text(f, names[i], launch_pad(),
+      ry + (launch_row_h() - f.line_height()) / 2, 0xF8F8F0, s)
+    i = i + 1
+  }
+}
