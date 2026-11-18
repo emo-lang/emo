@@ -168,18 +168,29 @@ def main() {
   // search line no row's, a press past the survivors' count no row
   // either.
   const apps = ["counter.elf", "files.elf", "editor.elf", "spin.elf"]
-  const l1 = ui_fb_canvas.canvas(emo_desktop.launch_w(1920), emo_desktop.launch_h())
+  // The round fold beside the plain one (emo-desktop M28, A28.3): the
+  // metal's panel is a toplevel the walk masks at the radius, its
+  // corners the wallpaper's own, so the metal's fold is the round one
+  // and the corpus carries both — the plain the canvas's digest, the
+  // round the corners set aside.
+  const lw = emo_desktop.launch_w(1920)
+  const lh = emo_desktop.launch_h()
+  const l1 = ui_fb_canvas.canvas(lw, lh)
   emo_desktop.paint_launcher(l1, f, "", apps, 4, -1)
   println("launch ${ui_fb_frame.digest(l1)}")
-  const l2 = ui_fb_canvas.canvas(emo_desktop.launch_w(1920), emo_desktop.launch_h())
+  println("launchr ${ui_fb_frame.round_digest(l1, 10)}")
+  const l2 = ui_fb_canvas.canvas(lw, lh)
   emo_desktop.paint_launcher(l2, f, "ed", ["editor.elf"], 1, 0)
   println("launch ${ui_fb_frame.digest(l2)}")
-  const l3 = ui_fb_canvas.canvas(emo_desktop.launch_w(1920), emo_desktop.launch_h())
+  println("launchr ${ui_fb_frame.round_digest(l2, 10)}")
+  const l3 = ui_fb_canvas.canvas(lw, lh)
   emo_desktop.paint_launcher(l3, f, "zz", apps, 0, -1)
   println("launch ${ui_fb_frame.digest(l3)}")
-  const l4 = ui_fb_canvas.canvas(emo_desktop.launch_w(1920), emo_desktop.launch_h())
+  println("launchr ${ui_fb_frame.round_digest(l3, 10)}")
+  const l4 = ui_fb_canvas.canvas(lw, lh)
   emo_desktop.paint_launcher(l4, f, "e", apps, 3, 2)
   println("launch ${ui_fb_frame.digest(l4)}")
+  println("launchr ${ui_fb_frame.round_digest(l4, 10)}")
   println("lgeom ${emo_desktop.launch_x(1920)} ${emo_desktop.launch_y(1080)} ${emo_desktop.launch_h()}")
   println("app ${emo_desktop.is_app_name("counter.elf")}")
   println("app ${emo_desktop.is_app_name("boot.txt")}")

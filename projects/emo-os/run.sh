@@ -1473,7 +1473,108 @@ PYEOF
       exit 1
     fi
   }
-  await 'desk range 32767 32767'
+  # The lock's face read whole (emo-desktop M28, A28.3): the opaque
+  # scrim every pixel but the wordmark's ink and the blind caret — the
+  # face's own stamp the model walks, the sprite parked where the beat
+  # left it composited over.
+  lock_is() {
+    local ppm="$1" what="$2"
+    if ! PPM="$ppm" WHAT="$what" POINTER_SPRITE="$pointer_sprite" GLYPHS_DIR="$glyphs_dir" python3 - <<'PYLOCK'
+import os
+import re
+import sys
+
+e = os.environ
+data = open(e['PPM'], 'rb').read()
+if data[:17] != b'P6\n1920 1080\n255\n' or len(data) != 17 + 1920 * 1080 * 3:
+    sys.exit(f"run.sh: the {e['WHAT']}'s screendump is not the mode's P6 1920x1080")
+px = data[17:]
+
+rows = re.findall(r'^\s*"([.#o1-9ab]+)",?\s*$', open(e['POINTER_SPRITE']).read(), re.M)
+if len(rows) != 17 or any(len(r) != 12 for r in rows):
+    sys.exit(f"run.sh: {e['POINTER_SPRITE']} does not draw the 12x17 sprite")
+
+sys.path.insert(0, e['GLYPHS_DIR'])
+import reference
+
+_face = reference.faces()['face_inter.emo']
+_ap = reference.ceil_scale(_face.ascent_fu, 16, _face.units_per_em)
+_dp = reference.ceil_scale(_face.descent_fu, 16, _face.units_per_em)
+LINE = _ap + _dp
+STRIKE = {}
+for gid in range(96):
+    if gid == 0:
+        pts, adv = _face.glyph_points(0)
+    else:
+        pts, adv = _face.glyph_points(_face.cmap_lookup(0x20 + gid - 1))
+    a, l, t, w, h, words = reference.rasterize(pts, adv, 16, _face.units_per_em, _ap)
+    STRIKE[gid] = (a, l, t, w, h, words)
+
+def glyph_index(b):
+    i = b - 31
+    return i if 1 <= i <= 95 else 0
+
+# The face's own ink: the wordmark's glyph coverages at their place —
+# ((1920 - lw) / 2, (1080 - LINE) / 2 - 12) — and the blind caret's
+# two-wide box at ((1920 / 2) - 1, (1080 - LINE) / 2 + 24), 18 tall.
+ink = {}
+pen = (1920 - sum(STRIKE[glyph_index(ord(c))][0] for c in 'locked')) // 2
+wy = (1080 - LINE) // 2 - 12
+for ch in 'locked':
+    gi = glyph_index(ord(ch))
+    a, l, t, gw, gh, words = STRIKE[gi]
+    for m in range(gw * gh):
+        c = (words[m // 8] >> (8 * (m % 8))) & 255
+        if c:
+            ink[(pen + l + m % gw, wy + t + m // gw)] = c
+    pen += a
+cx = 1920 // 2 - 1
+cy = (1080 - LINE) // 2 + 24
+for yy in range(cy, cy + 18):
+    for xx in range(cx, cx + 2):
+        ink[(xx, yy)] = 255
+
+sx, sy = 16, 700
+def sprite(x, y):
+    r, c = y - sy, x - sx
+    if 0 <= r < 17 and 0 <= c < 12:
+        cell = rows[r][c]
+        if cell == '#':
+            return (0, 0, 0), 255
+        if cell == 'o':
+            return (255, 255, 255), 255
+        if cell != '.':
+            n = int(cell, 16) if cell.isdigit() else ord(cell) - 87
+            return (0, 0, 0), n * 17
+    return None
+
+SC = (0x14, 0x14, 0x1C)
+def want(x, y):
+    base = SC
+    c = ink.get((x, y))
+    if c:
+        base = tuple((s * c + d * (255 - c) + 127) // 255 for s, d in zip((0xF8, 0xF8, 0xF0), base))
+    sp = sprite(x, y)
+    if sp is not None:
+        (sr, sg, sb), a = sp
+        if a > 0:
+            base = tuple((s * a + d * (255 - a) + 127) // 255 for s, d in zip((sr, sg, sb), base))
+    return base
+
+for y in range(1080):
+    row = px[y * 5760:(y + 1) * 5760]
+    for x in range(1920):
+        got = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
+        w = want(x, y)
+        if got != w:
+            sys.exit(f"run.sh: at the {e['WHAT']} the pixel at ({x},{y}) is {got}, the model says {w}")
+PYLOCK
+    then
+      kill "$qemu_pid" 2>/dev/null || true
+      exit 1
+    fi
+  }
+  await 'desk range 32767 32767' 
   await 'desk b 8'
   await 'comp 576 384'
   # The dock's first frame (emo-desktop A10.2): the strip's own
@@ -1608,7 +1709,7 @@ PYEOF
     kill "$qemu_pid" 2>/dev/null || true
     exit 1
   fi
-  abs 614 32101
+  abs 1297 32101
   btn true
   btn false
   await 'desktop counter up'
@@ -1755,7 +1856,7 @@ PYEOF
   await 'comp 768 476'
   # the dock's tile on a live pid is the desktop's open: the window
   # unhidden, raised, and focused — the way back the minimize spoke of
-  abs 614 32101
+  abs 1297 32101
   btn true
   btn false
   await 'comp 768 476'
@@ -1816,7 +1917,7 @@ PYEOF
   sleep 1
   hmp 'screendump .deskp1.ppm'
   apps_is .deskp1.ppm 0 0 '' 0 0 '' 0 0 '' 16 700 "$(dock_line 10)" 'desk one quiet' 'doc:boot.txt,doc:hello.txt' 0 ''
-  abs 614 32101
+  abs 1297 32101
   btn true
   btn false
   await_count 'desktop counter up' 2
@@ -1834,7 +1935,7 @@ PYEOF
   sleep 1
   hmp 'screendump .deskp3.ppm'
   apps_is .deskp3.ppm 0 0 '' 0 0 '' 0 0 '' 16 700 "$(dock_line 5)" 'desk two, counter on one' 'doc:boot.txt,doc:hello.txt' 1 ''
-  abs 614 32101
+  abs 1297 32101
   btn true
   btn false
   sleep 1
@@ -1864,6 +1965,98 @@ PYEOF
   sleep 1
   hmp 'screendump .calshut.ppm'
   apps_is .calshut.ppm 0 0 '' 0 0 '' 0 0 '' 16 700 "$(dock_line 10)" 'the calendar shut' 'doc:boot.txt,doc:hello.txt' 0 ''
+  # ---- the launcher and the lock (emo-desktop M28, A28.3) ----
+  #
+  # The account first: `passwd noctalia` writes the file — 32 raw bytes
+  # of the hash package's digest, the secret itself nowhere on the
+  # volume — `passwd ok` on the wire, the listing's third doc the
+  # icons' own news. The launcher: the strip's first tile opens the
+  # panel (the comp at the panel's place, the fold the hosted golden's
+  # state), the bytes narrow the catalog, Enter hands the row to the
+  # slots' own launch — the counter's third life. The lock: `lock`
+  # takes the session behind the opaque face, a wrong secret clears the
+  # line and stays, the right one lifts it — the desktop back, the
+  # third doc among the icons.
+  feed 'passwd noctalia'
+  await 'passwd ok'
+  # the refresh's own frame line, the wallpaper's third doc its news
+  await 'frame '
+  sleep 1
+  abs 614 32101
+  btn true
+  btn false
+  await 'comp 680 772'
+  abs 274 21239
+  sleep 1
+  hmp 'screendump .launch1.ppm'
+  notice_fold .launch1.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2; exit }' ../emo-desktop/fb/desktop/golden/expected.txt)" 'the launcher whole'
+  printf 'e' >&3
+  await_count 'comp 680 772' 2
+  printf 'd' >&3
+  await_count 'comp 680 772' 3
+  abs 274 21239
+  sleep 1
+  hmp 'screendump .launch2.ppm'
+  notice_fold .launch2.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2 }' ../emo-desktop/fb/desktop/golden/expected.txt | sed -n 2p)" 'the launcher narrowed'
+  # the line cleared first: the blank state the golden's own — the two
+  # backspaces the 'ed' came from, the caret the only witness
+  printf '\010\010' >&3
+  await_count 'comp 680 772' 4
+  printf 'z' >&3
+  await_count 'comp 680 772' 5
+  printf 'z' >&3
+  await_count 'comp 680 772' 6
+  abs 274 21239
+  sleep 1
+  hmp 'screendump .launch3.ppm'
+  notice_fold .launch3.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2 }' ../emo-desktop/fb/desktop/golden/expected.txt | sed -n 3p)" 'the launcher blank'
+  printf '\010\010' >&3
+  await_count 'comp 680 772' 7
+  abs 274 21239
+  sleep 1
+  hmp 'screendump .launch4.ppm'
+  notice_fold .launch4.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2; exit }' ../emo-desktop/fb/desktop/golden/expected.txt)" 'the launcher whole again'
+  printf 'c' >&3
+  await_count 'comp 680 772' 8
+  printf 'o' >&3
+  await_count 'comp 680 772' 9
+  printf '\n' >&3
+  await_count 'desktop counter up' 3
+  sleep 0.3
+  printf 'a' >&3
+  await_count 'add 1' 2
+  sleep 0.3
+  printf 'b' >&3
+  await_count 'sub 0' 2
+  abs 274 21239
+  sleep 1
+  printf 'q' >&3
+  await_count 'desktop counter exit 0' 3
+  # the lock's session: the face the whole display, the wrong secret
+  # the line's clear, the right one the lift
+  feed 'lock'
+  await 'lock on'
+  abs 274 21239
+  sleep 1
+  hmp 'screendump .lock1.ppm'
+  lock_is .lock1.ppm 'the lock taken'
+  printf 'x' >&3
+  sleep 1
+  printf '\n' >&3
+  await 'lock miss'
+  sleep 1
+  feed 'noctalia'
+  await 'lock ok'
+  abs 274 21239
+  sleep 1
+  hmp 'screendump .lock2.ppm'
+  apps_is .lock2.ppm 0 0 '' 0 0 '' 0 0 '' 16 700 "$(dock_line 10)" 'the lock lifted' 'doc:boot.txt,doc:hello.txt,doc:lock.hash' 0 ''
+  # the account file goes before the run ends (the editor save's own
+  # rule): the volume the second boot mounts must be the one the
+  # older pins expect, and the second boot's passwd writes it again
+  feed 'rm lock.hash'
+  await 'comp 0 0'
+  sleep 1
   # The REPL beats: the dock's gap focuses the panel, the serial's
   # bytes the shell's line — the commands the file work needs, the
   # launcher's own refusals among them. The `exec` command's success
@@ -1873,7 +2066,7 @@ PYEOF
   btn false
   sleep 0.5
   feed 'help'
-  await 'commands: help echo ls cat write rm counter exec poweroff'
+  await 'commands: help echo ls cat write rm counter exec passwd lock poweroff'
   feed 'echo repl answers'
   await 'echo repl answers'
   feed 'ls'
@@ -2217,7 +2410,12 @@ PYEOF
   # exec's documented leak, a frame never rejoins its block, the +1
   # held), the counter's second exec (emo-desktop M27, A27.3: the
   # workspace beats' own launch, the same shape all home at its exit,
-  # the handoff page's +1 held with the first's), the DMA check's block,
+  # the handoff page's +1 held with the first's), the lock face's run
+  # (emo-desktop M28: the full-screen panel's 127-block run taken at
+  # the lock and home at the lift, beside the search face's smaller
+  # one at its opens and closes) and the counter's third exec (the
+  # launcher's own launch, the handoff's +1 held with the other two's),
+  # the DMA check's block,
   # and the block driver's
   # queue block (T7.1) beside the display driver's (T8.1), the input
   # driver's (T8.3) and the pointer driver's (T8.11 — its two-block
@@ -2232,8 +2430,9 @@ PYEOF
   # pass's, the input pass's, and the window pass's at their clean
   # exits, and the clients': the dead one's to the fault's reap and
   # the compositor's reclaim, the reborn one's to its exit), the
-  # spinner's run and stack at its exit, the counter's second exec's
-  # run and stack at its exit, the
+  # spinner's run and stack at its exit, the counter's second and
+  # third execs' runs and stacks at their exits, the lock face's run
+  # at the lift, the search face's at its closes, the
   # window buffer's run at its close, and the DMA check's
   # block home; the services, the supervisors, the live filesystem and
   # compositor instances, every table, the cache block, and the queues
@@ -2244,7 +2443,7 @@ PYEOF
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'comp 64 128' 'desk assign a 1' 'desk word 768' 'comp 0 0' 'desk word 769' 'comp 64 128' 'desk assign a 0' 'desk word 257' 'comp 0 0' 'desk word 256' 'desk 0' 'clock ' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'desk 1' 'comp 0 0' 'desktop counter up' 'comp 0 1040' 'desk 513' 'comp 0 0' "frame $(app_line 1)" 'desk 514' 'comp 0 0' 'comp 768 476' 'desktop counter exit 0' 'comp 0 1040' 'desk 1' 'comp 0 0' 'desk 0' 'comp 0 0' 'comp 1636 32' 'comp 0 0' 'comp 0 0' 'commands: help echo ls cat write rm counter exec poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1427 1213'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'comp 64 128' 'desk assign a 1' 'desk word 768' 'comp 0 0' 'desk word 769' 'comp 64 128' 'desk assign a 0' 'desk word 257' 'comp 0 0' 'desk word 256' 'desk 0' 'clock ' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'desk 1' 'comp 0 0' 'desktop counter up' 'comp 0 1040' 'desk 513' 'comp 0 0' "frame $(app_line 1)" 'desk 514' 'comp 0 0' 'comp 768 476' 'desktop counter exit 0' 'comp 0 1040' 'desk 1' 'comp 0 0' 'desk 0' 'comp 0 0' 'comp 1636 32' 'comp 0 0' 'comp 0 0' 'commands: help echo ls cat write rm counter exec passwd lock poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1698 1483'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2
@@ -2397,7 +2596,7 @@ PYEOF
   local xprev xpos xstart xend
   xstart=$(grep -aboF -- 'desk 0' "$log" | head -1 | cut -d: -f1)
   xprev=$xstart
-  xend=$(grep -aboF -- 'commands: help echo ls cat write rm counter exec poweroff' "$log" | head -1 | cut -d: -f1)
+  xend=$(grep -aboF -- 'commands: help echo ls cat write rm counter exec passwd lock poweroff' "$log" | head -1 | cut -d: -f1)
   for d in $desktop_dock_digests; do
     xpos=$(grep -aboF -- "frame $d" "$log" | cut -d: -f1 | awk -v p="$xprev" '$1 > p { print; exit }' || true)
     if [ -z "$xpos" ]; then

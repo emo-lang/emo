@@ -959,8 +959,9 @@ def paint_launcher(s ui_fb.Surface, f ui_fb.raster.Strike, line String,
 // ---- the lock (emo-desktop M28, A28.2) ----
 //
 // The session's lock face: a full-screen toplevel the shell raises at
-// the lock and closes at the check's pass, the wallpaper's whole place
-// under a heavy scrim — the wordmark centered, the blind line's caret
+// the lock and closes at the check's pass, an opaque scrim over
+// everything — nothing under it leaks, not the wallpaper's shape, not
+// a window's corner — the wordmark centered, the blind line's caret
 // under it. The typed bytes are nobody's pixels: no echo, no dots, not
 // even the count — the line lives in the shell's scratch, and the
 // account file's verdict is the whole answer. The file itself is the
@@ -969,7 +970,7 @@ def paint_launcher(s ui_fb.Surface, f ui_fb.raster.Strike, line String,
 // calls, the face's only business the pixels.
 
 def lock_scrim() Int64 {
-  return 0xD014141C
+  return 0xFF14141C
 }
 
 def lock_ink() Int64 {

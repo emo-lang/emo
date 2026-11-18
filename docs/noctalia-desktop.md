@@ -34,25 +34,21 @@ The skeleton and the manners are already on the metal:
   window-level repaint at ~36 ms against the full composition's
   ~230 ms; and the frame callback (verb 22), the composition itself as
   the animation's pulse.
-- **The system-data layer's first three modules**: the notifications —
+- **The system-data layer's five modules**: the notifications —
   the toast, the history, DND (M25, D16); the wall clock and the
   calendar (M26, D17); the workspaces (M27, D18 — the verbs, the
   walk's filter, the bar's pager, the metal's assignment beats all
-  graded).
+  graded); the launcher's enumeration behind its search face (M28,
+  D14's seam and the volume's own `.elf` names); and the lock (M28,
+  D19 — the account file's digest, the session taken behind the
+  opaque face).
 
 So the remaining work is not structure. It is density: the skin and the
 motion.
 
 ## The ladder
 
-### 1. M28 — the launcher and the lock (D19)
-
-The launcher enumerates the disk's Emo packages and names them to a
-search face; the lock checks a hash file — the permanent answer, no PAM
-to hang an auth on (D19). The shell's last two structural modules, and
-the launcher is the icon family's first stage.
-
-### 2. The visual language — the skin layer
+### 1. The visual language — the skin layer
 
 The main lever for the polished effect, one milestone family in four
 steps, each riding the last:
@@ -82,7 +78,7 @@ steps, each riding the last:
    the popovers and the toasts re-dressed in alpha, round corners and
    shadows.
 
-### 3. The motion layer
+### 2. The motion layer
 
 All of it the shell's own work on the frame callback — the verbs are
 already there: the workspace switch's transition (a slide or a
@@ -94,7 +90,7 @@ full-screen animation at 60 fps is not the TCG's to give, and the
 animation walks window-sized rects, the damage discipline it already
 lives by.
 
-### 4. The seat's modifiers
+### 3. The seat's modifiers
 
 The apps' byte table carries none — the editor's save rides the `s`
 key, not Ctrl+S (A25.2's named follow-up). The workspace shortcut
@@ -119,8 +115,7 @@ vocabulary.
 
 ## The order
 
-M28 → the visual language family (the alpha, the
-wallpaper's palette, the icons and the re-dress) → the motion layer →
-the modifiers. The audio track stands alone, revisited only when it
+The visual language family (the alpha, the wallpaper's palette, the
+icons and the re-dress) → the motion layer → the modifiers. The audio track stands alone, revisited only when it
 exists; the network has no place on the ladder at all (D21), and the
 tray has retired (D22).

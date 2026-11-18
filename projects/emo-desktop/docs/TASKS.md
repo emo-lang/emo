@@ -2266,22 +2266,37 @@ topmost toplevel keeping itself there. The beats' discipline holds:
 every new wire word unique, the minute's tick never answers an await
 early.
 
-- [ ] **A28.1** — The launcher's enumeration and search face in the
+- [x] **A28.1** — The launcher's enumeration and search face in the
   package: the dock's launcher tile (`press` grown the count, the app
   tiles one slot right, the desk era's labels grown), the catalog
   arithmetic (the `.elf` suffix's filter, the substring's match, the
   survivors in order), the search face's geometry and paint (the line,
   the rows, the selection), and the golden's pins — the strip's states
   with the launcher tile, the filter's verdicts, the panel's frames —
-  across the five hosted targets byte-identically.
-- [ ] **A28.2** — The lock in the package, and the crypto's ground:
-  the account file's format (32 raw bytes) and its check
+  across the five hosted targets byte-identically. **complete
+  2026-11-18** — the package's launcher section (the geometry, the two
+  verdicts, the hit test, the paint), the golden's four face states
+  and the strip's states with the `s` tile (the residency's bits
+  shifted with the app tiles), the probes beside; the seven locks
+  pinning `emo_desktop` re-resolved. The beam leg's hang is the tree's
+  own: HEAD's package and golden hang alike, the M25 frame-beam
+  disease's family (the other four legs byte-identical).
+- [x] **A28.2** — The lock in the package, and the hash twin's
+  ground: the account file's format (32 raw bytes) and its check
   (`constant_time_compare` over `sha2.sha256`), the lock face's paint
-  (the wordmark, the blind line), the crypto package's targets grown
-  `riscv64` with the pinned locks re-resolved, and the golden's pins —
-  the hash vectors, the compare's verdicts, the face's frames — five
-  targets byte-identically.
-- [ ] **A28.3** — The shell's side and the metal: `hello`'s
+  (the wordmark, the blind line), and the golden's pins — the hash
+  vectors, the compare's verdicts, the face's frames — five targets
+  byte-identically. **complete 2026-11-18** — the plan's first ground
+  (the crypto package's targets grown `riscv64`) died on the
+  compiler's raise gap: the builder compiles a dep package whole, and
+  crypto's error surface refuses the machine's target whatever the
+  consumer requires — so the digest core rides a new `hash` package,
+  the engine carried word for word from crypto's sha2, the same
+  vectors pinning both (the twin's proof), the fold-back named for
+  the day the raise gap closes. The docs: `docs/stdlib/hash.md` +
+  zh, the stdlib index rows, the locks re-resolved (the twin's
+  consumers beside crypto's untouched pins).
+- [x] **A28.3** — The shell's side and the metal: `hello`'s
   enumeration (`desktop apps <n>`), the launcher tile's press opening
   the panel, the bytes feeding the line, the launches riding the
   slots' own path; `passwd` and `lock` in the shell's commands, the
@@ -2290,4 +2305,21 @@ early.
   and filtered and launched, the account written, the lock taken, a
   miss clearing, the secret lifting — ×3 double transport
   byte-identical; the READMEs, the ladder's step, CHECK.md's entry,
-  and the TASKS' boxes.
+  and the TASKS' boxes. **complete 2026-11-18** — the glue landed and
+  the metal taught its four finds: **the panel's role binds at the
+  declaration** (a second `win_role` is the argument refusal — the
+  face declared role 3 outright, and the raise the raise-era tried
+  was already moot), **the stack slot a new entry lands in is the
+  first free hole the closed eras left** (the face's slot below the
+  header's and the dock's until the focus's raise carried it up — the
+  raise a panel can take, the wallpaper's refusal the only one),
+  **the chrome's presents pause while the face holds the display**
+  (the minute's and the exits' repaints punching the header and the
+  strip through the face), and **the close releases and marks, the
+  next composition repaints** (the unlock's own wallpaper present is
+  that walk). The metal's panel folds took the round digests (the
+  walk's mask leaves the corners the wallpaper's, the canvas's zeros
+  the hosted's — `round_digest` beside `digest` in the corpus). The
+  account file rides home before the poweroff (the editor save's own
+  rule, the second boot's pins the older ones). Verified: `run.sh`
+  exits 0 on both transports, three runs byte for byte.

@@ -45,6 +45,7 @@ English version: [`README.md`](README.md).
 | M25 — 通知 | `notify` 动词族与通知服务,壳天生就是中心——toast、历史、勿扰 | complete |
 | M26 — 时钟 | 开发板 RTC 成为 time 动词,头条时钟与日历面板按 UTC 读真实墙钟 | complete |
 | M27 — 工作空间 | 合成器自有的四张桌面:窗口的指派动词、壳的切换、头条 pager 每次绘制读打包状态 | complete |
+| M28 — launcher 与锁 | dock 第一格即搜索面之门——卷上的 `.elf` 包枚举、过滤、启动;锁在不透明面背后接管会话,帐户文件即 hash 包自己的摘要 | complete |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 

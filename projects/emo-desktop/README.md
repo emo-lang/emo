@@ -45,6 +45,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M25 — Notifications | the `notify` verb family and the notification service, the shell as the center — the toast, the history, do-not-disturb | complete |
 | M26 — The clock | the board's RTC as the time verb, the bar's clock and the calendar panel reading wall time in UTC | complete |
 | M27 — Workspaces | four desks the compositor's own: the window's assignment verb, the shell's switch, the bar's pager reading the packed state per paint | complete |
+| M28 — The launcher and the lock | the dock's first tile the search face's door — the volume's `.elf` packages enumerated, filtered, launched — and the session the lock takes behind the opaque face, the account file the hash package's own digest | complete |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 

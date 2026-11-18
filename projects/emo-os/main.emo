@@ -3793,12 +3793,24 @@ def comp_compose(gpu Pid, me Pid) Int64 {
     i = i + 1
   }
   i = 0
+  var panels = 0
+  while i < top {
+    var entry = comp_stack + (i * comp_entry)
+    if peek64(entry + 24) == role_panel {
+      panels = panels + 1
+    }
+    i = i + 1
+  }
+  i = 0
   while i < top {
     var entry = comp_stack + (i * comp_entry)
     if peek64(entry + 24) == role_panel {
       var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
       sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
       comp_paint_record(entry, both >> 32, both & 4294967295)
+      if panels >= 3 {
+        println("pan ${i} g ${peek64(entry)}")
+      }
     }
     i = i + 1
   }

@@ -2792,6 +2792,25 @@ const desk_painted_minute = 16120 // the minute the bar's clock painted
 const cal_grant = 16128 // the calendar panel's grant and base —
 const cal_base = 16136 // 0 the panel shut, a toplevel while it shows
 
+// The launcher's and the lock's cells (emo-desktop M28), in the same
+// scratch page: the search face's grant and base, the line's bytes and
+// length, the lock face's two, the blind line's, the account file's
+// read-back and its name, the catalog's sixteen rows and their count,
+// and the digest's 32 bytes at the passwd's write.
+const launch_grant = 16800 // the search face's grant and base —
+const launch_base = 16808  // 0 the panel shut, a toplevel while it shows
+const launch_line = 16816  // the search line's bytes, 24 the name bound
+const launch_len = 16840   // the line's length
+const lock_grant = 16848   // the lock face's grant and base
+const lock_base = 16856
+const lock_line = 16864    // the blind line's bytes, 64 the secret bound
+const lock_len = 16928
+const lock_file = 16992    // the account file's bytes read back
+const lock_name = 17024    // the file's name, nine bytes
+const apps_cat = 17056     // the catalog: sixteen rows, 32 bytes each —
+const apps_count = 17568   // the name's bytes then its length
+const lock_dgst = 17600    // the digest's 32 bytes at the passwd's write
+
 // The notification center's cells (emo-desktop M25, A25.2), in the
 // same scratch page: the take's reply (the packed head and the two
 // lengths, 280 bytes at the service's bounds), the two surfaces' grant
@@ -2809,10 +2828,17 @@ const notify_painted = 16736
 
 // The launcher's dock, repainted whole: the tiles with their dots.
 def desk_dock(f ui_fb.raster.Strike, labels Array[String]) Void {
+  // the lock's session: the strip's presents pause with the rest
+  if peek64(buf + lock_grant) == 0 {
+    desk_dock_live(f, labels)
+  }
+}
+
+def desk_dock_live(f ui_fb.raster.Strike, labels Array[String]) Void {
   const mode = peek64(buf + desk_mode_cell)
   desk_strip_paint(f, peek64(buf + desk_dock_base),
     peek64(buf + desk_dock_grant),
-    mode >> 32, mode & 4294967295, labels, -1, desk_running_mask())
+    mode >> 32, mode & 4294967295, labels, -1, desk_running_mask() << 1)
 }
 
 // The launcher's one launch (emo-desktop A12.1; the live tile's open
@@ -3434,6 +3460,15 @@ def desk_wall_repaint(f ui_fb.raster.Strike) Void {
 // cell keeps, so a wake compares and the next minute's first wake
 // repaints.
 def desk_chrome(f ui_fb.raster.Strike) Void {
+  // the lock's session (emo-desktop M28): the face holds the display,
+  // the chrome's presents pause — the bar's clock lags the minutes it
+  // spends under the face, the next wake after the lift catches up
+  if peek64(buf + lock_grant) == 0 {
+    desk_chrome_live(f)
+  }
+}
+
+def desk_chrome_live(f ui_fb.raster.Strike) Void {
   const mode = peek64(buf + desk_mode_cell)
   const mw = mode >> 32
   const mh = mode & 4294967295
@@ -3562,6 +3597,7 @@ def desk_icons_refresh(f ui_fb.raster.Strike) Void {
         poke64(buf + desk_list_len, n)
         poke64(buf + desk_list_fold, d)
         desk_view_build()
+        desk_apps_build()
         desk_wall_repaint(f)
       }
     }
@@ -3903,6 +3939,404 @@ def cal_hit(mw Int64, x Int64, y Int64) Bool {
     y < cy + emo_desktop.cal_h()
 }
 
+// ---- the launcher and the lock (emo-desktop M28, A28.3) ----
+//
+// The catalog: the volume's .elf names, walked off the listing the
+// icons' own refresh reads, the suffix the view's own verdict. The
+// search face: the panel above the dock — the bell's and the clock's
+// sibling, a toplevel raised at the launcher tile's press, closed at
+// Esc, a launch, or a press outside it — the open panel consuming the
+// stream's bytes into the line, the popover's rule grown its keyboard
+// half. The lock (D19): the account file the passwd command writes —
+// 32 raw bytes of the hash package's digest, the secret never on the
+// volume — and the session the lock command takes behind the
+// full-screen face, the typed bytes nobody's pixels, the file's
+// verdict the whole answer.
+
+// The catalog's own line: `desktop apps <n>`, the enumeration said on
+// the wire, the icons line's twin.
+def desk_apps_line() Void {
+  var p = byte_at(0, 100) // d
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 32)
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 32)
+  p = num_at(peek64(buf + apps_count), p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The catalog built off the listing's bytes: every name the suffix
+// names an app, the row the name's bytes then its length.
+def desk_apps_build() Void {
+  var count = 0
+  const flen = peek64(buf + desk_list_len)
+  var pos = 0
+  while pos < flen && count < 16 {
+    var n = pos
+    while n < flen && peek8(buf + desk_list + n) != 10B {
+      n = n + 1
+    }
+    const nlen = n - pos
+    const namep = buf + desk_list + pos
+    if nlen > 0 && desk_is_elf(namep, nlen) {
+      const e = buf + apps_cat + (count * 32)
+      var i = 0
+      while i < nlen {
+        poke8(e + i, peek8(namep + i))
+        i = i + 1
+      }
+      poke64(e + 24, nlen)
+      count = count + 1
+    }
+    pos = n + 1
+  }
+  poke64(buf + apps_count, count)
+}
+
+// A name matches the search line when the line's bytes are one of the
+// name's own substrings; the empty line matches everything — the
+// face's opening state is the catalog whole.
+def launch_matches(namep Int64, nlen Int64) Bool {
+  const m = peek64(buf + launch_len)
+  if m == 0 {
+    return true
+  }
+  if m > nlen {
+    return false
+  }
+  var i = 0
+  while i <= nlen - m {
+    var j = 0
+    var same = true
+    while j < m {
+      if peek8(namep + i + j) != peek8(buf + launch_line + j) {
+        same = false
+        j = m
+      } else {
+        j = j + 1
+      }
+    }
+    if same {
+      return true
+    }
+    i = i + 1
+  }
+  return false
+}
+
+// The survivors' count, the hit test's bound and the paint's.
+def launch_survivors() Int64 {
+  var n = 0
+  var i = 0
+  while i < peek64(buf + apps_count) && n < 8 {
+    const e = buf + apps_cat + (i * 32)
+    if launch_matches(e, peek64(e + 24)) {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  return n
+}
+
+// The row's own entry: the survivor-th match's catalog row, -1 none.
+def launch_row_entry(row Int64) Int64 {
+  var n = 0
+  var i = 0
+  while i < peek64(buf + apps_count) {
+    const e = buf + apps_cat + (i * 32)
+    if launch_matches(e, peek64(e + 24)) {
+      if n == row {
+        return e
+      }
+      n = n + 1
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// The panel painted direct (the dock's own reason): the slab's
+// shapes through the carve, the line's bytes and the survivors' the
+// icons' own byte walk — no String crosses this def, the boxed
+// element's assignment one wall the package's paint leaves behind on
+// the machine. The buffer zeroed first: the slab's alpha grades
+// composite over the ground, the corners the walk masks ride the
+// fresh zeros, the hosted canvas's own.
+def launch_paint(f ui_fb.raster.Strike, mw Int64) Void {
+  const w = emo_desktop.launch_w(mw)
+  const h = emo_desktop.launch_h()
+  const base = peek64(buf + launch_base)
+  ui_fb_winbuf.carve_fill(base, w, 0, 0, w, h, 0)
+  const c = Carve.new(base: base, width: w, height: h)
+  c.shadow(0, 0, w, h, 12, 8, 0x80000000)
+  c.rounded(0, 0, w, h, 12, emo_desktop.launch_ground_top(),
+    emo_desktop.launch_ground_bottom())
+  const ty = (emo_desktop.launch_line_h() - f.line_height()) / 2
+  var pen = emo_desktop.launch_pad()
+  var i = 0
+  const llen = peek64(buf + launch_len)
+  while i < llen {
+    pen = pen + desk_name_byte(f, base, w, h, pen, ty,
+      peek8(buf + launch_line + i).to_int64())
+    i = i + 1
+  }
+  c.fill(pen + 4, (emo_desktop.launch_line_h() - 18) / 2, 2, 18,
+    emo_desktop.ink())
+  var n = 0
+  var k = 0
+  while k < peek64(buf + apps_count) && n < emo_desktop.launch_rows() {
+    const e = buf + apps_cat + (k * 32)
+    const nlen = peek64(e + 24)
+    if launch_matches(e, nlen) {
+      const ry = emo_desktop.launch_line_h() + emo_desktop.launch_pad() +
+        n * emo_desktop.launch_row_h()
+      // the first survivor the entry Enter takes — the line's own
+      // selection, the band on its row while the line names anything
+      if n == 0 && llen > 0 {
+        c.fill(emo_desktop.launch_pad() / 2, ry + 1, w - emo_desktop.launch_pad(),
+          emo_desktop.launch_row_h() - 2, emo_desktop.select_ink())
+      }
+      const ty2 = ry + (emo_desktop.launch_row_h() - f.line_height()) / 2
+      var p2 = emo_desktop.launch_pad()
+      var j = 0
+      while j < nlen {
+        p2 = p2 + desk_name_byte(f, base, w, h, p2, ty2,
+          peek8(e + j).to_int64())
+        j = j + 1
+      }
+      n = n + 1
+    }
+    k = k + 1
+  }
+  notify_present(peek64(buf + launch_grant), base, w, h)
+}
+
+// The panel shut: the toplevel closed, the walk's comp the pixels'
+// repair.
+def launch_close() Void {
+  notify_close(buf + launch_grant, buf + launch_base)
+}
+
+// The panel opened: the line empty, the catalog whole, the toplevel
+// raised at the panel's place.
+def launch_open(f ui_fb.raster.Strike, mw Int64, mh Int64) Void {
+  poke64(buf + launch_len, 0)
+  if notify_open(buf + launch_grant, buf + launch_base,
+    emo_desktop.launch_w(mw), emo_desktop.launch_h(),
+    emo_desktop.launch_x(mw), emo_desktop.launch_y(mh)) {
+    launch_paint(f, mw)
+  }
+}
+
+// A name launched off the face: the slots' own path when the name is
+// one of the tiles' (the dot, the exit line — residency is the
+// tiles'), a foreign name a plain exec whose death is the drain's
+// silent drop.
+def launch_name(f ui_fb.raster.Strike, namep Int64, nlen Int64,
+                labels Array[String]) Void {
+  const slot = desk_slot_of(namep, nlen)
+  if slot >= 0 {
+    desk_launch(f, slot, labels)
+  } else {
+    case syscall.exec(namep, nlen) {
+      (R.error, why) then { shell.desk_err(why) }
+      (R.ok, _) then {}
+    }
+  }
+}
+
+// The open panel's byte: Esc closes, Enter launches the first
+// survivor (the line's own answer), backspace trims, a printable
+// joins — every other byte nothing. Any byte the panel keeps, the
+// shell never sees.
+def launch_byte(f ui_fb.raster.Strike, b Int64, mw Int64, mh Int64,
+                labels Array[String]) Void {
+  if b == 27 {
+    launch_close()
+  } else {
+    if b == 10 {
+      const e = launch_row_entry(0)
+      launch_close()
+      if e >= 0 {
+        launch_name(f, e, peek64(e + 24), labels)
+      } else {
+        poke64(buf + launch_len, 0)
+      }
+    } else {
+      if b == 8 || b == 127 {
+        if peek64(buf + launch_len) > 0 {
+          poke64(buf + launch_len, peek64(buf + launch_len) - 1)
+        }
+        launch_paint(f, mw)
+      } else {
+        if b >= 32 && b <= 126 && peek64(buf + launch_len) < 24 {
+          poke8(buf + launch_line + peek64(buf + launch_len), b.to_byte())
+          poke64(buf + launch_len, peek64(buf + launch_len) + 1)
+        }
+        launch_paint(f, mw)
+      }
+    }
+  }
+}
+
+// The account file's name, nine bytes, poked once at the write.
+def lock_fill_name() Void {
+  poke8(buf + lock_name, 108B) // l
+  poke8(buf + lock_name + 1, 111B) // o
+  poke8(buf + lock_name + 2, 99B) // c
+  poke8(buf + lock_name + 3, 107B) // k
+  poke8(buf + lock_name + 4, 46B) // .
+  poke8(buf + lock_name + 5, 104B) // h
+  poke8(buf + lock_name + 6, 97B) // a
+  poke8(buf + lock_name + 7, 115B) // s
+  poke8(buf + lock_name + 8, 104B) // h
+}
+
+// `passwd <secret>`: the line's rest the secret's bytes, 1 to 64 of
+// them, the digest — 32 raw bytes, the hash package's own — the file's
+// whole content. The secret itself goes nowhere: not the volume, not
+// the wire's file. An empty or oversized secret refused, the
+// strictness.
+def desk_passwd_cmd(e Int64, n Int64) Void {
+  var s = shell.skip_spaces(e, n)
+  var slen = n - s
+  if slen <= 0 || slen > 64 {
+    lock_plain_line("passwd: a secret of 1 to 64 bytes", 33)
+  } else {
+    const dg = hash.sha2.sha256(notify_str(shell.line_ptr() + s, slen).to_bytes())
+    lock_fill_name()
+    var i = 0
+    while i < 32 {
+      poke8(buf + lock_dgst + i, dg.get(i).to_byte())
+      i = i + 1
+    }
+    case syscall.file_write(buf + lock_name, 9, buf + lock_dgst, 32) {
+      (R.error, _) then { lock_plain_line("passwd: the file refused", 24) }
+      (R.ok, _) then { lock_plain_line("passwd ok", 9) }
+    }
+  }
+}
+
+// A bare line the lock's own words ride on, the length the caller's.
+def lock_plain_line(text String, nlen Int64) Void {
+  const tb = text.to_bytes()
+  var p = byte_at(0, tb.get(0))
+  var i = 1
+  while i < nlen {
+    p = byte_at(p, tb.get(i))
+    i = i + 1
+  }
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// `lock`: the account file read, the session taken behind the
+// full-screen face when the file is a digest, the refusal naming
+// itself when it is not — no account, no lock, the strictness.
+def desk_lock_cmd(f ui_fb.raster.Strike, mw Int64, mh Int64) Void {
+  lock_fill_name()
+  case syscall.file_read(buf + lock_name, 9, buf + lock_file, 32) {
+    (R.error, _) then { lock_plain_line("lock: no account", 16) }
+    (R.ok, rn) then {
+      if rn != 32 {
+        lock_plain_line("lock: the file is not a digest", 30)
+      } else {
+        poke64(buf + lock_len, 0)
+        // the face declared a panel outright (emo-desktop M28): the
+        // role binds at the declaration and never changes, and a panel
+        // paints over every window and over the header and the dock —
+        // the walk's own chrome layer, the face the session's whole
+        // ground
+        var lg = 0
+        var lb = 0
+        case syscall.win_new(mw, mh) {
+          (R.error, _) then {}
+          (R.ok, ans) then {
+            lg = win_id(ans)
+            lb = win_base(ans)
+          }
+        }
+        var took = false
+        if lg != 0 {
+          case syscall.win_role(lg, 3) {
+            (R.error, _) then {}
+            (R.ok, _) then { took = true }
+          }
+        }
+        if took {
+          case syscall.win_move(lg, 0, 0) {
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
+          }
+          poke64(buf + lock_grant, lg)
+          poke64(buf + lock_base, lb)
+          const ground = Carve.new(base: lb, width: mw, height: mh)
+          emo_desktop.paint_lock(ground, f)
+          notify_present(lg, lb, mw, mh)
+          lock_plain_line("lock on", 7)
+        } else {
+          if lg != 0 {
+            case syscall.win_close(lg) {
+              (R.error, _) then {}
+              (R.ok, _) then {}
+            }
+          }
+          lock_plain_line("lock: the face refused", 20)
+        }
+      }
+    }
+  }
+}
+
+// The locked session's byte: the line grows blind (no echo, no dots —
+// not even the count is the screen's business), Enter the file's
+// check — a match lifts the face, a miss clears the line and stays.
+// There is no cancel: locked is locked.
+def lock_byte(f ui_fb.raster.Strike, b Int64) Void {
+  if b == 10 {
+    const dg = hash.sha2.sha256(notify_str(buf + lock_line,
+      peek64(buf + lock_len)).to_bytes())
+    if hash.constant_time_compare(dg,
+        notify_str(buf + lock_file, 32).to_bytes()) {
+      notify_close(buf + lock_grant, buf + lock_base)
+      // the display's repair (emo-desktop M28): the close releases the
+      // face and marks its rect, and the next composition is the one
+      // that repaints — the wallpaper's whole present is that walk,
+      // the chrome and the strip the walk's own panels again
+      desk_wall_repaint(f)
+      lock_plain_line("lock ok", 7)
+    } else {
+      poke64(buf + lock_len, 0)
+      lock_plain_line("lock miss", 9)
+    }
+  } else {
+    if b == 8 || b == 127 {
+      if peek64(buf + lock_len) > 0 {
+        poke64(buf + lock_len, peek64(buf + lock_len) - 1)
+      }
+    } else {
+      if b >= 32 && b <= 126 && peek64(buf + lock_len) < 64 {
+        poke8(buf + lock_line + peek64(buf + lock_len), b.to_byte())
+        poke64(buf + lock_len, peek64(buf + lock_len) + 1)
+      }
+    }
+  }
+}
+
+// The desktop takes the foreground (emo-desktop A12.1): the loop
+// never returns — the poweroff command's exit verb is what ends the
+// machine now, and the launcher's tiles are how a program begins.
+desktop()
+
 // The desktop's own body (emo-desktop A12.1): the dock's panel up,
 // the slots' names poked, the banner and the prompt — then the loop
 // that never returns.
@@ -3993,6 +4427,11 @@ def desktop() Void {
   poke64(buf + desk_wall_base, base_w)
   desk_wall_repaint(f)
   desk_icons_line()
+  // The launcher's catalog (emo-desktop M28): the volume's apps walked
+  // off the listing the view was built from, the count said on the
+  // wire — the icons line's twin.
+  desk_apps_build()
+  desk_apps_line()
   var gh = 0
   var base_h = 0
   case syscall.win_new(mw, emo_desktop.header_height()) {
@@ -4032,7 +4471,7 @@ def desktop() Void {
   }
   poke64(buf + desk_dock_grant, gd)
   poke64(buf + desk_dock_base, base_d)
-  const labels = ["c", "f", "e"]
+  const labels = ["s", "c", "f", "e"]
   desk_dock(f, labels)
   shell.banner()
   shell.prompt()
@@ -4132,20 +4571,45 @@ def desktop() Void {
     // The serial's byte: the line's feed, the command when the line
     // ends — `exec` the launcher's own dispatch, the rest the shell's.
     if t == 17741 {
-      const n = shell.feed(ev_value(ev))
-      if n >= 0 {
-        const s = shell.skip_spaces(0, n)
-        const e = shell.word_end(s, n)
-        if shell.exec_p(s, e - s) {
-          desk_exec_cmd(f, e, n, labels)
+      // The open panel's byte first (emo-desktop M28): the search face
+      // consumes the stream while it stands, the popover's rule grown
+      // its keyboard half; the locked session's byte next, the line
+      // growing blind; the shell's line only when neither holds the
+      // machine's ear.
+      if peek64(buf + launch_grant) != 0 {
+        launch_byte(f, ev_value(ev), mw, mh, labels)
+      } else {
+        if peek64(buf + lock_grant) != 0 {
+          lock_byte(f, ev_value(ev))
         } else {
-          shell.execute(n)
-          // the volume may have changed under the command (the write,
-          // the rm): the fold's comparison is the refresh's whole cost
-          // when it did not (emo-desktop A13)
-          desk_icons_refresh(f)
+          const n = shell.feed(ev_value(ev))
+          if n >= 0 {
+            const s = shell.skip_spaces(0, n)
+            const e = shell.word_end(s, n)
+            if shell.exec_p(s, e - s) {
+              desk_exec_cmd(f, e, n, labels)
+            } else {
+              if shell.passwd_p(s, e - s) {
+                desk_passwd_cmd(e, n)
+                // the volume changed under the command: the account
+                // file is the listing's new doc, the view's own news
+                desk_icons_refresh(f)
+              } else {
+                if shell.lock_p(s, e - s) {
+                  desk_lock_cmd(f, mw, mh)
+                } else {
+                  shell.execute(n)
+                  // the volume may have changed under the command (the
+                  // write, the rm): the fold's comparison is the
+                  // refresh's whole cost when it did not (emo-desktop
+                  // A13)
+                  desk_icons_refresh(f)
+                }
+              }
+            }
+            shell.prompt()
+          }
         }
-        shell.prompt()
       }
     }
     if t == 3 {
@@ -4166,7 +4630,28 @@ def desktop() Void {
     // wallpaper the selection's clear (emo-desktop A13).
     if t == 1 && ev_code(ev) == 272 {
       if ev_value(ev) == 1 {
-        const tile = emo_desktop.press(px, py, mw, mh, 3)
+        // The launcher's panel and the lock's face first (emo-desktop
+        // M28): a toplevel over the windows owns every press — the
+        // open panel a row's launch or the close (the popover's rule),
+        // the locked session the raise's own, the face keeping itself.
+        const tile = emo_desktop.press(px, py, mw, mh, 4)
+        if peek64(buf + launch_grant) != 0 {
+          const row = emo_desktop.launch_hit(mw, mh, px, py,
+            launch_survivors())
+          if row >= 0 {
+            const e = launch_row_entry(row)
+            launch_close()
+            if e >= 0 {
+              launch_name(f, e, peek64(e + 24), labels)
+            }
+          } else {
+            launch_close()
+          }
+        } else {
+          if peek64(buf + lock_grant) != 0 {
+            // consumed: the face is the raise's own, the topmost
+            // toplevel keeping itself there
+          } else {
         // The header's bell first (emo-desktop M25, A25.2): the
         // panel's door, and an open panel owns every press inside its
         // rect — the DND row's verdict or the panel's own, never the
@@ -4196,12 +4681,15 @@ def desktop() Void {
                   notify_close(buf + cal_grant, buf + cal_base)
                 }
                 if tile == 0 {
-                  desk_launch(f, 0, labels)
+                  launch_open(f, mw, mh)
                 }
                 if tile == 1 {
-                  desk_launch(f, 1, labels)
+                  desk_launch(f, 0, labels)
                 }
                 if tile == 2 {
+                  desk_launch(f, 1, labels)
+                }
+                if tile == 3 {
                   desk_launch(f, 2, labels)
                 }
                 if tile == -1 && py >= emo_desktop.header_height() {
@@ -4226,11 +4714,8 @@ def desktop() Void {
           }
         }
       }
+        }
+      }
     }
   }
 }
-
-// The desktop takes the foreground (emo-desktop A12.1): the loop
-// never returns — the poweroff command's exit verb is what ends the
-// machine now, and the launcher's tiles are how a program begins.
-desktop()

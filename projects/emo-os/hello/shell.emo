@@ -48,7 +48,7 @@ const sh_m_res = sh_text + 32
 const sh_m_ref = sh_text + 64
 const sh_m_unk = sh_text + 72
 const sh_help = sh_text + 88
-const sh_prompt = sh_text + 152
+const sh_prompt = sh_text + 552
 const sh_c_help = sh_text + 160
 const sh_c_echo = sh_text + 168
 const sh_c_ls = sh_text + 176
@@ -62,6 +62,8 @@ const sh_one = sh_text + 220
 const sh_c_counter = sh_text + 224
 const sh_c_exec = sh_text + 232
 const sh_c_desktop = sh_text + 240
+const sh_c_passwd = sh_text + 536
+const sh_c_lock = sh_text + 544
 const sh_logo = sh_text + 248
 
 // The line's length, the feed's own state — a word of this image's
@@ -111,12 +113,13 @@ def m_unk() Array[Byte] {
 }
 
 def help_bytes() Array[Byte] {
-  // "commands: help echo ls cat write rm counter exec poweroff"
+  // "commands: help echo ls cat write rm counter exec passwd lock poweroff"
   return [
     99B, 111B, 109B, 109B, 97B, 110B, 100B, 115B, 58B, 32B, 104B, 101B, 108B,
     112B, 32B, 101B, 99B, 104B, 111B, 32B, 108B, 115B, 32B, 99B, 97B, 116B,
     32B, 119B, 114B, 105B, 116B, 101B, 32B, 114B, 109B, 32B, 99B, 111B, 117B,
-    110B, 116B, 101B, 114B, 32B, 101B, 120B, 101B, 99B, 32B, 112B, 111B, 119B,
+    110B, 116B, 101B, 114B, 32B, 101B, 120B, 101B, 99B, 32B, 112B, 97B, 115B,
+    115B, 119B, 100B, 32B, 108B, 111B, 99B, 107B, 32B, 112B, 111B, 119B,
     101B, 114B, 111B, 102B, 102B
   ]
 }
@@ -232,6 +235,16 @@ def c_exec() Array[Byte] {
   return [101B, 120B, 101B, 99B]
 }
 
+def c_passwd() Array[Byte] {
+  // "passwd" — the account command's word (emo-desktop M28)
+  return [112B, 97B, 115B, 115B, 119B, 100B]
+}
+
+def c_lock() Array[Byte] {
+  // "lock" — the session command's word (emo-desktop M28)
+  return [108B, 111B, 99B, 107B]
+}
+
 def c_desktop() Array[Byte] {
   // "desktop" — the desktop lines' own prefix, the refusals' word
   return [100B, 101B, 115B, 107B, 116B, 111B, 112B]
@@ -264,6 +277,8 @@ def sh_init() Void {
   put_bytes(sh_c_counter, c_counter())
   put_bytes(sh_c_exec, c_exec())
   put_bytes(sh_c_desktop, c_desktop())
+  put_bytes(sh_c_passwd, c_passwd())
+  put_bytes(sh_c_lock, c_lock())
   poke64(sh_line_n, 0)
   put_bytes(sh_logo, logo_r1())
   put_bytes(sh_logo + 53, logo_r2())
@@ -334,6 +349,14 @@ def line_ptr() Int64 {
 
 def exec_p(s Int64, wlen Int64) Bool {
   return word_is(s, wlen, sh_c_exec, 4)
+}
+
+def passwd_p(s Int64, wlen Int64) Bool {
+  return word_is(s, wlen, sh_c_passwd, 6)
+}
+
+def lock_p(s Int64, wlen Int64) Bool {
+  return word_is(s, wlen, sh_c_lock, 4)
 }
 
 // The prompt and the exec command's refusal, the desktop loop's calls.
@@ -444,7 +467,7 @@ def cmd_help(e Int64, n Int64) Void {
   if extra_args(e, n) {
     err_line(sh_c_help, 4, sh_m_badarg, 12)
   } else {
-    out(sh_help, 57)
+    out(sh_help, 69)
     out_nl()
   }
 }
