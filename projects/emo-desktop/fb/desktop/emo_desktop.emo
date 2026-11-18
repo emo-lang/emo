@@ -955,3 +955,34 @@ def paint_launcher(s ui_fb.Surface, f ui_fb.raster.Strike, line String,
     i = i + 1
   }
 }
+
+// ---- the lock (emo-desktop M28, A28.2) ----
+//
+// The session's lock face: a full-screen toplevel the shell raises at
+// the lock and closes at the check's pass, the wallpaper's whole place
+// under a heavy scrim — the wordmark centered, the blind line's caret
+// under it. The typed bytes are nobody's pixels: no echo, no dots, not
+// even the count — the line lives in the shell's scratch, and the
+// account file's verdict is the whole answer. The file itself is the
+// stdlib's own digest: 32 raw bytes of `crypto.sha2.sha256` over the
+// secret, compared through `constant_time_compare` — the shell's
+// calls, the face's only business the pixels.
+
+def lock_scrim() Int64 {
+  return 0xD014141C
+}
+
+def lock_ink() Int64 {
+  return 0xF8F8F0
+}
+
+def paint_lock(s ui_fb.Surface, f ui_fb.raster.Strike) Void {
+  const w = s.width()
+  const h = s.height()
+  s.fill(0, 0, w, h, lock_scrim())
+  const word = "locked"
+  const lw = ui_fb.text_width(f, word)
+  ui_fb.text(f, word, (w - lw) / 2, (h - f.line_height()) / 2 - 12,
+    lock_ink(), s)
+  s.fill(w / 2 - 1, (h - f.line_height()) / 2 + 24, 2, 18, lock_ink())
+}

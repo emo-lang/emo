@@ -1,0 +1,81 @@
+// The word layer beneath the algorithms: the logical shift, the
+// rotations, and the big-endian byte doors. Pure Int64 arithmetic, so
+// every target answers identically. The semantics this module rides
+// are properties of the language, not of a platform: `>>` is
+// arithmetic (sign-extending) and `<<` wraps modulo 2^64 — the digest
+// goldens pin them on every target from T55.2 on.
+//
+// Preconditions, trusted because every caller is in-package with
+// fixed arguments: shift and rotation amounts are within the width,
+// stored values are masked to the width, and an access stays within
+// the buffer.
+
+// The logical right shift. `>>` fills from the sign, so the shift by
+// a nonzero amount is followed by a mask that clears the copied bits;
+// `n == 0` is the identity (`1 << 64` would wrap to zero and hand
+// back all ones).
+def lshr(x Int64, n Int64) Int64 {
+  if n <= 0 {
+    return x
+  }
+  return (x >> n) & ((1 << (64 - n)) - 1)
+}
+
+def rotl64(x Int64, n Int64) Int64 {
+  if n <= 0 {
+    return x
+  }
+  return (x << n) | lshr(x, 64 - n)
+}
+
+def rotr64(x Int64, n Int64) Int64 {
+  if n <= 0 {
+    return x
+  }
+  return lshr(x, n) | (x << (64 - n))
+}
+
+// The 32-bit rotations take their words masked to 32 bits — always
+// positive as Int64, so `>>` is exact and the final mask only cleans
+// the bits the left shift spilled past bit 31.
+def rotl32(x Int64, n Int64) Int64 {
+  if n <= 0 {
+    return x
+  }
+  return ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
+}
+
+def rotr32(x Int64, n Int64) Int64 {
+  if n <= 0 {
+    return x
+  }
+  return ((x >> n) | (x << (32 - n))) & 0xFFFFFFFF
+}
+
+def load_u32_be(b Bytes, i Int64) Int64 {
+  return (b.get(i) << 24) | (b.get(i + 1) << 16) | (b.get(i + 2) << 8) | b.get(i + 3)
+}
+
+def store_u32_be(b Bytes, i Int64, v Int64) Void {
+  b.set(i, (v >> 24) & 0xFF)
+  b.set(i + 1, (v >> 16) & 0xFF)
+  b.set(i + 2, (v >> 8) & 0xFF)
+  b.set(i + 3, v & 0xFF)
+}
+
+def load_u64_be(b Bytes, i Int64) Int64 {
+  const hi = (b.get(i) << 56) | (b.get(i + 1) << 48) | (b.get(i + 2) << 40) | (b.get(i + 3) << 32)
+  const lo = (b.get(i + 4) << 24) | (b.get(i + 5) << 16) | (b.get(i + 6) << 8) | b.get(i + 7)
+  return hi | lo
+}
+
+def store_u64_be(b Bytes, i Int64, v Int64) Void {
+  b.set(i, lshr(v, 56) & 0xFF)
+  b.set(i + 1, lshr(v, 48) & 0xFF)
+  b.set(i + 2, lshr(v, 40) & 0xFF)
+  b.set(i + 3, lshr(v, 32) & 0xFF)
+  b.set(i + 4, (v >> 24) & 0xFF)
+  b.set(i + 5, (v >> 16) & 0xFF)
+  b.set(i + 6, (v >> 8) & 0xFF)
+  b.set(i + 7, v & 0xFF)
+}

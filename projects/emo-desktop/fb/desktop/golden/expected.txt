@@ -66,3 +66,8 @@ lhit -1
 lhit -1
 lhit -1
 lhit -1
+sha 721ee3c57b31edacf3bede6867f93ebaa5c46857ef633b972903f911cac0da14
+sha 32
+cmp true
+cmp false
+lock 4270366718

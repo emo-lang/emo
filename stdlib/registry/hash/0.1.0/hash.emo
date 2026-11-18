@@ -1,0 +1,31 @@
+// The hash package's own surface, beside the SHA-2 module: the
+// constant-time comparison and the lowercase hex rendering — the two
+// helpers a digest's consumer needs, carried word for word from the
+// crypto package (the twin's reasons live in sha2.emo's head). Bytes
+// in, Bytes out; compare tags through `constant_time_compare`, never
+// `==`.
+def constant_time_compare(a Bytes, b Bytes) Bool {
+  var diff = a.length() ^ b.length()
+  var i = 0
+  while i < a.length() && i < b.length() {
+    diff = diff | (a.get(i) ^ b.get(i))
+    i = i + 1
+  }
+  return diff == 0
+}
+
+// The lowercase hex rendering of bytes — two characters each, the
+// form every digest is read and compared in. The answer is text, so
+// it answers String: ASCII rides every target exactly.
+def hex_encode(data Bytes) String {
+  const digits = "0123456789abcdef".to_bytes()
+  const out = Bytes.new(data.length() * 2)
+  var i = 0
+  while i < data.length() {
+    const b = data.get(i)
+    out.set(i * 2, digits.get((b >> 4) & 0xF))
+    out.set(i * 2 + 1, digits.get(b & 0xF))
+    i = i + 1
+  }
+  return out.to_string()
+}

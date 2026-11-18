@@ -72,6 +72,7 @@ The packages:
 | [`template`](#the-template-package) | text with holes rendered from a json context, strict at every step | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
 | [`crypto`](#the-crypto-package) | SHA-2/SHA-3, HMAC, HKDF/PBKDF2, ChaCha20-Poly1305, AES-GCM, Ed25519, X25519 | all five |
+| [`hash`](#the-hash-package) | the machine's digest twin: SHA-256/224, the constant-time compare, the hex rendering | all five and `riscv64` |
 | [`rand`](#the-rand-package) | OS entropy and a deterministic HMAC-DRBG stream | `ocaml`, `c`, `typescript`, `beam`, `wasm` |
 | [`uuid`](#the-uuid-package) | RFC 9562 UUIDs: v4/v7/v3/v5, the strict text and byte forms | all five |
 | [`csv`](#the-csv-package) | RFC 4180 CSV records, UTF-8 | all five |
@@ -785,6 +786,24 @@ Targets: all five. Reference:
 `examples/crypto_sign`, `examples/crypto_ecdh`, and the c-only
 `examples/crypto_hash_million`, `examples/crypto_kdf`,
 `examples/crypto_sign_sweep`, `examples/crypto_ecdh_iterated`.
+
+## The `hash` package
+
+The machine's digest twin: SHA-256 and SHA-224 — one-shot or streaming —
+the constant-time comparison, and the lowercase hex rendering, carried
+word for word from the [`crypto`](#the-crypto-package) package's engine
+(the full account in [`docs/stdlib/hash.md`](stdlib/hash.md)): crypto's
+error surface refuses the `riscv64` target whole, and the machine's
+lock needs the digest alone. The same vectors pin both, and when the
+compiler's raise gap closes the twin folds back.
+
+```emo
+def constant_time_compare(a Bytes, b Bytes) Bool
+def hex_encode(data Bytes) String
+
+// hash.sha2:   sha256, sha224, sha512, sha384, sha512_224, sha512_256,
+//              and the streaming Digest and Wide classes
+```
 
 ## The `rand` package
 

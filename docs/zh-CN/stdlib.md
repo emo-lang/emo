@@ -43,6 +43,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`template`](#template-包) | 文本加洞,从 json 上下文渲染,步步从严 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个 |
+| [`hash`](#hash-包) | 机器的摘要孪生:SHA-256/224、常数时间比较、hex 渲染 | 全部五个与 `riscv64` |
 | [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam`、`wasm` |
 | [`uuid`](#uuid-包) | RFC 9562 UUID:v4/v7/v3/v5,严格的文本与字节形式 | 全部五个 |
 | [`csv`](#csv-包) | RFC 4180 CSV 记录,UTF-8 | 全部五个 |
@@ -502,6 +503,20 @@ def hex_decode(text String) (R, Bytes)
 Bytes 进、Bytes 出;文本只在 hex 编解码处保持为文本。错误二分是标准库的那条:长度或计数不对 raise,数据原因是值——验不过的 tag 无论何种伪造都是 `(R.error, "crypto: authentication failed")`,坏签名是 `false`,全零的共享密钥是 `(R.error, "crypto: x25519 low-order point")`。常量时间是源码级纪律——没有取决于秘密的分支或下标,AES 的 S-box 查表是写明的例外——参考文档逐 target 说明这条纪律变成了什么,而在任何一个 target 上它都不是保证。SHA-1 与 MD5 收在 `crypto.legacy` 之后,对一切安全用途都是坏的,只为既有数据而存在。
 
 目标:全部五个。参考:[`docs/zh-CN/stdlib/crypto.md`](stdlib/crypto.md) · 示例:`examples/crypto_hash`、`examples/crypto_aead`、`examples/crypto_sign`、`examples/crypto_ecdh`,以及仅 c 的 `examples/crypto_hash_million`、`examples/crypto_kdf`、`examples/crypto_sign_sweep`、`examples/crypto_ecdh_iterated`。
+
+## hash 包
+
+机器的摘要孪生:SHA-256 与 SHA-224——一次性或流式——常数时间比较,以及小写 hex 渲染,逐字携带自 [`crypto`](#crypto-包) 包的引擎(完整叙述见 [`docs/zh-CN/stdlib/hash.zh-CN.md`](stdlib/hash.zh-CN.md)):crypto 的错误面把 `riscv64` 目标整个拒掉,而机器的锁只需要摘要。同一组向量钉住两边;等编译器的 raise 缺口合拢,孪生折回。
+
+```emo
+def constant_time_compare(a Bytes, b Bytes) Bool
+def hex_encode(data Bytes) String
+
+// hash.sha2:   sha256、sha224、sha512、sha384、sha512_224、sha512_256,
+//              以及流式的 Digest 与 Wide 类
+```
+
+目标:全部五个与 `riscv64`。参考:[`docs/zh-CN/stdlib/hash.zh-CN.md`](stdlib/hash.zh-CN.md)。
 
 ## rand 包
 

@@ -2,6 +2,7 @@ require "emo/ui_fb"
 require "emo/ui_fb_canvas"
 require "emo/ui_fb_frame"
 require "emo_desktop"
+require "hash"
 
 // The dock's hosted twin (emo-desktop A10.2, A12.1): the strip painted
 // onto a canvas the dock buffer's own size (1920x40 — the metal's dock
@@ -194,6 +195,21 @@ def main() {
   println("lhit ${emo_desktop.launch_hit(1920, 1080, 960, 1028, 4)}")
   println("lhit ${emo_desktop.launch_hit(1920, 1080, 600, 836, 4)}")
   println("lhit ${emo_desktop.launch_hit(1920, 1080, 960, 900, 1)}")
+  // The lock (emo-desktop M28, A28.2): the account file's own
+  // arithmetic — the digest the file carries is the hash package's,
+  // 32 raw bytes — and the compare's verdicts pinned beside: the same bytes
+  // match, the differing bytes do not. The face on its own canvas: the
+  // wallpaper's whole place under the heavy scrim, the wordmark
+  // centered, the blind caret under it — no echo's bytes anywhere.
+  const secret = hash.sha2.sha256("noctalia".to_bytes())
+  println("sha ${hash.hex_encode(secret)}")
+  println("sha ${secret.length()}")
+  println("cmp ${hash.constant_time_compare(secret, secret)}")
+  println("cmp ${hash.constant_time_compare(secret,
+    hash.sha2.sha256("noctaliA".to_bytes()))}")
+  const lock = ui_fb_canvas.canvas(480, 270)
+  emo_desktop.paint_lock(lock, f)
+  println("lock ${ui_fb_frame.digest(lock)}")
 }
 
 main()

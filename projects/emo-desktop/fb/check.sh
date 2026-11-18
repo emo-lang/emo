@@ -29,6 +29,7 @@ STAGE=$(cd "$(dirname "$0")/../../.." && pwd)/scripts/stage-registry.sh
 
 UI=$(cd ../../emo-ui && pwd)
 SYSCALL_SRC="$PWD/../../../stdlib/registry/syscall/0.1.0"
+HASH_SRC="$PWD/../../../stdlib/registry/hash/0.1.0"
 # The wasm artifacts run under the canonical host the compiler carries
 # as generated data (step 56's seventeen imports — the hand-rolled
 # emo-ui runner predates them and supplies three, so every module
@@ -88,6 +89,8 @@ sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo p
   apps/files/package.emo apps/files/main.emo \
   apps/editor/package.emo apps/editor/main.emo \
   "$SYSCALL_SRC/package.emo" "$SYSCALL_SRC/syscall.emo" \
+  "$HASH_SRC/package.emo" "$HASH_SRC/hash.emo" "$HASH_SRC/sha2.emo" \
+  "$HASH_SRC"/internal/*.emo \
   "$UI/corpus/package.emo" "$UI/corpus/main.emo" | cksum | awk '{print $1}')
 REG=$PWD/.emo-build/registry-$sum
 "$STAGE" "$REG"
