@@ -3081,6 +3081,62 @@ def test_fine() {
         match (result_named "test_fine" results).Emo_project.t_outcome with
         | Emo_project.Passed -> ()
         | _ -> Alcotest.fail "the sibling test still runs");
+    tc "--fail-fast stops at the first failing test" (fun () ->
+        let scratch =
+          write_project
+            [
+              main_add;
+              ( "test/arith.emo",
+                {|def test_a_fail() {
+  expect_equal(3, main.add(1, 1))
+}
+
+def test_b_pass() {
+  expect_equal(2, main.add(1, 1))
+}
+|} );
+            ]
+        in
+        Sys.chdir scratch;
+        let results = Emo_project.run_tests ~fail_fast:true () in
+        Alcotest.(check int) "one result" 1 (List.length results);
+        match (List.hd results).Emo_project.t_outcome with
+        | Emo_project.Failed _ -> ()
+        | _ -> Alcotest.fail "the first failure should be the only result");
+    tc "a failing test's stack renders one frame per line" (fun () ->
+        let results =
+          run_tests_in
+            [
+              main_add;
+              ( "test/stack.emo",
+                {|def level2() {
+  expect_equal(3, main.add(1, 1))
+}
+
+def level1() {
+  level2()
+}
+
+def test_stack() {
+  level1()
+}
+|} );
+            ]
+        in
+        match (result_named "test_stack" results).Emo_project.t_outcome with
+        | Emo_project.Failed d ->
+            let hint =
+              match d.Diagnostic.hint with Some h -> h | None -> ""
+            in
+            let lines = String.split_on_char '\n' hint in
+            Alcotest.(check bool)
+              "more than one frame" true (List.length lines >= 2);
+            Alcotest.(check bool)
+              "one frame per line" true
+              (List.for_all
+                 (fun line -> contains_substring line "called from `")
+                 lines)
+        | _ -> Alcotest.fail "test_stack should fail");
     tc "a project without test/ runs nothing" (fun () ->
         let results = run_tests_in [ main_add ] in
         Alcotest.(check int) "empty" 0 (List.length results));

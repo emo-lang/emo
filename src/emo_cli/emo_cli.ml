@@ -1655,7 +1655,8 @@ let check =
    assertion (or any uncaught raise) fails its test; a runtime error
    errors it. Exit codes: 0 all pass, 1 any failure or error, 65 the
    tree's static stages failed. *)
-let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
+let run_tests_cmd ~(color : bool) ~(error_limit : int) ~(fail_fast : bool) :
+    int =
   let indent text =
     let text =
       (* A test's output already ends in a newline; the indentation
@@ -1666,12 +1667,14 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
     String.concat "\n"
       (List.map (fun line -> "  " ^ line) (String.split_on_char '\n' text))
   in
-  let show_diagnostic color d =
+  let show_diagnostic ?hint_limit color d =
     print_endline
-      (indent (Emo_support.Render.render ~color ~source:(Sys.getcwd ()) d))
+      (indent
+         (Emo_support.Render.render ~color ?hint_limit
+            ~source:(Sys.getcwd ()) d))
   in
   try
-    let results = Emo_project.run_tests () in
+    let results = Emo_project.run_tests ~fail_fast () in
     let total = List.length results in
     if total = 0 then begin
       print_endline "no tests found under test/";
@@ -1691,12 +1694,12 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
           | Emo_project.Failed d ->
               incr failed;
               Printf.printf "FAIL %s\n" name;
-              show_diagnostic color d;
+              show_diagnostic ~hint_limit:20 color d;
               if r.t_output <> "" then print_endline (indent r.t_output)
           | Emo_project.Errored d ->
               incr errored;
               Printf.printf "ERROR %s\n" name;
-              show_diagnostic color d;
+              show_diagnostic ~hint_limit:20 color d;
               if r.t_output <> "" then print_endline (indent r.t_output))
         results;
       let bucket word n = Printf.sprintf "%d %s" n word in
@@ -1711,7 +1714,31 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
       Printf.printf "%d test%s, %s\n" total
         (if total = 1 then "" else "s")
         (String.concat ", " buckets);
-      if !failed + !errored > 0 then 1 else 0
+      if !failed + !errored > 0 then begin
+        (* The full run's recap: the same failures again, so a long run
+           ends on what went wrong. Each stack shows its innermost ten
+           frames. *)
+        if not fail_fast then begin
+          print_endline "";
+          print_endline "failures:";
+          List.iter
+            (fun (r : Emo_project.test_result) ->
+              let name =
+                String.concat "." (r.Emo_project.t_module @ [ r.t_name ])
+              in
+              match r.t_outcome with
+              | Emo_project.Passed -> ()
+              | Emo_project.Failed d ->
+                  Printf.printf "FAIL %s\n" name;
+                  show_diagnostic ~hint_limit:10 color d
+              | Emo_project.Errored d ->
+                  Printf.printf "ERROR %s\n" name;
+                  show_diagnostic ~hint_limit:10 color d)
+            results
+        end;
+        1
+      end
+      else 0
     end
   with
   | Emo_project.Static_errors diagnostics ->
@@ -1723,10 +1750,16 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) : int =
 
 let test_cmd =
   let no_color, error_limit = static_flags () in
-  let test no_color error_limit locked =
+  let fail_fast =
+    Arg.(
+      value & flag
+      & info [ "fail-fast" ]
+          ~doc:"Stop at the first failing or erroring test.")
+  in
+  let test no_color error_limit fail_fast locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
     let color = (not no_color) && Unix.isatty Unix.stderr in
-    match run_tests_cmd ~color ~error_limit with
+    match run_tests_cmd ~color ~error_limit ~fail_fast with
     | 0 -> Cmd.Exit.ok
     | code -> exit code
   in
@@ -1737,7 +1770,7 @@ let test_cmd =
           module under the test/ directory, each in its own scheduler run. \
           Assertions are the expect_equal / expect_true / expect_false / \
           expect_fail builtins; a failed assertion fails only its own test.")
-    Term.(const test $ no_color $ error_limit $ locked_flag ())
+    Term.(const test $ no_color $ error_limit $ fail_fast $ locked_flag ())
 
 (* `emo deps`: regeneration is an explicit command. A run writes the
    lockfile only when none exists — an existing one is never rewritten. *)

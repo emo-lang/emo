@@ -5336,7 +5336,8 @@ let test_cmd_tests =
         Alcotest.(check int)
           "exit" 0
           (in_dir dir (fun () ->
-               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20
+                 ~fail_fast:false)));
     tc "a failing assertion exits 1" (fun () ->
         let dir =
           write_fixture_project "test-cmd-fail"
@@ -5349,7 +5350,8 @@ let test_cmd_tests =
         Alcotest.(check int)
           "exit" 1
           (in_dir dir (fun () ->
-               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20
+                 ~fail_fast:false)));
     tc "a static error in a test module exits 65" (fun () ->
         let dir =
           write_fixture_project "test-cmd-static"
@@ -5361,13 +5363,15 @@ let test_cmd_tests =
         Alcotest.(check int)
           "exit" 65
           (in_dir dir (fun () ->
-               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20
+                 ~fail_fast:false)));
     tc "a project without test/ exits 0" (fun () ->
         let dir = write_fixture_project "test-cmd-none" [ add_main ] in
         Alcotest.(check int)
           "exit" 0
           (in_dir dir (fun () ->
-               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20
+                 ~fail_fast:false)));
     tc "the scaffold's own test passes" (fun () ->
         let dir = Filename.concat scratch "scaffold_test" in
         if Sys.file_exists dir then Emo_project.remove_tree dir;
@@ -5378,7 +5382,8 @@ let test_cmd_tests =
         Alcotest.(check int)
           "emo test" 0
           (in_dir dir (fun () ->
-               Emo_cli.run_tests_cmd ~color:false ~error_limit:20)));
+               Emo_cli.run_tests_cmd ~color:false ~error_limit:20
+                 ~fail_fast:false)));
   ]
 
 let check_tests =

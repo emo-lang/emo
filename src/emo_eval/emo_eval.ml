@@ -1419,19 +1419,25 @@ let exception_data (v : value) : string option =
       | _ -> None)
   | _ -> None
 
-(* Formats an uncaught raise: the value's to_string plus the call chain. *)
-let uncaught_diagnostic (v, span, trace) =
+(* Formats an uncaught raise: the value's to_string plus the call chain.
+   [trace_lines] renders one frame per line instead of one comma-separated
+   hint — the test runner reads a failure's stack that way. How many
+   frames show is the renderer's decision ([Render.render ~hint_limit]). *)
+let uncaught_diagnostic ?(trace_lines = false) (v, span, trace) =
   let hint =
     match trace with
     | [] -> None
     | _ ->
+        let frames =
+          List.map
+            (fun (name, s) ->
+              Printf.sprintf "called from `%s` (%s)" name
+                (Emo_support.Span.to_string s))
+            trace
+        in
         Some
-          (String.concat ", "
-             (List.map
-                (fun (name, s) ->
-                  Printf.sprintf "called from `%s` (%s)" name
-                    (Emo_support.Span.to_string s))
-                trace))
+          (if trace_lines then String.concat "\n" frames
+           else String.concat ", " frames)
   in
   let message =
     match exception_data v with

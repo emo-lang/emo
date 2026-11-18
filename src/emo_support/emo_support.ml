@@ -68,7 +68,7 @@ module Render = struct
          |
          9 |     self.age = 36
          |     ^^^^^^^^^ hint *)
-  let render ?(color = false) ~source (d : Diagnostic.t) : string =
+  let render ?(color = false) ?hint_limit ~source (d : Diagnostic.t) : string =
     let label = styled color "31;1" (Severity.to_string d.severity) in
     let head =
       match d.code with
@@ -95,15 +95,37 @@ module Render = struct
     let span_len = max 1 (d.span.stop - d.span.start) in
     let caret_count = max 1 (min span_len (line_len - caret_column)) in
     let carets = styled color "31;1" (String.make caret_count '^') in
-    let caret_tail = match d.hint with Some h -> " " ^ h | None -> "" in
+    (* A one-line hint trails the caret; a multi-line one (the test
+       runner's stack frames) prints under the excerpt, one per line, with
+       [hint_limit] capping how many lines show. *)
+    let caret_tail, hint_lines =
+      match d.hint with
+      | None -> ("", [])
+      | Some h -> (
+          match String.split_on_char '\n' h with
+          | [ single ] -> (" " ^ single, [])
+          | lines ->
+              let lines =
+                match hint_limit with
+                | Some n when List.length lines > n ->
+                    take n lines
+                    @ [
+                        Printf.sprintf "... %d more frame(s) hidden"
+                          (List.length lines - n);
+                      ]
+                | _ -> lines
+              in
+              ("", List.map (fun line -> blank_gutter ^ " " ^ line) lines))
+    in
     String.concat "\n"
-      [
-        head;
-        "  --> " ^ Span.to_string d.span;
-        blank_gutter;
-        number ^ " | " ^ line_text;
-        blank_gutter ^ " " ^ String.make caret_column ' ' ^ carets ^ caret_tail;
-      ]
+      ([
+         head;
+         "  --> " ^ Span.to_string d.span;
+         blank_gutter;
+         number ^ " | " ^ line_text;
+         blank_gutter ^ " " ^ String.make caret_column ' ' ^ carets ^ caret_tail;
+       ]
+      @ hint_lines)
 
   (* Every recoverable error from one stage, sorted by position and capped at
      [limit] (None renders all). A suppressed remainder is noted at the end. *)

@@ -202,16 +202,29 @@ FAIL test.fail.test_bad
   before
   loaded
 1 test, 0 passed, 1 failed
+
+failures:
+FAIL test.fail.test_bad
+  error[E3010]: uncaught exception: expect_equal: expected 3, got 2
 ```
 
 The runner prints the rendered diagnostic — including a source excerpt and
-caret — before the captured output. Output printed by a test is captured and
+caret — before the captured output. A failed test's call stack follows the
+excerpt, one frame per line; a chain longer than 20 frames shows the innermost
+20 and notes how many were hidden. Output printed by a test is captured and
 shown only when that test fails or errors; a passing test's output is not
 shown. The summary line counts all three outcomes:
 
 ```text
 3 tests, 0 passed, 1 failed, 2 errors
 ```
+
+After a full run with failures, the runner lists them again under
+`failures:`, one after another, so a long run ends on what went wrong. Each
+recap shows at most the innermost ten stack frames.
+
+`emo test --fail-fast` stops at the first failing or erroring test; the
+summary then counts only the tests that ran, and there is no recap.
 
 Exit codes:
 
@@ -229,8 +242,9 @@ dependencies, for CI, and exits 66 when it is missing.
 ## Isolation and shared state
 
 Each test runs in its own scheduler run, with its own captured output. The
-runner traps a raise per test, so one failure does not stop the others, and
-processes spawned by a test are dropped when its scheduler run ends.
+runner traps a raise per test, so one failure does not stop the others —
+unless `--fail-fast` asks it to. Processes spawned by a test are dropped when
+its scheduler run ends.
 
 The module environment is different: a test module loads **once**, and all of
 its tests run against that same environment. Module-level mutable values — a

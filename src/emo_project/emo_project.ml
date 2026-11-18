@@ -1914,9 +1914,11 @@ type test_result = {
 }
 
 (* Runs every test under test/ and returns one result per test, modules
-   and tests in sorted order. Any lex/parse/check failure in the tree
-   raises [Static_errors], like [run_entry ~check:true]. *)
-let run_tests () : test_result list =
+   and tests in sorted order. With [fail_fast] the run stops at the first
+   failing or erroring test, returning the results up to it. Any
+   lex/parse/check failure in the tree raises [Static_errors], like
+   [run_entry ~check:true]. *)
+let run_tests ?(fail_fast = false) () : test_result list =
   let p, (manifest, dir) = prepare () in
   ignore (load_deps ~manifest ~manifest_dir:dir ~target:"c" p);
   let _paths, _graph, _program, errors = check_project p in
@@ -1927,96 +1929,110 @@ let run_tests () : test_result list =
   in
   let results = ref [] in
   let push r = results := r :: !results in
-  List.iter
-    (fun mpath ->
-      let file = Hashtbl.find p.files mpath in
-      let span = Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0 in
-      (* A module's items run once, in their own scheduler run. A
-         top-level raise or error here fails the module's load rather
-         than any single test — the run continues with the next
-         module. *)
-      let loaded =
-        let env = ref None in
-        try
-          ignore
-            (Emo_sched_det.run (fun () ->
-                 env := Some (!Emo_eval.module_loader mpath)));
-          match !env with
-          | Some e -> Ok e
-          | None -> assert false (* run returned without the body *)
-        with
-        | Emo_eval.Emo_raise (v, s, trace) ->
-            Error (Emo_eval.uncaught_diagnostic (v, s, trace))
-        | Emo_eval.Error d -> Error d
-      in
-      match loaded with
-      | Error d ->
-          push
-            {
-              t_module = mpath;
-              t_name = "<load>";
-              t_outcome = Errored d;
-              t_output = "";
-            }
-      | Ok env ->
-          let tests =
-            Hashtbl.fold
-              (fun name binding acc ->
-                match binding.Emo_eval.bound with
-                | Emo_eval.ArrowBlock c
-                  when String.length name >= 5 && String.sub name 0 5 = "test_"
-                  ->
-                    (name, c) :: acc
-                | _ -> acc)
-              env.Emo_eval.frame []
-          in
-          List.iter
-            (fun (name, closure) ->
-              match closure.Emo_eval.params with
-              | _ :: _ ->
-                  push
-                    {
-                      t_module = mpath;
-                      t_name = name;
-                      t_outcome =
-                        Errored
-                          {
-                            Emo_support.Diagnostic.severity = Error;
-                            code = Some "E5008";
-                            message =
-                              Printf.sprintf
-                                "test `%s` takes parameters; test functions \
-                                 take none"
-                                name;
-                            span;
-                            hint = None;
-                          };
-                      t_output = "";
-                    }
-              | [] ->
-                  let buf = Buffer.create 256 in
-                  Emo_eval.set_output (Buffer.add_string buf);
-                  let outcome =
-                    Fun.protect ~finally:Emo_eval.reset_output (fun () ->
-                        try
-                          ignore
-                            (Emo_sched_det.run (fun () ->
-                                 ignore (Emo_eval.apply_closure closure span [])));
-                          Passed
-                        with
-                        | Emo_eval.Emo_raise (v, s, trace) ->
-                            Failed (Emo_eval.uncaught_diagnostic (v, s, trace))
-                        | Emo_eval.Error d -> Errored d)
-                  in
-                  push
-                    {
-                      t_module = mpath;
-                      t_name = name;
-                      t_outcome = outcome;
-                      t_output = Buffer.contents buf;
-                    })
-            (List.sort compare tests))
-    test_modules;
+  let exception Stop in
+  (try
+     List.iter
+       (fun mpath ->
+         let file = Hashtbl.find p.files mpath in
+         let span =
+           Emo_support.Span.make ~file ~line:1 ~col:1 ~start:0 ~stop:0
+         in
+         (* A module's items run once, in their own scheduler run. A
+            top-level raise or error here fails the module's load rather
+            than any single test — the run continues with the next
+            module. *)
+         let loaded =
+           let env = ref None in
+           try
+             ignore
+               (Emo_sched_det.run (fun () ->
+                    env := Some (!Emo_eval.module_loader mpath)));
+             match !env with
+             | Some e -> Ok e
+             | None -> assert false (* run returned without the body *)
+           with
+           | Emo_eval.Emo_raise (v, s, trace) ->
+               Error (Emo_eval.uncaught_diagnostic ~trace_lines:true (v, s, trace))
+           | Emo_eval.Error d -> Error d
+         in
+         match loaded with
+         | Error d ->
+             push
+               {
+                 t_module = mpath;
+                 t_name = "<load>";
+                 t_outcome = Errored d;
+                 t_output = "";
+               };
+             if fail_fast then raise Stop
+         | Ok env ->
+             let tests =
+               Hashtbl.fold
+                 (fun name binding acc ->
+                   match binding.Emo_eval.bound with
+                   | Emo_eval.ArrowBlock c
+                     when String.length name >= 5
+                          && String.sub name 0 5 = "test_" ->
+                       (name, c) :: acc
+                   | _ -> acc)
+                 env.Emo_eval.frame []
+             in
+             List.iter
+               (fun (name, closure) ->
+                 match closure.Emo_eval.params with
+                 | _ :: _ ->
+                     push
+                       {
+                         t_module = mpath;
+                         t_name = name;
+                         t_outcome =
+                           Errored
+                             {
+                               Emo_support.Diagnostic.severity = Error;
+                               code = Some "E5008";
+                               message =
+                                 Printf.sprintf
+                                   "test `%s` takes parameters; test \
+                                    functions take none"
+                                   name;
+                               span;
+                               hint = None;
+                             };
+                         t_output = "";
+                       };
+                     if fail_fast then raise Stop
+                 | [] ->
+                     let buf = Buffer.create 256 in
+                     Emo_eval.set_output (Buffer.add_string buf);
+                     let outcome =
+                       Fun.protect ~finally:Emo_eval.reset_output (fun () ->
+                           try
+                             ignore
+                               (Emo_sched_det.run (fun () ->
+                                    ignore
+                                      (Emo_eval.apply_closure closure span [])));
+                             Passed
+                           with
+                           | Emo_eval.Emo_raise (v, s, trace) ->
+                               Failed
+                                 (Emo_eval.uncaught_diagnostic ~trace_lines:true
+                                    (v, s, trace))
+                           | Emo_eval.Error d -> Errored d)
+                     in
+                     push
+                       {
+                         t_module = mpath;
+                         t_name = name;
+                         t_outcome = outcome;
+                         t_output = Buffer.contents buf;
+                       };
+                     match outcome with
+                     | Passed -> ()
+                     | Failed _ | Errored _ ->
+                         if fail_fast then raise Stop)
+               (List.sort compare tests))
+       test_modules
+   with Stop -> ());
   List.rev !results
 
 (* ---- embedded programs: internal tooling run against the bundled stdlib ----

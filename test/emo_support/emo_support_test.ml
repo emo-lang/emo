@@ -120,6 +120,23 @@ let renderer_tests =
         Alcotest.(check bool)
           "has escape" true
           (contains_substring text "\027[31;1merror\027[0m"));
+    tc "a multi-line hint shows its first N frames and notes the rest"
+      (fun () ->
+        let hint =
+          String.concat "\n"
+            (List.init 12 (fun i -> Printf.sprintf "frame %d" i))
+        in
+        let d = diagnostic ~hint Severity.Error "boom" in
+        let text = Render.render ~hint_limit:10 ~source d in
+        Alcotest.(check bool)
+          "the first ten" true
+          (contains_substring text "| frame 9");
+        Alcotest.(check bool)
+          "not the eleventh" false
+          (contains_substring text "| frame 10");
+        Alcotest.(check bool)
+          "the note" true
+          (contains_substring text "... 2 more frame(s) hidden"));
     tc "render_all sorts by position" (fun () ->
         let early =
           Diagnostic.
