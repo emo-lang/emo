@@ -47,9 +47,12 @@ tree's and EmoOS's, listed there.
 | M27 — workspaces | A27.1–A27.3 | The workspace verb family grows the compositor additions-only; the bar's pager switches and every window carries its workspace (D18; the kernel half in EmoOS's tracker). |
 | M28 — the launcher's enumeration and the lock | A28.1–A28.3 | The launcher enumerates the disk's app packages behind its search, and the lock screen takes the session behind D19's hash file — no PAM anywhere. |
 | M29 — the audio ride-along (parked) | — | Volume, the OSD, and the media controls arrive with the audio OS track (the virtio-sound driver, the mixer service, the verb family); until it lands the three render nothing by D15's rule. |
+| M30 — the skin's ground | A30.1–A30.3 | `win_format`'s vocabulary grows ARGB8888 and the walk grows the src-over blend (the alpha surface's pixels the walk's own stack order already solves), and the shape service — radius and softness per surface, every surface the corners and the shadow's wearer (the kernel half in EmoOS's tracker, Step 14). |
+| M31 — the wallpaper's art and the icons | A31.1–A31.3 | The wallpaper leaves the formula for the disk's RLE art and the palette's extraction feeds the chrome its colors; the icon family's strikes dress the launcher, the dock and the panels (the kernel half empty — the fs and the shape arithmetic carry it). |
 
-The polished effect's own ladder — the skin layer and the motion the
-rows above do not yet number — is written in
+The polished effect's own ladder — its skin layer now numbered (M30
+the alpha ground and the shape service, M31 the wallpaper's art and
+the icons), its motion layer still to number — is written in
 [`docs/noctalia-desktop.md`](../../../docs/noctalia-desktop.md).
 
 ## M7 — the screen (the desktop side)
@@ -2323,3 +2326,112 @@ early.
   account file rides home before the poweroff (the editor save's own
   rule, the second boot's pins the older ones). Verified: `run.sh`
   exits 0 on both transports, three runs byte for byte.
+
+## M30 — the skin's ground (opened 2026-11-18)
+
+The visual language's first milestone (the ladder's steps one and
+two): per-pixel alpha compositing — the ground the translucent
+panels, the popovers and the soft shadows stand on — and the shape
+service, the radius and the softness per surface. The kernel half is
+[EmoOS's Step 14](../../emo-os/docs/TASKS.md); the hosted twins ride
+the package.
+
+The ground's one honest discovery: **the dependency problem is
+already solved by construction.** The walk iterates the whole stack
+at every composition and stores only within the damage box — an alpha
+surface's pixels are recomputed over whatever the stack order puts
+beneath them inside that box, and untouched outside it. No dependency
+record, no chain marks: the full-stack walk is the solver, the
+damage's clip the only discipline. (A shadow's ring reaching outside
+its own rect is the same arithmetic — the ring's pixels inside a
+lower surface's damage box recomputed, the rest untouched.)
+
+The format binds at its declaration (the role's own rule): a
+surface's bytes mean one thing for its life, and a client wanting
+another creates another surface. Format 0 stays XRGB8888; format 1 is
+ARGB8888 — the byte the alpha rides in the word's top byte, the
+package's `over()` the blend's own arithmetic, the half-up mix the
+walk copies verbatim (the walk's byte the hosted canvas's byte, the
+corpus discipline). The alpha blits are the word-copy blits' four
+siblings — plain, masked, scaled, scaled-masked — the per-pixel cost
+the honest trade (TCG's four-to-six multiple on the surfaces that
+declare it; every XRGB surface keeps the word-copy path, the
+wallpaper whole). The shape service: the walk's radius and softness
+(the toplevels' 10 and 16 since T9.2) become a surface's own words —
+a second `win_format` arm or the vocabulary's packed form, the
+opening's A30.2 to land — and every surface, popups and subsurfaces
+and panels included, wears the corners and the shadow that only
+toplevels wore. The cards' own painted shadows (the alpha grades the
+M25 card retired into the buffer) can then retire into the walk's.
+
+- [ ] **A30.1** — The alpha ground: the format word in the walk's rows
+  (beside the scale's), `win_format` accepting format 1 with the
+  bind-at-declaration rule (the second call the argument refusal, the
+  role's own), the walk's four alpha blits (the src-over blend the
+  package's `over()` verbatim), and the golden's pins — an ARGB
+  surface over an XRGB ground, the blend's every coverage byte, the
+  damage-box clip recomputing the alpha face over a moved lower
+  surface — across the five hosted targets byte-identically.
+- [ ] **A30.2** — The shape service: the radius and the softness per
+  surface (the toplevels' 10 and 16 the defaults, zero the bare
+  rectangle), the walk's panel and popup blits grown the masked and
+  shadowed path the toplevels' own arithmetic, and the golden's pins —
+  a rounded panel, a shadowed popup, a bare zero — five targets
+  byte-identically.
+- [ ] **A30.3** — The metal beats and the docs: `run.sh`'s beats — an
+  ARGB panel over the wallpaper, the blend's bytes folded to the
+  corpus, the shape's corners on a popup — ×3 double transport
+  byte-identical; `desktop-abi.md`'s format and shape words (both
+  languages), the READMEs, CHECK.md's entry, and the TASKS' boxes.
+
+## M31 — the wallpaper's art and the icons (opened 2026-11-18)
+
+The visual language's second milestone (the ladder's steps three and
+four): the wallpaper leaves the formula for the disk's own art and
+the palette's extraction feeds the chrome its colors, and the icon
+family's strikes dress the shell. The kernel half is empty by
+construction — the filesystem's verbs carry the art, the shape
+arithmetic (the walk's and the package's shared `shape_sd`) carries
+the icons — EmoOS's tracker adds no step.
+
+The art rides the disk as **RLE, not raw and not PNG** (the opening's
+own decision): a raw 1080p frame is 8.3 MiB against the volume's four
+(never fits), a pure-Emo PNG inflate is the boot's seconds and a
+milestone of its own — the RLE the volume carries, the machine's own
+art drawn for runs (the flat bands the RLE loves), the host tool
+(`gen-wallpaper.py`, the outlines.py precedent) turning a source
+picture into the volume's file, the shell's boot decoding it into the
+wallpaper's surface (runs of words, the loop the frame blit's own).
+The palette's extraction samples the decoded surface — the top's and
+the bottom's bands, the accent — and feeds the chrome's constants
+through D14's provider seam (the metal's read, the golden's fixture);
+D15's rule holds — the extraction that fails keeps the constants it
+had, nothing pretends. The PNG inflate stays out, named: its own
+milestone when the boot's seconds are measured and accepted.
+
+The icons: the shape arithmetic's own strikes — the launcher's rows,
+the dock's tiles, the desktop's cells and the notification rows
+dressed from a shapes file (the rounded rectangles, the circles, the
+strokes the walk's and the package's shared arithmetic rasterizes at
+the sizes the faces already ride — no outlines pipeline needed for
+the shapes' own geometry). The shell's panels re-dress in the alpha,
+the corners and the shadows A30 landed.
+
+- [ ] **A31.1** — The wallpaper's art: the RLE format (the run's
+  shape, the file's name and size), the host tool turning a source
+  picture into the volume's file, the shell's boot decode into the
+  wallpaper's surface (the procedural formula retired to the
+  fixture's), and the golden's pins — the decoded bands' bytes — five
+  hosted targets byte-identically.
+- [ ] **A31.2** — The palette's extraction and the chrome's feed: the
+  sampling (the bands, the accent), the provider seam (the metal's
+  read, the golden's fixture), and the chrome's constants answered
+  from it — the golden's pins five targets byte-identically, the
+  failure's fall to the old constants pinned beside.
+- [ ] **A31.3** — The icon family and the shell's re-dress: the shapes
+  file, the strikes at the sizes, the launcher's rows and the dock's
+  tiles and the notification rows dressed, and the golden's pins —
+  five targets byte-identically; the metal beats beside A30.3's
+  (the wallpaper's art and the icons' strikes on the display, ×3
+  double transport byte-identical), the READMEs, CHECK.md's entry,
+  and the TASKS' boxes.

@@ -50,33 +50,42 @@ motion.
 
 ### 1. The visual language — the skin layer
 
-The main lever for the polished effect, one milestone family in four
-steps, each riding the last:
+The main lever for the polished effect, two milestones now numbered —
+M30 the alpha ground and the shape service, M31 the wallpaper's art
+and the icons — four steps, each riding the last:
 
-1. **Per-pixel alpha compositing.** The blit is a word copy today, and
-   a card must paint opaque (A25.3's own note). `win_format`'s
-   vocabulary grows ARGB8888; the compositor's walk grows the src-over
-   blend. This is the ground the other three stand on — the
-   translucent panels, the popovers, the soft shadows are alpha's
+1. **Per-pixel alpha compositing (M30, A30.1).** The blit is a word
+   copy for the surfaces that mean XRGB; `win_format`'s vocabulary
+   grows ARGB8888 and the walk grows the src-over blend — the
+   per-pixel cost the honest trade on the surfaces that declare it.
+   The dependency is already solved by construction: the walk
+   iterates the whole stack at every composition, the damage box only
+   clips the stores. This is the ground the other three stand on —
+   the translucent panels, the popovers, the soft shadows are alpha's
    consumers, not features of their own.
-2. **The shadow and the round corner as a service.** They exist today
-   painted into pixels; lifted to the compositor they become every
-   window's — third-party apps included — at no app's effort, the walk
-   drawing them around the buffer it already carries.
-3. **The wallpaper's decode and the palette's extraction.** A PNG
-   decoder (stdlib, or the desktop's own codec package) fills the
-   wallpaper's surface; the palette's extraction feeds the chrome —
-   the accent and the materials are fixed constants today, and
-   Noctalia's coherence is the wallpaper's own colors answering for
-   them. The honest cost: a pure-Emo inflate over a 1080p image takes
-   seconds at boot on the metal; the alternative is the disk carrying
-   the pre-converted raw (or RLE) form, the decoder's work done once
-   off the machine.
-4. **The icon family and the shell's re-dress.** A rasterized icon
-   strike for the launcher, the dock and the notification center (the
-   `outlines.py` font precedent, run again for icons), and the panels,
-   the popovers and the toasts re-dressed in alpha, round corners and
-   shadows.
+2. **The shadow and the round corner as a service (M30, A30.2).**
+   The arithmetic is the walk's own since T9.2 — every toplevel
+   rounded at 10 and shadowed at 16 — and the service is the
+   vocabulary: radius and softness per surface, popups and
+   subsurfaces and panels wearing what only toplevels wore, at no
+   app's effort.
+3. **The wallpaper's decode and the palette's extraction (M31,
+   A31.1–A31.2).** The disk carries the wallpaper's art as RLE — a
+   raw 1080p frame never fits the volume, and a pure-Emo PNG inflate
+   is the boot's seconds, its own later milestone — the shell's boot
+   decoding the runs into the wallpaper's surface, the host tool
+   (`gen-wallpaper.py`, the outlines.py precedent) turning a source
+   picture into the volume's file. The palette's extraction samples
+   the decoded surface and feeds the chrome through D14's provider
+   seam — the accent and the materials answering for the wallpaper's
+   own colors, the extraction that fails keeping the constants it
+   had.
+4. **The icon family and the shell's re-dress (M31, A31.3).** The
+   strikes are the shape arithmetic's own — the rounded rectangles,
+   the circles, the strokes the walk's and the package's shared
+   `shape_sd` rasterizes at the sizes the faces already ride — and
+   the launcher's rows, the dock's tiles and the notification rows
+   re-dressed in the alpha, the corners and the shadows A30 landed.
 
 ### 2. The motion layer
 

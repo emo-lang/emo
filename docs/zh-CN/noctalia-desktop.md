@@ -25,12 +25,12 @@ launcher 枚举盘上的 Emo 包,把名字交给搜索面;锁屏查一个 hash �
 
 ### 1. 视觉语言——皮肤层
 
-精致效果的主杠杆,一个里程碑族,四级台阶,每一级骑上一级:
+精致效果的主杠杆,如今编号为两个里程碑——M30 = alpha 地基与形状服务,M31 = 壁纸之艺与图标——四级台阶,每一级骑上一级:
 
-1. **逐像素 alpha 合成**。blit 今天是字拷贝,卡片只能画成不透明(A25.3 自己的笔记)。`win_format` 词表长出 ARGB8888;合成器的 walk 长出 src-over 混合。这是其余三级站的地基——半透明面板、popover、柔和阴影都是 alpha 的消费者,不是各自的特性。
-2. **阴影与圆角成为服务**。它们今天存在,但是画进像素的;提升到合成器,就成了每个窗口的——第三方 app 也算——不费任何 app 的力,walk 围着它已经搬运的 buffer 画出来。
-3. **壁纸解码与取色**。一个 PNG 解码器(stdlib,或桌面自己的 codec 包)填满壁纸的 surface;取色喂给 chrome——accent 和材质今天是固定常量,而 Noctalia 的一体感,正是壁纸自己的颜色替它们作答。诚实的成本:纯 Emo 的 inflate 解一张 1080p 图,金属开机要花秒级;备选是盘上带预转换的 raw(或 RLE)形态,解码器的活下机做一次。
-4. **图标族与壳面重装**。给 launcher、dock 和通知中心一套栅格化的图标 strike(`outlines.py` 字体先例再跑一遍),panel、popover 和 toast 换上 alpha、圆角与阴影的材质。
+1. **逐像素 alpha 合成(M30,A30.1)**。声明 XRGB 的面保持字拷贝;`win_format` 词表长出 ARGB8888,合成器的 walk 长出 src-over 混合——逐像素的成本只落在声明的面上。依赖问题已由构造解决:walk 每次合成迭代整个栈,damage 盒只裁剪存储。这是其余三级站的地基——半透明面板、popover、柔和阴影都是 alpha 的消费者,不是各自的特性。
+2. **阴影与圆角成为服务(M30,A30.2)**。算术自 T9.2 起就是 walk 自己的——每个 toplevel 圆角 10、阴影 16——服务即词表:逐面的 radius 与 softness,popup、subsurface、panel 戴上只有 toplevel 戴过的东西,不费任何 app 的力。
+3. **壁纸解码与取色(M31,A31.1–A31.2)**。盘上以 RLE 携带壁纸之艺——raw 的 1080p 帧永远装不进卷,纯 Emo 的 PNG inflate 是开机的秒级、自己的后续里程碑——壳的开机把游程解进壁纸的 surface,宿主工具(`gen-wallpaper.py`,outlines.py 先例)把源图转成卷上的文件。取色采样解码后的面,经 D14 的 provider 接缝喂 chrome——accent 和材质由壁纸自己的颜色作答,失败的取色保留原有常数。
+4. **图标族与壳面重装(M31,A31.3)**。strike 是形状算术自己的——圆角矩形、圆、笔画,walk 与包共享的 `shape_sd` 在字体已骑的尺寸上光栅化——launcher 的行、dock 的 tile、通知的行换上 A30 落地的 alpha、圆角与阴影。
 
 ### 2. 动效层
 

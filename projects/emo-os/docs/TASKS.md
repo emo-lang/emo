@@ -978,3 +978,35 @@ nobody's notification).
   answer, and the sequence pins that order. The grade ×3 double
   transport byte-identical; the docs (desktop-abi, syscalls rows
   30–32, the READMEs, CHECK.md) ride the desktop's A27.3.
+
+
+## Step 14 — the skin's ground: the format and the shapes (M30, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-18. The desktop's half is emo-desktop M30, whose
+tracker records the milestone's shape. The walk's dependency problem
+is already solved by construction — the whole-stack iteration with
+the damage box's clip recomputes an alpha surface over whatever the
+stack order puts beneath it — no new mechanism, the discovery the
+opening records.
+
+- [ ] **T14.1** — The format word and the alpha blits: the format in
+  the walk's rows (beside the scale's, zero the XRGB8888 the rows
+  already mean), the gate's `win_format` arm accepting format 1
+  (ARGB8888 — the byte the alpha rides in the word's top byte) with
+  the bind-at-declaration rule (the second call reason 4, the role's
+  own), and the walk's four alpha blits (plain, masked, scaled,
+  scaled-masked — the src-over blend the package's `over()`
+  verbatim, the half-up mix the walk's byte the hosted canvas's
+  byte); every XRGB surface keeps the word-copy path.
+- [ ] **T14.2** — The shape service and the beats: the radius and the
+  softness per surface (the toplevels' 10 and 16 the defaults, zero
+  the bare rectangle), the walk's panel and popup blits grown the
+  masked and shadowed path the toplevels' arithmetic, and `run.sh`'s
+  beats beside the desktop's A30.3 — an ARGB panel over the
+  wallpaper, the shape's corners on a popup — graded ×3 double
+  transport byte-identical; the docs (`desktop-abi.md`'s format and
+  shape words, both languages) ride with it.
+
+M31 (the wallpaper's RLE art, the palette's extraction, the icon
+strikes) adds no step — the filesystem's verbs carry the art and the
+shape arithmetic carries the icons, both landed.
