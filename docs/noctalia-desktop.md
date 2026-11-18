@@ -42,6 +42,13 @@ The skeleton and the manners are already on the metal:
   D14's seam and the volume's own `.elf` names); and the lock (M28,
   D19 — the account file's digest, the session taken behind the
   opaque face).
+- **The alpha ground** (M30, A30.1, the ladder's first step):
+  `win_format`'s ARGB8888 beside the word-copy path, the walk's
+  per-pixel source-over — the launcher's panel the first ARGB surface
+  on the metal, its slab, caret and rows the buffer's own
+  straight-alpha truth composed over the wallpaper's bytes, the
+  golden's four faces pinned byte-identically across the hosted
+  targets.
 
 So the remaining work is not structure. It is density: the skin and the
 motion.

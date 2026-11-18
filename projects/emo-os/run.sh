@@ -381,6 +381,23 @@ except OSError:
     pass
 s.close()
 PYEOF
+  # The screendump's file lands a beat behind the monitor's answer on a
+  # loaded host — the readers' own size checks stay the assertion, the
+  # wait here only keeps the race from biting (the trio beat's ENOENT,
+  # 2026-11-18).
+  case "$1" in
+    screendump*)
+      local f="${1#screendump }"
+      local n=0
+      while [ "$n" -lt 40 ]; do
+        if [ -f "$f" ] && [ "$(stat -f %z "$f" 2>/dev/null || echo 0)" -eq 6220817 ]; then
+          return 0
+        fi
+        sleep 0.25
+        n=$((n + 1))
+      done
+      ;;
+  esac
   }
   # The run's other hand (T8.11): one QMP command over the second
   # socket — the capabilities handshake, the command, the answer read,

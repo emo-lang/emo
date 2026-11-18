@@ -119,7 +119,11 @@ seam): verb 20, `win_format(grant, format)`, and verb 21,
 `win_scale(grant, scale)`, record the negotiation's words on the
 buffer's row — XRGB8888 (0) and scale 1 the first accepted values, the
 rest refused by their number; the shape exists, the values grow under
-it. **The frame callback** (the fifth seam): verb 22, `win_frame()`,
+it. ARGB8888 (1) is the value that grew in (emo-desktop M30, A30.1):
+the format binds at the declaration — a second call is reason 4 — and
+the walk composites an ARGB row per pixel, source-over, the buffer's
+alpha bytes the shape the blend composes with; a scale on an ARGB row
+is refused until the blend and the scaling are one walk. **The frame callback** (the fifth seam): verb 22, `win_frame()`,
 parks the caller, and the compositor's answer is the tick — the next
 composition's completion, the flush that put a frame on the display; a
 ring of four parks full is the resource refusal. **The stream's

@@ -67,6 +67,19 @@ class Eye {
     self.canvas.shadow(x, y, w, h, radius, soft, color)
   }
 
+  def store(x Int64, y Int64, word Int64) {
+    // The forward this method owes the interface is withheld on the
+    // wasm backend's account (emo-desktop M30, A30.1): any interface
+    // call to `store` in this program — through a field or a
+    // parameter, called or dead — emits an invalid module (the
+    // fallthru's extra element, the fourth lowering bug of the family
+    // the element assignment and the division opened; CHECK.md
+    // carries the record). Nothing stores into the scripted screen —
+    // the loop paints through fill, blend and ink — so the method
+    // stands empty, and the day the emitter carries the store call is
+    // the day this body grows its forward back.
+  }
+
   def present() {
     println("frame ${ui_fb_frame.digest(self.canvas)}")
   }

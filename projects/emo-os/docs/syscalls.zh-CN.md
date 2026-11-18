@@ -62,8 +62,8 @@ trap 落进内核的 shim,它把动词与六个字拼装给门的分派器
 | 17 | `win_role(grant, role)` | 缓冲成为合成器栈上该角色的表面——0 toplevel、1 popup、2 subsurface、3 panel、4 wallpaper(T8.27,emo-desktop A13——一块机器只有一份、永不抬升的画布,走栈画在每个窗口之下);合成器实现的是 toplevel,其余按原因 4 拒绝,第二次声明与没有表面在背后的 grant 同罪;栈满为原因 5(T8.13,见下) |
 | 18 | `input_info(index)` | 第 index 个指针的轴,打包的设备自报量程(X 在上、Y 在下);没有设备应答的索引为原因 4(T8.13,见下) |
 | 19 | `win_parent(grant, parent)` | popup 或 subsurface 点名它挂靠的 toplevel——自绑定起其坐标即父面的坐标,走栈把它画在父面正上方,父面死亡时随之而去;调用者须拥有两个 grant,无条目的表面、不带父面的角色(toplevel、panel)、非活 toplevel 的父面,一律原因 4(T8.15,见下) |
-| 20 | `win_format(grant, format)` | 缓冲的格式记入其行——XRGB8888(0)是第一个接受的值;合成器不携带的格式按其号码拒为原因 4(T8.15,见下) |
-| 21 | `win_scale(grant, scale)` | 表面的 scale 记入其行——1 是第一个接受的值;其余按号码拒为原因 4(T8.15,见下) |
+| 20 | `win_format(grant, format)` | 缓冲的格式记入其行——XRGB8888(0)是第一个接受的值,ARGB8888(1)是第二个(emo-desktop M30,A30.1:走查对 ARGB 行逐像素 source-over 合成,缓冲的 alpha 字节即形状);格式在声明时绑定,第二次调用拒为原因 4;合成器不携带的格式按其号码拒为原因 4(T8.15,见下) |
+| 21 | `win_scale(grant, scale)` | 表面的 scale 记入其行——1 是第一个接受的值;过 1 的整数(emo-desktop A16.4,EmoOS T10.4)是走查自身的倍数,最近邻,重绘骑配对的 move;低于 1 拒为原因 4,ARGB 行上的 scale 同样拒为原因 4(混合与缩放还不是一条走查)(T8.15,见下) |
 | 22 | `win_frame()` | 帧回调:调用者停靠,应答是下一次合成的完成——把一帧送上显示的那次 flush;四个停靠的环满为原因 5(T8.15,见下) |
 | 23 | `desktop_version()` | 桌面协议的版本字;应答 1(T8.15,见下) |
 | 25 | `win_minimize(grant)` | toplevel 离开合成器的走栈:隐藏抹去的像素就是应答自带的合成重绘的 damage,条目保留(恢复的记忆),它持有的焦点落到旁边的窗口;不是 toplevel、或已隐藏的 grant 为原因 4,别的进程拥有的 grant 为原因 3(emo-desktop A16.3,EmoOS T10.3) |

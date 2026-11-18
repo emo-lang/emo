@@ -532,6 +532,12 @@ class Carve {
   // the display — the gate checks the carve's holder, the display
   // service judges the rect, the transfer and the flush complete — and
   // `present ok` says so after.
+  def store(x Int64, y Int64, word Int64) {
+    if x >= 0 && x < self.width && y >= 0 && y < self.height {
+      poke32(self.base + (y * self.width + x) * 4, word)
+    }
+  }
+
   def present() {
     frame_line(carve_digest(self.base, self.width, self.height))
     case syscall.present(0, 0, 0, self.width, self.height) {
@@ -739,6 +745,12 @@ class Win {
     ui_fb_winbuf.carve_shadow(self.base,
       ui_fb_winbuf.pack(self.width, self.height), ui_fb_winbuf.pack(x, y),
       ui_fb_winbuf.pack(w, h), radius, soft, color)
+  }
+
+  def store(x Int64, y Int64, word Int64) {
+    if x >= 0 && x < self.width && y >= 0 && y < self.height {
+      poke32(self.base + (y * self.width + x) * 4, word)
+    }
   }
 
   def present() {
@@ -3721,6 +3733,15 @@ def notify_panel_paint(f ui_fb.raster.Strike, base Int64, w Int64, h Int64,
 // full), and nothing is left behind — the ask is the caller's.
 def notify_open(grant_cell Int64, base_cell Int64, w Int64, h Int64,
                 x Int64, y Int64) Bool {
+  return notify_open_role(grant_cell, base_cell, w, h, x, y, 0)
+}
+
+// The role-taking variant (emo-desktop M30, A30.1): the launcher's
+// search face declares itself a panel — the panel pass paints it
+// without the walk's mask and shadow, the buffer's own alpha bytes
+// the shape (the straight write's edges the AA).
+def notify_open_role(grant_cell Int64, base_cell Int64, w Int64, h Int64,
+                     x Int64, y Int64, role Int64) Bool {
   var g = 0
   var b = 0
   case syscall.win_new(w, h) {
@@ -3730,7 +3751,7 @@ def notify_open(grant_cell Int64, base_cell Int64, w Int64, h Int64,
       b = win_base(ans)
     }
   }
-  case syscall.win_role(g, 0) {
+  case syscall.win_role(g, role) {
     (R.error, _) then {
       case syscall.win_close(g) {
         (R.error, _) then {}
@@ -4077,9 +4098,26 @@ def launch_paint(f ui_fb.raster.Strike, mw Int64) Void {
   const base = peek64(buf + launch_base)
   ui_fb_winbuf.carve_fill(base, w, 0, 0, w, h, 0)
   const c = Carve.new(base: base, width: w, height: h)
-  c.shadow(0, 0, w, h, 12, 8, 0x80000000)
-  c.rounded(0, 0, w, h, 12, emo_desktop.launch_ground_top(),
-    emo_desktop.launch_ground_bottom())
+  // the shadow rides the walk's own (the toplevel's since T9.2) — the
+  // buffer's own would double it under the blend
+  // the slab the straight write (emo-desktop M30, A30.1): the grade's
+  // own color with the grade's own alpha, the buffer the truth the
+  // walk's blend composes with
+  var sy = 0
+  while sy < h {
+    const color = ui_fb.grade(emo_desktop.launch_ground_top(),
+      emo_desktop.launch_ground_bottom(), sy, h)
+    var sx = 0
+    while sx < w {
+      const cov = ui_fb.fill_cover(ui_fb.shape_sd(sx, sy, 0, 0, w, h, 12))
+      if cov > 0 {
+        c.store(sx, sy, ((cov * ((color >> 24) & 255) + 127) / 255) << 24 |
+          (color & 0xFFFFFF))
+      }
+      sx = sx + 1
+    }
+    sy = sy + 1
+  }
   const ty = (emo_desktop.launch_line_h() - f.line_height()) / 2
   var pen = emo_desktop.launch_pad()
   var i = 0
@@ -4089,8 +4127,18 @@ def launch_paint(f ui_fb.raster.Strike, mw Int64) Void {
       peek8(buf + launch_line + i).to_int64())
     i = i + 1
   }
-  c.fill(pen + 4, (emo_desktop.launch_line_h() - 18) / 2, 2, 18,
-    emo_desktop.ink())
+  // the caret the whole-word store (emo-desktop M30, A30.1): an opaque
+  // word is the straight-alpha truth, the fill's RGB-only write would
+  // leave the alpha byte zero and the blend would skip it
+  var cy = (emo_desktop.launch_line_h() - 18) / 2
+  while cy < (emo_desktop.launch_line_h() - 18) / 2 + 18 {
+    var cx = pen + 4
+    while cx < pen + 6 {
+      c.store(cx, cy, 0xFFF8F8F0)
+      cx = cx + 1
+    }
+    cy = cy + 1
+  }
   var n = 0
   var k = 0
   while k < peek64(buf + apps_count) && n < emo_desktop.launch_rows() {
@@ -4130,9 +4178,17 @@ def launch_close() Void {
 // raised at the panel's place.
 def launch_open(f ui_fb.raster.Strike, mw Int64, mh Int64) Void {
   poke64(buf + launch_len, 0)
-  if notify_open(buf + launch_grant, buf + launch_base,
+  if notify_open_role(buf + launch_grant, buf + launch_base,
     emo_desktop.launch_w(mw), emo_desktop.launch_h(),
-    emo_desktop.launch_x(mw), emo_desktop.launch_y(mh)) {
+    emo_desktop.launch_x(mw), emo_desktop.launch_y(mh), 3) {
+    // the face's own bytes carry their alpha (emo-desktop M30,
+    // A30.1): the slab's grades declared ARGB8888 and the face itself
+    // declared a panel — the walk's blend the wallpaper's own colors
+    // answering through the slab, no walk mask, no walk shadow
+    case syscall.win_format(peek64(buf + launch_grant), 1) {
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
+    }
     launch_paint(f, mw)
   }
 }

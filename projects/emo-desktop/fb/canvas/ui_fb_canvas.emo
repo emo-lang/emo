@@ -59,6 +59,21 @@ class Canvas {
     }
   }
 
+  // A word stored whole (emo-desktop M30, A30.1): the straight-alpha
+  // write the format-1 surfaces' paint rides — the painter owns the
+  // alpha byte, the store never touches it.
+  def store(x Int64, y Int64, word Int64) {
+    if x >= 0 {
+      if x < self.width {
+        if y >= 0 {
+          if y < self.height {
+            self.data.set_u32_le((y * self.width + x) * 4, word)
+          }
+        }
+      }
+    }
+  }
+
   // A color composited over the rectangle, pixel by pixel through
   // `ui_fb.over`: what is there is read, mixed, and written back.
   def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
@@ -209,10 +224,14 @@ class Canvas {
 }
 
 // One word composited through `ui_fb.over` at byte offset `i` — nothing
-// read or written when the color covers nothing.
+// read or written when the color covers nothing. The ground's own alpha
+// byte is kept (emo-desktop M30, A30.1): the RGB channels `over`'s, the
+// top byte the ground's own — a straight-alpha ground's translucency
+// survives the ink laid over it, the compose the display's truth.
 def blend_at(data Bytes, i Int64, color Int64) {
   if ((color >> 24) & 0xFF) > 0 {
-    data.set_u32_le(i, ui_fb.over(color, data.get_u32_le(i)))
+    data.set_u32_le(i, ui_fb.over(color, data.get_u32_le(i)) |
+      (data.get_u32_le(i) & 0xFF000000))
   }
 }
 

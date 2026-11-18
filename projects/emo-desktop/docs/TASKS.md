@@ -2364,7 +2364,7 @@ and panels included, wears the corners and the shadow that only
 toplevels wore. The cards' own painted shadows (the alpha grades the
 M25 card retired into the buffer) can then retire into the walk's.
 
-- [ ] **A30.1** — The alpha ground: the format word in the walk's rows
+- [x] **A30.1** — The alpha ground: the format word in the walk's rows
   (beside the scale's), `win_format` accepting format 1 with the
   bind-at-declaration rule (the second call the argument refusal, the
   role's own), the walk's four alpha blits (the src-over blend the
@@ -2372,6 +2372,60 @@ M25 card retired into the buffer) can then retire into the walk's.
   surface over an XRGB ground, the blend's every coverage byte, the
   damage-box clip recomputing the alpha face over a moved lower
   surface — across the five hosted targets byte-identically.
+  **complete 2026-11-18** — the walk's rows grew the format word, the
+  gate's verb 20 accepting 1 and verb 21 refusing a scale on an ARGB
+  row, the alpha blits landed — plain and masked, the pair the
+  vocabulary reaches, the scaled pair held behind the scale refusal
+  until the blend and the scaling are one walk — and the ARGB rows
+  skip the walk's
+  mask and shadow (the buffer's alpha bytes the shape). The hosted
+  twins grew with it: `Surface.store` (the whole-word write the
+  straight-alpha truth needs), `blend_at` keeping the ground's alpha
+  byte, `over_word` beside `over`, and the launcher's face the
+  golden's first compose — the four states' slabs, carets and rows
+  composited over a display-sized wallpaper replica, `digest` beside
+  `round_digest`. The metal taught the alignment's three finds:
+  **the caret's fill strips the alpha** (an opaque word through
+  `Carve.fill` lands alpha 0 and the blend skips it — the caret a
+  whole-word `store` loop on both sides), **the ink's keep is
+  `over`'s, not `over_word`'s** (the canvas's `blend_at` keeps the
+  ground's top byte over `over`'s clear-top-byte RGB; the carve's
+  first cut kept it over `over_word`'s recomputed `na` and the ink
+  came out a coverage brighter — the desktop comp sum's wander the
+  find's fingerprint, ending where M28 began, the era's grounds alpha
+  0 under their ink), and **the selection band's fill strips to
+  invisible on the straight-alpha ground** (both sides agree —
+  `select_ink`'s translucent alpha dormant until A31.3's re-dress).
+  One freshness lesson rides with them: an await's miss with its line
+  already in the log is a stale image, not a moved wire — the first
+  green-looking run graded yesterday's `hello.elf`. Verified: the
+  golden byte-identical on the interpreter, ocaml, c, typescript and
+  wasm (the beam leg the tree's own M25 hang); `run.sh` exits 0 on
+  both transports with the metal's launcher panel graded against the
+  new pins — ×3 double transport byte-identical on the task's final
+  tree. The wasm backend's
+  two lowerings found on the way, worked around in the package
+  (`rounded_straight` a builder's `push` + `to_array`, the division
+  the shift form): the element assignment `arr[i] = v` emits an
+  invalid module, and so does `/255`. And the interface's growth
+  collected its implementors — every `Surface` in the tree grew
+  `store` (the frame golden's `Eye` the gate's catch, the `def at`
+  sweep the rest: the corpus's and the apps golden's wrappers, the
+  probe's counting surface, the Chrome, the wayland trio), zero call
+  sites, zero pixel moves. The wasm backend's fourth lowering bug
+  surfaced behind them: any interface call to `store` in a program
+  that also carries a class method named `store` emits an invalid
+  module (the fallthru's extra element — the frame, the window
+  shell's twin, the convergence corpus and the first apps all broke;
+  the desktop golden's own store calls the one green exception), the
+  workaround the empty bodies with the record in them (nothing stores
+  into any of the scripted screens), and the beam legs' hang map
+  widened with the gate's timeout bound (the frame, the corpus, the
+  dock and the notification center time out — the window shell's
+  twin, the first apps and the shapes run green on the same target —
+  the M25 family's scope wider than the desktop's entry recorded; the
+  type golden's wasm refusal moved its name with the interface's
+  growth, the pin re-read).
 - [ ] **A30.2** — The shape service: the radius and the softness per
   surface (the toplevels' 10 and 16 the defaults, zero the bare
   rectangle), the walk's panel and popup blits grown the masked and

@@ -180,6 +180,17 @@ class Chrome {
     self.inner.shadow(x, y + bar_height(), w, h, radius, soft, color)
   }
 
+  def store(x Int64, y Int64, word Int64) {
+    // The forward this method owes the interface is withheld on the
+    // wasm backend's account (emo-desktop M30, A30.1): the interface
+    // call to `store` in a program that carries this class emits an
+    // invalid module (the fallthru's extra element, the fourth
+    // lowering bug of the family CHECK.md records). Nothing stores
+    // into a chrome — the windows paint through fill, blend and ink —
+    // so the method stands empty, and the day the emitter carries the
+    // store call is the day this body grows its forward back.
+  }
+
   def present() {
     self.inner.present()
   }

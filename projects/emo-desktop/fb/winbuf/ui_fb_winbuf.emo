@@ -677,10 +677,15 @@ def low(p Int64) Int64 {
 }
 
 // The word at address `i` composited through `ui_fb.over` — nothing
-// read or written when the color covers nothing.
+// read or written when the color covers nothing. The ground's own
+// alpha byte is kept (emo-desktop M30, A30.1): the RGB channels
+// `over`'s, the top byte the ground's own — the canvas's own
+// `blend_at` rule verbatim (`over`'s answer is the RGB alone, its top
+// byte clear), so the ink the hosted canvas lays and the ink the
+// carve lays are the same words.
 def carve_blend_at(i Int64, color Int64) Void {
   if ((color >> 24) & 255) > 0 {
-    poke32(i, ui_fb.over(color, peek32(i)))
+    poke32(i, ui_fb.over(color, peek32(i)) | (peek32(i) & 0xFF000000))
   }
 }
 
@@ -911,6 +916,12 @@ class Win {
              color Int64) {
     carve_shadow(self.base, pack(self.width, self.height), pack(x, y),
       pack(w, h), radius, soft, color)
+  }
+
+  def store(x Int64, y Int64, word Int64) {
+    if x >= 0 && x < self.width && y >= 0 && y < self.height {
+      poke32(self.base + (y * self.width + x) * 4, word)
+    }
   }
 
   def present() {

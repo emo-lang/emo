@@ -168,29 +168,71 @@ def main() {
   // search line no row's, a press past the survivors' count no row
   // either.
   const apps = ["counter.elf", "files.elf", "editor.elf", "spin.elf"]
-  // The round fold beside the plain one (emo-desktop M28, A28.3): the
-  // metal's panel is a toplevel the walk masks at the radius, its
-  // corners the wallpaper's own, so the metal's fold is the round one
-  // and the corpus carries both — the plain the canvas's digest, the
-  // round the corners set aside.
+  // The face's bytes composited over the wallpaper's own (emo-desktop
+  // M30, A30.1): the buffer the paint's straight-alpha truth, the
+  // wallpaper the ground the metal's carve holds, the compose the
+  // package's source-over per pixel — the digest the display's bytes,
+  // the round fold beside it (the walk's mask leaves the corners the
+  // wallpaper's own). Four states: the catalog whole with the bare
+  // line, the narrowed face with its one survivor selected, the blank
+  // face a line nothing matches, the narrowed-again face with three
+  // survivors and the third selected.
   const lw = emo_desktop.launch_w(1920)
   const lh = emo_desktop.launch_h()
+  // the wallpaper's replica at the display's own size (emo-desktop
+  // M30, A30.1): the formula is position-dependent on the full mode —
+  // the panel's pixels sample the display's coordinates
+  const lwall = ui_fb_canvas.canvas(1920, 1080)
+  emo_desktop.wallpaper(lwall, 1920, 1080)
   const l1 = ui_fb_canvas.canvas(lw, lh)
-  emo_desktop.paint_launcher(l1, f, "", apps, 4, -1)
-  println("launch ${ui_fb_frame.digest(l1)}")
-  println("launchr ${ui_fb_frame.round_digest(l1, 10)}")
   const l2 = ui_fb_canvas.canvas(lw, lh)
-  emo_desktop.paint_launcher(l2, f, "ed", ["editor.elf"], 1, 0)
-  println("launch ${ui_fb_frame.digest(l2)}")
-  println("launchr ${ui_fb_frame.round_digest(l2, 10)}")
   const l3 = ui_fb_canvas.canvas(lw, lh)
-  emo_desktop.paint_launcher(l3, f, "zz", apps, 0, -1)
-  println("launch ${ui_fb_frame.digest(l3)}")
-  println("launchr ${ui_fb_frame.round_digest(l3, 10)}")
   const l4 = ui_fb_canvas.canvas(lw, lh)
+  // the slabs' straight words stored whole (emo-desktop M30, A30.1):
+  // the def's words the alpha truth, the store never touching them
+  var words = emo_desktop.rounded_straight(lw, lh,
+    emo_desktop.launch_ground_top(), emo_desktop.launch_ground_bottom())
+  var wi = 0
+  while wi < words.length() {
+    l1.store(wi % lw, wi / lw, words[wi])
+    l2.store(wi % lw, wi / lw, words[wi])
+    l3.store(wi % lw, wi / lw, words[wi])
+    l4.store(wi % lw, wi / lw, words[wi])
+    wi = wi + 1
+  }
+  emo_desktop.paint_launcher(l1, f, "", apps, 4, -1)
+  emo_desktop.paint_launcher(l2, f, "ed", ["editor.elf"], 1, 0)
+  emo_desktop.paint_launcher(l3, f, "zz", apps, 0, -1)
   emo_desktop.paint_launcher(l4, f, "e", apps, 3, 2)
-  println("launch ${ui_fb_frame.digest(l4)}")
-  println("launchr ${ui_fb_frame.round_digest(l4, 10)}")
+  const lout = ui_fb_canvas.canvas(lw, lh)
+  var lstate = 0
+  while lstate < 4 {
+    var buf = l1
+    if lstate == 1 {
+      buf = l2
+    }
+    if lstate == 2 {
+      buf = l3
+    }
+    if lstate == 3 {
+      buf = l4
+    }
+    const lwallx = emo_desktop.launch_x(1920)
+    const lwally = emo_desktop.launch_y(1080)
+    var ly = 0
+    while ly < lh {
+      var lx = 0
+      while lx < lw {
+        lout.fill(lx, ly, 1, 1, ui_fb.over_word(buf.at(lx, ly),
+          lwall.at(lwallx + lx, lwally + ly)))
+        lx = lx + 1
+      }
+      ly = ly + 1
+    }
+    println("launch ${ui_fb_frame.digest(lout)}")
+    println("launchr ${ui_fb_frame.round_digest(lout, 10)}")
+    lstate = lstate + 1
+  }
   println("lgeom ${emo_desktop.launch_x(1920)} ${emo_desktop.launch_y(1080)} ${emo_desktop.launch_h()}")
   println("app ${emo_desktop.is_app_name("counter.elf")}")
   println("app ${emo_desktop.is_app_name("boot.txt")}")

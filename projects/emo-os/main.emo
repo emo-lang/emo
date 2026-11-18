@@ -2641,6 +2641,19 @@ def comp_scale_of(row Int64) Int64 {
   return s
 }
 
+// The row's format (emo-desktop M30, A30.1): zero the XRGB8888 the
+// rows have always meant, one the ARGB8888 the walk blends over —
+// the row stores the declared word plus one, the undeclared's zero.
+def comp_fmt_of(row Int64) Int64 {
+  var f = peek64(row + 96)
+  if f > 0 {
+    f = f - 1
+  }
+  return f
+}
+
+
+
 // The rect a surface paints, packed w above h: the row's own sizes
 // under the row's scale — every bounds check, hit test and painted
 // record reads the surface at the size the walk carries it.
@@ -2731,6 +2744,9 @@ def comp_abs_pos(entry Int64, rx Int64, ry Int64) Int64 {
 def comp_blit_entry(entry Int64, x Int64, y Int64) Int64 {
   var row = grant_row_of(peek64(entry))
   if peek64(row + 56) != 0 {
+    if comp_fmt_of(row) == 1 {
+      return comp_blit_alpha(peek64(row + 16), peek64(row + 32), peek64(row + 40), x, y)
+    }
     return comp_blit(peek64(row + 16), peek64(row + 32), peek64(row + 40), x, y)
   }
   return 0
@@ -2970,6 +2986,152 @@ def comp_over(src Int64, dst Int64) Int64 {
   const g = comp_mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF, a)
   const b = comp_mix(src & 0xFF, dst & 0xFF, a)
   return (r << 16) | (g << 8) | b
+}
+
+// The same source-over on the packed word, the channels `comp_mix`'s —
+// the package's own mix verbatim (emo-desktop M30, A30.1) — the alpha
+// blit's arithmetic, the walk's byte the hosted canvas's byte by the
+// corpus's discipline. The alpha byte rides source-over's own: out =
+// src + dst·(1−src), the ink over the slab keeping the slab's
+// translucency. No division anywhere: the package's mixes ride the
+// shift form, and the machine's division is the vocabulary's next.
+def comp_over_pack(src Int64, dst Int64) Int64 {
+  const a = (src >> 24) & 0xFF
+  if a >= 255 {
+    return src & 0xFFFFFF
+  }
+  if a <= 0 {
+    return dst & 0xFFFFFF
+  }
+  const r = comp_mix((src >> 16) & 0xFF, (dst >> 16) & 0xFF, a)
+  const g = comp_mix((src >> 8) & 0xFF, (dst >> 8) & 0xFF, a)
+  const b = comp_mix(src & 0xFF, dst & 0xFF, a)
+  // the alpha byte source-over's own: a + dst·(1−a), the division-free
+  // form the package's mix rides
+  var t = a * 255 + ((dst >> 24) & 0xFF) * (255 - a) + 128
+  const na = (t + (t >> 8)) >> 8
+  return (na << 24) | (r << 16) | (g << 8) | b
+}
+
+// The alpha blit (emo-desktop M30, A30.1): the buffer's pixels blended
+// source-over onto the carve's own, per pixel — the package's mix the
+// arithmetic, the damage's box the clip, the row's format the reason
+// this path exists. The buffer's stride is its own width; the carve's
+// the mode's.
+def comp_blit_alpha(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
+  var sum = 0
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var cols = w
+  if (x + w) > mw {
+    cols = mw - x
+  }
+  var rows = h
+  if (y + h) > mh {
+    rows = mh - y
+  }
+  var x0 = x
+  var dx0 = peek64(comp_dmg_x)
+  if x0 < dx0 {
+    x0 = dx0
+  }
+  var x1 = x + cols
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if x1 > dx1 {
+    x1 = dx1
+  }
+  var r0 = y
+  var dy0 = peek64(comp_dmg_y)
+  if r0 < dy0 {
+    r0 = dy0
+  }
+  var r1 = y + rows
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if r1 > dy1 {
+    r1 = dy1
+  }
+  var r = r0
+  while r < r1 {
+    var roff = r - y
+    var c = x0 - x
+    while c < x1 - x {
+      var src = peek32(base + (roff * w + c) * 4)
+      var at = koff + screen_base + ((r * mw) + x + c) * 4
+      var nv = comp_over_pack(src, peek32(at))
+      poke32(at, nv)
+      sum = sum + nv
+      c = c + 1
+    }
+    r = r + 1
+  }
+  return sum
+}
+
+// The corner's pixel for the alpha blit: the mask's coverage replaces
+// the word's own top byte (the client's to keep, the corner's to
+// shape) and the blend is the packed one.
+def comp_corner_pixel_alpha(base Int64, w Int64, h Int64, x Int64, y Int64,
+                            rad Int64, cx Int64, cy Int64) Int64 {
+  const c = comp_fill_cover(comp_shape_sd(x + cx, y + cy, x, y, w, h, rad))
+  if c <= 0 {
+    return 0
+  }
+  var mw = peek64(comp_mode_w)
+  var v = peek32(base + ((cy * w) + cx) * 4)
+  var at = koff + screen_base + (((y + cy) * mw) + x + cx) * 4
+  var nv = comp_over_pack((c << 24) | (v & 0xFFFFFF), peek32(at))
+  poke32(at, nv)
+  return nv
+}
+
+// The masked alpha blit (emo-desktop M30, A30.1): the corners' masked
+// pixels the alpha corner's own, the straight spans per pixel — the
+// alpha surface's every byte a blend, no word-copy span to take the
+// shortcut the opaque rows take.
+def comp_blit_alpha_masked(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
+  var sum = 0
+  var rad = comp_radius_in(comp_win_radius, w, h)
+  var mw = peek64(comp_mode_w)
+  var mh = peek64(comp_mode_h)
+  var cols = w
+  if (x + w) > mw {
+    cols = mw - x
+  }
+  var rows = h
+  if (y + h) > mh {
+    rows = mh - y
+  }
+  var x0 = x
+  var dx0 = peek64(comp_dmg_x)
+  if x0 < dx0 {
+    x0 = dx0
+  }
+  var x1 = x + cols
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  if x1 > dx1 {
+    x1 = dx1
+  }
+  var r0 = y
+  var dy0 = peek64(comp_dmg_y)
+  if r0 < dy0 {
+    r0 = dy0
+  }
+  var r1 = y + rows
+  var dy1 = dy0 + peek64(comp_dmg_h)
+  if r1 > dy1 {
+    r1 = dy1
+  }
+  var r = r0
+  while r < r1 {
+    var roff = r - y
+    var c = x0 - x
+    while c < x1 - x {
+      sum = sum + comp_corner_pixel_alpha(base, w, h, x, y, rad, c, roff)
+      c = c + 1
+    }
+    r = r + 1
+  }
+  return sum
 }
 
 // One span of the shadow laid beneath a toplevel, row `row`: every
@@ -3427,12 +3589,18 @@ def comp_toplevel_entry(entry Int64, x Int64, y Int64) Int64 {
     var mh = peek64(comp_mode_h)
     if x == 0 && y == 0 && (w * s) >= mw && (h * s) >= mh {
       if s == 1 {
+        if comp_fmt_of(row) == 1 {
+          return comp_blit_alpha(base, w, h, x, y)
+        }
         return comp_blit(base, w, h, x, y)
       }
       return comp_blit_scaled(base, w, h, s, x, y)
     }
     var sum = comp_toplevel_shadow(w * s, h * s, x, y)
     if s == 1 {
+      if comp_fmt_of(row) == 1 {
+        return sum + comp_blit_alpha_masked(base, w, h, x, y)
+      }
       return sum + comp_blit_masked(base, w, h, x, y)
     }
     return sum + comp_blit_scaled_masked(base, w, h, s, x, y)
@@ -3793,24 +3961,12 @@ def comp_compose(gpu Pid, me Pid) Int64 {
     i = i + 1
   }
   i = 0
-  var panels = 0
-  while i < top {
-    var entry = comp_stack + (i * comp_entry)
-    if peek64(entry + 24) == role_panel {
-      panels = panels + 1
-    }
-    i = i + 1
-  }
-  i = 0
   while i < top {
     var entry = comp_stack + (i * comp_entry)
     if peek64(entry + 24) == role_panel {
       var both = comp_abs_pos(entry, peek64(entry + 8), peek64(entry + 16))
       sum = sum + comp_blit_entry(entry, both >> 32, both & 4294967295)
       comp_paint_record(entry, both >> 32, both & 4294967295)
-      if panels >= 3 {
-        println("pan ${i} g ${peek64(entry)}")
-      }
     }
     i = i + 1
   }

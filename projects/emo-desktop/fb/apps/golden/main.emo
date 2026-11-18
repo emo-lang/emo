@@ -71,6 +71,13 @@ class Eye {
     self.canvas.shadow(x, y, w, h, radius, soft, color)
   }
 
+  def store(x Int64, y Int64, word Int64) {
+    // Withheld on the wasm backend's account (emo-desktop M30, A30.1;
+    // CHECK.md carries the record): the interface call to `store` in
+    // this program emits an invalid module. Nothing stores into the
+    // scripted screen.
+  }
+
   def present() {
     println("frame ${ui_fb_frame.round_digest(self.canvas, 10)}")
   }

@@ -73,6 +73,9 @@ class Tally {
              color Int64) {
   }
 
+  def store(x Int64, y Int64, word Int64) {
+  }
+
   def present() {
     self.presents.replace(self.presents.read() + 1)
   }

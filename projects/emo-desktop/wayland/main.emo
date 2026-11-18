@@ -79,6 +79,10 @@ class LiveEye {
     self.canvas.shadow(x, y, w, h, radius, soft, color)
   }
 
+  def store(x Int64, y Int64, word Int64) {
+    self.canvas.store(x, y, word)
+  }
+
   // The present bridge: the whole canvas through pwrite, the buffer
   // back on the surface, the whole rect damaged, the commit. The
   // digest rides the transcript — the evidence a frame changed.
@@ -155,6 +159,10 @@ class DockSurface {
     self.base.shadow(x, y + self.dy, w, h, radius, soft, color)
   }
 
+  def store(x Int64, y Int64, word Int64) {
+    self.base.store(x, y + self.dy, word)
+  }
+
   def present() {
   }
 }
@@ -209,6 +217,10 @@ class PanelSurface {
   def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
              color Int64) {
     self.base.shadow(x + self.dx, y + self.dy, w, h, radius, soft, color)
+  }
+
+  def store(x Int64, y Int64, word Int64) {
+    self.base.store(x + self.dx, y + self.dy, word)
   }
 
   def present() {

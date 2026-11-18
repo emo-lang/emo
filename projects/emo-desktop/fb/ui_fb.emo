@@ -315,7 +315,21 @@ interface Surface {
              color Int64) Void
   def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
              color Int64) Void
+  def store(x Int64, y Int64, word Int64) Void
   def present() Void
+}
+
+// The same source-over on the packed word (emo-desktop M30, A30.1):
+// the channels `over`'s, the alpha byte source-over's own — out =
+// src + dst·(1−src) — so an ink laid over a translucent ground keeps
+// the ground's translucency instead of erasing it. The compose the
+// golden's pins ride, the twin of the walk's own packed blend.
+def over_word(src Int64, dst Int64) Int64 {
+  const sa = (src >> 24) & 0xFF
+  const da = (dst >> 24) & 0xFF
+  var t = sa * 255 + da * (255 - sa) + 128
+  const na = (t + (t >> 8)) >> 8
+  return (na << 24) | over(src, dst)
 }
 
 // One pixel of a glyph's ink at `color`'s channels: the glyph's
@@ -389,6 +403,7 @@ def over(src Int64, dst Int64) Int64 {
   const b = mix(src & 0xFF, dst & 0xFF, a)
   return (r << 16) | (g << 8) | b
 }
+
 
 // ---- shapes: one rounded rectangle, three ways (emo-desktop A14.1) ----
 //

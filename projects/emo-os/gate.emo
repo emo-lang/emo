@@ -792,13 +792,16 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     return route_win_parent - (32 * slot)
   }
   if n == 20 {
-    // win_format(grant, format) (T8.15, emo-desktop A9.3): the
-    // negotiation's field (the fourth seam) — the buffer's format is a
-    // word on the row, named by the client and recorded by the gate.
-    // XRGB8888 (0) is the first accepted value and the shape exists
-    // from the first day; a format the compositor does not carry is
-    // refused by its number, as every refusal is — the protocol
-    // carries no text.
+    // win_format(grant, format) (T8.15, emo-desktop A9.3; the
+    // vocabulary grown emo-desktop M30, A30.1): the negotiation's
+    // field (the fourth seam) — the buffer's format is a word on the
+    // row, named by the client and recorded by the gate. XRGB8888 (0)
+    // is the first accepted value; ARGB8888 (1) is the second — the
+    // alpha the walk's blend rides (emo-desktop M30). The format
+    // binds at its declaration and does not change (the role's own
+    // rule): the second call is the argument refusal, whatever the
+    // values. The row stores the declared word plus one, the unset
+    // row's zero the undeclared's.
     var fidx = grant_row_of(r0)
     if fidx < 0 {
       return -reason_argument
@@ -806,10 +809,13 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if peek64(grant_table + (fidx * grant_row) + 8) != peek64(handoff_caller) {
       return -reason_permission
     }
-    if r1 != 0 {
+    if r1 > 1 {
       return -reason_argument
     }
-    poke64(grant_table + (fidx * grant_row) + 96, r1)
+    if peek64(grant_table + (fidx * grant_row) + 96) != 0 {
+      return -reason_argument
+    }
+    poke64(grant_table + (fidx * grant_row) + 96, r1 + 1)
     return 0
   }
   if n == 21 {
@@ -829,6 +835,12 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     }
     if peek64(grant_table + (sidx * grant_row) + 8) != peek64(handoff_caller) {
       return -reason_permission
+    }
+    // the alpha's scale is the vocabulary's next (emo-desktop M30):
+    // an ARGB row's nearest-neighbor pair is not carried yet, and the
+    // strictness names it rather than walking the surface wrong
+    if peek64(grant_table + (sidx * grant_row) + 96) == 2 {
+      return -reason_argument
     }
     if r1 < 1 {
       return -reason_argument

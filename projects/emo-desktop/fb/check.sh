@@ -258,7 +258,10 @@ run_target() {
     c)          "$2/c/out" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     typescript) node "$2/typescript/out.ts" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
     wasm)       node "$HOST" "$2/wasm/out.wasm" >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
-    beam)       erl -noshell -pa "$2/beam" \
+    # The beam leg's hang is the tree's own (the M25 frame-beam
+    # family): the timeout turns it into a visible red instead of a
+    # gate that never answers.
+    beam)       timeout 120 erl -noshell -pa "$2/beam" \
                   -eval 'out:main(), erlang:halt(0).' >"$2/$1.txt" 2>&1 && rc=0 || rc=$? ;;
   esac
 }
@@ -354,8 +357,8 @@ check_golden shapes shapes/expected.txt \
 check_golden type type/expected.txt \
   "$PWD/.emo-build/check/type" "type parse facts" ocaml c typescript
 golden_build type wasm "$PWD/.emo-build/check/type/wasm" && rc=0 || rc=$?
-got=$(grep -o -m1 "method \`blend\` has no static dispatch" "$OUT.log" | head -1 || true)
-expect "method \`blend\` has no static dispatch" \
+got=$(grep -o -m1 "method \`at\` has no static dispatch" "$OUT.log" | head -1 || true)
+expect "method \`at\` has no static dispatch" \
   "the type golden --target wasm says why" "$got"
 golden_build type beam "$PWD/.emo-build/check/type/beam" && rc=0 || rc=$?
 got=$(grep -o -m1 "method \`present\` has no dispatch" "$OUT.log" | head -1 || true)

@@ -933,16 +933,62 @@ def launch_ground_bottom() Int64 {
   return 0xE6323C4A
 }
 
+// The slab's straight-alpha rounded write (emo-desktop M30, A30.1):
+// the pixel stored whole — the grade's own color, the coverage the
+// alpha byte — no blend over what the surface held, the buffer the
+// straight-alpha truth the walk's blend composes with. The edges'
+// coverage scales the grade's own alpha, half-up.
+def rounded_straight(w Int64, h Int64, top Int64, bottom Int64) Array[Int64] {
+  // the panel's own radius, twelve: the def's design size. The words
+  // are the straight-alpha truth — the grade's own color, the coverage
+  // the alpha byte — the caller stores them whole (the walk's blend
+  // composes with the ground through them). No Surface crosses here:
+  // the wasm backend's interface dispatch trips its own validation on
+  // the void-with-arguments shape, and the pure words are the pins'
+  // truth anyway.
+  const words = ArrayBuilder.new()
+  var row = 0
+  while row < h {
+    const color = ui_fb.grade(top, bottom, row, h)
+    const ga = (color >> 24) & 255
+    var col = 0
+    while col < w {
+      const c = ui_fb.fill_cover(ui_fb.shape_sd(col, row, 0, 0, w, h,
+        ui_fb.radius_in(12, w, h)))
+      if c > 0 {
+        var t = ga * c + 128
+        words.push(((t + (t >> 8)) >> 8) << 24 | (color & 0xFFFFFF))
+      } else {
+        words.push(0)
+      }
+      col = col + 1
+    }
+    row = row + 1
+  }
+  return words.to_array()
+}
+
 def paint_launcher(s ui_fb.Surface, f ui_fb.raster.Strike, line String,
                    names Array[String], n Int64, sel Int64) Void {
+  // the slab's straight words are the caller's (emo-desktop M30,
+  // A30.1): `rounded_straight` hands them back and the caller stores
+  // them whole — the paint lays the line, the caret and the rows over
+  // the stored truth. The shadow rides the walk's own (the toplevel's
+  // since T9.2), the buffer's own retired with the blend.
   const w = s.width()
   const h = s.height()
-  s.shadow(0, 0, w, h, 12, 8, 0x80000000)
-  s.rounded(0, 0, w, h, 12, launch_ground_top(), launch_ground_bottom())
   ui_fb.text(f, line, launch_pad(), (launch_line_h() - f.line_height()) / 2,
     0xF8F8F0, s)
   const caret = launch_pad() + ui_fb.text_width(f, line) + 4
-  s.fill(caret, (launch_line_h() - 18) / 2, 2, 18, ink())
+  var cy = (launch_line_h() - 18) / 2
+  while cy < (launch_line_h() - 18) / 2 + 18 {
+    var cx = caret
+    while cx < caret + 2 {
+      s.store(cx, cy, 0xFFF8F8F0)
+      cx = cx + 1
+    }
+    cy = cy + 1
+  }
   var i = 0
   while i < n && i < launch_rows() {
     const ry = launch_line_h() + launch_pad() + i * launch_row_h()

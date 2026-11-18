@@ -989,7 +989,7 @@ the damage box's clip recomputes an alpha surface over whatever the
 stack order puts beneath it — no new mechanism, the discovery the
 opening records.
 
-- [ ] **T14.1** — The format word and the alpha blits: the format in
+- [x] **T14.1** — The format word and the alpha blits: the format in
   the walk's rows (beside the scale's, zero the XRGB8888 the rows
   already mean), the gate's `win_format` arm accepting format 1
   (ARGB8888 — the byte the alpha rides in the word's top byte) with
@@ -997,7 +997,16 @@ opening records.
   own), and the walk's four alpha blits (plain, masked, scaled,
   scaled-masked — the src-over blend the package's `over()`
   verbatim, the half-up mix the walk's byte the hosted canvas's
-  byte); every XRGB surface keeps the word-copy path.
+  byte); every XRGB surface keeps the word-copy path. **complete
+  2026-11-18** — the format word in the rows, verb 20's second value,
+  verb 21's refusal of a scale on an ARGB row, the alpha blits (plain
+  and masked — the scaled pair the refusal holds unreachable), and
+  the ARGB rows' skip of the walk's mask and shadow (the buffer's
+  alpha bytes the shape). The shell's launcher panel the first ARGB
+  surface on the metal — its slab, caret and rows composited over the
+  wallpaper's own bytes, the round folds meeting the desktop golden's
+  pins; the beats' ×3 and the docs' final pass the desktop's A30.3
+  (EmoOS's T14.2 beside it).
 - [ ] **T14.2** — The shape service and the beats: the radius and the
   softness per surface (the toplevels' 10 and 16 the defaults, zero
   the bare rectangle), the walk's panel and popup blits grown the
