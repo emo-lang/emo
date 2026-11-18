@@ -17,7 +17,8 @@
   emo_pkg)
  ; emo_man reads the standard library's reference pages, which ride the
  ; binary as generated data (man_data) the way the stdlib sources do.
- (modules emo_cli emo_man man_data version emo_linenoise)
+ ; emo_docs serves the introduction pages the same way (docs_data).
+ (modules emo_cli emo_man emo_docs man_data docs_data version emo_linenoise)
  ; The vendored linenoise editor (`linenoise.c`, upstream
  ; antirez/linenoise at a473823d74b93eab2ba83480df16ed37617493f2, the
  ; marked emo: patches) and the stubs mapping its verdicts onto
@@ -51,6 +52,20 @@
  (action
   (with-stdout-to
    man_data.ml
+   (run %{gen} ../../docs))))
+
+; The introduction pages ride the binary as generated data — one
+; (name, markdown) pair per page, built from docs/intro/*.md, so
+; `emo docs` answers with nothing beside the binary.
+
+(rule
+ (target docs_data.ml)
+ (deps
+  (:gen ../../devtools/gen-docs-data.sh)
+  (source_tree ../../docs/intro))
+ (action
+  (with-stdout-to
+   docs_data.ml
    (run %{gen} ../../docs))))
 
 (executable

@@ -127,6 +127,28 @@ the whole update — the route the stdlib sources themselves take
 (T24.2). The reference is English; the Chinese translations under
 `docs/zh-CN/stdlib/` are for reading in the repository.
 
+## The language's introduction pages
+
+`emo docs` serves the introduction pages under `docs/intro/` from
+inside the binary — the pages an AI harness reads as development
+documentation alongside a project it is working on:
+
+```console
+$ emo docs            # list the pages the binary carries
+$ emo docs syntax     # print the syntax page
+$ emo docs type-system
+```
+
+Unlike `emo man`, which renders its pages for a terminal, `emo docs`
+passes each page through as the markdown it is written in — the reader
+is a program, which reads markdown and pipes, so there is no pager and
+no layout. Without a topic named, the pages it carries are listed.
+The pages ride the binary the same way the manual's do:
+`devtools/gen-docs-data.sh` generates the `(name, markdown)` data
+module from `docs/intro/*.md` at build time. The pages are English;
+the Chinese translations under `docs/zh-CN/intro/` are for reading in
+the repository.
+
 ## References
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) — why

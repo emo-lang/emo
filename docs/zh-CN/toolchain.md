@@ -107,6 +107,24 @@ $ emo man stdlib     # 标准库总览
 相同(T24.2)。参考页只有英文;`docs/zh-CN/stdlib/` 下的中文译本供在
 仓库里阅读。
 
+## 语言的介绍页
+
+`emo docs` 从二进制内部输出 `docs/intro/` 下的介绍页——AI harness
+在开发项目时把它们当开发文档读:
+
+```console
+$ emo docs            # 列出二进制携带的页面
+$ emo docs syntax     # 输出 syntax 页
+$ emo docs type-system
+```
+
+与为终端渲染页面的 `emo man` 不同,`emo docs` 把每页按原样输出为
+它本来的 Markdown——读者是程序,程序读 Markdown、走管道,所以没有
+分页器,也没有排版。不指定主题时,列出它携带的页面。页面随二进制
+携带的方式与参考页相同:构建时由 `devtools/gen-docs-data.sh` 从
+`docs/intro/*.md` 生成 `(名字, Markdown)` 数据模块。页面只有英文;
+`docs/zh-CN/intro/` 下的中文译本供在仓库里阅读。
+
 ## 参考
 
 - [`docs/toolchain-distribution.md`](toolchain-distribution.md) ——

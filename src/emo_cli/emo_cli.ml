@@ -2961,6 +2961,27 @@ let man_cmd =
           match Emo_man.run package with 0 -> Cmd.Exit.ok | code -> exit code)
       $ package)
 
+(* `emo docs`: the language's introduction pages, carried by the binary
+   the same way the manual's pages are. They pass through as the
+   markdown they are written in — the reader is an AI harness, which
+   reads markdown and pipes — so there is no renderer here. *)
+let docs_cmd =
+  let topic =
+    Arg.(
+      value
+      & pos 0 (some string) None
+      & info [] ~docv:"TOPIC"
+          ~doc:
+            "The introduction page to print. Without one, the pages the binary \
+             carries are listed.")
+  in
+  Cmd.v
+    (Cmd.info "docs" ~doc:"Read the language's introduction pages.")
+    Term.(
+      const (fun topic ->
+          match Emo_docs.run topic with 0 -> Cmd.Exit.ok | code -> exit code)
+      $ topic)
+
 (* ---- `emo emoji`: the shared-package lifecycle ----
 
    The group gathers the authoring flow for packages meant for the
@@ -3648,6 +3669,7 @@ let cmd =
       new_cmd;
       doctor_cmd;
       man_cmd;
+      docs_cmd;
       version_cmd;
     ]
 
