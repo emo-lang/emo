@@ -16,10 +16,14 @@ created demo — next: cd demo && emo run main.emo, or emo test
 ```
 demo/
 ├── package.emo        # name、version、targets、deps
-├── main.emo           # greet + println("Hello, world!")
+├── main.emo           # 入口:打印 src.lib.greet("world")
+├── src/lib.emo        # greet——模块 `src.lib`
 ├── test/greet.emo
 └── .gitignore         # .emo-build/
 ```
+
+包根下每个 `.emo` 文件都是位于其路径上的模块,所以 `src/lib.emo` 就是模块
+`src.lib`,`main.emo` 通过 `src.lib.greet` 调用它。
 
 `package.emo` 初始为 `targets = ["ocaml", "c"]`。这个字段有两个作用：该包作为**依赖**被别人使用时，目标不在列表里的构建会在发射前被解析门拒绝；`emo emoji build` 也只构建列表里的 target。直接对项目自己的入口执行 `emo build --target X <entry>` 不受它阻挡——下面七个 target 都能用默认脚手架直接构建。要让包在所有后端可构建，就声明全部：
 

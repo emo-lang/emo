@@ -4862,7 +4862,12 @@ let new_tests =
           "manifest declares the default targets" true
           (contains manifest {|targets = ["ocaml", "c"]|});
         let main_src = read_file (Filename.concat dir "main.emo") in
-        Alcotest.(check bool) "main greets" true (contains main_src "greet");
+        Alcotest.(check bool)
+          "main calls the src module" true
+          (contains main_src "src.lib.greet(");
+        let lib_src = read_file (Filename.concat dir "src/lib.emo") in
+        Alcotest.(check bool) "the src module greets" true
+          (contains lib_src "def greet(");
         Alcotest.(check bool)
           "gitignore ignores the build dir" true
           (contains

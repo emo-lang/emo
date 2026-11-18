@@ -2772,9 +2772,10 @@ let doctor_cmd =
           match doctor ~emit:flushed with 0 -> Cmd.Exit.ok | code -> exit code)
       $ const ())
 
-(* `emo new <name>`: the project scaffold — package.emo, a hello-world
-   main.emo with its test under test/, and .gitignore (T24.3). Strictness
-   holds: the name is refused unless every part is a lowercase identifier
+(* `emo new <name>`: the project scaffold — package.emo, the greet body
+   under src/, an entry main.emo that calls it, its test under test/, and
+   .gitignore (T24.3). Strictness holds: the name is refused unless every
+   part is a lowercase identifier
    (a `-` can never be required, so it is refused here rather than at
    publish time), an existing directory or clashing files refuse, and
    nothing is ever overwritten. The manifest carries the plain name when
@@ -2851,6 +2852,7 @@ let scaffold ~(path : string) : int =
           in
           make_dirs (Filename.dirname path);
           Unix.mkdir path 0o755;
+          Unix.mkdir (Filename.concat path "src") 0o755;
           Unix.mkdir (Filename.concat path "test") 0o755;
           write "package.emo"
             (Printf.sprintf
@@ -2889,18 +2891,24 @@ let scaffold ~(path : string) : int =
             (Printf.sprintf
                {|// %s, scaffolded by `emo new` — run it with `emo run main.emo`.
 
+println(src.lib.greet("world"))
+|}
+               leaf);
+          write "src/lib.emo"
+            (Printf.sprintf
+               {|// %s's source tree: every .emo file under the package root is a
+// module at its path, so this file is the module `src.lib`.
+
 def greet(whom String) String {
   return "Hello, ${whom}!"
 }
-
-println(greet("world"))
 |}
                leaf);
           write "test/greet.emo"
-            {|// Tests for main.emo's greet — run them with `emo test`.
+            {|// Tests for src/lib.emo's greet — run them with `emo test`.
 
 def test_greet() {
-  expect_equal("Hello, world!", main.greet("world"))
+  expect_equal("Hello, world!", src.lib.greet("world"))
 }
 |};
           write ".gitignore" ".emo-build/\n";

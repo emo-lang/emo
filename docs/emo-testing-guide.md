@@ -64,7 +64,8 @@ ok test.arithmetic.test_negative
 2 tests, 2 passed
 ```
 
-`emo new <name>` scaffolds the same layout, including a passing test under
+`emo new <name>` scaffolds this layout, with the code under test in
+`src/lib.emo` (the module `src.lib`) and a passing test under
 `test/greet.emo`.
 
 ## Test discovery

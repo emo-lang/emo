@@ -16,10 +16,15 @@ The scaffold writes:
 ```
 demo/
 ├── package.emo        # name, version, targets, deps
-├── main.emo           # greet + println("Hello, world!")
+├── main.emo           # the entry: prints src.lib.greet("world")
+├── src/lib.emo        # greet — the module `src.lib`
 ├── test/greet.emo
 └── .gitignore         # .emo-build/
 ```
+
+Every `.emo` file under the package root is a module at its path, so
+`src/lib.emo` is the module `src.lib` and `main.emo` reaches it as
+`src.lib.greet`.
 
 `package.emo` starts with `targets = ["ocaml", "c"]`. That field has two jobs. When the package is consumed as a **dependency**, a build whose target is not in the list is refused by the resolution gate before any emission. `emo emoji build` also builds exactly the declared list. A direct `emo build --target X <entry>` on the project's own entry file is not blocked by it — all seven targets below build from the default scaffold. A package meant to build everywhere declares all of them:
 
