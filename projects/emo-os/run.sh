@@ -650,24 +650,38 @@ def shadow_at(x, y, wx, wy, w, h, base):
 def base_want(x, y):
     if 0 <= x < 1920 and 1048 <= y < 1080:
         return (78, 76, y - 1048)
-    if 64 <= x < 192 and 64 <= y < 128:
-        return (79, 80, y - 64)
-    if 416 <= x < 480 and 64 <= y < 128:
-        return (85, 66, y - 64)
+    base = (48, 48, 56)
     if 16 <= x < 528 and 32 <= y < 160:
         # the window's own pixel at its coverage of this one — whole
         # the window's word, partial the word over what the shadow
         # left, clear the shadow alone
         c = fill_cover(shape_sd(x, y, 16, 32, 512, 128, RAD))
         if c >= 255:
-            return (73, 78, y - 32)
+            base = (73, 78, y - 32)
+        else:
+            sb = shadow_at(x, y, 16, 32, 512, 128, (48, 48, 56))
+            if c == 0:
+                base = sb
+            else:
+                base = tuple(((73, 78, y - 32)[i] * c + sb[i] * (255 - c) + 127) // 255 for i in range(3))
+    elif 16 - PAD <= x < 528 + PAD and 32 - PAD <= y < 160 + PAD:
         base = shadow_at(x, y, 16, 32, 512, 128, (48, 48, 56))
-        if c == 0:
-            return base
-        return tuple(((73, 78, y - 32)[i] * c + base[i] * (255 - c) + 127) // 255 for i in range(3))
-    if 16 - PAD <= x < 528 + PAD and 32 - PAD <= y < 160 + PAD:
-        return shadow_at(x, y, 16, 32, 512, 128, (48, 48, 56))
-    return (48, 48, 56)
+    if 416 <= x < 480 and 64 <= y < 128:
+        base = (85, 66, y - 64)
+    # The popup's own ring and mask (emo-desktop M30, A30.2): the
+    # shape's words the popup declares — the ring's ramp beneath its
+    # rect's arcs and past its edges, the word at the mask's coverage
+    # over that
+    rc = shadow_cover(shape_sd(x, y, 64, 64, 128, 64, 6), 6)
+    if rc > 0:
+        base = shadowed(base, rc)
+    if 64 <= x < 192 and 64 <= y < 128:
+        c = fill_cover(shape_sd(x, y, 64, 64, 128, 64, 6))
+        if c >= 255:
+            base = (79, 80, y - 64)
+        elif c > 0:
+            base = tuple(((79, 80, y - 64)[i] * c + base[i] * (255 - c) + 127) // 255 for i in range(3))
+    return base
 
 def want(x, y):
     return with_sprite(x, y, base_want(x, y))
@@ -2460,7 +2474,7 @@ PYLOCK
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 3935613222' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 776081060' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'comp 64 128' 'desk assign a 1' 'desk word 768' 'comp 0 0' 'desk word 769' 'comp 64 128' 'desk assign a 0' 'desk word 257' 'comp 0 0' 'desk word 256' 'desk 0' 'clock ' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'desk 1' 'comp 0 0' 'desktop counter up' 'comp 0 1040' 'desk 513' 'comp 0 0' "frame $(app_line 1)" 'desk 514' 'comp 0 0' 'comp 768 476' 'desktop counter exit 0' 'comp 0 1040' 'desk 1' 'comp 0 0' 'desk 0' 'comp 0 0' 'comp 1636 32' 'comp 0 0' 'comp 0 0' 'commands: help echo ls cat write rm counter exec passwd lock poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1698 1483'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 6' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'shape 10 16 ok' 'shape r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 879805928' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 2015241062' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'comp 64 128' 'desk assign a 1' 'desk word 768' 'comp 0 0' 'desk word 769' 'comp 64 128' 'desk assign a 0' 'desk word 257' 'comp 0 0' 'desk word 256' 'desk 0' 'clock ' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'desk 1' 'comp 0 0' 'desktop counter up' 'comp 0 1040' 'desk 513' 'comp 0 0' "frame $(app_line 1)" 'desk 514' 'comp 0 0' 'comp 768 476' 'desktop counter exit 0' 'comp 0 1040' 'desk 1' 'comp 0 0' 'desk 0' 'comp 0 0' 'comp 1636 32' 'comp 0 0' 'comp 0 0' 'commands: help echo ls cat write rm counter exec passwd lock poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1698 1483'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2

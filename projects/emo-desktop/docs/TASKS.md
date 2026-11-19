@@ -2461,11 +2461,35 @@ M25 card retired into the buffer) can then retire into the walk's.
   the composed words through the fill — the display's bytes the pins'
   truth regardless. The docs: `syscalls.md`'s row 33 and
   `desktop-abi.md`'s shape words (both languages).
-- [ ] **A30.3** — The metal beats and the docs: `run.sh`'s beats — an
+- [x] **A30.3** — The metal beats and the docs: `run.sh`'s beats — an
   ARGB panel over the wallpaper, the blend's bytes folded to the
   corpus, the shape's corners on a popup — ×3 double transport
   byte-identical; `desktop-abi.md`'s format and shape words (both
   languages), the READMEs, CHECK.md's entry, and the TASKS' boxes.
+  **complete 2026-11-19** — the ARGB panel over the wallpaper landed
+  with A30.1 (the launcher's panel the first ARGB surface, its bytes
+  folded to the corpus's round digests); the beats' new word is the
+  shape's: the wire test pass names verb 33 — the toplevel's own
+  defaults answered (`shape 10 16 ok`, every sum the bytes of
+  yesterday) and the second call refused (`shape r4`, the
+  bind-at-declaration on the wire), and the popup declares six and
+  six — the corners on a popup the composition's own word carries
+  (`comp 48 32 879805928`, the ring's ramp beneath the arcs and the
+  mask's coverage in the corners), the parent's move riding the shaped
+  popup beside it (`comp 16 32 2015241062`). The full-model screendump
+  check grew the popup's ring and mask — the ring the shape's words
+  lay over the parent's own pixels, the model's flat word-branches
+  the shape's absence, the ring's one-byte sink at (68,61) the first
+  pixel that named it. **The sums' shape, recorded**: a declared shape
+  moves only the compositions its surface sits in — the sub's and the
+  panel's presents never saw the popup's ring (the damage's box the
+  surface's own, the ring outside it uncounted), the move's did (the
+  popup rides its parent). Verified: `run.sh` exits 0 on both
+  transports, three runs byte for byte. The docs rode their own
+  commits (the format and shape words with A30.1 and A30.2), the
+  READMEs' M30 rows, CHECK.md's entries, and the boxes closed —
+  T14.2's with them, the beats and the docs its text names both
+  landed.
 
 ## M31 — the wallpaper's art and the icons (opened 2026-11-18)
 

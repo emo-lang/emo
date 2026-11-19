@@ -1259,6 +1259,38 @@ def fmt_ok_line() Void {
   gate_line(p)
 }
 
+def shape_ok_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 104) // h
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 49) // 1
+  p = byte_at(p, 48) // 0
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 49) // 1
+  p = byte_at(p, 54) // 6
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+def shape_no_line() Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 104) // h
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 32) //  
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 52) // 4
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
 def fmt_no_line() Void {
   var p = byte_at(0, 102) // f
   p = byte_at(p, 111) // o
@@ -1678,6 +1710,20 @@ if peek64(win_cell) != 0 {
         (R.error, _) then { mark() }
         (R.ok, _) then {}
       }
+      // The shape's words (emo-desktop M30, A30.2; verb 33): the
+      // radius and the softness the walk's mask and shadow wear — the
+      // toplevel's own defaults its word names (the sums the same
+      // bytes), the second call the argument refusal the format's own
+      // rule. The popup below declares six and six, the corners the
+      // composition's words carry.
+      case syscall.win_shape(id, 10, 16) {
+        (R.error, _) then { mark() }
+        (R.ok, _) then { shape_ok_line() }
+      }
+      case syscall.win_shape(id, 0, 0) {
+        (R.error, _) then { shape_no_line() }
+        (R.ok, _) then { mark() }
+      }
       case syscall.desktop_version() {
         (R.error, _) then { mark() }
         (R.ok, _) then { protocol_line() }
@@ -1707,6 +1753,10 @@ if peek64(win_cell) != 0 {
             (R.ok, _) then {}
           }
           case syscall.win_move(ppop, 48, 32) {
+            (R.error, _) then { mark() }
+            (R.ok, _) then {}
+          }
+          case syscall.win_shape(ppop, 6, 6) {
             (R.error, _) then { mark() }
             (R.ok, _) then {}
           }

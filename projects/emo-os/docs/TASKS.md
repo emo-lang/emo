@@ -1007,14 +1007,20 @@ opening records.
   wallpaper's own bytes, the round folds meeting the desktop golden's
   pins; the beats' ×3 and the docs' final pass the desktop's A30.3
   (EmoOS's T14.2 beside it).
-- [ ] **T14.2** — The shape service and the beats: the radius and the
+- [x] **T14.2** — The shape service and the beats: the radius and the
   softness per surface (the toplevels' 10 and 16 the defaults, zero
   the bare rectangle), the walk's panel and popup blits grown the
   masked and shadowed path the toplevels' arithmetic, and `run.sh`'s
   beats beside the desktop's A30.3 — an ARGB panel over the
   wallpaper, the shape's corners on a popup — graded ×3 double
   transport byte-identical; the docs (`desktop-abi.md`'s format and
-  shape words, both languages) ride with it.
+  shape words, both languages) ride with it. **complete 2026-11-19** —
+  the service's walk half landed with T14.1's commit and the beats
+  with the desktop's A30.3: the wire names verb 33 (the toplevel's own
+  defaults answered, the second call the bind refusal) and the popup
+  declares six and six, the composition's word the corners' bytes; the
+  full-model screendump check grew the popup's ring and mask. ×3
+  double transport byte-identical; the docs both languages.
 
 M31 (the wallpaper's RLE art, the palette's extraction, the icon
 strikes) adds no step — the filesystem's verbs carry the art and the
