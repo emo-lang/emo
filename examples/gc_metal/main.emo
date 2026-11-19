@@ -1,0 +1,10 @@
+require "gc"
+gc.arena(1024)
+println("arena ok")
+var s = gc.s_new(2)
+gc.s_set(s, 1, 42)
+println("slot " + gc.s_get(s, 1).to_string())
+var r = ref_new(s)
+println("ref " + ref_read(r).to_string())
+gc.collect()
+println("collected " + heap_words().to_string())

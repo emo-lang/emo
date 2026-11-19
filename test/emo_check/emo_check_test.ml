@@ -1538,8 +1538,8 @@ peek64()|}
 
 (* The GC heap's doors (docs/gc-heap.md): the interpreter run and the
    `c` target admit them and type them; every other target — build
-   targets and `riscv64` alike — refuses by name at the identifier,
-   E4032. *)
+   targets alike — refuses by name at the identifier, E4032; the metal
+   (riscv64) joined the interpreter and `c` at step 91. *)
 let gc_heap_tests =
   let check_on target source =
     match Emo_parser.parse_program ~file:"test.emo" ~source with
@@ -1584,7 +1584,10 @@ println(v + n + k + s + rv + total + roots.length() + blocks.length())|}
         let diagnostics = check every_door in
         Alcotest.(check int)
           "clean on the hosted default" 0 (List.length diagnostics));
-    tc "every other build target refuses, riscv64 included" (fun () ->
+    tc "the metal admits every door" (fun () ->
+        let diagnostics = check_on "riscv64" every_door in
+        Alcotest.(check int) "clean on riscv64" 0 (List.length diagnostics));
+    tc "every other build target refuses" (fun () ->
         List.iter
           (fun target ->
             let diagnostics = check_on target {|const h = heap_new(2)|} in
@@ -1593,7 +1596,7 @@ println(v + n + k + s + rv + total + roots.length() + blocks.length())|}
               (List.exists
                  (fun d -> d.Diagnostic.code = Some "E4032")
                  diagnostics))
-          [ "ocaml"; "typescript"; "wasm"; "browser"; "beam"; "riscv64" ]);
+          [ "ocaml"; "typescript"; "wasm"; "browser"; "beam" ]);
     tc "the interpreter admits the doors and types them" (fun () ->
         let clean = check_on "interpreter" every_door in
         Alcotest.(check int) "clean on the interpreter" 0 (List.length clean));

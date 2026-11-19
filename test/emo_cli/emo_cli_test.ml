@@ -3825,10 +3825,10 @@ let riscv64_examples_tests =
    list at T3.3: spawn/send/receive lower to the green threads. *)
 let riscv64_refusal_tests =
   [
-    tc "a map literal refuses with a clear diagnostic" (fun () ->
+    tc "a map literal lowers to the metal's Map (step 91)" (fun () ->
         let entry = scratch_entry "riscv-map" {|println({ "a": 1 })|} in
         Alcotest.(check int)
-          "exit" 65
+          "exit" 0
           (build_entry ~target:"riscv64" entry
              (Filename.concat (Filename.dirname entry) "out")));
     tc "the refusals name the construct" (fun () ->
@@ -3876,7 +3876,8 @@ let riscv64_refusal_tests =
                   (contains message "does not support"
                   && contains message fragment))
           [
-            ("raise", {|raise Exception.new(message: "boom")|}, "raise");
+            (* the raise gap closed at step 91: an exception lowers and
+               answers the target's own loud tail *)
             ( "a String method the metal does not lower",
               {|println("a b".split(" ").length())|},
               "the String method `split`" );
@@ -7100,8 +7101,8 @@ let gc_refusal_expected target =
   List.map
     (fun name ->
       Printf.sprintf
-        "`%s` reaches the GC heap: only the interpreter run and the `c` target \
-         admit it, not `%s`"
+        "`%s` reaches the GC heap: only the interpreter run, the `c` target \
+         and the metal admit it, not `%s`"
         name target)
     [
       "heap_new";
@@ -7158,7 +7159,7 @@ let gc_refusal_tests =
               (target ^ ": every refusal is E4032")
               (List.map (fun _ -> "E4032") expected)
               (List.map fst got))
-          [ "ocaml"; "typescript"; "wasm"; "browser"; "beam"; "riscv64" ]);
+          [ "ocaml"; "typescript"; "wasm"; "browser"; "beam" ]);
     tc "the admitting seats check clean" (fun () ->
         List.iter
           (fun target ->
@@ -7166,7 +7167,7 @@ let gc_refusal_tests =
               (target ^ ": the doors check clean")
               []
               (diagnostics target gc_refusal_source))
-          [ "interpreter"; "c" ]);
+          [ "interpreter"; "c"; "riscv64" ]);
   ]
 
 (* ---- emo wasm run ----

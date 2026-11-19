@@ -3859,15 +3859,15 @@ let capture_program_output f =
    path). The binary lands outside the example — the examples are a
    source tree dune links into its sandbox, and a build output written
    into a hardlinked tree cannot be replaced. *)
-let build_example root entry name =
+let build_example ?(target = "ocaml") root entry name =
   let emo_exe = emo_exe_path () in
   let bin = Filename.concat (fresh_scratch ()) (name ^ "-bin") in
   ignore (Sys.command ("mkdir -p " ^ Filename.quote (Filename.dirname bin)));
   let out, _, status =
     Emo_test_support.run_cmd
-      (Printf.sprintf "exec 2>&1; cd %s && %s build %s --target ocaml -o %s"
+      (Printf.sprintf "exec 2>&1; cd %s && %s build %s --target %s -o %s"
          (Filename.quote root) (Filename.quote emo_exe) (Filename.quote entry)
-         (Filename.quote bin))
+         target (Filename.quote bin))
   in
   (status, out, bin)
 
@@ -3910,7 +3910,7 @@ let run_interpreted_example root name entry =
     (name ^ ": interpreter matches golden")
     golden interpreted
 
-let bootstrap_example root name entry =
+let bootstrap_example ?(target = "ocaml") root name entry =
   let golden =
     (* Root projects keep their golden beside the entry inside
        <root>/<name>/; a package project is its own root. *)
@@ -3945,7 +3945,7 @@ let bootstrap_example root name entry =
   Alcotest.(check string)
     (name ^ ": interpreter matches golden")
     golden interpreted;
-  let status, build_out, bin = build_example root entry name in
+  let status, build_out, bin = build_example ~target root entry name in
   (match status with
   | Unix.WEXITED 0 -> ()
   | _ -> Alcotest.fail (Printf.sprintf "%s: build failed: %s" name build_out));
@@ -4144,7 +4144,7 @@ let bootstrap_tests =
           "crypto_sign" "main.emo");
     tc "gc_demo compiles to a binary with the interpreter's output" (fun () ->
         use_workspace_registry () |> ignore;
-        bootstrap_example
+        bootstrap_example ~target:"c"
           (Filename.concat (examples_dir ()) "gc_demo")
           "gc_demo" "main.emo");
     tc "crypto_ecdh compiles to a binary with the interpreter's output"
