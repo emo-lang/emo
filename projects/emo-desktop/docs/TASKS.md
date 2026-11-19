@@ -2574,11 +2574,57 @@ the corners and the shadows A30 landed.
   pin exactly (`comp 0 0 884125748`), the ledger `frames 1698 1483`
   unmoved, the volume's story the wires' own (`installed
   wallpaper.rle 32848`, the gen counts one higher, `fs ls 7`).
-- [ ] **A31.2** — The palette's extraction and the chrome's feed: the
+- [x] **A31.2** — The palette's extraction and the chrome's feed: the
   sampling (the bands, the accent), the provider seam (the metal's
   read, the golden's fixture), and the chrome's constants answered
   from it — the golden's pins five targets byte-identically, the
   failure's fall to the old constants pinned beside.
+  **complete 2026-11-19** — the extraction is one walk over the
+  decoded art: the color whose channel spread is the art's widest,
+  answered at the chrome's ink energy (the brightest channel scaled to
+  232, the ribbons' own peak — the current art's violet
+  `0x453475` answering `0x8867E8`, the ribbon's own ink the rule
+  recovers); an art with no chroma past the floor refuses (`-1`), and
+  the callers wear the constants the failure keeps. The package's
+  `palette_accent` and the metal's typed twin (`desk_palette_accent`,
+  the shell walking the scratch it read at boot) are the same walk;
+  the golden's feeder the fixture's — D14's seam whole. The chrome's
+  feed: the header's wordmark ink and the pager's active ground the
+  accent answers, the cyan and the rose constants the fallback's; the
+  dock's tiles and the clock's quiet ink unchanged, the calendar's
+  today-cell its own constant (a panel, not the chrome). The
+  materials replay the art: `material_row` walks the runs' own row
+  under the scrim (the formula's numbers gone from both worlds —
+  D8's sample now the art's own), the bytes the formula rendered —
+  the dock's ten golden frames unmoved, the proof the replay is the
+  formula's equal. The painters take the art (and the packed mode
+  where the argument wall asked): `paint` loses its redundant strip
+  height, `paint_header` the mode word, `paint_pager` the accent —
+  the golden's calls the fixture's arrays. The failure's fixture:
+  `wall_rle.gray_runs()` (twenty-four gray rows, the channels'
+  spread zero) and the bar painted over it pinned beside —
+  `bar gray 2639220349`, the wordmark in the cyan the art refused to
+  replace. **Found on the way, and named by the pins**: the fixture's
+  first cut carried the quarter's runs only, and the chrome's walk at
+  the display mode never met a row's end — every dock frame showed
+  the scrim over yesterday's bytes; the mode's own runs ride the
+  fixture now (`runs()` the painters', `quarter_runs()` the decode
+  pin's), and the dock's frames returned to the committed numbers —
+  the byte-stability the walk's honesty is proved with. **The metal
+  taught the load's timing**: the desk pass's strip paints before the
+  desktop's boot ever ran, and a load parked at the desktop's first
+  paint left the era's strip the flat ground — its digest the tell
+  (`4279355244` where the corpus's `108753192` stood); the file's read
+  is guarded now (the len cell the attempt's mark — zero never tried,
+  negative refused, positive the size), every chrome era's first paint
+  wanting it and only the first getting it, and the desk era's strip
+  came back the corpus's own number. Verified: the desktop golden
+  byte-identical on the interpreter, ocaml, c, typescript and wasm
+  (the beam leg the tree's own M25 hang; the fb gate 178 ok, the eight
+  reds the family's); `run.sh` exits 0 on both transports, three runs
+  byte for byte — the bar's wordmark and the screendumps the model's
+  accent word for word (`0x8867E8`), the ledger `frames 1698 1483`
+  unmoved; `@fmt` green.
 - [ ] **A31.3** — The icon family and the shell's re-dress: the shapes
   file, the strikes at the sizes, the launcher's rows and the dock's
   tiles and the notification rows dressed, and the golden's pins —

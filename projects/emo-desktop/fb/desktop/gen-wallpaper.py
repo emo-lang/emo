@@ -118,53 +118,77 @@ def write_file(path, w, h, runs):
 
 CHUNK = 448  # words to a table, the face fixtures' own chunk
 
-FIXTURE_HEADER = """// The wallpaper's fixture (emo-desktop M31, A31.1): the quarter-mode
-// ({fw}x{fh}) runs of the volume's RLE art and the formula the package
-// retired — both written by `gen-wallpaper.py` from the formula's
-// render, the decode's truth the golden walks onto a quarter canvas
-// beside the formula it must equal. A run word is the pixel count in
-// its low half and the opaque color in its high half, row-aligned, in
-// order, tiling the frame exactly.
+FIXTURE_HEADER = """// The wallpaper's fixture (emo-desktop M31): the volume's RLE art as
+// run words — the display mode's own and the quarter canvas's ({fw}x{fh})
+// beside it — the gray art the palette's walk refuses, and the formula
+// the package retired — all written by `gen-wallpaper.py` from the
+// formula's render, the decode's truth the golden walks onto a quarter
+// canvas beside the formula it must equal. A run word is the pixel
+// count in its low half and the opaque color in its high half,
+// row-aligned, in order, tiling the frame exactly.
 //
 //   python3 ../gen-wallpaper.py
 """
 
 
-def fixture_module(fw, fh, runs):
+def runs_table(out, label, prefix, runs):
+    """One run word table: chunked consts, the router, the array."""
     chunks = [runs[i:i + CHUNK] for i in range(0, len(runs), CHUNK)] or [[]]
-    out = [FIXTURE_HEADER.format(fw=fw, fh=fh)]
     out.append("")
-    out.append(f"def width() Int64 {{\n  return {fw}\n}}")
-    out.append(f"def height() Int64 {{\n  return {fh}\n}}")
-    out.append(f"def run_words() Int64 {{\n  return {len(runs)}\n}}")
+    out.append(f"def {prefix}words() Int64 {{\n  return {len(runs)}\n}}")
     out.append("")
-    out.append("// The runs' tables: 448 words to a chunk, the face fixtures'")
-    out.append("// chunk, the router below the reader's one door.")
+    out.append(f"// The {label}'s tables: 448 words to a chunk, the face")
+    out.append("// fixtures' chunk, the router below the reader's one door.")
     for ci, chunk in enumerate(chunks):
-        out.append(f"const data{ci} = [")
+        out.append(f"const {prefix}data{ci} = [")
         for i in range(0, len(chunk), 8):
             line = ", ".join(str(word) for word in chunk[i:i + 8])
             comma = "," if i + 8 < len(chunk) else ""
             out.append(f"  {line}{comma}")
         out.append("]")
     out.append("")
-    out.append("def run_word(k Int64) Int64 {")
+    out.append(f"def {prefix}word(k Int64) Int64 {{")
     out.append("  const at = k")
     for ci in range(len(chunks)):
         lo, hi = CHUNK * ci, CHUNK * (ci + 1)
         out.append(f"  if at < {hi} {{")
-        out.append(f"    return data{ci}[at - {lo}]")
+        out.append(f"    return {prefix}data{ci}[at - {lo}]")
         out.append("  }")
     out.append("  return 0")
     out.append("}")
     out.append("")
-    out.append("// The runs whole, one array the decode walks.")
-    out.append("def runs() Array[Int64] {")
+    out.append(f"// The {label}'s runs whole, one array the walkers consume.")
+    out.append(f"def {prefix}runs() Array[Int64] {{")
     out.append("  const holder = ArrayBuilder.new()")
     out.append("  var i = 0")
-    out.append("  while i < run_words() {")
-    out.append("    holder.push(run_word(i))")
+    out.append(f"  while i < {prefix}words() {{")
+    out.append(f"    holder.push({prefix}word(i))")
     out.append("    i = i + 1")
+    out.append("  }")
+    out.append("  return holder.to_array()")
+    out.append("}")
+
+
+def fixture_module(fw, fh, qruns, fruns):
+    out = [FIXTURE_HEADER.format(fw=fw, fh=fh)]
+    out.append("//")
+    out.append("// `runs()` are the display mode's own runs — the chrome's")
+    out.append("// material rows and the palette's accent walk them at the mode the")
+    out.append("// painters are called with (the rows are mode-wide); the quarter's")
+    out.append("// own runs, `quarter_runs()`, serve the decode pin's small canvas.")
+    runs_table(out, "display mode's art", "", fruns)
+    runs_table(out, "quarter canvas's art", "quarter_", qruns)
+    out.append("// The gray art (emo-desktop M31, A31.2): the failure's fixture —")
+    out.append("// twenty-four rows of the mode's width, each one run of a plain")
+    out.append("// gray, the channels' spread zero everywhere. The palette's walk")
+    out.append("// refuses it, and the chrome's pins beside it wear the constants")
+    out.append("// the failure keeps.")
+    out.append("def gray_runs() Array[Int64] {")
+    out.append("  const holder = ArrayBuilder.new()")
+    out.append("  var row = 0")
+    out.append("  while row < 24 {")
+    out.append(f"    holder.push((((32 + row) * 65793) << 32) | 1920)")
+    out.append("    row = row + 1")
     out.append("  }")
     out.append("  return holder.to_array()")
     out.append("}")
@@ -236,13 +260,13 @@ def main():
     runs = encode(args.width, args.height)
     write_file(args.out, args.width, args.height, runs)
     fw, fh = args.fixture_width, args.fixture_height
-    fruns = encode(fw, fh)
+    qruns = encode(fw, fh)
     os.makedirs(os.path.dirname(os.path.abspath(args.fixture)), exist_ok=True)
     with open(args.fixture, "w") as f:
-        f.write(fixture_module(fw, fh, fruns))
+        f.write(fixture_module(fw, fh, qruns, runs))
     size = 16 + 8 * len(runs)
     print(f"wallpaper.rle {args.width}x{args.height}: {len(runs)} runs, {size} bytes")
-    print(f"fixture {fw}x{fh}: {len(fruns)} runs")
+    print(f"fixture: {len(runs)} mode runs, {len(qruns)} quarter runs")
 
 
 if __name__ == "__main__":

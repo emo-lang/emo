@@ -137,38 +137,82 @@ def dock_scrim() Int64 {
 }
 
 // One row of the chrome's material at the display row `gy`, painted
-// at the surface's local `ly`: the wallpaper's gradient row, every
-// ribbon whose span holds the row over it, the scrim over the whole —
-// D8's formula, the wallpaper recomputed at nothing a pixel reads.
-// `mw` and `mh` are the display's mode (the ribbons are fractions of
-// it), `w` the surface's own width — the header's golden canvas is
-// narrower than the mode and samples the same formula.
+// at the surface's local `ly`: the decoded art's own row replayed —
+// the runs the volume's file carries are the wallpaper's truth, the
+// row's colors walked and filled whole (the clip the surface's own) —
+// the scrim over the row. The formula this replaced computed the same
+// colors at nothing a pixel reads (D8's sample now the art's own,
+// A31.2); `mw` is the mode the runs walk by, `w` the surface's own
+// width — the header's golden canvas is narrower than the mode and
+// replays the same rows.
 def material_row(s ui_fb.Surface, ly Int64, gy Int64, w Int64, mw Int64,
-                 mh Int64, scrim Int64) Void {
-  const denom = mh - 1
-  const tr = (wall_top() >> 16) & 255
-  const tg = (wall_top() >> 8) & 255
-  const tb = wall_top() & 255
-  const br = (wall_bottom() >> 16) & 255
-  const bg = (wall_bottom() >> 8) & 255
-  const bb = wall_bottom() & 255
-  const r = (tr * (denom - gy) + br * gy) / denom
-  const g = (tg * (denom - gy) + bg * gy) / denom
-  const b = (tb * (denom - gy) + bb * gy) / denom
-  s.fill(0, ly, w, 1, (r << 16) | (g << 8) | b)
-  if gy < (5 * mh) / 8 {
-    s.blend(-((25 * mw) / 128) + (3 * gy) / 4, ly, (115 * mw) / 256, 1,
-      (0x28 << 24) | 0x30B8C8)
-  }
-  if gy >= (5 * mh) / 24 && gy < (15 * mh) / 16 {
-    s.blend((15 * mw) / 256 + gy / 2, ly, (25 * mw) / 64, 1,
-      (0x20 << 24) | 0xE86890)
-  }
-  if gy >= (85 * mh) / 192 {
-    s.blend((225 * mw) / 256 - gy / 4, ly, (135 * mw) / 256, 1,
-      (0x18 << 24) | 0x8868E8)
+                 scrim Int64, art Array[Int64]) Void {
+  var x = 0
+  var y = 0
+  var i = 0
+  while i < art.length() && y <= gy {
+    const count = art[i] & 4294967295
+    const color = art[i] >> 32
+    if y == gy {
+      s.fill(x, ly, count, 1, color)
+    }
+    x = x + count
+    if x == mw {
+      x = 0
+      y = y + 1
+    }
+    i = i + 1
   }
   s.blend(0, ly, w, 1, scrim)
+}
+
+// The palette's accent (emo-desktop M31, A31.2): the decoded art's
+// most chromatic run, answered at the chrome's ink energy — the walk
+// takes the color whose channel spread is the art's widest (the first
+// maximum keeping the walk's order), then scales the hue's channels so
+// the brightest of them reaches 232, the ribbons' own ink peak. An art
+// with no chroma past the floor refuses: -1, the callers' constants
+// the wear the failure keeps (D14's rule — the metal's twin walks the
+// scratch it read at boot, the golden's fixture the gray art).
+def palette_accent(art Array[Int64]) Int64 {
+  var best = -1
+  var best_hi = 0
+  var best_sat = 47
+  var i = 0
+  while i < art.length() {
+    const color = art[i] >> 32
+    const r = (color >> 16) & 255
+    const g = (color >> 8) & 255
+    const b = color & 255
+    var hi = r
+    var lo = r
+    if g > hi {
+      hi = g
+    }
+    if g < lo {
+      lo = g
+    }
+    if b > hi {
+      hi = b
+    }
+    if b < lo {
+      lo = b
+    }
+    if hi - lo > best_sat {
+      best_sat = hi - lo
+      best_hi = hi
+      best = color
+    }
+    i = i + 1
+  }
+  if best < 0 {
+    return -1
+  }
+  const r = (best >> 16) & 255
+  const g = (best >> 8) & 255
+  const b = best & 255
+  return (((r * 232) / best_hi) << 16) | (((g * 232) / best_hi) << 8) |
+    ((b * 232) / best_hi)
 }
 
 // The strip onto its own surface, whole from scratch: the material
@@ -184,12 +228,12 @@ def material_row(s ui_fb.Surface, ly Int64, gy Int64, w Int64, mw Int64,
 // the strip's own height and `top` the display row its first row
 // stands on — the material samples the wallpaper's formula at the
 // display's own rows.
-def paint(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64, h Int64,
+def paint(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
           top Int64, labels Array[String], focused Int64,
-          running Int64) Void {
+          running Int64, art Array[Int64]) Void {
   var ly = 0
-  while ly < h {
-    material_row(s, ly, top + ly, w, w, top + h, dock_scrim())
+  while ly < strip_height() {
+    material_row(s, ly, top + ly, w, w, dock_scrim(), art)
     ly = ly + 1
   }
   const sx = shelf_pad()
@@ -461,8 +505,11 @@ def pager_empty_ink() Int64 {
 // The four cells onto the bar's surface: the caller's `desks` word
 // decoded — the active desk in the low byte, the occupancy mask above —
 // one rounded ground where the state names one, the number centered in
-// every cell.
-def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64) Void {
+// every cell. The active cell's ground is the palette's accent (A31.2)
+// at the caller's own answer — the art's chroma when the walk gave it,
+// the rose constant the failure keeps when it did not.
+def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64,
+                acc Int64) Void {
   const active = desks & 255
   const mask = (desks >> 8) & 15
   var i = 0
@@ -474,6 +521,9 @@ def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64) Void {
     var ink_color = pager_empty_ink()
     if i == active {
       ground = pager_active_ground()
+      if acc >= 0 {
+        ground = 0xFF000000 | acc
+      }
       ink_color = pager_active_ink()
     } else {
       if (mask >> i) & 1 == 1 {
@@ -492,10 +542,15 @@ def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64) Void {
 }
 
 // The header bar onto its own surface, whole from scratch: the
-// wallpaper's formula under the header's scrim, row by row — the bar
-// samples the display's own rows, `mw` and `mh` the mode — then the
-// wordmark one pad in, the bell and the pager after it, the wall clock
-// at the right edge and the running count before it. The clock is
+// decoded art's rows under the header's scrim, row by row (A31.2 —
+// the material replays the runs, the formula's numbers gone), then
+// the wordmark one pad in — its ink the palette's accent, the art's
+// own chroma at the ink energy the ribbons carry, the cyan constant
+// the failure keeps — the bell and the pager after it, the wall clock
+// at the right edge and the running count before it. `mode` is the
+// display's own packed word (w above h, the shell's packing — the
+// eight arguments the machine's calls take are the wall here too).
+// The clock is
 // `now` — the seconds the caller read, never the bar's own (the bar
 // has no clock of its own; the time verb and the caller's wake are its
 // ground, D17) — and the count is the one fact the desktop keeps (its
@@ -506,19 +561,24 @@ def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64) Void {
 // does no verb of its own. The text sits centered in the bar's height,
 // the line box's own.
 def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
-                 mw Int64, mh Int64, running Int64, now Int64,
-                 desks Int64) Void {
+                 mode Int64, running Int64, now Int64,
+                 desks Int64, art Array[Int64]) Void {
   var y = 0
   while y < header_height() {
-    material_row(s, y, y, w, mw, mh, header_scrim())
+    material_row(s, y, y, w, mode >> 32, header_scrim(), art)
     y = y + 1
   }
   const ty = (header_height() - f.line_height()) / 2
-  ui_fb.text(f, "EmoOS", 8, ty, header_accent(), s)
+  const extracted = palette_accent(art)
+  var acc = extracted
+  if acc < 0 {
+    acc = header_accent()
+  }
+  ui_fb.text(f, "EmoOS", 8, ty, acc, s)
   const cw = ui_fb.text_width(f, clock_text(0))
   ui_fb.text(f, clock_text(now), w - icon_margin() - cw, ty, header_ink(), s)
   count_text(s, f, w - icon_margin() - cw - 16, ty, running, header_ink())
-  paint_pager(s, f, desks)
+  paint_pager(s, f, desks, extracted)
 }
 
 // ---- the wall clock (emo-desktop M26, D17) ----

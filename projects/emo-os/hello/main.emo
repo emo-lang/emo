@@ -2017,6 +2017,10 @@ if peek64(desk_cell) != 0 {
   }
   const mw = out_w(mode)
   const mh = out_h(mode)
+  // The chrome's material wants the art (emo-desktop M31, A31.2): the
+  // file's one read before the strip's first paint — the load's guard
+  // no-ops when the desktop's boot already ran it.
+  wall_file_load(mode)
   const max_x = out_w(range)
   const max_y = out_h(range)
   desk_range_line(max_x, max_y)
@@ -3188,35 +3192,6 @@ def desk_list_load() Void {
 // hosted canvas paints the same formula), so the golden's digest and
 // the screendump's bytes are one design.
 
-// One clipped span packed x above w — the ribbon row's store span, the
-// clip the package's `blend` gets from `ui_fb.clip` and the raw stores
-// must do themselves (a negative x would walk the store off the row).
-def desk_span_clip(x Int64, w Int64, mw Int64) Int64 {
-  var x0 = x
-  var w0 = w
-  if x0 < 0 {
-    w0 = w0 + x0
-    x0 = 0
-  }
-  if x0 + w0 > mw {
-    w0 = mw - x0
-  }
-  if w0 < 0 {
-    w0 = 0
-  }
-  return (x0 << 32) | w0
-}
-
-// One ribbon row blended: the span the clip packed, one pixel tall.
-def desk_ribbon_row(base Int64, mw Int64, y Int64, x Int64, w Int64, ink_color Int64) Void {
-  const span = desk_span_clip(x, w, mw)
-  const x0 = span >> 32
-  const w0 = span & 4294967295
-  if w0 > 0 {
-    carve_blend(base, mw, x0, y, w0, 1, ink_color)
-  }
-}
-
 // The wallpaper's art, whole (emo-desktop M31, A31.1): the volume's
 // RLE file decoded run by run onto the buffer — one fill a run,
 // row-aligned, the walk the package's `wallpaper_decode` keeps on the
@@ -3252,10 +3227,15 @@ def desk_wallpaper_decode(base Int64, mw Int64, mh Int64) Void {
 
 // The wallpaper file's boot read (emo-desktop M31, A31.1): the
 // volume's whole RLE into the shell's scratch, the header checked
-// before the ok cell turns — the magic's word, the mode's own w and h
-// packed above the size's floor. A read refused, a size past the
-// scratch, a foreign magic, a foreign mode: all one verdict, the flat
-// ground's.
+// before the ok cell turns — the magic's word, the caller's own mode
+// packed above the size's floor. The len cell is the attempt's mark
+// (zero never tried, negative tried and refused, positive the size
+// the answer wrote), so every chrome era's first paint can want the
+// art and only the first gets the read — the desk pass's strip paints
+// before the desktop's own boot ever ran (A31.2's find: the era's
+// strip wore the flat ground and its digest said so). A read refused,
+// a size past the scratch, a foreign magic, a foreign mode: all one
+// verdict, the flat ground's.
 def put_wall_name(a Int64) Int64 {
   poke8(a, 119B)      // w
   poke8(a + 1, 97B)   // a
@@ -3273,21 +3253,23 @@ def put_wall_name(a Int64) Int64 {
   return 13
 }
 
-def wall_file_load() Void {
-  poke64(buf + wall_file_ok, 0)
-  const n = put_wall_name(buf + wall_name)
-  const mode = peek64(buf + desk_mode_cell)
-  const mw = mode >> 32
-  const mh = mode & 4294967295
-  case syscall.file_read(buf + wall_name, n, buf + wall_file, 65536) {
-    (R.error, _) then {}
-    (R.ok, size) then {
-      if size >= 16 && size <= 65536 {
-        if peek64(buf + wall_file) == 0x314C4C41574F4D45 {
-          const wh = peek64(buf + wall_file + 8)
-          if (wh & 4294967295) == mw && (wh >> 32) == mh {
-            poke64(buf + wall_file_len, size)
-            poke64(buf + wall_file_ok, 1)
+def wall_file_load(mode Int64) Void {
+  if peek64(buf + wall_file_len) == 0 {
+    poke64(buf + wall_file_ok, 0)
+    poke64(buf + wall_file_len, -1)
+    const n = put_wall_name(buf + wall_name)
+    const mw = mode >> 32
+    const mh = mode & 4294967295
+    case syscall.file_read(buf + wall_name, n, buf + wall_file, 65536) {
+      (R.error, _) then {}
+      (R.ok, size) then {
+        if size >= 16 && size <= 65536 {
+          if peek64(buf + wall_file) == 0x314C4C41574F4D45 {
+            const wh = peek64(buf + wall_file + 8)
+            if (wh & 4294967295) == mw && (wh >> 32) == mh {
+              poke64(buf + wall_file_len, size)
+              poke64(buf + wall_file_ok, 1)
+            }
           }
         }
       }
@@ -3296,36 +3278,85 @@ def wall_file_load() Void {
 }
 
 // One row of the chrome's material at the display row `gy`, painted at
-// the buffer's local `ly`: the wallpaper's gradient row, every ribbon
-// whose span holds the row over it, the scrim over the whole — the
-// package's `material_row` mirrored (D8: the chrome samples the
-// wallpaper's formula, it never reads the pixels behind it), the call
-// that paints the call that stays typed.
-def desk_chrome_row(base Int64, mw Int64, ly Int64, gy Int64, mh Int64, scrim Int64) Void {
-  const denom = mh - 1
-  const tr = (emo_desktop.wall_top() >> 16) & 255
-  const tg = (emo_desktop.wall_top() >> 8) & 255
-  const tb = emo_desktop.wall_top() & 255
-  const br = (emo_desktop.wall_bottom() >> 16) & 255
-  const bg = (emo_desktop.wall_bottom() >> 8) & 255
-  const bb = emo_desktop.wall_bottom() & 255
-  const r = (tr * (denom - gy) + br * gy) / denom
-  const g = (tg * (denom - gy) + bg * gy) / denom
-  const b = (tb * (denom - gy) + bb * gy) / denom
-  carve_fill(base, mw, 0, ly, mw, 1, (r << 16) | (g << 8) | b)
-  if gy < (5 * mh) / 8 {
-    desk_ribbon_row(base, mw, ly, -((25 * mw) / 128) + (3 * gy) / 4,
-      (115 * mw) / 256, 0x2830B8C8)
-  }
-  if gy >= (5 * mh) / 24 && gy < (15 * mh) / 16 {
-    desk_ribbon_row(base, mw, ly, (15 * mw) / 256 + gy / 2, (25 * mw) / 64,
-      0x20E86890)
-  }
-  if gy >= (85 * mh) / 192 {
-    desk_ribbon_row(base, mw, ly, (225 * mw) / 256 - gy / 4, (135 * mw) / 256,
-      0x188868E8)
+// the buffer's local `ly`: the scratch's own runs replayed — the file
+// the boot read is the art's truth, the row's colors walked and filled
+// whole, the scrim over the row — the package's `material_row`
+// mirrored (D8's sample now the art's own, A31.2), the call that
+// paints the call that stays typed. A boot whose volume carried no
+// art paints the flat ground's row under the scrim.
+def desk_chrome_row(base Int64, mw Int64, ly Int64, gy Int64, scrim Int64) Void {
+  if peek64(buf + wall_file_ok) == 0 {
+    carve_fill(base, mw, 0, ly, mw, 1, emo_desktop.wall_top())
+  } else {
+    var x = 0
+    var y = 0
+    var at = buf + wall_file + 16
+    const end = buf + wall_file + peek64(buf + wall_file_len)
+    while at < end && y <= gy {
+      const run = peek64(at)
+      const count = run & 4294967295
+      const color = run >> 32
+      if y == gy {
+        carve_fill(base, mw, x, ly, count, 1, color)
+      }
+      x = x + count
+      if x == mw {
+        x = 0
+        y = y + 1
+      }
+      at = at + 8
+    }
   }
   carve_blend(base, mw, 0, ly, mw, 1, scrim)
+}
+
+// The palette's accent, the shell's own read (emo-desktop M31, A31.2):
+// the scratch's runs walked — the most chromatic color at the ink
+// energy the scaling answers, the package's `palette_accent` mirrored,
+// the same floor and the same 232 the channels climb to. No file, no
+// chroma past the floor: -1, the constants the wear falls back to.
+def desk_palette_accent() Int64 {
+  var best = -1
+  var best_hi = 0
+  var best_sat = 47
+  if peek64(buf + wall_file_ok) != 0 {
+    var at = buf + wall_file + 16
+    const end = buf + wall_file + peek64(buf + wall_file_len)
+    while at < end {
+      const color = peek64(at) >> 32
+      const r = (color >> 16) & 255
+      const g = (color >> 8) & 255
+      const b = color & 255
+      var hi = r
+      var lo = r
+      if g > hi {
+        hi = g
+      }
+      if g < lo {
+        lo = g
+      }
+      if b > hi {
+        hi = b
+      }
+      if b < lo {
+        lo = b
+      }
+      if hi - lo > best_sat {
+        best_sat = hi - lo
+        best_hi = hi
+        best = color
+      }
+      at = at + 8
+    }
+  }
+  if best < 0 {
+    return -1
+  }
+  const r = (best >> 16) & 255
+  const g = (best >> 8) & 255
+  const b = best & 255
+  return (((r * 232) / best_hi) << 16) | (((g * 232) / best_hi) << 8) |
+    ((b * 232) / best_hi)
 }
 
 // A label's glyphs along one line from `(x, y)`, the line box's
@@ -3378,11 +3409,16 @@ def desk_count_text(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, right
 def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, running Int64, now Int64, desks Int64) Void {
   var y = 0
   while y < emo_desktop.header_height() {
-    desk_chrome_row(base, mw, y, y, mh, emo_desktop.header_scrim())
+    desk_chrome_row(base, mw, y, y, emo_desktop.header_scrim())
     y = y + 1
   }
   const ty = (emo_desktop.header_height() - f.line_height()) / 2
-  desk_text(f, base, mw, emo_desktop.header_height(), "EmoOS", 8, ty, emo_desktop.header_accent())
+  const extracted = desk_palette_accent()
+  var acc = extracted
+  if acc < 0 {
+    acc = emo_desktop.header_accent()
+  }
+  desk_text(f, base, mw, emo_desktop.header_height(), "EmoOS", 8, ty, acc)
   const cw = ui_fb.text_width(f, emo_desktop.clock_text(0))
   desk_text(f, base, mw, emo_desktop.header_height(), emo_desktop.clock_text(now), mw - emo_desktop.icon_margin() - cw, ty, emo_desktop.header_ink())
   desk_count_text(f, base, mw, emo_desktop.header_height(), mw - emo_desktop.icon_margin() - cw - 16, ty, running, emo_desktop.header_ink())
@@ -3397,6 +3433,9 @@ def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, runnin
     var ink_color = emo_desktop.pager_empty_ink()
     if i == active {
       ground = emo_desktop.pager_active_ground()
+      if extracted >= 0 {
+        ground = 0xFF000000 | extracted
+      }
       ink_color = emo_desktop.pager_active_ink()
     } else {
       if (mask >> i) & 1 == 1 {
@@ -3428,7 +3467,7 @@ def desk_dock_paint(f ui_fb.raster.Strike, base Int64, mw Int64, top Int64, labe
   const dims = ui_fb_winbuf.pack(mw, sh)
   var ly = 0
   while ly < sh {
-    desk_chrome_row(base, mw, ly, top + ly, top + sh, emo_desktop.dock_scrim())
+    desk_chrome_row(base, mw, ly, top + ly, emo_desktop.dock_scrim())
     ly = ly + 1
   }
   const sx = emo_desktop.shelf_pad()
@@ -4596,8 +4635,9 @@ def desktop() Void {
   poke64(buf + desk_wall_base, base_w)
   // The art's boot read (emo-desktop M31, A31.1): the mode's own
   // verdict before the first paint — the wallpaper the volume's file
-  // decodes, or the flat ground when the volume carries none.
-  wall_file_load()
+  // decodes, or the flat ground when the volume carries none. (The
+  // desk pass wanted the file first; the guard kept the one read.)
+  wall_file_load(mode)
   desk_wall_repaint(f)
   desk_icons_line()
   // The launcher's catalog (emo-desktop M28): the volume's apps walked

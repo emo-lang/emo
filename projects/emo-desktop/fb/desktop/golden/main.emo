@@ -27,11 +27,14 @@ require "hash"
 def main() {
   const strip = ui_fb_canvas.canvas(1920, 40)
   // the desk era's three: no app focused, alpha's tile lit, beta's
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["a", "b"], -1, 0)
+  emo_desktop.paint(strip, f, 1920, 1040, ["a", "b"], -1, 0,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["a", "b"], 0, 0)
+  emo_desktop.paint(strip, f, 1920, 1040, ["a", "b"], 0, 0,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["a", "b"], 1, 0)
+  emo_desktop.paint(strip, f, 1920, 1040, ["a", "b"], 1, 0,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
   // the desktop era's residency, the launcher's four tiles: the
   // launcher's own first (emo-desktop M28, A28.1 — the `s` tile the
@@ -40,19 +43,26 @@ def main() {
   // empty strip, the counter's tile, two, all three, then the quits'
   // way back down (the counter out, the browser out) and the session's
   // end, every dot out again
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 0)
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 0,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 2)
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 2,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 6)
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 6,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 14)
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 14,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 12)
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 12,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 8)
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 8,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
-  emo_desktop.paint(strip, f, 1920, 40, 1040, ["s", "c", "f", "e"], -1, 0)
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 0,
+    wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
   println("tile ${emo_desktop.press(100, 200, 1920, 1080, 2)}")
   println("tile ${emo_desktop.press(24, 1060, 1920, 1080, 4)}")
@@ -74,7 +84,7 @@ def main() {
   const wall = ui_fb_canvas.canvas(256, 192)
   wall_rle.wallpaper_formula(wall, 256, 192)
   println("wall ${ui_fb_frame.digest(wall)}")
-  emo_desktop.wallpaper_decode(wall, 256, 192, wall_rle.runs())
+  emo_desktop.wallpaper_decode(wall, 256, 192, wall_rle.quarter_runs())
   println("wall decoded ${ui_fb_frame.digest(wall)}")
   const bar = ui_fb_canvas.canvas(256, 24)
   // the clock's epochs (emo-desktop M26, A26.1): the bar reads the
@@ -85,16 +95,28 @@ def main() {
   // occupancy's ink (desk 1 live under desk 0's accent), the accent's
   // move (desk 2 active, desks 0 and 2 occupied — every cell states
   // its fact), and every desk live under desk 3's accent.
-  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 2, 1774775100, 0)
+  emo_desktop.paint_header(bar, f, 256, (1920 << 32) | 1080, 2, 1774775100, 0,
+    wall_rle.runs())
   println("bar ${ui_fb_frame.digest(bar)}")
-  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 0, 1785541260, 0)
+  emo_desktop.paint_header(bar, f, 256, (1920 << 32) | 1080, 0, 1785541260, 0,
+    wall_rle.runs())
   println("bar ${ui_fb_frame.digest(bar)}")
-  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 1, 1774775100, 256)
+  emo_desktop.paint_header(bar, f, 256, (1920 << 32) | 1080, 1, 1774775100, 256,
+    wall_rle.runs())
   println("bar ${ui_fb_frame.digest(bar)}")
-  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 1, 1774775100, 1282)
+  emo_desktop.paint_header(bar, f, 256, (1920 << 32) | 1080, 1, 1774775100, 1282,
+    wall_rle.runs())
   println("bar ${ui_fb_frame.digest(bar)}")
-  emo_desktop.paint_header(bar, f, 256, 1920, 1080, 2, 1785541260, 3843)
+  emo_desktop.paint_header(bar, f, 256, (1920 << 32) | 1080, 2, 1785541260, 3843,
+    wall_rle.runs())
   println("bar ${ui_fb_frame.digest(bar)}")
+  // the failure's fall (emo-desktop M31, A31.2): the same bar over the
+  // gray art — the palette's walk refuses it, and the wordmark wears
+  // the cyan constant the failure keeps, the bytes pinned beside the
+  // accent's own
+  emo_desktop.paint_header(bar, f, 256, (1920 << 32) | 1080, 0, 1785541260, 0,
+    wall_rle.gray_runs())
+  println("bar gray ${ui_fb_frame.digest(bar)}")
   // the pager's own probes: the cells' origins pinned, a press in each
   // cell names its desk, the gaps and the world outside the bar name
   // none
@@ -187,10 +209,11 @@ def main() {
   const lh = emo_desktop.launch_h()
   // the wallpaper's replica at the display's own size (emo-desktop
   // M30, A30.1): the formula is position-dependent on the full mode —
-  // the panel's pixels sample the display's coordinates (M31, A31.1:
-  // the fixture's formula now — the package's live path is the decode)
+  // the panel's pixels sample the display's coordinates (M31, A31.2:
+  // the replica the volume's own runs decoded — the retirement's
+  // full-mode proof, the bytes the launch composites pin)
   const lwall = ui_fb_canvas.canvas(1920, 1080)
-  wall_rle.wallpaper_formula(lwall, 1920, 1080)
+  emo_desktop.wallpaper_decode(lwall, 1920, 1080, wall_rle.runs())
   const l1 = ui_fb_canvas.canvas(lw, lh)
   const l2 = ui_fb_canvas.canvas(lw, lh)
   const l3 = ui_fb_canvas.canvas(lw, lh)

@@ -1311,7 +1311,33 @@ for yy in range(24):
         r0, g0, b0 = wall(xx, yy)
         overlay[(xx, yy)] = over(HEADER_SCRIM, (r0 << 16) | (g0 << 8) | b0)
 ty = (24 - LINE) // 2
-stamp_text('EmoOS', 8, ty, 0x40C8C8)
+
+# The palette's accent (emo-desktop M31, A31.2): the machine's own walk
+# over the volume's runs — the file the shell read at boot, the walk
+# the shell's `desk_palette_accent` and the package's `palette_accent`
+# mirror — the most chromatic run's hue at the chrome's ink energy, the
+# brightest channel scaled to 232, the ribbons' own peak. No chroma
+# past the floor: the constant the failure keeps.
+import struct as _struct
+
+def extract_accent(path):
+    best, best_hi, best_sat = -1, 0, 47
+    blob = open(path, 'rb').read()
+    at = 16
+    while at + 8 <= len(blob):
+        count, color = _struct.unpack_from('<II', blob, at)
+        r, g, b = (color >> 16) & 255, (color >> 8) & 255, color & 255
+        hi, lo = max(r, g, b), min(r, g, b)
+        if hi - lo > best_sat:
+            best_sat, best_hi, best = hi - lo, hi, color
+        at += 8
+    if best < 0:
+        return -1
+    r, g, b = (best >> 16) & 255, (best >> 8) & 255, best & 255
+    return ((r * 232 // best_hi) << 16) | ((g * 232 // best_hi) << 8) | (b * 232 // best_hi)
+
+ACCENT = extract_accent('wallpaper.rle')
+stamp_text('EmoOS', 8, ty, 0x40C8C8 if ACCENT < 0 else ACCENT)
 # The notification bell (emo-desktop M25, A25.2): the header's panel
 # toggle after the wordmark — a 16x16 rounded square, the panel's state
 # its color (the dim ink while the panel is shut; the accent while it
