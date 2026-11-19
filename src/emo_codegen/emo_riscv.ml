@@ -2869,7 +2869,7 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
           | "length", [] ->
               emit_expr env d self_;
               put env "    andi a0, a0, -32\n";
-              put env "    ld a0, 8(a0)\n";
+              put env "    ld a0, 16(a0)\n";
               if boxed then box_result env "emo_box_i64"
           | "set", [ k; v ] ->
               let m_slot = temp_offset env d in
@@ -4062,20 +4062,23 @@ let emit_function env ~(label : string) ~(fname : string)
      the only writer — the c host's own init sequence. The inits pool
      their births one after another with no boundary between them —
      one walk carries the accumulation. *)
+  if f.pool > 0 then put env "    sd zero, %d(sp)\n" (pool_offset f);
   let gctr = ref 0 in
   List.iter
     (fun (g, init) ->
       pool_expr env gctr init;
       emit_expr env 0 init;
       box_if_numeric env init.Emo_ir.ety;
-      pool_result env init.Emo_ir.ety;
-      gput env "    call emo_retain\n";
-      gput env "    la t0, %s\n" (global_cell g);
-      gput env "    sd a0, 0(t0)\n")
+      (* the birth's claim already rides the pool — emit_expr's arms
+         pool their own births, the walk's mirror — and the cell takes
+         its own with the retain; a second put would answer the drain
+         twice and free a word the cell still holds *)
+      put env "    call emo_retain\n";
+      put env "    la t0, %s\n" (global_cell g);
+      put env "    sd a0, 0(t0)\n")
     pglobals;
   if !gctr > f.pool then f.pool <- !gctr;
-  if f.pool > 0 then gput env "    sd zero, %d(sp)\n" (pool_offset f);
-  gput env "%s:\n" f.body_start;
+  put env "%s:\n" f.body_start;
   emit_stmts env body;
   (* Fall-off: the statement walk already left a final expression
      statement's value in a0 (fa0 for a Float64-typed fall-off in a
@@ -4406,12 +4409,12 @@ let user_console_hook_asm =
     .globl emo_user_console_hook
 emo_user_console_hook:
     la t2, emo_user_console_byte
-    sb a0, 0(t2)
-    mv a0, t2
-    li a1, 1
-    li a7, 1
-    ecall
-    ret
+    sb a0, 0(t2)            # the byte parks in the cell
+    mv a0, t2               # the gate's write verb: (cell, one byte);
+    li a1, 1                #   under OpenSBI the same ecall renders the
+    li a7, 1                #   pointer's low byte, so this hook's world
+    ecall                   #   is the kernel's — the direct boot reads
+    ret                     #   the demo through the kernel's own serial
 
     .section .bss
     .globl emo_user_console_byte
@@ -4491,6 +4494,11 @@ emo_alloc:
     la t1, emo_cur_slot
     ld t1, 0(t1)            # the allocator is the current process
     ld t2, 576(t1)          # its arena cursor
+    addi t2, t2, 31
+    andi t2, t2, -32        # the block on the 32-line — the tagged word's
+                            #   low bits are the tag's, so every block's
+                            #   own address must leave them clear, whatever
+                            #   phase the arena's base came in with
     add t3, t2, t0
     ld t4, 584(t1)          # its arena end — the quota's edge, minus the
     addi t4, t4, -8         #   freelist head word the arena carries at its
@@ -4634,7 +4642,13 @@ emo_ident_new:
     .globl emo_pool_put
 emo_pool_put:
     ld t0, 0(a1)
-    bgeu t0, a2, .Lidn_over
+    bgeu t0, a2, .Lput_over
+    j .Lput_ok
+.Lput_over:
+    la a0, msg_pool
+    la a1, msg_pool_end
+    call emo_fail
+.Lput_ok:
     addi t1, a1, 8
     slli t2, t0, 3
     add t1, t1, t2
@@ -4806,9 +4820,9 @@ emo_release_walk:
     sd zero, 24(sp)         # the walk's index
     ld s2, 56(sp)           # the map block (the release frame's word)
     ld s1, 48(sp)           # the serving slot (the release frame's own)
-    ld s3, 24(s2)           # the entries block (payload word 2)
+    ld s3, 32(s2)           # the entries block (payload word 3)
     beqz s3, .Lrmp_buckets
-    ld s4, 8(s2)            # the count
+    ld s4, 16(s2)           # the count
 .Lrmp_walk:
     ld t4, 24(sp)
     bge t4, s4, .Lrmp_eblock
@@ -4835,7 +4849,7 @@ emo_release_walk:
     sd t3, 8(s3)            # the link rides the entries block's payload
     sd s3, -8(t2)
 .Lrmp_buckets:
-    ld t0, 40(s2)           # the buckets block (payload word 4)
+    ld t0, 48(s2)           # the buckets block (payload word 5)
     beqz t0, .Lrmp_done
     ld t2, 584(s1)
     ld t3, -8(t2)
@@ -10285,17 +10299,28 @@ emo_gc_heap_slide:
     li s2, 0                # the expected destination
     li s3, 0                # i
     addi s4, s0, 16         # the elements cursor
+    ld s5, 0(s0)            # the pairs' header word: the raw builder's
+                            #   array marks itself -1 and its payloads lie
+                            #   bare — a tagged array's elements ride box
+                            #   cells and need the detag
 .Lgsl_valid:
     bge s3, s1, .Lgsl_vdone
     ld a0, 0(s4)
+    bgez s5, .Lgsl_htag
+    j .Lgsl_hhave
+.Lgsl_htag:
     andi t0, a0, -32
-    ld t0, 8(t0)            # the handle word
-    mv a0, t0
+    ld a0, 8(t0)            # the handle word
+.Lgsl_hhave:
     call emo_gc_live        # a0 = the entry
     ld t1, 24(a0)           # the size
     ld t2, 8(s4)
+    bgez s5, .Lgsl_dtag
+    j .Lgsl_dhave
+.Lgsl_dtag:
     andi t2, t2, -32
     ld t2, 8(t2)            # the destination
+.Lgsl_dhave:
     bne t2, s2, .Lgsl_dest
     add t3, t2, t1
     addi t3, t3, 1
@@ -11119,8 +11144,16 @@ emo_map_new_empty:
     li a1, 0
     li a2, 26               # the Map's word tag (kind 13)
     li a3, 0
-    call emo_ident_new      # refcount 1, the requested count; the
-                            #   identity's own walk zeroed the payload
+    call emo_ident_new      # refcount 1, the requested count — the
+                            #   block may come off the freelist, so the
+                            #   fields zero here, not in ident_new
+    andi t0, a0, -32
+    sd zero, 8(t0)
+    sd zero, 16(t0)
+    sd zero, 24(t0)
+    sd zero, 32(t0)
+    sd zero, 40(t0)
+    sd zero, 48(t0)
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -11139,6 +11172,13 @@ emo_map_key_ok:
     beq t1, t2, .Lmko_yes   # Float64
     li t2, 2
     beq t1, t2, .Lmko_yes   # String
+    # the raw Int64: a raw array's element read answers the payload bare,
+    # an odd word whose kind bits name nothing — the same value its box
+    # carries, so the map takes it and key_eq matches the two shapes
+    andi t2, a0, 1
+    beqz t2, .Lmko_no
+    j .Lmko_yes
+.Lmko_no:
     li a0, 0
     ret
 .Lmko_yes:
@@ -11193,11 +11233,19 @@ emo_map_key_eq:
     andi t0, a0, 1
     andi t1, a1, 1
     bnez t0, .Lmke_a0imm
-    bnez t1, .Lmke_no       # an immediate and a pointer — kinds differ
-    j .Lmke_ptrs
+    bnez t1, .Lmke_mix_b0   # a cell against a bare word: the Int64's
+    j .Lmke_ptrs            #   two shapes, matched by payload below
 .Lmke_a0imm:
     bnez t1, .Lmke_imms
-    j .Lmke_no
+    srli t3, a1, 1
+    andi t3, t3, 0xF
+    beqz t3, .Lmke_mix_b    # the cell (a1) is an Int64: its payload
+    j .Lmke_no              #   against the bare word (a0)
+.Lmke_mix_b0:
+    srli t2, a0, 1
+    andi t2, t2, 0xF
+    beqz t2, .Lmke_mix_a    # the cell (a0) is an Int64: its payload
+    j .Lmke_no              #   against the bare word (a1)
 .Lmke_imms:
     beq a0, a1, .Lmke_yes
     j .Lmke_no
@@ -11206,19 +11254,58 @@ emo_map_key_eq:
     andi t2, t2, 0xF
     srli t3, a1, 1
     andi t3, t3, 0xF
-    bne t2, t3, .Lmke_no
+    bne t2, t3, .Lmke_mixed
     beqz t2, .Lmke_i64
     li t4, 1
     beq t2, t4, .Lmke_f64
     li t4, 2
     beq t2, t4, .Lmke_str
     j .Lmke_no
+.Lmke_mixed:
+    # the box and the bare payload of one Int64 — the raw array's
+    # element read answers the bare word, the box carries it inside;
+    # one value, two shapes, equal keys
+    beqz t2, .Lmke_mix_a
+    beqz t3, .Lmke_mix_b
+    j .Lmke_no
+.Lmke_mix_a:
+    andi t2, a1, 1
+    beqz t2, .Lmke_no
+    srli t4, a0, 31
+    beqz t4, .Lmke_no       # the cell side must be a real RAM address:
+    andi t0, a0, -32        #   a bare 0 or 1 wears kind bits 0 too
+    ld t0, 8(t0)
+    beq t0, a1, .Lmke_yes
+    j .Lmke_no
+.Lmke_mix_b:
+    andi t2, a0, 1
+    beqz t2, .Lmke_no
+    srli t4, a1, 31
+    beqz t4, .Lmke_no       # the cell side must be a real RAM address
+    andi t1, a1, -32
+    ld t1, 8(t1)
+    beq t1, a0, .Lmke_yes
+    j .Lmke_no
 .Lmke_i64:
+    srli t4, a0, 31
+    beqz t4, .Lmke_i64_a    # a bare word wearing kind bits zero: its
+    srli t4, a1, 31         #   value IS the word, no cell behind it
+    beqz t4, .Lmke_i64_b
     andi t0, a0, -32
     ld t0, 8(t0)
     andi t1, a1, -32
     ld t1, 8(t1)
     beq t0, t1, .Lmke_yes
+    j .Lmke_no
+.Lmke_i64_a:
+    andi t0, a1, -32
+    ld t0, 8(t0)
+    beq t0, a0, .Lmke_yes
+    j .Lmke_no
+.Lmke_i64_b:
+    andi t0, a0, -32
+    ld t0, 8(t0)
+    beq t0, a1, .Lmke_yes
     j .Lmke_no
 .Lmke_f64:
     andi t0, a0, -32
@@ -11266,7 +11353,7 @@ emo_map_find:
     mv s1, a1
     ld s2, 32(s0)           # the entries
     beqz s2, .Lmf_none
-    ld s3, 8(s0)            # the count
+    ld s3, 16(s0)           # the count
     li s4, 0
 .Lmf_loop:
     bge s4, s3, .Lmf_none
@@ -11403,6 +11490,19 @@ emo_map_store:
     slli t3, t1, 4
     add t2, t2, t3
     add t2, s3, t2          # the new entry slot
+    # the key and the value ride across too: the hash's leaf spent the
+    # temps, so the old entry re-derives from the cell it still sits in
+    andi t0, s0, -32
+    ld t5, 32(t0)           # the old entries
+    slli t3, t1, 3
+    mv t4, t1
+    slli t4, t4, 4
+    add t3, t3, t4
+    add t3, t5, t3          # the old entry, again
+    ld t4, 0(t3)
+    sd t4, 0(t2)            # the key
+    ld t4, 8(t3)
+    sd t4, 8(t2)            # the value
     sd a5, 16(t2)           # next
     sd t1, 0(a0)            # the head
     addi t1, t1, 1
@@ -11431,7 +11531,7 @@ emo_map_store:
     sd s5, 24(t0)           # the new cap
 .Lms_append:
     andi t0, s0, -32
-    ld t1, 24(t0)           # the count (fresh after a grow)
+    ld t1, 16(t0)           # the count (fresh after a grow)
     ld t2, 32(t0)           # the entries
     slli t3, t1, 3
     slli t4, t1, 4
@@ -11441,19 +11541,19 @@ emo_map_store:
     mv a0, s1
     call emo_map_hash
     andi t0, s0, -32        # the cell re-reads after the leaf
-    ld t3, 32(t0)           # the mask
+    ld t3, 40(t0)           # the mask
     and a0, a0, t3
     slli a0, a0, 3
-    ld t5, 40(t0)           # the buckets
+    ld t5, 48(t0)           # the buckets
     add t5, t5, a0          # the bucket slot
     ld a2, 0(t5)            # the old head
     sd a2, 16(s3)           # entry.next
-    ld t6, 24(t0)           # the count, the entry's index
+    ld t6, 16(t0)           # the count, the entry's index
     sd t6, 0(t5)            # buckets[b] = i
     sd s1, 0(s3)            # entry.key
     sd s2, 8(s3)            # entry.value
     addi t6, t6, 1
-    sd t6, 24(t0)           # the count rises
+    sd t6, 16(t0)           # the count rises
     mv a0, s1
     call emo_retain         # the map takes the key's claim
     mv a0, s2
@@ -11659,10 +11759,10 @@ emo_map_remove:
     ld a0, 0(t2)
     call emo_map_hash
     andi t0, s0, -32
-    ld t3, 32(t0)           # the mask
+    ld t3, 40(t0)           # the mask
     and a0, a0, t3
     slli a0, a0, 3
-    ld t3, 40(t0)           # the buckets
+    ld t3, 48(t0)           # the buckets
     add t3, t3, a0
     ld a5, 0(t3)            # the current head
     slli t4, s5, 3
@@ -11689,11 +11789,14 @@ emo_map_remove:
 # emo_map_keys: a0 = the map. a0 = an Array of the keys, insertion
 # order — the keys are stored tagged, so the words copy as they are.
 emo_map_keys:
-    addi sp, sp, -32
+    addi sp, sp, -56
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
     sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
     andi s0, a0, -32
     ld s1, 16(s0)           # the count
     addi a0, s1, 1
@@ -11701,19 +11804,36 @@ emo_map_keys:
     mv s2, a0               # the block
     addi t1, a0, 8
     sd s1, 0(t1)            # the length
-    ld t2, 32(s0)           # the entries
-    addi t1, s2, 16         # the element cursor
-    li t3, 0
+    ld s3, 32(s0)           # the entries
+    addi s4, s2, 16         # the element cursor
+    li s5, 0                # the index — the walk's state lives in
+                            #   s-regs only: the box call below spends
+                            #   every temp it finds
 .Lmk_walk:
-    bge t3, s1, .Lmk_done
-    slli t4, t3, 3
-    slli t5, t3, 4
+    bge s5, s1, .Lmk_done
+    slli t4, s5, 3
+    slli t5, s5, 4
     add t4, t4, t5
-    add t4, t2, t4
+    add t4, s3, t4
     ld t6, 0(t4)            # the key's word
-    sd t6, 0(t1)
-    addi t1, t1, 8
-    addi t3, t3, 1
+    andi t0, t6, 1
+    beqz t0, .Lmk_key_tag   # a pointer key rides as it is
+    srli t0, t6, 1
+    andi t0, t0, 0xF
+    beqz t0, .Lmk_key_tag   # the Int64 cell rides as it is
+    li t2, 1
+    beq t0, t2, .Lmk_key_tag
+    li t2, 2
+    beq t0, t2, .Lmk_key_tag
+    mv a0, t6
+    call emo_box_i64        # the raw Int64's key boxes here: the answer
+    mv t6, a0               #   array is a tagged one and the accessor
+    j .Lmk_put              #   reads its elements through the box
+.Lmk_key_tag:
+.Lmk_put:
+    sd t6, 0(s4)
+    addi s4, s4, 8
+    addi s5, s5, 1
     j .Lmk_walk
 .Lmk_done:
     ori a0, s2, 8           # the Array word (kind 4)
@@ -11721,7 +11841,10 @@ emo_map_keys:
     ld s0, 8(sp)
     ld s1, 16(sp)
     ld s2, 24(sp)
-    addi sp, sp, 32
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 56
     ret
 
 # emo_map_insert_pair: a0 = the map, a1 = the (key, value) pair's cell.

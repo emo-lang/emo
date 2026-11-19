@@ -1,7 +1,9 @@
 package {
-  name = "gcfull"
+  name = "emo/gc_metal"
   version = "0.1.0"
   targets = ["riscv64"]
 
-  deps {}
+  deps {
+    "gc" = "0.1.0"
+  }
 }
