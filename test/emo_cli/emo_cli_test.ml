@@ -4866,7 +4866,8 @@ let new_tests =
           "main calls the src module" true
           (contains main_src "src.lib.greet(");
         let lib_src = read_file (Filename.concat dir "src/lib.emo") in
-        Alcotest.(check bool) "the src module greets" true
+        Alcotest.(check bool)
+          "the src module greets" true
           (contains lib_src "def greet(");
         Alcotest.(check bool)
           "gitignore ignores the build dir" true

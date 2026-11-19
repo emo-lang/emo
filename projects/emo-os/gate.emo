@@ -126,6 +126,12 @@ const grant_rows = 8
 // A9.3): the buffer's format at +96 and its scale at +104, the gate's
 // to record when the verbs name them, beside the eight words T8.5
 // laid out (id, owner, base, blocks, w, h, ready, the damage rect).
+// The shape's word joined them (emo-desktop M30, A30.2) at +48, the
+// one free word the T8.5 layout left: the radius and the softness the
+// walk's mask and shadow wear, packed each one past its value
+// (radius's in the high half, the softness in the low), zero the
+// undeclared's — the row's stride never moved, the routing cells
+// downstream where A11.2 parked them.
 const grant_row = 112
 
 // The compositor's cells (T8.6): the pid cell the gate routes the
@@ -846,6 +852,32 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
       return -reason_argument
     }
     poke64(grant_table + (sidx * grant_row) + 104, r1)
+    return 0
+  }
+  if n == 33 {
+    // win_shape(grant, radius, softness) (emo-desktop M30, A30.2):
+    // the shape's word on the row — the radius and the softness the
+    // walk's mask and shadow wear, packed each one past its value.
+    // The toplevels' 10 and 16 are the defaults the rows carry unset;
+    // zero the radius is the bare rectangle, and a softness of zero
+    // is the mask alone. The shape binds at its declaration (the
+    // format's own rule): the second call is the argument refusal,
+    // whatever the values.
+    var shidx = grant_row_of(r0)
+    if shidx < 0 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (shidx * grant_row) + 8) != peek64(handoff_caller) {
+      return -reason_permission
+    }
+    if r1 < 0 || r1 > 255 || r2 < 0 || r2 > 255 {
+      return -reason_argument
+    }
+    if peek64(grant_table + (shidx * grant_row) + 48) != 0 {
+      return -reason_argument
+    }
+    poke64(grant_table + (shidx * grant_row) + 48,
+      ((r1 + 1) << 16) | (r2 + 1))
     return 0
   }
   if n == 22 {

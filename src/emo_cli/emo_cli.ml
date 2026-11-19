@@ -1655,8 +1655,8 @@ let check =
    assertion (or any uncaught raise) fails its test; a runtime error
    errors it. Exit codes: 0 all pass, 1 any failure or error, 65 the
    tree's static stages failed. *)
-let run_tests_cmd ~(color : bool) ~(error_limit : int) ~(fail_fast : bool) :
-    int =
+let run_tests_cmd ~(color : bool) ~(error_limit : int) ~(fail_fast : bool) : int
+    =
   let indent text =
     let text =
       (* A test's output already ends in a newline; the indentation
@@ -1670,8 +1670,7 @@ let run_tests_cmd ~(color : bool) ~(error_limit : int) ~(fail_fast : bool) :
   let show_diagnostic ?hint_limit color d =
     print_endline
       (indent
-         (Emo_support.Render.render ~color ?hint_limit
-            ~source:(Sys.getcwd ()) d))
+         (Emo_support.Render.render ~color ?hint_limit ~source:(Sys.getcwd ()) d))
   in
   try
     let results = Emo_project.run_tests ~fail_fast () in
@@ -1753,8 +1752,7 @@ let test_cmd =
   let fail_fast =
     Arg.(
       value & flag
-      & info [ "fail-fast" ]
-          ~doc:"Stop at the first failing or erroring test.")
+      & info [ "fail-fast" ] ~doc:"Stop at the first failing or erroring test.")
   in
   let test no_color error_limit fail_fast locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());

@@ -49,6 +49,13 @@ The skeleton and the manners are already on the metal:
   straight-alpha truth composed over the wallpaper's bytes, the
   golden's four faces pinned byte-identically across the hosted
   targets.
+- **The shape service** (M30, A30.2, the ladder's second step):
+  `win_shape`'s radius and softness per surface — the toplevels' 10
+  and 16 the defaults the rows carry unset, zero the bare rectangle
+  every other role wears — and the walk's masked and shadowed path
+  grown to every role, the damage's box following the surface's own
+  ring. The vocabulary and the walk in; the beats' words are the next
+  task's.
 
 So the remaining work is not structure. It is density: the skin and the
 motion.

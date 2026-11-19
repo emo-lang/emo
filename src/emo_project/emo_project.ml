@@ -1952,7 +1952,8 @@ let run_tests ?(fail_fast = false) () : test_result list =
              | None -> assert false (* run returned without the body *)
            with
            | Emo_eval.Emo_raise (v, s, trace) ->
-               Error (Emo_eval.uncaught_diagnostic ~trace_lines:true (v, s, trace))
+               Error
+                 (Emo_eval.uncaught_diagnostic ~trace_lines:true (v, s, trace))
            | Emo_eval.Error d -> Error d
          in
          match loaded with
@@ -1992,8 +1993,8 @@ let run_tests ?(fail_fast = false) () : test_result list =
                                code = Some "E5008";
                                message =
                                  Printf.sprintf
-                                   "test `%s` takes parameters; test \
-                                    functions take none"
+                                   "test `%s` takes parameters; test functions \
+                                    take none"
                                    name;
                                span;
                                hint = None;
@@ -2001,7 +2002,7 @@ let run_tests ?(fail_fast = false) () : test_result list =
                          t_output = "";
                        };
                      if fail_fast then raise Stop
-                 | [] ->
+                 | [] -> (
                      let buf = Buffer.create 256 in
                      Emo_eval.set_output (Buffer.add_string buf);
                      let outcome =
@@ -2028,8 +2029,7 @@ let run_tests ?(fail_fast = false) () : test_result list =
                        };
                      match outcome with
                      | Passed -> ()
-                     | Failed _ | Errored _ ->
-                         if fail_fast then raise Stop)
+                     | Failed _ | Errored _ -> if fail_fast then raise Stop))
                (List.sort compare tests))
        test_modules
    with Stop -> ());

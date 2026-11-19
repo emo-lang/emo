@@ -16,6 +16,58 @@ def stage(s ui_fb.Surface) {
   println("shapes ${ui_fb_frame.digest(s)}")
 }
 
+// The shape service's face (emo-desktop M30, A30.2): the words the
+// walk's mask and shadow wear, the package's arithmetic at the same
+// points — the ground the stages' slate, the ring beneath past the
+// shape's edge only (the walk skips the interior its blit covers),
+// the slab's straight words over it, the corners' alpha the mask's
+// coverage, the straight edges' the grade's own. The grades the
+// launcher's pair by their values (`emo_desktop`'s — this golden
+// requires the frame and the canvas alone), the shadow's ink the
+// walk's half-dark. The composed words land alpha-zero (the fill's
+// own rule): the digest the display's bytes are the bytes the metal's
+// fold meets, and the whole-word store in a def of numbers is the
+// invalid module's recipe (CHECK.md's fourth lowering bug) — the
+// package's own escape, the golden's too.
+def shape_face(cv ui_fb.Surface, ox Int64, oy Int64, sw Int64, sh Int64,
+               rad Int64, soft Int64) {
+  const top = 0xE6424E62
+  const bottom = 0xE6323C4A
+  const gw = cv.width()
+  const gh = cv.height()
+  var row = 0
+  while row < gh {
+    var col = 0
+    while col < gw {
+      const sd = ui_fb.shape_sd(col - ox, row - oy, 0, 0, sw, sh,
+        ui_fb.radius_in(rad, sw, sh))
+      const ground = cv.at(col, row)
+      if sd > 0 {
+        if soft > 0 {
+          const c = ui_fb.shadow_cover(sd, soft)
+          if c > 0 {
+            const mixed = ui_fb.over_word(ui_fb.cover(0x80000000, c), ground)
+            cv.fill(col, row, 1, 1, mixed & 0xFFFFFF)
+          }
+        }
+      } else {
+        const cov = ui_fb.fill_cover(sd)
+        const color = ui_fb.grade(top, bottom, row - oy, sh)
+        var word = 0
+        if cov >= 255 {
+          word = (color >> 24) << 24 | (color & 0xFFFFFF)
+        } else {
+          word = cov << 24 | (color & 0xFFFFFF)
+        }
+        const mixed = ui_fb.over_word(word, ground)
+        cv.fill(col, row, 1, 1, mixed & 0xFFFFFF)
+      }
+      col = col + 1
+    }
+    row = row + 1
+  }
+}
+
 def main() {
   const s = ui_fb_canvas.canvas(320, 200)
   s.fill(0, 0, 320, 200, 0x202830)
@@ -55,6 +107,19 @@ def main() {
   s.rounded(250, 140, 30, 20, 99, 0xFFEF476F, 0xFFEF476F)
   s.stroke(286, 140, 20, 20, 4, 30, 0xFF118AB2)
   s.shadow(250, 170, 20, 0, 0, 8, 0xFF000000)
+  stage(s)
+  // The shape service's three: a shaped panel at twelve and eight, a
+  // popup at six and six, and the bare rectangle zero — the words the
+  // walk's mask and shadow wear, the bytes the metal's beats fold
+  // against.
+  s.fill(0, 0, 320, 200, 0xFF2A3040)
+  shape_face(s, 30, 30, 240, 120, 12, 8)
+  stage(s)
+  s.fill(0, 0, 320, 200, 0xFF2A3040)
+  shape_face(s, 20, 20, 160, 90, 6, 6)
+  stage(s)
+  s.fill(0, 0, 320, 200, 0xFF2A3040)
+  shape_face(s, 20, 20, 200, 100, 0, 0)
   stage(s)
 }
 

@@ -123,7 +123,18 @@ it. ARGB8888 (1) is the value that grew in (emo-desktop M30, A30.1):
 the format binds at the declaration — a second call is reason 4 — and
 the walk composites an ARGB row per pixel, source-over, the buffer's
 alpha bytes the shape the blend composes with; a scale on an ARGB row
-is refused until the blend and the scaling are one walk. **The frame callback** (the fifth seam): verb 22, `win_frame()`,
+is refused until the blend and the scaling are one walk. The shape is
+the vocabulary's next word (emo-desktop M30, A30.2): verb 33,
+`win_shape(grant, radius, softness)`, records the mask's radius and
+the shadow's softness on the row — the toplevels' 10 and 16 the
+defaults the rows carry unset, zero the bare rectangle every other
+role wears, a declared zero the words' own meaning (a toplevel
+stripped, a panel or a popup shaped — the walk's masked and shadowed
+path the toplevels' arithmetic, grown to every role), and zero the
+softness the mask alone. The shape binds at its declaration, the
+second call the argument refusal; the damage's box follows the
+surface's own ring, the painted record carrying what the row's death
+would take. **The frame callback** (the fifth seam): verb 22, `win_frame()`,
 parks the caller, and the compositor's answer is the tick — the next
 composition's completion, the flush that put a frame on the display; a
 ring of four parks full is the resource refusal. **The stream's

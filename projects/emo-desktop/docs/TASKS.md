@@ -2426,12 +2426,41 @@ M25 card retired into the buffer) can then retire into the walk's.
   the M25 family's scope wider than the desktop's entry recorded; the
   type golden's wasm refusal moved its name with the interface's
   growth, the pin re-read).
-- [ ] **A30.2** — The shape service: the radius and the softness per
+- [x] **A30.2** — The shape service: the radius and the softness per
   surface (the toplevels' 10 and 16 the defaults, zero the bare
   rectangle), the walk's panel and popup blits grown the masked and
   shadowed path the toplevels' own arithmetic, and the golden's pins —
   a rounded panel, a shadowed popup, a bare zero — five targets
-  byte-identically.
+  byte-identically. **complete 2026-11-19** — the shape's word at
+  row +48, the T8.5 layout's one free word (the radius and the
+  softness packed each one past its value, zero the undeclared's —
+  the row's stride never moved, the routing cells where A11.2 parked
+  them), verb 33 `win_shape` with the bind-at-declaration rule, and
+  the walk grown: `comp_radius_of`/`comp_soft_of` reading the role's
+  defaults, the shadow and the masked blits taking the surface's own
+  radius and softness (the shadow the surface's — the panel and the
+  popup wear what the toplevel wore), a declared softness of zero the
+  mask alone, and the panel/popup entry grown the shaped branch beside
+  the bare one. The damage's box follows the ring: the painted records
+  grew the pad word (the shape may die before the marks that need it),
+  `comp_dmg_mark` takes the pad, and every mark in the routes carries
+  the surface's own — the undeclared's the flat nine, byte for byte
+  the marks of yesterday. The pins in the shapes' golden, the
+  arithmetic's home: the three faces the words describe — the panel at
+  twelve and eight, the popup at six and six, the bare zero — the ring
+  beneath past the shape's edge only, the slab's straight words over
+  it, the composed words alpha-zero (the display's bytes the fold
+  meets), four hosted targets byte-identically, the beam leg the
+  family's. The metal: ×3 double transport byte-identical, the
+  defaults' neutrality the whole story — no surface declares a shape
+  yet, and the beats (the corners on a popup, the shaped panel's fold)
+  A30.3's. **Found on the way, the fourth lowering bug's sharpened
+  edge**: the store call inside a def of numbers alone lowers an
+  invalid module (the shapes' golden's first store site broke it; the
+  paint_launcher's dynamic frame the only green shape), the workaround
+  the composed words through the fill — the display's bytes the pins'
+  truth regardless. The docs: `syscalls.md`'s row 33 and
+  `desktop-abi.md`'s shape words (both languages).
 - [ ] **A30.3** — The metal beats and the docs: `run.sh`'s beats — an
   ARGB panel over the wallpaper, the blend's bytes folded to the
   corpus, the shape's corners on a popup — ×3 double transport

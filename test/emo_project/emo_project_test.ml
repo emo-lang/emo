@@ -3094,7 +3094,8 @@ def test_fine() {
 def test_b_pass() {
   expect_equal(2, main.add(1, 1))
 }
-|} );
+|}
+              );
             ]
         in
         Sys.chdir scratch;
@@ -3120,7 +3121,8 @@ def level1() {
 def test_stack() {
   level1()
 }
-|} );
+|}
+              );
             ]
         in
         match (result_named "test_stack" results).Emo_project.t_outcome with
@@ -3130,7 +3132,8 @@ def test_stack() {
             in
             let lines = String.split_on_char '\n' hint in
             Alcotest.(check bool)
-              "more than one frame" true (List.length lines >= 2);
+              "more than one frame" true
+              (List.length lines >= 2);
             Alcotest.(check bool)
               "one frame per line" true
               (List.for_all

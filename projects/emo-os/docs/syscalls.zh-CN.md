@@ -74,6 +74,7 @@ trap 落进内核的 shim,它把动词与六个字拼装给门的分派器
 | 30 | `win_workspace(grant, desk)` | 属主的 toplevel 换一张桌面:walk 只画它现在点名的桌面,被离桌的已画矩形是这一搬抹掉的像素,进桌那边是它画出的像素;被搬走的是焦点所在者,则焦点按最小化的回落作答。桌号界为 0..3;非 toplevel 的 grant 是原因 4,别的进程的 grant 是原因 3(emo-desktop M27,EmoOS T13.2,见下) |
 | 31 | `desk_show(desk)` | 壳的切换:点名桌面的窗上屏,离桌者记住自己曾持的焦点,进桌者恢复自己的——记忆为空则落到它的栈顶 toplevel——整模即损伤,切换的合成把它重画。调用者必须持有一个 panel(桌面的权威,桌面打开自己的规矩);桌号越界是原因 4,应用调用是原因 3;对正在显示的桌面作切换则平静作答,什么都不合成(emo-desktop M27,EmoOS T13.2,见下) |
 | 32 | `desk_workspace()` | 询问桌面:一个打包字,低字节是当前桌面,其上是占用掩码——只要活的 toplevel 还背着这张桌,该位就置着,最小化的在原地活着。门从不拒绝它(emo-desktop M27,EmoOS T13.2,见下) |
+| 33 | `win_shape(grant, radius, softness)` | 表面的形状记入其行——合成器的掩模与阴影所穿的 radius 与 softness,行未声明时 toplevel 带缺省的 10 和 16,其余角色穿裸矩形。radius 为零是词自身的含义(剥掉 toplevel、给 panel 整形),softness 为零是只有掩模没有影环;过 255 的值为原因 4,形状在声明时绑定——第二次调用即原因 4,format 自家的规矩(emo-desktop M30,A30.2,见下) |
 
 动词 10 到 16 **为桌面段预留**(门的编号规矩不变:预留号在它的动词落地前不携带含义,落地之日起冻结)——`present`、`output_info`、`input_read`、`win_new`、`win_close`、`win_focus`、`win_move`,见 [`docs/desktop-abi.zh-CN.md`](desktop-abi.zh-CN.md)。动词 10 到 16 已全部落地(T8.3、T8.4、T8.5、T8.6)——桌面段前七个动词,冻结。动词 17 和 18(T8.13,emo-desktop A9.1)按同一条规矩生长段——只在新的号下添加,绝不改写——而它们骑的路由号是邮箱的,不是动词的:窗口 present 投递的合成请求占 op 17(动词 10 的派生,T8.6),指针的通知占 op 18(T8.11),所以 win_role 的请求骑 −1019,input_info 的 op 18 落进输入服务的邮箱——那里原本只有 2 和 12 两个住客。动词 19 到 23(T8.15,emo-desktop A9.3)再次生长段——19 的绑定骑邮箱 op 20,22 的回调占 op 21,而 20、21、23 由门自己应答(协商的字段与版本是协议前门的事,不经服务之手)。
 
