@@ -28,6 +28,8 @@
   (source_tree ../../stdlib/registry/syscall)
   (source_tree ../../examples/parity_fake)
   (source_tree ../../examples/parity_metal)
+  (source_tree ../../examples/gc_demo)
+  (source_tree ../../examples/gc_metal)
   emo_os_test.exe)
  (action
   (run %{exe:emo_os_test.exe})))
