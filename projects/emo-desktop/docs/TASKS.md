@@ -2625,10 +2625,54 @@ the corners and the shadows A30 landed.
   byte for byte — the bar's wordmark and the screendumps the model's
   accent word for word (`0x8867E8`), the ledger `frames 1698 1483`
   unmoved; `@fmt` green.
-- [ ] **A31.3** — The icon family and the shell's re-dress: the shapes
+- [x] **A31.3** — The icon family and the shell's re-dress: the shapes
   file, the strikes at the sizes, the launcher's rows and the dock's
   tiles and the notification rows dressed, and the golden's pins —
   five targets byte-identically; the metal beats beside A30.3's
   (the wallpaper's art and the icons' strikes on the display, ×3
   double transport byte-identical), the READMEs, CHECK.md's entry,
   and the TASKS' boxes.
+  **complete 2026-11-20** — the shapes file is the desktop package's
+  second module (`emo_icons.emo`, the entry's doors
+  `emo_desktop.icon_of/icon_size/icon_ink/paint_icon`): the four
+  apps' marks and the papers' own — the counter's plus (two fills),
+  the files' folder (the tab and the body), the editor's sheet (the
+  page and the fold's notch the ground's), the spinner's ring (the
+  disc and the hole the ground's) — the rounded rectangles and fills
+  the surfaces' arithmetic rasterizes at whatever size the face
+  rides, the names mapped by their first byte, everything else the
+  papers'. The dress: **the dock's tiles** wear their app's mark at
+  three quarters of the tile (the initial retired, the running dot
+  keeping its foot), **the launcher's rows** wear the mark at the
+  row's left with the name shifted a mark and a pad, **the
+  notification rows** wear the notifying app's own (the title's
+  first byte the map — `emo_notify` grew the `emo_desktop` dep, the
+  shared `paint_panel` the one painter both worlds walk). The
+  selection band's re-dress rode with it — A30.1's dormant find ③:
+  the band's stores carry `select_ink`'s own 0x58 alpha at last, the
+  translucent ink the slab keeps. The metal's twins: `desk_icon_paint`
+  (the carve's tiles) and `desk_icon_slab` (the launcher's
+  straight-alpha slab, the coverage words `cover`'s own shift-form
+  arithmetic — the fill's verbatim word the A30.1 trap's rule, the
+  roundeds' color alpha under the coverage). **The straight form
+  exists because the canvas's own rounded could not**: the span's
+  RGB write lands the bodies alpha-zero on the slab (the panel
+  showing through the folder's body — the golden's first compose
+  pinned it) — the icons' bodies the stores' own words, the form
+  `paint_icon_straight` carries and the slab's twin mirrors.
+  **Found on the way**: the launcher's first probe folds said
+  `1059130988/4244428722` where the golden said `1000467708` — the
+  canvas's fill strips the alpha (the A30.1 find ①) where the slab
+  store keeps it, the plus's bars invisible on one world and not the
+  other; the fills the store's whole words and the fold converged.
+  The pins: the dock's ten golden frames wear the marks (the new
+  digests), the launch/launchr pairs the rows' and the band's, the
+  five `icon` probes the map's verdicts, the notify golden's panel
+  and center digests the rows' — five targets byte-identically (the
+  beam legs the tree's own M25 hang). Verified: `run.sh` exits 0 on
+  both transports, three runs byte for byte — the display's dock and
+  launcher and notification rows the strikes' own (the folds the
+  goldens'), the ledger `frames 1698 1483` unmoved; the fb gate 178
+  ok, the eight reds the family's; `@fmt` green. The docs: the
+  READMEs' M31 rows (both languages), the noctalia ladder's two
+  steps retired, CHECK.md's entry, this box — **M31 complete**.

@@ -343,8 +343,15 @@ def paint_panel(s ui_fb.Surface, f ui_fb.raster.Strike, x Int64, y Int64,
   var yy = y + first_entry_y(0)
   while i < items.length() && yy + row_h() <= y + h {
     const n = items[i]
-    ui_fb.text(f, n.title(), x + 16, yy + 6, ink(), s)
-    ui_fb.text(f, n.body(), x + 16, yy + 30, ink_dim(), s)
+    // the row wears its app's mark (emo-desktop M31, A31.3): the
+    // title's own first byte the shapes file maps, the ground the
+    // panel's grade at the row's mid
+    const isz = emo_desktop.icon_size(row_h())
+    emo_desktop.paint_icon(s, emo_desktop.icon_of(n.title()), x + 16,
+      yy + (row_h() - isz) / 2 + 2, isz, emo_desktop.icon_ink(),
+      ui_fb.grade(card_top(), card_bottom(), yy + row_h() / 2 - y, h))
+    ui_fb.text(f, n.title(), x + 16 + isz + 8, yy + 6, ink(), s)
+    ui_fb.text(f, n.body(), x + 16 + isz + 8, yy + 30, ink_dim(), s)
     s.fill(x + 12, yy + row_h() - 6, w - 24, 1, row_line())
     yy = yy + row_h()
     i = i + 1

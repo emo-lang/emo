@@ -248,9 +248,15 @@ def paint(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
     const ty = tile_y()
     s.rounded(tx, ty, tile_size(), tile_size(), 8, tile_top(i == focused),
       tile_bottom(i == focused))
-    ui_fb.text(f, labels[i],
-      tx + (tile_size() - ui_fb.text_width(f, labels[i])) / 2,
-      ty + (tile_size() - f.line_height()) / 2, ink(), s)
+    // the tile wears its app's mark (emo-desktop M31, A31.3): the
+    // shapes file's strike at three quarters of the tile, the ring's
+    // hole the grade's own mid
+    emo_icons.paint_icon(s, emo_icons.icon_of(labels[i]),
+      tx + (tile_size() - emo_icons.icon_size(tile_size())) / 2,
+      ty + (tile_size() - emo_icons.icon_size(tile_size())) / 2,
+      emo_icons.icon_size(tile_size()), emo_icons.icon_ink(),
+      ui_fb.grade(tile_top(i == focused), tile_bottom(i == focused),
+        tile_size() / 2, tile_size()))
     if (running >> i) & 1 == 1 {
       s.fill(tx + 14, ty + 26, 4, 4, ink())
     }
@@ -335,6 +341,36 @@ def text_byte(s ui_fb.Surface, f ui_fb.raster.Strike, x Int64, y Int64,
   }
   s.ink(x, y, f, i, ink_color)
   return f.advance(i)
+}
+
+// The icon family's doors (emo-desktop M31, A31.3): the shapes file
+// is the package's own second module, the consumers' addresses these
+// four — the marks the launcher's rows, the dock's tiles and the
+// notification rows wear.
+def icon_of(name String) Int64 {
+  return emo_icons.icon_of(name)
+}
+
+def icon_of_byte(b Int64) Int64 {
+  return emo_icons.icon_of_byte(b)
+}
+
+def icon_size(size Int64) Int64 {
+  return emo_icons.icon_size(size)
+}
+
+def icon_ink() Int64 {
+  return emo_icons.icon_ink()
+}
+
+def paint_icon(s ui_fb.Surface, idx Int64, x Int64, y Int64, size Int64,
+               fg Int64, back Int64) Void {
+  emo_icons.paint_icon(s, idx, x, y, size, fg, back)
+}
+
+def paint_icon_straight(s ui_fb.Surface, idx Int64, x Int64, y Int64,
+                        size Int64, fg Int64, back Int64) Void {
+  emo_icons.paint_icon_straight(s, idx, x, y, size, fg, back)
 }
 
 // The wallpaper's colors: a deep navy at the top running into a dusky
@@ -1023,10 +1059,29 @@ def paint_launcher(s ui_fb.Surface, f ui_fb.raster.Strike, line String,
   while i < n && i < launch_rows() {
     const ry = launch_line_h() + launch_pad() + i * launch_row_h()
     if i == sel {
-      s.fill(launch_pad() / 2, ry + 1, w - launch_pad(), launch_row_h() - 2,
-        select_ink())
+      // the band the whole words it always meant (emo-desktop M31,
+      // A31.3 — A30.1's dormant find: the fill's RGB write left the
+      // translucent ink alpha-zero on the slab, both worlds alike; the
+      // store carries the ink's own alpha at last)
+      var by = ry + 1
+      while by < ry + launch_row_h() - 1 {
+        var bx = launch_pad() / 2
+        while bx < w - launch_pad() / 2 {
+          s.store(bx, by, select_ink())
+          bx = bx + 1
+        }
+        by = by + 1
+      }
     }
-    ui_fb.text(f, names[i], launch_pad(),
+    // the row wears its app's mark (emo-desktop M31, A31.3), the name
+    // one mark and one pad to the right of it
+    const isz = emo_icons.icon_size(launch_row_h())
+    emo_icons.paint_icon_straight(s, emo_icons.icon_of(names[i]),
+      launch_pad() / 2 + 1, ry + (launch_row_h() - isz) / 2, isz,
+      emo_icons.icon_ink(),
+      ui_fb.grade(launch_ground_top(), launch_ground_bottom(),
+        ry + launch_row_h() / 2, h))
+    ui_fb.text(f, names[i], launch_pad() + isz + 6,
       ry + (launch_row_h() - f.line_height()) / 2, 0xF8F8F0, s)
     i = i + 1
   }

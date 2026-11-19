@@ -47,6 +47,7 @@ Chinese translation: [`README.zh-CN.md`](README.zh-CN.md).
 | M27 — Workspaces | four desks the compositor's own: the window's assignment verb, the shell's switch, the bar's pager reading the packed state per paint | complete |
 | M28 — The launcher and the lock | the dock's first tile the search face's door — the volume's `.elf` packages enumerated, filtered, launched — and the session the lock takes behind the opaque face, the account file the hash package's own digest | complete |
 | M30 — The skin's ground | `win_format`'s ARGB8888 and the walk's per-pixel source-over (the launcher's panel the first ARGB surface), and the shape's words — `win_shape`'s radius and softness per surface, the toplevels' 10 and 16 the defaults, every role wearing the corners and the ring | complete |
+| M31 — The wallpaper's art and the icons | the wallpaper the volume's own RLE file (`gen-wallpaper.py`'s render, decoded at boot), the palette's extraction feeding the chrome its accent and materials, and the icon family's strikes dressing the dock's tiles, the launcher's rows and the notification rows from the shapes file | complete |
 
 The compiler track (the literal-width fix, the N-block arena, the frame-scoped pool) runs beside the ladder, not inside it — its tasks are the Emo tree's and the EmoOS tracker's.
 

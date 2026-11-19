@@ -64,9 +64,9 @@ motion.
 
 ### 1. The visual language — the skin layer
 
-The main lever for the polished effect, two milestones now numbered —
+The main lever for the polished effect, two milestones now complete —
 M30 the alpha ground and the shape service, M31 the wallpaper's art
-and the icons — four steps, each riding the last:
+and the icons — the skin layer's four steps landed (2026-11-20):
 
 1. **Per-pixel alpha compositing (M30, A30.1).** The blit is a word
    copy for the surfaces that mean XRGB; `win_format`'s vocabulary
@@ -83,24 +83,6 @@ and the icons — four steps, each riding the last:
    vocabulary: radius and softness per surface, popups and
    subsurfaces and panels wearing what only toplevels wore, at no
    app's effort.
-3. **The wallpaper's decode and the palette's extraction (M31,
-   A31.1–A31.2).** The disk carries the wallpaper's art as RLE — a
-   raw 1080p frame never fits the volume, and a pure-Emo PNG inflate
-   is the boot's seconds, its own later milestone — the shell's boot
-   decoding the runs into the wallpaper's surface, the host tool
-   (`gen-wallpaper.py`, the outlines.py precedent) turning a source
-   picture into the volume's file. The palette's extraction samples
-   the decoded surface and feeds the chrome through D14's provider
-   seam — the accent and the materials answering for the wallpaper's
-   own colors, the extraction that fails keeping the constants it
-   had.
-4. **The icon family and the shell's re-dress (M31, A31.3).** The
-   strikes are the shape arithmetic's own — the rounded rectangles,
-   the circles, the strokes the walk's and the package's shared
-   `shape_sd` rasterizes at the sizes the faces already ride — and
-   the launcher's rows, the dock's tiles and the notification rows
-   re-dressed in the alpha, the corners and the shadows A30 landed.
-
 ### 2. The motion layer
 
 All of it the shell's own work on the frame callback — the verbs are

@@ -1771,6 +1771,7 @@ PYLOCK
   btn false
   await 'desktop counter up'
   await 'comp 0 1040'
+  hmp 'screendump .cnt.ppm'
   await 'comp 0 0'
   await "frame $(app_line 1)"
   await 'comp 768 508'

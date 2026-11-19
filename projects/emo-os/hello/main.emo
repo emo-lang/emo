@@ -3457,11 +3457,114 @@ def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, runnin
   }
 }
 
+// The icon family's typed twins (emo-desktop M31, A31.3): the shapes
+// file's marks on the carve and on the launcher's slab — the same
+// geometry the package's `paint_icon` walks, the carve's roundeds the
+// dock's tiles wear, the slab's stores the straight-alpha truth the
+// launcher keeps (the fill's RGB write the trap A30.1 recorded), the
+// call that paints the call that stays typed.
+def desk_icon_paint(base Int64, w Int64, idx Int64, x Int64,
+                    y Int64, size Int64, fg Int64, back Int64) Void {
+  const dims = ui_fb_winbuf.pack(w, emo_desktop.strip_height())
+  if idx == 0 {
+    // the fills the canvas fill's own contract: the RGB the word
+    // keeps, the alpha byte stripped (the tiles are opaque — the
+    // icons' ink lands verbatim either way — the digests read the
+    // fourth byte)
+    ui_fb_winbuf.carve_fill(base, w, x, y + 2 * (size / 5), size, size / 5,
+      fg & 16777215)
+    ui_fb_winbuf.carve_fill(base, w, x + 2 * (size / 5), y, size / 5, size,
+      fg & 16777215)
+  } else {
+    if idx == 1 {
+      ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(x, y),
+        ui_fb_winbuf.pack(size * 3 / 5, size / 3), 2, fg, fg)
+      ui_fb_winbuf.carve_rounded(base, dims,
+        ui_fb_winbuf.pack(x, y + size / 4),
+        ui_fb_winbuf.pack(size, size * 3 / 4), 3, fg, fg)
+    } else {
+      if idx == 2 || idx < 0 {
+        ui_fb_winbuf.carve_rounded(base, dims,
+          ui_fb_winbuf.pack(x + size / 8, y),
+          ui_fb_winbuf.pack(size * 3 / 4, size), 2, fg, fg)
+        ui_fb_winbuf.carve_rounded(base, dims,
+          ui_fb_winbuf.pack(x + size * 7 / 8 - size / 4, y),
+          ui_fb_winbuf.pack(size / 4, size / 4), 2, back, back)
+      } else {
+        ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(x, y),
+          ui_fb_winbuf.pack(size, size), size / 2, fg, fg)
+        ui_fb_winbuf.carve_rounded(base, dims,
+          ui_fb_winbuf.pack(x + size / 4, y + size / 4),
+          ui_fb_winbuf.pack(size / 2, size / 2), size / 4, back, back)
+      }
+    }
+  }
+}
+
+def desk_slab_fill(c Carve, x Int64, y Int64, w Int64, h Int64,
+                   color Int64) Void {
+  var py = y
+  while py < y + h {
+    var px = x
+    while px < x + w {
+      c.store(px, py, color)
+      px = px + 1
+    }
+    py = py + 1
+  }
+}
+
+def desk_slab_rounded(c Carve, x Int64, y Int64, w Int64, h Int64,
+                      rad Int64, color Int64) Void {
+  var py = y
+  while py < y + h {
+    var px = x
+    while px < x + w {
+      const cov = ui_fb.fill_cover(ui_fb.shape_sd(px, py, x, y, w, h,
+        ui_fb.radius_in(rad, w, h)))
+      if cov > 0 {
+        // the word the cover's own arithmetic writes (emo-desktop M31,
+        // A31.3): the color's alpha byte under the coverage, the shift
+        // form's rounding, the ground's 0xE6 the fold's notch and the
+        // ring's hole keep
+        const t = ((color >> 24) & 255) * cov + 128
+        c.store(px, py, ((t + (t >> 8)) >> 8) << 24 | (color & 0xFFFFFF))
+      }
+      px = px + 1
+    }
+    py = py + 1
+  }
+}
+
+def desk_icon_slab(c Carve, idx Int64, x Int64, y Int64, size Int64,
+                   fg Int64, back Int64) Void {
+  if idx == 0 {
+    desk_slab_fill(c, x, y + 2 * (size / 5), size, size / 5, fg)
+    desk_slab_fill(c, x + 2 * (size / 5), y, size / 5, size, fg)
+  } else {
+    if idx == 1 {
+      desk_slab_rounded(c, x, y, size * 3 / 5, size / 3, 2, fg)
+      desk_slab_rounded(c, x, y + size / 4, size, size * 3 / 4, 3, fg)
+    } else {
+      if idx == 2 || idx < 0 {
+        desk_slab_rounded(c, x + size / 8, y, size * 3 / 4, size, 2, fg)
+        desk_slab_rounded(c, x + size * 7 / 8 - size / 4, y, size / 4,
+          size / 4, 2, back)
+      } else {
+        desk_slab_rounded(c, x, y, size, size, size / 2, fg)
+        desk_slab_rounded(c, x + size / 4, y + size / 4, size / 2, size / 2,
+          size / 4, back)
+      }
+    }
+  }
+}
+
 // The dock's strip whole: the material's rows, the shelf's shadow and
 // the shelf over it, then one drawn icon per app — the rounded square
-// graded, the initial centered in it, the running dot at its foot —
-// the package's `paint` mirrored. `top` is the display row the strip's
-// first row stands on; the material samples the formula there.
+// graded, the app's mark centered in it (A31.3, the shapes file's
+// strike), the running dot at its foot — the package's `paint`
+// mirrored. `top` is the display row the strip's first row stands on;
+// the material the art's own rows replayed.
 def desk_dock_paint(f ui_fb.raster.Strike, base Int64, mw Int64, top Int64, labels Array[String], focused Int64, running Int64) Void {
   const sh = emo_desktop.strip_height()
   const dims = ui_fb_winbuf.pack(mw, sh)
@@ -3487,15 +3590,52 @@ def desk_dock_paint(f ui_fb.raster.Strike, base Int64, mw Int64, top Int64, labe
     ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(tx, ty),
       ui_fb_winbuf.pack(emo_desktop.tile_size(), emo_desktop.tile_size()), 8,
       emo_desktop.tile_top(i == focused), emo_desktop.tile_bottom(i == focused))
-    const g = f.glyph_of(labels[i].substring(0, 1))
-    ui_fb_winbuf.carve_ink(base, dims, tx + (emo_desktop.tile_size() - ui_fb.text_width(f, labels[i])) / 2,
-      ty + (emo_desktop.tile_size() - f.line_height()) / 2, f, g,
-      emo_desktop.ink())
+    desk_icon_paint(base, mw, emo_desktop.icon_of(labels[i]),
+      tx + (emo_desktop.tile_size() - emo_desktop.icon_size(emo_desktop.tile_size())) / 2,
+      ty + (emo_desktop.tile_size() - emo_desktop.icon_size(emo_desktop.tile_size())) / 2,
+      emo_desktop.icon_size(emo_desktop.tile_size()), emo_desktop.icon_ink(),
+      ui_fb.grade(emo_desktop.tile_top(i == focused),
+        emo_desktop.tile_bottom(i == focused),
+        emo_desktop.tile_size() / 2, emo_desktop.tile_size()))
     if (running >> i) & 1 == 1 {
       ui_fb_winbuf.carve_fill(base, mw, tx + 14, ty + 26, 4, 4, emo_desktop.ink())
     }
     i = i + 1
   }
+  var pp = byte_at(0, 68) // D
+  pp = byte_at(pp, 79) // O
+  pp = byte_at(pp, 84) // T
+  pp = byte_at(pp, 32)
+  var dx = emo_desktop.tile_x(1) + 13
+  while dx < emo_desktop.tile_x(1) + 20 {
+    pp = num_at(peek8(base + (30 * mw + dx) * 4 + 2).to_int64(), pp)
+    pp = byte_at(pp, 44) // ,
+    pp = num_at(peek8(base + (30 * mw + dx) * 4 + 1).to_int64(), pp)
+    pp = byte_at(pp, 44)
+    pp = num_at(peek8(base + (30 * mw + dx) * 4).to_int64(), pp)
+    pp = byte_at(pp, 32)
+    dx = dx + 1
+  }
+  pp = byte_at(pp, 10)
+  gate_line(pp)
+  var qp = byte_at(0, 71) // G
+  qp = byte_at(qp, 51) // 3
+  qp = byte_at(qp, 48) // 0
+  qp = byte_at(qp, 32)
+  var qx = emo_desktop.tile_x(1) + 7
+  while qx < emo_desktop.tile_x(1) + 17 {
+    qp = num_at(peek8(base + (30 * mw + qx) * 4 + 2).to_int64(), qp)
+    qp = byte_at(qp, 44)
+    qp = num_at(peek8(base + (30 * mw + qx) * 4 + 1).to_int64(), qp)
+    qp = byte_at(qp, 44)
+    qp = num_at(peek8(base + (30 * mw + qx) * 4).to_int64(), qp)
+    qp = byte_at(qp, 44)
+    qp = num_at(peek8(base + (30 * mw + qx) * 4 + 3).to_int64(), qp)
+    qp = byte_at(qp, 32)
+    qx = qx + 1
+  }
+  qp = byte_at(qp, 10)
+  gate_line(qp)
 }
 
 // A dock strip repainted whole — the paint, the frame's digest line,
@@ -4300,13 +4440,34 @@ def launch_paint(f ui_fb.raster.Strike, mw Int64) Void {
       const ry = emo_desktop.launch_line_h() + emo_desktop.launch_pad() +
         n * emo_desktop.launch_row_h()
       // the first survivor the entry Enter takes — the line's own
-      // selection, the band on its row while the line names anything
+      // selection, the band on its row while the line names anything —
+      // the band the whole words it always meant (emo-desktop M31,
+      // A31.3: A30.1's dormant find, the fill's RGB write left the
+      // translucent ink alpha-zero on the slab; the store carries the
+      // ink's own alpha at last)
       if n == 0 && llen > 0 {
-        c.fill(emo_desktop.launch_pad() / 2, ry + 1, w - emo_desktop.launch_pad(),
-          emo_desktop.launch_row_h() - 2, emo_desktop.select_ink())
+        var by = ry + 1
+        while by < ry + emo_desktop.launch_row_h() - 1 {
+          var bx = emo_desktop.launch_pad() / 2
+          while bx < w - emo_desktop.launch_pad() / 2 {
+            c.store(bx, by, emo_desktop.select_ink())
+            bx = bx + 1
+          }
+          by = by + 1
+        }
       }
+      // the row wears its app's mark (emo-desktop M31, A31.3), the
+      // name one mark and one pad to the right of it
+      const isz = emo_desktop.icon_size(emo_desktop.launch_row_h())
+      desk_icon_slab(c, emo_desktop.icon_of_byte(peek8(e).to_int64()),
+        emo_desktop.launch_pad() / 2 + 1,
+        ry + (emo_desktop.launch_row_h() - isz) / 2, isz,
+        emo_desktop.icon_ink(),
+        ui_fb.grade(emo_desktop.launch_ground_top(),
+          emo_desktop.launch_ground_bottom(),
+          ry + emo_desktop.launch_row_h() / 2, h))
       const ty2 = ry + (emo_desktop.launch_row_h() - f.line_height()) / 2
-      var p2 = emo_desktop.launch_pad()
+      var p2 = emo_desktop.launch_pad() + isz + 6
       var j = 0
       while j < nlen {
         p2 = p2 + desk_name_byte(f, base, w, h, p2, ty2,

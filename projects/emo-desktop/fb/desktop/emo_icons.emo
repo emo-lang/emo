@@ -1,0 +1,147 @@
+// The icon family (emo-desktop M31, A31.3): the shapes file the
+// launcher's rows, the dock's tiles and the notification rows dress
+// from — the four apps' marks and the papers' own, drawn with the
+// rounded rectangles and fills the surfaces' arithmetic rasterizes at
+// whatever size the face rides (no outlines pipeline: the shapes' own
+// geometry). An icon is its index's shapes at `(x, y)` in `size` —
+// the counter's plus, the files' folder, the editor's sheet, the
+// spinner's ring — the ring's hole and the sheet's fold the caller's
+// ground, the one color the shapes borrow from what they sit on. A
+// name maps to its mark by the first byte (`c`, `f`, `e`, `s`);
+// everything else the papers' own.
+
+def icon_of_byte(b Int64) Int64 {
+  if b == 99 {
+    return 0
+  }
+  if b == 102 {
+    return 1
+  }
+  if b == 101 {
+    return 2
+  }
+  if b == 115 {
+    return 3
+  }
+  return -1
+}
+
+def icon_of(name String) Int64 {
+  const c = name.substring(0, 1)
+  if c == "c" {
+    return 0
+  }
+  if c == "f" {
+    return 1
+  }
+  if c == "e" {
+    return 2
+  }
+  if c == "s" {
+    return 3
+  }
+  return -1
+}
+
+// One icon's size inside a face's own: three quarters of it, the
+// inset the marks keep off their tile's edge.
+def icon_size(size Int64) Int64 {
+  return size * 3 / 4
+}
+
+// The marks' ink: the quiet ink at the alpha the shapes' words carry
+// (the surfaces' roundeds write the color's own byte).
+def icon_ink() Int64 {
+  return 0xFFF8F8F0
+}
+
+def paint_icon(s ui_fb.Surface, idx Int64, x Int64, y Int64, size Int64,
+               fg Int64, back Int64) Void {
+  if idx == 0 {
+    // the counter's plus: two bars crossing
+    s.fill(x, y + 2 * (size / 5), size, size / 5, fg)
+    s.fill(x + 2 * (size / 5), y, size / 5, size, fg)
+  } else {
+    if idx == 1 {
+      // the files' folder: the tab, the body over it
+      s.rounded(x, y, size * 3 / 5, size / 3, 2, fg, fg)
+      s.rounded(x, y + size / 4, size, size * 3 / 4, 3, fg, fg)
+    } else {
+      if idx == 2 || idx < 0 {
+        // the editor's sheet: the page, the fold's notch the ground's
+        s.rounded(x + size / 8, y, size * 3 / 4, size, 2, fg, fg)
+        s.rounded(x + size * 7 / 8 - size / 4, y, size / 4, size / 4, 2,
+          back, back)
+      } else {
+        // the spinner's ring: the disc, the hole the ground's
+        s.rounded(x, y, size, size, size / 2, fg, fg)
+        s.rounded(x + size / 4, y + size / 4, size / 2, size / 2, size / 4,
+          back, back)
+      }
+    }
+  }
+}
+
+// The straight-surface form (emo-desktop M31, A31.3): the same marks
+// on a slab that keeps its own alpha — every shape the store's own
+// words, the fills' whole opaque words and the roundeds' coverage
+// words the walk's cover composes (the canvas's own rounded would
+// leave the bodies the span's RGB write lands — alpha-zero, the panel
+// showing through — the trap A30.1 recorded grown a body). The metal's
+// typed twin (`desk_icon_slab`) walks the same shapes.
+def icon_straight_rounded(s ui_fb.Surface, x Int64, y Int64, w Int64,
+                          h Int64, rad Int64, color Int64) Void {
+  const r = ui_fb.radius_in(rad, w, h)
+  var py = y
+  while py < y + h {
+    var px = x
+    while px < x + w {
+      const cov = ui_fb.fill_cover(ui_fb.shape_sd(px, py, x, y, w, h, r))
+      if cov > 0 {
+        const t = ((color >> 24) & 255) * cov + 128
+        s.store(px, py, ((t + (t >> 8)) >> 8) << 24 | (color & 0xFFFFFF))
+      }
+      px = px + 1
+    }
+    py = py + 1
+  }
+}
+
+def paint_icon_straight(s ui_fb.Surface, idx Int64, x Int64, y Int64,
+                        size Int64, fg Int64, back Int64) Void {
+  if idx == 0 {
+    var py = y + 2 * (size / 5)
+    while py < y + 2 * (size / 5) + size / 5 {
+      var px = x
+      while px < x + size {
+        s.store(px, py, fg)
+        px = px + 1
+      }
+      py = py + 1
+    }
+    py = y
+    while py < y + size {
+      var px = x + 2 * (size / 5)
+      while px < x + 2 * (size / 5) + size / 5 {
+        s.store(px, py, fg)
+        px = px + 1
+      }
+      py = py + 1
+    }
+  } else {
+    if idx == 1 {
+      icon_straight_rounded(s, x, y, size * 3 / 5, size / 3, 2, fg)
+      icon_straight_rounded(s, x, y + size / 4, size, size * 3 / 4, 3, fg)
+    } else {
+      if idx == 2 || idx < 0 {
+        icon_straight_rounded(s, x + size / 8, y, size * 3 / 4, size, 2, fg)
+        icon_straight_rounded(s, x + size * 7 / 8 - size / 4, y, size / 4,
+          size / 4, 2, back)
+      } else {
+        icon_straight_rounded(s, x, y, size, size, size / 2, fg)
+        icon_straight_rounded(s, x + size / 4, y + size / 4, size / 2,
+          size / 2, size / 4, back)
+      }
+    }
+  }
+}

@@ -46,9 +46,81 @@ def main() {
   emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 0,
     wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 0,
+    wall_rle.runs())
+  var ry4 = 0
+  while ry4 < 40 {
+    var rf4 = 0
+    var rx4 = 0
+    while rx4 < 1920 {
+      rf4 = (rf4 * 31 + (strip.at(rx4, ry4) & 16777215)) % 4294967296
+      rx4 = rx4 + 1
+    }
+    if ry4 == 0 || ry4 == 4 || ry4 == 11 || ry4 == 26 || ry4 == 30 {
+      println("ROWF4 " + "${ry4}" + " " + "${rf4}")
+    }
+    ry4 = ry4 + 1
+  }
   emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 2,
     wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
+  var sg = 0
+  while sg < 8 {
+    var sf = 0
+    var sx2 = sg * 30
+    while sx2 < sg * 30 + 30 {
+      sf = (sf * 31 + (strip.at(sx2, 30) & 16777215)) % 4294967296
+      sx2 = sx2 + 1
+    }
+    println("SEG0 " + "${sg}" + " " + "${sf}")
+    sg = sg + 1
+  }
+  var seg = 0
+  while seg < 8 {
+    var sf = 0
+    var sx2 = seg * 240
+    while sx2 < seg * 240 + 240 {
+      sf = (sf * 31 + (strip.at(sx2, 30) & 16777215)) % 4294967296
+      sx2 = sx2 + 1
+    }
+    println("SEG30 " + "${seg}" + " " + "${sf}")
+    seg = seg + 1
+  }
+  var bp = "B30 "
+  var bx = 60
+  while bx < 91 {
+    bp = bp + "${strip.at(bx, 30) & 16777215} "
+    bx = bx + 1
+  }
+  println(bp)
+  var fp = "GFULL "
+  var fx = emo_desktop.tile_x(1) + 7
+  while fx < emo_desktop.tile_x(1) + 17 {
+    fp = fp + "${strip.at(fx, 30)} "
+    fx = fx + 1
+  }
+  println(fp)
+  var gp = "G30 "
+  var gx = emo_desktop.tile_x(1) + 12
+  while gx < emo_desktop.tile_x(1) + 25 {
+    gp = gp + "${strip.at(gx, 30) & 16777215} "
+    gx = gx + 1
+  }
+  println(gp)
+  println("PROBE ${strip.at(emo_desktop.tile_x(1) + 14, 30)} ${strip.at(emo_desktop.tile_x(1) + 15, 31)} ${strip.at(emo_desktop.tile_x(1) + 7, 11)} ${strip.at(emo_desktop.tile_x(1) + 14, 24)} ${strip.at(emo_desktop.tile_x(1) + 20, 12)}")
+  var ry3 = 0
+  while ry3 < 40 {
+    var rf = 0
+    var rx3 = 0
+    while rx3 < 1920 {
+      rf = (rf * 31 + (strip.at(rx3, ry3) & 16777215)) % 4294967296
+      rx3 = rx3 + 1
+    }
+    if ry3 == 0 || ry3 == 4 || ry3 == 11 || ry3 == 26 || ry3 == 30 {
+      println("ROWF " + "${ry3}" + " " + "${rf}")
+    }
+    ry3 = ry3 + 1
+  }
   emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 6,
     wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
@@ -69,6 +141,13 @@ def main() {
   println("tile ${emo_desktop.press(64, 1060, 1920, 1080, 4)}")
   println("tile ${emo_desktop.press(110, 1060, 1920, 1080, 4)}")
   println("tile ${emo_desktop.press(150, 1060, 1920, 1080, 4)}")
+  // the shapes file's own probes (emo-desktop M31, A31.3): the marks
+  // the four apps' first bytes map, the papers' own the rest
+  println("icon ${emo_desktop.icon_of("counter.elf")}")
+  println("icon ${emo_desktop.icon_of("files.elf")}")
+  println("icon ${emo_desktop.icon_of("editor.elf")}")
+  println("icon ${emo_desktop.icon_of("spin.elf")}")
+  println("icon ${emo_desktop.icon_of("boot.txt")}")
 
   // The desktop's own canvas (emo-desktop A13): the wallpaper whole on
   // a quarter-mode canvas, twice (M31, A31.1) — the fixture's formula
