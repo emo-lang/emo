@@ -61,15 +61,21 @@ def main() {
   println("tile ${emo_desktop.press(150, 1060, 1920, 1080, 4)}")
 
   // The desktop's own canvas (emo-desktop A13): the wallpaper whole on
-  // a quarter-mode canvas — the gradient's rows, the three ribbons —
-  // then the header bar with two apps running and with none, the
-  // icons' four states on a canvas two cells tall, a name drawn byte
-  // by byte the way the shell draws the volume's, and beside them the
-  // square root's probes, the layout's cell origins, and the hit
-  // test's verdicts.
+  // a quarter-mode canvas, twice (M31, A31.1) — the fixture's formula
+  // first (the procedural art the package retired, living in the
+  // golden's fixture now), then the same canvas from the volume's RLE
+  // runs decoded (`wall_rle.runs()`, the tool's render walking the
+  // surface run by run); the two digests one number is the tool's
+  // fidelity, the bytes the metal's boot decode meets. Then the header
+  // bar with two apps running and with none, the icons' four states on
+  // a canvas two cells tall, a name drawn byte by byte the way the
+  // shell draws the volume's, and beside them the square root's
+  // probes, the layout's cell origins, and the hit test's verdicts.
   const wall = ui_fb_canvas.canvas(256, 192)
-  emo_desktop.wallpaper(wall, 256, 192)
+  wall_rle.wallpaper_formula(wall, 256, 192)
   println("wall ${ui_fb_frame.digest(wall)}")
+  emo_desktop.wallpaper_decode(wall, 256, 192, wall_rle.runs())
+  println("wall decoded ${ui_fb_frame.digest(wall)}")
   const bar = ui_fb_canvas.canvas(256, 24)
   // the clock's epochs (emo-desktop M26, A26.1): the bar reads the
   // seconds the caller hands it — 2026-03-29 09:05 UTC with two apps
@@ -181,9 +187,10 @@ def main() {
   const lh = emo_desktop.launch_h()
   // the wallpaper's replica at the display's own size (emo-desktop
   // M30, A30.1): the formula is position-dependent on the full mode —
-  // the panel's pixels sample the display's coordinates
+  // the panel's pixels sample the display's coordinates (M31, A31.1:
+  // the fixture's formula now — the package's live path is the decode)
   const lwall = ui_fb_canvas.canvas(1920, 1080)
-  emo_desktop.wallpaper(lwall, 1920, 1080)
+  wall_rle.wallpaper_formula(lwall, 1920, 1080)
   const l1 = ui_fb_canvas.canvas(lw, lh)
   const l2 = ui_fb_canvas.canvas(lw, lh)
   const l3 = ui_fb_canvas.canvas(lw, lh)

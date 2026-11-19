@@ -2854,6 +2854,19 @@ const desk_painted_minute = 16120 // the minute the bar's clock painted
 const cal_grant = 16128 // the calendar panel's grant and base —
 const cal_base = 16136 // 0 the panel shut, a toplevel while it shows
 
+// The wallpaper's file (emo-desktop M31, A31.1): the volume's RLE art
+// read once at boot into the shell's scratch — the bytes at 131072,
+// a 64 KiB cap over the whole cell map's head (the notify reply, the
+// launcher's and the lock's cells all live below 17 KiB; the read's
+// first staging at 16384 wiped them and the desktop's own boot proved
+// the collision) — the size it answered, the ok cell the decode's one
+// green light (a file missing or a header that names another mode
+// leaves it zero, the flat ground's), and the name's own bytes beside.
+const wall_file = 131072 // the file's bytes, 64 KiB at the 128 KiB line
+const wall_file_len = 196608 // the bytes the answer wrote
+const wall_file_ok = 196616 // the header's verdict, 0 or 1
+const wall_name = 196624 // "wallpaper.rle", 13 bytes
+
 // The launcher's and the lock's cells (emo-desktop M28), in the same
 // scratch page: the search face's grant and base, the line's bytes and
 // length, the lock face's two, the blind line's, the account file's
@@ -2999,6 +3012,17 @@ def desk_is_elf(namep Int64, nlen Int64) Bool {
   return peek8(namep + nlen - 4) == 46B && peek8(namep + nlen - 3) == 101B && peek8(namep + nlen - 2) == 108B && peek8(namep + nlen - 1) == 102B
 }
 
+// Whether a name is the wallpaper's own file (emo-desktop M31, A31.1):
+// the machine's picture is not a document — the view skips it the way
+// it skips the apps' images, the volume's full truth still the `ls`
+// and the `cat`'s.
+def desk_is_wall(namep Int64, nlen Int64) Bool {
+  if nlen != 13 {
+    return false
+  }
+  return peek8(namep) == 119B && peek8(namep + 1) == 97B && peek8(namep + 2) == 108B && peek8(namep + 3) == 108B && peek8(namep + 4) == 112B && peek8(namep + 5) == 97B && peek8(namep + 6) == 112B && peek8(namep + 7) == 101B && peek8(namep + 8) == 114B && peek8(namep + 9) == 46B && peek8(namep + 10) == 114B && peek8(namep + 11) == 108B && peek8(namep + 12) == 101B
+}
+
 // One view entry written from a name's bytes; the next index back.
 def desk_view_put(idx Int64, namep Int64, nlen Int64, kind Int64) Int64 {
   const e = buf + desk_view + (idx * 40)
@@ -3040,11 +3064,13 @@ def desk_view_has(count Int64, namep Int64, nlen Int64) Bool {
 
 // The listing through the view's grammar, whole from scratch. At the
 // root: a flat name a document, a prefixed name its folder once, the
-// `.elf` rows skipped. Inside a folder F: the `..` way up first, then
+// `.elf` rows and the wallpaper's own file skipped (emo-desktop M31,
+// A31.1 — the machine's picture is not a document, the apps' images
+// are not icons). Inside a folder F: the `..` way up first, then
 // each name under F — the rest after `F/` a document of its own, or
 // the subfolder its own prefix names, deduped the same way. A folder
 // and a flat file of one spelling are both shown: they are two
-// entries of the volume, and the view hides nothing.
+// entries of the volume, and the view hides nothing else.
 def desk_view_build() Void {
   var count = 0
   const flen = peek64(buf + desk_list_len)
@@ -3065,7 +3091,7 @@ def desk_view_build() Void {
     }
     const nlen = n - pos
     const namep = buf + desk_list + pos
-    if !desk_is_elf(namep, nlen) {
+    if !desk_is_elf(namep, nlen) && !desk_is_wall(namep, nlen) {
       // the first slash, or -1: the name's folder membership
       var slash = -1
       var k = 0
@@ -3191,44 +3217,81 @@ def desk_ribbon_row(base Int64, mw Int64, y Int64, x Int64, w Int64, ink_color I
   }
 }
 
-// The wallpaper's art, whole: the gradient row by row (each channel a
-// positive-weight lerp between the package's two anchors), then the
-// three ribbons over it — the same slopes and inks the package's
-// `wallpaper` lays on the hosted canvas, mirrored here because the
-// call that paints must be the call that stays typed.
-def desk_wallpaper_paint(base Int64, mw Int64, mh Int64) Void {
-  const denom = mh - 1
-  const tr = (emo_desktop.wall_top() >> 16) & 255
-  const tg = (emo_desktop.wall_top() >> 8) & 255
-  const tb = emo_desktop.wall_top() & 255
-  const br = (emo_desktop.wall_bottom() >> 16) & 255
-  const bg = (emo_desktop.wall_bottom() >> 8) & 255
-  const bb = emo_desktop.wall_bottom() & 255
-  var y = 0
-  while y < mh {
-    const r = (tr * (denom - y) + br * y) / denom
-    const g = (tg * (denom - y) + bg * y) / denom
-    const b = (tb * (denom - y) + bb * y) / denom
-    carve_fill(base, mw, 0, y, mw, 1, (r << 16) | (g << 8) | b)
-    y = y + 1
+// The wallpaper's art, whole (emo-desktop M31, A31.1): the volume's
+// RLE file decoded run by run onto the buffer — one fill a run,
+// row-aligned, the walk the package's `wallpaper_decode` keeps on the
+// hosted canvas, mirrored here because the call that paints must be
+// the call that stays typed. The file the boot read (`wall_file_load`)
+// is the art's only source; the procedural formula this replaces is
+// the golden fixture's now. A boot whose volume carried no file (or
+// one whose header names another mode) leaves the ok cell zero and
+// the walk paints the flat ground — the gradient's deep end, the wall
+// the desktop still stands on while the volume heals.
+def desk_wallpaper_decode(base Int64, mw Int64, mh Int64) Void {
+  if peek64(buf + wall_file_ok) == 0 {
+    carve_fill(base, mw, 0, 0, mw, mh, emo_desktop.wall_top())
+  } else {
+    var x = 0
+    var y = 0
+    var at = buf + wall_file + 16
+    const end = buf + wall_file + peek64(buf + wall_file_len)
+    while at < end {
+      const run = peek64(at)
+      const count = run & 4294967295
+      const color = run >> 32
+      carve_fill(base, mw, x, y, count, 1, color)
+      x = x + count
+      if x == mw {
+        x = 0
+        y = y + 1
+      }
+      at = at + 8
+    }
   }
-  var t = 0
-  while t < (5 * mh) / 8 {
-    desk_ribbon_row(base, mw, t, -((25 * mw) / 128) + (3 * t) / 4,
-      (115 * mw) / 256, 0x2830B8C8)
-    t = t + 1
-  }
-  var u = (5 * mh) / 24
-  while u < (15 * mh) / 16 {
-    desk_ribbon_row(base, mw, u, (15 * mw) / 256 + u / 2, (25 * mw) / 64,
-      0x20E86890)
-    u = u + 1
-  }
-  var v = (85 * mh) / 192
-  while v < mh {
-    desk_ribbon_row(base, mw, v, (225 * mw) / 256 - v / 4, (135 * mw) / 256,
-      0x188868E8)
-    v = v + 1
+}
+
+// The wallpaper file's boot read (emo-desktop M31, A31.1): the
+// volume's whole RLE into the shell's scratch, the header checked
+// before the ok cell turns — the magic's word, the mode's own w and h
+// packed above the size's floor. A read refused, a size past the
+// scratch, a foreign magic, a foreign mode: all one verdict, the flat
+// ground's.
+def put_wall_name(a Int64) Int64 {
+  poke8(a, 119B)      // w
+  poke8(a + 1, 97B)   // a
+  poke8(a + 2, 108B)  // l
+  poke8(a + 3, 108B)  // l
+  poke8(a + 4, 112B)  // p
+  poke8(a + 5, 97B)   // a
+  poke8(a + 6, 112B)  // p
+  poke8(a + 7, 101B)  // e
+  poke8(a + 8, 114B)  // r
+  poke8(a + 9, 46B)   // .
+  poke8(a + 10, 114B) // r
+  poke8(a + 11, 108B) // l
+  poke8(a + 12, 101B) // e
+  return 13
+}
+
+def wall_file_load() Void {
+  poke64(buf + wall_file_ok, 0)
+  const n = put_wall_name(buf + wall_name)
+  const mode = peek64(buf + desk_mode_cell)
+  const mw = mode >> 32
+  const mh = mode & 4294967295
+  case syscall.file_read(buf + wall_name, n, buf + wall_file, 65536) {
+    (R.error, _) then {}
+    (R.ok, size) then {
+      if size >= 16 && size <= 65536 {
+        if peek64(buf + wall_file) == 0x314C4C41574F4D45 {
+          const wh = peek64(buf + wall_file + 8)
+          if (wh & 4294967295) == mw && (wh >> 32) == mh {
+            poke64(buf + wall_file_len, size)
+            poke64(buf + wall_file_ok, 1)
+          }
+        }
+      }
+    }
   }
 }
 
@@ -3506,7 +3569,7 @@ def desk_wall_repaint(f ui_fb.raster.Strike) Void {
   const mode = peek64(buf + desk_mode_cell)
   const mw = mode >> 32
   const mh = mode & 4294967295
-  desk_wallpaper_paint(base, mw, mh)
+  desk_wallpaper_decode(base, mw, mh)
   desk_icons_paint(f, base, mw, mh)
   frame_line(carve_digest(base, mw, mh))
   case syscall.present(peek64(buf + desk_wall_grant), 0, 0, mw, mh) {
@@ -4531,6 +4594,10 @@ def desktop() Void {
   }
   poke64(buf + desk_wall_grant, gw)
   poke64(buf + desk_wall_base, base_w)
+  // The art's boot read (emo-desktop M31, A31.1): the mode's own
+  // verdict before the first paint — the wallpaper the volume's file
+  // decodes, or the flat ground when the volume carries none.
+  wall_file_load()
   desk_wall_repaint(f)
   desk_icons_line()
   // The launcher's catalog (emo-desktop M28): the volume's apps walked

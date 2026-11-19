@@ -49,3 +49,9 @@ emo_os_user_blob_s:
     .globl emo_os_user_blob_s_end
 emo_os_user_blob_s_end:
 
+    .globl emo_os_user_blob_w
+emo_os_user_blob_w:
+    .incbin "wallpaper.rle"
+    .globl emo_os_user_blob_w_end
+emo_os_user_blob_w_end:
+

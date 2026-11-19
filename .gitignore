@@ -117,3 +117,6 @@ examples/*/emo-os-demo.d/
 compile_commands.json
 erl_crash.dump
 *.core
+
+# the wallpaper's art (emo-desktop M31): generated, the build embeds it
+projects/emo-os/wallpaper.rle

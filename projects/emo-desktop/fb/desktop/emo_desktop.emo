@@ -304,60 +304,30 @@ def wall_bottom() Int64 {
   return 0x40306A
 }
 
-// One translucent ribbon: a diagonal band, one blended row at a time —
-// the row's left edge a line `(m·y)/d + c`, the width fixed, the ink a
-// blend word, the coverage in its top byte the surface's own rule.
-// `span` packs the band's rows, `y0` above `y1` — the riscv64 call
-// takes eight arguments, and the ribbon's shape fits in them. `d` is
-// never zero (the caller's slopes are honest fractions).
-def ribbon(s ui_fb.Surface, h Int64, span Int64, m Int64, d Int64, c Int64, width Int64, ink_color Int64) Void {
-  var y = span >> 32
-  if y < 0 {
-    y = 0
-  }
-  var ye = span & 4294967295
-  if ye > h {
-    ye = h
-  }
-  while y < ye {
-    const x = c + (m * y) / d
-    s.blend(x, y, width, 1, ink_color)
-    y = y + 1
-  }
-}
-
-// The wallpaper whole: the gradient row by row (each channel a
-// positive-weight lerp between the two anchors, so the division is the
-// positive kind every target rounds the same), then the three ribbons
-// over it — teal from the upper left, rose through the middle, violet
-// from the lower right, macOS's abstract poster in the surface's own
-// primitives. One call per boot: the shell paints the icons over this
-// before the wallpaper's first present.
-def wallpaper(s ui_fb.Surface, w Int64, h Int64) Void {
-  const denom = h - 1
-  const tr = (wall_top() >> 16) & 0xFF
-  const tg = (wall_top() >> 8) & 0xFF
-  const tb = wall_top() & 0xFF
-  const br = (wall_bottom() >> 16) & 0xFF
-  const bg = (wall_bottom() >> 8) & 0xFF
-  const bb = wall_bottom() & 0xFF
+// The wallpaper whole (emo-desktop M31, A31.1): the volume's RLE art
+// walked onto the surface run by run — one fill a run, row-aligned,
+// the file's order the rows' order, until the runs tile the frame
+// exactly. `runs` are the file's run words, the pixel count in the low
+// half and the opaque color in the high half (`gen-wallpaper.py`'s
+// emission, the shell's boot decoding the same words); the walk's
+// trust is the format's own. The procedural formula this replaces
+// lives in the golden's fixture now (`wall_rle.wallpaper_formula`),
+// the decode's truth the fixture's equal bytes.
+def wallpaper_decode(s ui_fb.Surface, w Int64, h Int64, runs Array[Int64]) Void {
+  var x = 0
   var y = 0
-  while y < h {
-    const r = (tr * (denom - y) + br * y) / denom
-    const g = (tg * (denom - y) + bg * y) / denom
-    const b = (tb * (denom - y) + bb * y) / denom
-    s.fill(0, y, w, 1, (r << 16) | (g << 8) | b)
-    y = y + 1
+  var i = 0
+  while i < runs.length() {
+    const count = runs[i] & 4294967295
+    const color = runs[i] >> 32
+    s.fill(x, y, count, 1, color)
+    x = x + count
+    if x == w {
+      x = 0
+      y = y + 1
+    }
+    i = i + 1
   }
-  // The ribbons' bands, offsets and widths derive from the mode (A14.3
-  // — fractions of w and h whose 256ths and 128ths reproduce the 1024x768
-  // drawing they were tuned at exactly); the slopes stay the art's own.
-  ribbon(s, h, (0 << 32) | ((5 * h) / 8), 3, 4, -((25 * w) / 128),
-    (115 * w) / 256, (0x28 << 24) | 0x30B8C8)
-  ribbon(s, h, (((5 * h) / 24) << 32) | ((15 * h) / 16), 1, 2, (15 * w) / 256,
-    (25 * w) / 64, (0x20 << 24) | 0xE86890)
-  ribbon(s, h, (((85 * h) / 192) << 32) | h, -1, 4, (225 * w) / 256,
-    (135 * w) / 256, (0x18 << 24) | 0x8868E8)
 }
 
 // The header bar's inks: the wordmark in the boot banner's cyan, the

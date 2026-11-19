@@ -96,6 +96,11 @@ const app_blob_e = koff + 0x870021f0
 const app_blob_e_end = koff + 0x870021f8
 const app_blob_s = koff + 0x87002200
 const app_blob_s_end = koff + 0x87002208
+// The wallpaper's art (emo-desktop M31, A31.1): the volume's RLE file
+// rides beside the apps' images, the first boot installing it the
+// same way — the machine's own picture on the machine's own volume.
+const app_blob_w = koff + 0x87002210
+const app_blob_w_end = koff + 0x87002218
 
 // The process service's screen-pass state (T8.2), on the exec page's
 // tail: the granted child's pid and the carve's base, across requests —
@@ -5375,6 +5380,23 @@ def put_spin_name(a Int64) Int64 {
   return 8
 }
 
+def put_wall_name(a Int64) Int64 {
+  poke8(a, 119B)      // w
+  poke8(a + 1, 97B)   // a
+  poke8(a + 2, 108B)  // l
+  poke8(a + 3, 108B)  // l
+  poke8(a + 4, 112B)  // p
+  poke8(a + 5, 97B)   // a
+  poke8(a + 6, 112B)  // p
+  poke8(a + 7, 101B)  // e
+  poke8(a + 8, 114B)  // r
+  poke8(a + 9, 46B)   // .
+  poke8(a + 10, 114B) // r
+  poke8(a + 11, 108B) // l
+  poke8(a + 12, 101B) // e
+  return 13
+}
+
 
 def install_img(fs Pid, namea Int64, nlen Int64, bloba Int64, blobend Int64,
     label String) Void {
@@ -5414,6 +5436,9 @@ install_img(fs_svc, install_scratch, en, peek64(app_blob_e),
 var sn = put_spin_name(install_scratch)
 install_img(fs_svc, install_scratch, sn, peek64(app_blob_s),
   peek64(app_blob_s_end), "spin.elf")
+var wn = put_wall_name(install_scratch)
+install_img(fs_svc, install_scratch, wn, peek64(app_blob_w),
+  peek64(app_blob_w_end), "wallpaper.rle")
 frames.give(install_scratch)
 
 // The restart proof (T7.2, docs/fs.md): a file written through the

@@ -122,13 +122,24 @@ stale() {
   return 1
 }
 
+# The wallpaper's art (emo-desktop M31, A31.1): the volume's RLE file,
+# generated from the formula's render by the desktop's tool — the
+# kernel embeds it (user.S) and the first boot installs it on the
+# volume, the shell's boot decoding it into the wallpaper's surface. A
+# file missing or older than the tool regenerates here, before the
+# kernel's build can want it.
+wall_src='../emo-desktop/fb/desktop/gen-wallpaper.py'
+if [ ! -f wallpaper.rle ] || [ "$wall_src" -nt wallpaper.rle ]; then
+  python3 "$wall_src" --out wallpaper.rle
+fi
+
 # shellcheck disable=SC2086
 if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src $notify_src "$hash_dir"/package.emo "$hash_dir"/*.emo "$hash_dir"/internal/*.emo ||
    stale counter.elf $counter_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale files.elf $files_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale spin.elf $spin_src ||
-   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf; then
+   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf wallpaper.rle; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
   else

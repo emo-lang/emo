@@ -2524,12 +2524,56 @@ the sizes the faces already ride — no outlines pipeline needed for
 the shapes' own geometry). The shell's panels re-dress in the alpha,
 the corners and the shadows A30 landed.
 
-- [ ] **A31.1** — The wallpaper's art: the RLE format (the run's
+- [x] **A31.1** — The wallpaper's art: the RLE format (the run's
   shape, the file's name and size), the host tool turning a source
   picture into the volume's file, the shell's boot decode into the
   wallpaper's surface (the procedural formula retired to the
   fixture's), and the golden's pins — the decoded bands' bytes — five
   hosted targets byte-identically.
+  **complete 2026-11-19** — the format: `wallpaper.rle`, 13 bytes of
+  name on the volume, the file a header word (the `EMOWALL1` magic,
+  the mode packed w above h) then one word per run — the pixel count
+  in the low half, the opaque color in the high half, little-endian,
+  runs row-aligned and in order until they tile the frame exactly
+  (32,848 bytes at 1920×1080, 4,104 runs — a raw frame never fit the
+  volume, the runs fit easily). The tool is
+  `fb/desktop/gen-wallpaper.py`: the formula's render (the exact
+  arithmetic the screendump's model carries — anchors, ribbons, the
+  truncating slopes, the `over` rounding) RLE-encoded into the
+  volume's file and into the golden's fixture module
+  (`wall_rle.emo`, the quarter-mode runs chunked the face fixtures'
+  way, the retired formula beside them — the fixture the golden's
+  half now). The machine writes its own picture onto the volume the
+  way it writes its apps: the file rides the kernel image
+  (`user.S`'s fifth blob, the bounds parked at the handoff tail's
+  next pair), the first boot's install train names it on the wire
+  (`installed wallpaper.rle 32848`; the fs gen counts one higher,
+  `fs ls 7`), the volume carries it after. The shell's boot reads the
+  file whole into its scratch (a 64 KiB cap at the 128 KiB line) and
+  every wallpaper repaint decodes the runs — one fill a run, the
+  package's `wallpaper_decode` the hosted twin, the walk staying
+  typed on the metal; the formula deleted from both. A file missing,
+  a foreign magic, a mode that is not the display's: the flat ground,
+  the gradient's deep end. **The desk's view hides the machine's own
+  file** — the wallpaper's art is not a document, the view skips it
+  beside the `.elf` rows (the desktop's face byte-stable; `fs ls` and
+  the `cat` still reach it). The golden pins the retirement's proof:
+  the fixture's formula first (`wall 1307018457`), then the same
+  canvas from the runs decoded (`wall decoded 1307018457` — the two
+  digests one number, the tool's fidelity), and the full-mode replica
+  rides the fixture's formula. **Found on the way**: the file's first
+  staging at offset 16384 wiped the notification reply, the toast and
+  panel grants, and the launcher's and lock's cells — the scratch
+  page dense to 17 KiB — and the desktop's own boot named it (the
+  bar's and dock's first presents gone, the launcher's press a REPL
+  `?`); the file now lives at the 128 KiB line, the whole cell map
+  below it. Verified: the desktop golden byte-identical on the
+  interpreter, ocaml, c, typescript and wasm (the beam leg the
+  tree's own M25 hang); `run.sh` exits 0 on both transports, three
+  runs byte for byte — the decode's desktop comp sum the committed
+  pin exactly (`comp 0 0 884125748`), the ledger `frames 1698 1483`
+  unmoved, the volume's story the wires' own (`installed
+  wallpaper.rle 32848`, the gen counts one higher, `fs ls 7`).
 - [ ] **A31.2** — The palette's extraction and the chrome's feed: the
   sampling (the bands, the accent), the provider seam (the metal's
   read, the golden's fixture), and the chrome's constants answered
