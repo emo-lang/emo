@@ -29,12 +29,12 @@ Linux) os=linux ;;
   ;;
 esac
 
-# The release matrix names Apple Silicon arm64 and Linux aarch64.
+# The release matrix names the archives macOS arm64 and Linux aarch64 /
+# amd64 — uname's x86_64 must map to the archive's amd64.
 case "$(uname -m)" in
-x86_64 | amd64) arch=x86_64 ;;
-arm64 | aarch64)
-  if [ "$os" = macos ]; then arch=arm64; else arch=aarch64; fi
-  ;;
+arm64) arch=arm64 ;;
+aarch64) arch=aarch64 ;;
+x86_64 | amd64) arch=amd64 ;;
 *)
   echo "install.sh: unsupported architecture: $(uname -m)" >&2
   exit 1
@@ -43,7 +43,7 @@ esac
 
 # Intel Macs are not a shipping target — say so here rather than let
 # the download 404.
-if [ "$os" = macos ] && [ "$arch" = x86_64 ]; then
+if [ "$os" = macos ] && [ "$(uname -m)" != arm64 ]; then
   echo "install.sh: no Intel macOS build — Emo ships macOS for Apple Silicon only" >&2
   exit 1
 fi
