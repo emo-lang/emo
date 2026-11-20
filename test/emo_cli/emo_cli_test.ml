@@ -922,13 +922,41 @@ let wasi_examples_tests =
           in
           Alcotest.(check int) "build exit" 0 exit_code;
           let cmd =
+            (* the guest root is a scratch directory of its own, not the
+               example's tree directory: dune's sandbox links the tree's
+               files read-only, so a leftover of an earlier run (file_read's
+               artifact stays behind by design) rides the grant read-only and
+               the demo's first write aborts the case binding. The demos
+               write-then-read their own files — the bytes don't care which
+               directory the grant rides, and a fresh one keeps the run
+               hermetic against whatever the tree carries. *)
+            let root = Filename.concat scratch ("wasi-root-" ^ name) in
+            (if not (Sys.file_exists root) then
+               try Unix.mkdir root 0o755 with _ -> ());
             Printf.sprintf
-              "cd %s && wasmtime run -S cli -W \
-               component-model-more-async-builtins=y --dir %s::/ %s"
-              (Filename.quote dir) (Filename.quote dir)
-              (Filename.quote out_wasm)
+              "wasmtime run -S cli -W component-model-more-async-builtins=y \
+               --dir %s::/ %s"
+              (Filename.quote root) (Filename.quote out_wasm)
           in
           let out, err, proc_status = run_cmd cmd in
+          (* the bytes first, but a mismatch answers with the runtime's
+             own stderr and exit — an empty stdout is wasmtime refusing
+             to start, and the refusal text is the diagnosis *)
+          if out <> expected then
+            Alcotest.fail
+              (Printf.sprintf
+                 "stdout mismatch\n\
+                  expected %S\n\
+                  received %S\n\
+                  exit: %s\n\
+                  stderr:\n\
+                  %s"
+                 expected out
+                 (match proc_status with
+                 | Unix.WEXITED n -> string_of_int n
+                 | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                 | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                 err);
           Alcotest.(check string) "output" expected out;
           match proc_status with
           | Unix.WEXITED 0 -> ()

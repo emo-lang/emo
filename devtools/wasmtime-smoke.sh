@@ -81,11 +81,17 @@ wfail=0
 for name in $WASI_GOLDENS; do
     dir="$ROOT/examples/$name"
     [ -d "$dir" ] || { echo "MISSING  wasi/$name"; wfail=$((wfail + 1)); continue; }
+    # the guest root is a scratch directory of its own, not the example's
+    # tree directory: a leftover of an earlier run riding the grant would
+    # be the demo's own working file, and the demos write-then-read their
+    # own files — a fresh root keeps the run hermetic and the tree clean.
+    root="$OUT/wasi-roots/$name"
+    mkdir -p "$root"
     if (cd "$dir" && EMO_REGISTRY="$REGISTRY" "$EMO" build main.emo \
             --target wasm --wasi > /dev/null 2>&1) \
-        && out=$(cd "$dir" && wasmtime run -S cli \
-            -W component-model-more-async-builtins=y --dir "$dir"::/ \
-            main.wasm 2>/dev/null) \
+        && out=$(wasmtime run -S cli \
+            -W component-model-more-async-builtins=y --dir "$root"::/ \
+            "$dir/main.wasm" 2>/dev/null) \
         && [ "$out" = "$(cat "$dir/expected.txt")" ]
     then
         wpass=$((wpass + 1))
