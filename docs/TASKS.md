@@ -78,6 +78,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M49 — The file half's rung two | 88 | Directories list, paths stat, and the mutations land: the DIRECTORY oflag opens directories (a stat before the open answers ENOTDIR for a file), the fd table grew the host path and the grant root so every resolution stays confined, `fd_readdir` lists statelessly (the caller's cookie the position, entries whole-only, d_type UNKNOWN with `path_filestat_get` the type channel), `fd_filestat_get`/`path_filestat_get` stat through the new path-shaped `os_stat` door (millisecond times scaled to nanoseconds; stdio answering character device; an unlinked-open's stat answering the miss), and the four path mutations ride the os doors that already exist, the errno text channel grown to EEXIST/ENOTEMPTY/EXDEV/EPERM; the lookupflags' symlink-follow bit is required, and the fixture's link-refusal probe now names `fd_pread` (`CHECK.md`). |
 | M50 — The GC bootstrap | 89 | The machine object model the interpreter run hosts, and the collector in Emo over it: sixteen bare-name doors — the fixed `struct` block, the counted `array` block, the rooted `ref`, and the walk's doors (`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`) — admitted only by the interpreter run (checked as target `interpreter`; every build target refuses by name, E4032), words self-describing by parity (even a shifted scalar, odd a reference, `0` null), slot 0 of every block the collector's header; the `gc` package implements mark-sweep in pure Emo — tagged accessors, the worklist drain, cycles cut by the mark bit — answering the words reclaimed; the weak root registry makes the host collector the liveness oracle and roots the mutator discipline (a handle a collection must respect lives in a `ref`); the goldens: `examples/gc_demo`'s nine lines on the interpreter alone (a rooted chain and a traced array survive the kill of four thousand unrooted nodes; the cycle dies the moment its root drops — the shape reference counting can never reclaim), `gc_heap_tests`, and the `gc_refusal` negative goldens on every refusing target (`CHECK.md`, `docs/gc-heap.md`). |
 | M51 — The GC ladder | 90 | The heap grows its own allocator and its wings: step 90 lands the arena — `heap_new` makes it, the raw `heap_load`/`heap_store` lane moves words, `heap_carve`/`heap_release` bind and unbind ranges — and the `gc` package's free list (first fit over two maps, split and neighbor-merge) becomes the only allocator, `struct_new`/`array_new`/`heap_free` retiring with the doors' blessing; handles carry offset + generation so a stale handle dies loudly without tombstones; the header word packs magic/kind/generation/mark/size; the demo's second generation lands inside the sweep's own words, the arena never growing (`CHECK.md`). |
+| M52 — The GC heap's riscv64 host | 91 | The metal joins the heap's hosts: the image grants the collector a region in its `.bss` (the mebibyte arena, the binding table, the root table, the slide's stage), the twenty-four doors land as runtime helpers compiled beside the program, `Ref` joins the tagged value model as kind 12 and the metal's `Map` as kind 13 (identity kinds under the runtime's reference counting, a zero release unlinking the root table), the raise gap this host carried since the hash twin closes (`Raise` lowers to `emo_raise`, the exception value rendering the `c` host's way), and module-level `var`s lower (cells in static memory, the prologue initializing) so the `gc` package's own geometry rides the image; the demo's 24 gold lines answer byte-for-byte on the interpreter, the `c` host and the metal — three boots stable, through the EmoOS kernel and direct — with the debug round's six walls named in `CHECK.md` (the prologue's double pool, the Map's half-taken +8 shift, the slide's raw pairs, the forwarding map's split key shapes, the rehash that copied only `next`, the unrounded arena cursor) and the gold leg riding `@emo_os`'s `gc_metal` group (`CHECK.md`, `docs/gc-heap.md`, `plan/step-91-riscv64-gc-host.md`). |
 
 ## Design gates
 
@@ -5246,3 +5247,53 @@ collector, and the real-memory hosts.
       memoizes script consts, and an impure initializer re-runs at
       the first read (CHECK.md names the boundary). riscv64's
       tagged-word heap stays the next host, unmapped.
+
+## M52 — The GC heap's riscv64 host
+
+### Step 91 — The metal's own heap: the region, the doors, the kinds, and the demo's gold on three hosts
+
+**Status:** complete. (`plan/step-91-riscv64-gc-host.md` is the step's
+record, `docs/gc-heap.md` the design note.)
+
+- [x] **T91.1** — The admission: `base_env "riscv64"` takes the
+      `gc_heap_bindings` beside the raw-memory ones — the heap's doors
+      and the raw lane coexist on the machine the way the memory model
+      always meant — the `gc` package's manifest grows `riscv64` and
+      the locks re-pin, and the E4032 refusal's text names the three
+      hosts that admit and refuses the rest; the admission tests flip
+      riscv64 from the refusal lists into the admitted ones, and the
+      map-literal and raise refusal tests retire with the gaps they
+      pinned.
+- [x] **T91.2** — The region and the doors: `emo_gc_region` in the
+      image's `.bss` (NOBITS, every profile) — the one-mebibyte arena,
+      the binding table (8192 entries of 32 bytes: offset, generation,
+      kind, size), the root table, the slide's staging — and the
+      twenty-four doors as runtime helpers compiled beside the
+      program, the loud ends answering the interpreter's texts; the
+      first round's biggest wall found here: a thin helper tail-calls
+      through a `ra` its callee had already spent, the stale return
+      address re-entering the helper until the arena walked dry.
+- [x] **T91.3** — The kinds and the gaps: `Ref` joins the tagged
+      value model as kind 12 (identity-counted, a zero release
+      unlinking the root table), the metal's `Map` as kind 13 (the
+      hash map in the metal's words, the entries' claims riding the
+      cell, `keys()` answering insertion order), `Raise` lowers to
+      `emo_raise` (the `c` host's rendering rule — a bare message
+      through, an `Exception` instance's message field), and
+      module-level `var`s lower (cells in the image's static memory,
+      the prologue initializing them, the pool's pre-pass counting
+      their births).
+- [x] **T91.4** — The acceptance: `examples/gc_metal` pins the demo's
+      own source, and the 24 gold lines answer byte-for-byte on the
+      interpreter, the `c` host and the metal — the metal three boots
+      stable through the EmoOS kernel (the checksum feed, the gate's
+      writes) and three through the direct boot; the debug round's
+      six walls each named and fixed (CHECK.md carries the list).
+- [x] **T91.5** — The gold leg and the docs: the `@emo_os` suite's
+      `gc_metal` group (the parity case pinning the metal demo's
+      source to the demo's own; the kernel leg ×3 against
+      `expected.txt`, off `dune runtest` like the rest of the suite);
+      `docs/gc-heap.md` + zh (the matrix's third row, the metal's
+      section), `docs/stdlib/gc.md` + zh (three hosts), the stdlib
+      index rows, this section + zh mirror,
+      `plan/step-91-riscv64-gc-host.md`, CHECK.md's record.

@@ -5,11 +5,12 @@ written in pure Emo over the object-model doors the interpreter run
 admits ([`docs/gc-heap.md`](../gc-heap.md) is the design note). The
 arena is the host's; everything on top of it — the carving, the free
 geometry with its split and merge, the tracing, the sweep — is this
-package. One source serves every host that answers the same doors; two
-hosts answer them today — the interpreter run (a simulated arena) and
-the `c` target (real `malloc`'d words), byte-identical between them —
-and on every other build target the whole family refuses at check time
-(E4032), so the honest seats are those two.
+package. One source serves every host that answers the same doors;
+three hosts answer them today — the interpreter run (a simulated
+arena), the `c` target (real `malloc`'d words), and the `riscv64`
+metal (the image's own region) — byte-identical between them — and on
+every other build target the whole family refuses at check time
+(E4032), so the honest seats are those three.
 
 ## Using the package
 
@@ -126,8 +127,8 @@ geometry, merged with its neighbors — the words a collection frees
 are the words the next allocation carves from, as the demo's second
 generation shows.
 
-One full collection: the walk starts at the roots the interpreter run
-answers, follows every odd word with the mark bit cutting cycles,
+One full collection: the walk starts at the roots the host's root
+table answers, follows every odd word with the mark bit cutting cycles,
 drains the worklist to the end of the graph, and frees everything
 unmarked. It answers the number of physical words the sweep took back.
 A root that reaches a freed block dies loudly at the door (E3050) —

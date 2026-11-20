@@ -106,8 +106,10 @@ collector and value model underneath are still OCaml's — the borrowed
 host runtime of point 2.) That is the README's "ships inside the binary": a
 compiled program carries its runtime with it, with no interpreter and no
 runtime download. A freestanding target has **no host runtime** — it
-carries its own, with its own allocator (step 19's bump allocator, "GC
-deferred").
+carries its own, with its own allocator (step 19's bump allocator)
+and, since step 91, its own collector: the `gc` heap's doors over the
+image's granted region, the Emo package on top (see
+[`gc-heap.md`](gc-heap.md)).
 
 Why the runtime matters to the GC, FFI, and HPC discussions: the runtime
 owns **value representation, memory management, and scheduling**. "No

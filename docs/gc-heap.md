@@ -14,8 +14,10 @@ the rooted **ref**, mark-sweep, the free list with its split and
 coalesce — is Emo code. One source serves every host that answers the
 same doors; the arena the interpreter simulates *is* the spec, and a
 target whose memory is real implements the same doors over a granted
-region (plan/step-90-gc-ladder.md names the ladder: allocator, payload
-packing, the compacting collector, the real-memory hosts).
+region (plan/step-90-gc-ladder.md named the ladder: allocator, payload
+packing, the compacting collector, the real-memory hosts — all four
+rungs walked; plan/step-91-riscv64-gc-host.md puts the last host on
+the metal, the track's own customer).
 
 This does not reopen T23.5. The hosted runtime's reclamation model —
 reference counting for identity objects, arena for value families —
@@ -170,21 +172,62 @@ manage.
 | --- | --- |
 | interpreter run | admits — the doors are the run's object model |
 | `c` | admits — the runtime keeps the arena and the binding over real `malloc`'d words (T90.4) |
-| `ocaml`, `typescript`, `browser`, `wasm`, `beam`, `riscv64` | refuse by name at check time (E4032) |
+| `riscv64` | admits — the image grants the collector a region; the doors are the image's runtime helpers (step 91) |
+| `ocaml`, `typescript`, `browser`, `wasm`, `beam` | refuse by name at check time (E4032) |
 
 The interpreter run checks as the target `interpreter` (`emo run`'s
-checking passes it); the `c` target admits in its own checking. The
-other hosted seats and the LSP keep the hosted default, so a gc-door
-program shows its refusal in the editor the way a `peek8` program
-does off `riscv64`. On the `c` host the mutator discipline sharpens
-one rule of its own: a script-level binding that allocates or roots
-is a `var`, never a `const` — the `c` target memoizes script consts,
-and an impure initializer would re-run at the first read, a second
-allocation wearing the first one's name. A `Ref` crosses a process
+checking passes it); the `c` target admits in its own checking, and
+`riscv64` with it. The other hosted seats and the LSP keep the hosted
+default, so a gc-door program shows its refusal in the editor the way
+a `peek8` program does off `riscv64`. On the `c` host the mutator
+discipline sharpens one rule of its own: a script-level binding that
+allocates or roots is a `var`, never a `const` — the `c` target
+memoizes script consts, and an impure initializer would re-run at the
+first read, a second allocation wearing the first one's name. On the
+metal the region rides every profile's image, and a kernel-profile
+program can call the doors bare but still cannot `require` the package
+(E5014, the kernel profile's own rule). A `Ref` crosses a process
 boundary as the same cell — the registry is the run's own, and one
 root either way. `heap_words` counts physical words; the interpreter's
 own blocks, boxed values, and builder storage stay the host's memory
 and are nobody's door to name.
+
+## The metal (riscv64)
+
+The third host, and the one the track was opened for: the same
+twenty-four doors over the image's own memory, no host runtime to
+borrow. The image grants the collector one region in its `.bss` —
+`emo_gc_region`: a one-mebibyte arena, the binding table (8192
+entries of 32 bytes each: offset, generation, kind, size), the root
+table (4096 cells), and the slide's staging. A request the region
+cannot answer is the loud end — the doors refuse by name, the
+interpreter's texts on the wire.
+
+The doors are runtime helpers compiled beside the program
+(`emo_gc_heap_new` and friends), each checked accessor validating
+kind, generation, and bounds against the binding table the way the
+interpreter's evaluator does. Everything above the region is the same
+Emo package — the demo's allocator, collector, and compaction compile
+into the image unchanged.
+
+The `Ref` lands as the tagged value model's kind 12 and the metal's
+`Map` as kind 13 — both identity kinds under the runtime's own
+reference counting, a release reaching zero unlinking the root table
+(the `c` host's exact-oracle rule, retold in the metal's words).
+`raise` closes its last gap on this host: the `Raise` statement
+lowers to `emo_raise`, the exception value rendering the way the `c`
+host renders one (a bare message passes through, an `Exception`
+instance's message field comes out of field 0), an uncaught raise the
+loud end's print and exit. Module-level `var`s lower too — the cells
+in the image's static memory, the prologue initializing them before
+the body — so the `gc` package's own `by_start`/`by_end` ride the
+image like any other value.
+
+The acceptance is the demo's 24 gold lines byte-for-byte across all
+three hosts — the interpreter run, the compiled `c`, and the metal —
+the metal's proof three boots stable through the EmoOS kernel
+embedding the image (the `@emo_os` suite's `gc_metal` group drives
+that leg).
 
 ## The errors
 
@@ -197,7 +240,7 @@ and are nobody's door to name.
 | E3055 | a block or arena past the size guards (2^23 / 2^41 words) |
 | E3056 | `heap_carve` overlapping a bound block |
 | E3057 | `heap_new` making a second arena |
-| E4032 | the check-time refusal, one per door, off the interpreter |
+| E4032 | the check-time refusal, one per door, on every target that does not admit the heap |
 
 E3053 (the double free) retired with `heap_free` at step 90 — a
 released block is unbound, and the second release is E3050 like any
@@ -218,9 +261,11 @@ interpreter run, `gc_heap_tests` in the checker suite, and the
 `gc_refusal` negative goldens naming every door on every refusing
 target.
 
-The ladder ahead (plan/step-90-gc-ladder.md): float and byte payload
-packing (T90.2), the moving/compacting collector the offset handles
-already make rewritable (T90.3), and the real-memory hosts — a `c`
-target runtime, the riscv64 tagged-word heap — answering the same
-doors over a granted region with the same Emo allocator and collector
-compiled in (T90.4).
+The ladder is walked: float and byte payload packing (T90.2), the
+moving/compacting collector the offset handles already made rewritable
+(T90.3), and the real-memory hosts — the `c` target runtime (T90.4)
+and the riscv64 tagged-word heap (step 91) — answering the same doors
+over granted memory with the same Emo allocator and collector compiled
+in. The track closes with its first customer served: an EmoOS user
+program's heap is the collector's to manage, and the demo's gold pins
+the three hosts together.

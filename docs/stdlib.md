@@ -90,7 +90,7 @@ The packages:
 | [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
 | [`wayland`](#the-wayland-package) | the Wayland client protocol: codec, core and xdg-shell tables, shm | `c` |
 | [`wasm`](#the-wasm-package) | a WebAssembly runtime in Emo: decode, validate, execute, host imports | `ocaml`, `c` |
-| [`gc`](#the-gc-package) | the GC heap's collector: tagged accessors over the machine object model, mark-sweep with cycle reclamation | the interpreter run |
+| [`gc`](#the-gc-package) | the GC heap's collector: tagged accessors over the machine object model, mark-sweep with cycle reclamation | the interpreter run, `c`, `riscv64` |
 
 "all five" names the hosted targets those packages declare — `c`,
 `ocaml`, `typescript`, `wasm`, and `beam`. It is the package's list, not
