@@ -326,46 +326,59 @@ let i_cwd = 26
 let i_s_read_dir = 27
 
 (* stream.read — the directory-entry batch door *)
-let wasi_import_count = 28
+let i_wall = 28
+
+(* wasi:clocks/system-clock now — the instant rides the retptr *)
+let i_mono = 29
+
+(* wasi:clocks/monotonic-clock now — the mark, one flat i64 *)
+let wasi_import_count = 30
 
 (* The wasi mode's fixed scratch cells — page 0, all below the 65536
    heap base. The bump cursor cell is shared with the provider's realloc
    (see Emo_component's provider): one cursor, two allocators, no
-   overlap. The fd table's entries are 12 bytes: the descriptor handle
-   and the i64 cursor. *)
+   overlap. *)
 let wasi_bump_cell = 0x100
 let wasi_fs_flag = 0x1000
+
+(* the fs-init'd flag: zero means the preopens and the cwd hint are
+   still unfetched *)
 let wasi_pre_count = 0x1004
+
+(* the preopen table: 12-byte entries (desc, prefix ptr, prefix len),
+   16 slots *)
 let wasi_pre_base = 0x1008
 
-(* 12-byte entries: desc, prefix ptr, prefix len; 16 slots *)
+(* the cwd hint: (ptr, len) *)
 let wasi_cwd_cell = 0x1100
 
-(* ptr, len *)
+(* the fd table: 8-byte entries (desc, cursor), 64 slots, fds 3.. *)
 let wasi_fd_base = 0x1200
 
-(* 12-byte entries: desc, i64 cursor; 64 slots, fds 3.. *)
+(* the list answers: (ptr, len) *)
 let wasi_retp_a = 0x1600
 
-(* the list answers: (ptr, len) *)
+(* the handle pairs: (stream, future) *)
 let wasi_retp_b = 0x1608
 
-(* the handle pairs: (stream, future) *)
+(* the two-byte result<_,err> answers and the open-at handle *)
 let wasi_retp_c = 0x1610
 
-(* the two-byte result<_,err> answers and the open-at handle *)
-let wasi_scratch = 0x2000
+(* the instant record: s64 seconds at +0, u32 nanoseconds at +8 *)
+let wasi_clock_cell = 0x1620
+
 (* the stream.read scratch, 4096 bytes *)
+let wasi_scratch = 0x2000
 
 (* Every defined function's index follows the imports. *)
 let import_count = 20
 
 (* The ABI mode: the Node canonical host's twenty `emo.*` imports, or
-   the WASI 0.3 component's twenty-seven — the stdio doors, the exit
+   the WASI 0.3 component's twenty-nine — the stdio doors, the exit
    channel, the stream/future/resource builtins, and the filesystem,
-   random, and environment doors (step 85). [assemble] sets both before
-   any lowering reads the indices; the wasi import table and the
-   lowered-function list branch on [wasi_mode]. *)
+   random, environment, and clocks doors (step 85, the clocks rung).
+   [assemble] sets both before any lowering reads the indices; the wasi
+   import table and the lowered-function list branch on [wasi_mode]. *)
 let wasi_mode = ref false
 let import_base = ref import_count
 let wasi_import_base = wasi_import_count
@@ -2078,6 +2091,38 @@ let rec expr env (x : Emo_ir.expr) : unit =
                     ~err:
                       (wasi_fail env ~prefix:"os: rename "
                          ~path:[ W.Local_get bo ] ~code:[ W.Local_get err ]))
+          | "time_now_ms", [] ->
+              (* the wall clock, UTC epoch milliseconds: the
+                 system-clock's now answers the instant record — s64
+                 seconds at the retptr's +0, u32 nanoseconds at +8 —
+                 and the guest composes the ms, the sub-millisecond
+                 tail truncated away *)
+              let sp = fresh_local env "__clock_s" W.I64 in
+              let np = fresh_local env "__clock_ns" W.I32 in
+              es env
+                [
+                  W.I32_const wasi_clock_cell;
+                  W.Call i_wall;
+                  W.I32_const wasi_clock_cell;
+                  W.I64_load;
+                  W.Local_set sp;
+                  W.I32_const (wasi_clock_cell + 8);
+                  W.I32_load;
+                  W.Local_set np;
+                  W.Local_get sp;
+                  W.I64_const 1000L;
+                  W.I64_mul;
+                  W.Local_get np;
+                  W.I64_extend_i32_u;
+                  W.I64_const 1000000L;
+                  W.I64_div_u;
+                  W.I64_add;
+                  W.Struct_new t_vint;
+                ]
+          | "time_mono_ns", [] ->
+              (* the monotonic clock, nanoseconds: the mark is one flat
+                 i64, the same one-line answer the node host gives *)
+              es env [ W.Call i_mono; W.Struct_new t_vint ]
           | _ ->
               (* the process half: a WasmGC module has no process to
                  fork, so these raise when called — the package ships
@@ -11641,6 +11686,8 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
       imp "wasi:cli/environment@0.3.0" "get-arguments" 1;
       imp "wasi:cli/environment@0.3.0" "get-initial-cwd" 1;
       imp "stream" "read-dir-entries" 3;
+      imp "wasi:clocks/system-clock@0.3.0" "now" 1;
+      imp "wasi:clocks/monotonic-clock@0.3.0" "now" 2;
     ]
   in
   {

@@ -230,18 +230,20 @@ incrementally shippable steps — one file per step, executed in order.
   --target wasm --wasi` wraps the WasmGC module in a WASI 0.3 command
   component (`wasi:cli/run@0.3.0`) wasmtime 46+ (`-S cli`) executes —
   stdout/stderr through the standard stream cycles, the exit code
-  through `wasi:cli/exit`, the import table remapped from the eighteen
-  `emo.*` doors to twenty-seven standard ones: `wasi:filesystem`
+  through `wasi:cli/exit`, the import table remapped from the twenty
+  `emo.*` doors to thirty standard ones: `wasi:filesystem`
   (descriptor as a `(sub resource)` export, open-at, the
   directory-entry stream, the one-string mutations),
   `wasi:filesystem/preopens`, `wasi:random/random`,
-  `wasi:cli/environment`. The host-written lists ride a provider
-  realloc sharing the bump cursor cell with the guest; the file
-  chain's last mile landed with five guest-side bugs each pinned by a
-  probe, and the guest-side `%g` renders every float.
-  `wasi_examples` — 66 demos byte-identical with the Node list,
+  `wasi:cli/environment`, and the clocks (T85.9: `wasi:clocks`
+  system/monotonic `now` — the time package's clock half reads off
+  the `instant` record and the flat mark). The host-written lists ride
+  a provider realloc sharing the bump cursor cell with the guest; the
+  file chain's last mile landed with five guest-side bugs each pinned
+  by a probe, and the guest-side `%g` renders every float.
+  `wasi_examples` — 67 demos byte-identical with the Node list,
   skipping without wasmtime — and wasmtime-smoke's execution rung
-  (62/62) pin the doors. The plan is `plan/step-85-wasi03.md`.
+  runs the same list. The plan is `plan/step-85-wasi03.md`.
 
 - **M47 — The library's manual (step 86):** `emo man` — the standard
   library's reference pages read from inside the binary. The docs

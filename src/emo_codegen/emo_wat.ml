@@ -109,6 +109,7 @@ type instr =
   | I32_store
   | I32_load8_u
   | I32_store8
+  | I64_load
   | Array_new_default of int
   | Call_ref of int
   | Ref_func of int
@@ -257,6 +258,7 @@ let rec instr_text indent (i : instr) : string =
   | I32_store -> Printf.sprintf "%si32.store\n" pad
   | I32_load8_u -> Printf.sprintf "%si32.load8_u\n" pad
   | I32_store8 -> Printf.sprintf "%si32.store8\n" pad
+  | I64_load -> Printf.sprintf "%si64.load\n" pad
   | Array_new_default t -> Printf.sprintf "%sarray.new_default $t%d\n" pad t
   | Call_ref t -> Printf.sprintf "%scall_ref $t%d\n" pad t
   | Ref_func f -> Printf.sprintf "%sref.func $f%d\n" pad f
@@ -528,6 +530,7 @@ let rec encode_instr buf (i : instr) =
   | I32_store -> Buffer.add_string buf "\x36\x02\x00"
   | I32_load8_u -> Buffer.add_string buf "\x2d\x00\x00"
   | I32_store8 -> Buffer.add_string buf "\x3a\x00\x00"
+  | I64_load -> Buffer.add_string buf "\x29\x03\x00"
   | Array_new_default t ->
       Buffer.add_string buf "\xfb\x07";
       leb_u buf t

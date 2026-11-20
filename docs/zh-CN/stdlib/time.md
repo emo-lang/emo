@@ -224,7 +224,9 @@ receive {
 
 `["ocaml", "c", "typescript", "wasm", "beam"]`。时钟半在包声明的每
 个目标上运行——在 `wasm` 上经由两个宿主导入(`time_now_ms`、
-`time_mono_ns`)。定时半在 `wasm` 上于调用处抛出,点名能力:wasm
+`time_mono_ns`),在 WASI 0.3 组件(`--wasi`)上经由 `wasi:clocks`——
+system clock 的 `instant` 记录合成为毫秒,monotonic clock 的 mark
+平铺读取。定时半在 `wasm` 上于调用处抛出,点名能力:wasm
 驱动在一次宿主调用内同步跑完整个程序,在驱动学会 await 之前没有诚
 实的泊车——`os` 包的进程半是先例。`riscv64` 不声明:裸金属内核有自
 己的 tick。`browser` 目标也不声明——浏览器程序的定时是页面自己的
@@ -233,6 +235,9 @@ receive {
 
 ## 参考
 
+- 时钟演示:`examples/clock_demo`——只打活门的派生事实(墙钟对固定
+  时刻、不回拨、单调非降),在每个目标上逐字节相同,WASI 0.3 组件
+  也一样。
 - 演示:`examples/time_demo`——从字段构造的固定时刻、每个格式记
   号、日历字段、between 家族、转换、一次睡眠前后的 `mono`、以
   `halt` 收尾的三次 tick、一次 `after`——在解释器、ocaml、c、

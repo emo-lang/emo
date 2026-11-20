@@ -225,7 +225,7 @@ Hello, world!
 
 `--wasi` 把同一个 WasmGC 模块包进 **WASI 0.3 command component**——一个真正的 `wasi:cli/run@0.3.0` 组件，任何 WASI 0.3 运行时都能执行（wasmtime 46+；`-S cli` 打开 CLI 宿主，`-W component-model-more-async-builtins=y` 打开 stdio 循环所依赖的同步 stream 内建）。Node 彻底退出舞台：打印、abort、退出码都走标准 `wasi:cli` 的 stdio/exit 门与原生 stream。
 
-导入表从十八个 `emo.*` 门缩减为 **28 个标准门**：
+导入表从二十个 `emo.*` 门缩减为 **30 个标准门**：
 
 | 导入 | 用途 |
 | --- | --- |
@@ -235,6 +235,8 @@ Hello, world!
 | `wasi:filesystem/preopens` | `get-directories`——路径解析所锚定的 preopen 表 |
 | `wasi:random/random` | `get-random-bytes`（短返回自动循环） |
 | `wasi:cli/environment` | `get-environment`、`get-arguments`、`get-initial-cwd` |
+| `wasi:clocks/system-clock` | `now`——`instant` 记录（s64 秒、u32 纳秒），墙钟的毫秒由它合成 |
+| `wasi:clocks/monotonic-clock` | `now`——mark,一个平铺的 u64 纳秒 |
 
 外加 canon ABI 供给的 guest 侧内建：`stream.new`/`read`/`read-dir-entries`/`write`/`drop-*`、`future.read`/`drop-readable`，以及 descriptor 的 `resource.drop`。
 
@@ -244,7 +246,7 @@ Hello, world!
 - **guest 侧 `%g` 浮点格式化器完整渲染所有浮点**：node 宿主的 `floatStr`/`g6` 规则以 wat 级移植——整值 `x.0` 形式、1e-4 到 1e6 之间六位有效数字的 fixed 形式、区间外带符号两位指数的 exp 形式——与 Node 和 c 目标逐字节一致。
 - **文件链端到端可用**:经 preopen 表到 `open-at` 的路径解析、stream 读/写循环、目录项扫描——`file`、`bufio`、`os` 的 fd/目录半区与 Node 和 c 目标逐字节一致。把项目目录映射为 guest 根(`--dir <dir>::/`;`emo run` 会替你做):WASI 0.3 没有 cwd 概念——`get-initial-cwd` 在 wasmtime 下答 none——preopen 根是相对路径唯一的锚。
 - `os` 的进程半边与 Node 宿主一致,调用即 raise。
-- 金测:`test/emo_cli/emo_cli_test.ml` 的 `wasi_examples`(46 个 demo 与 Node 金测逐字节一致),`devtools/wasmtime-smoke.sh` 的第二个 rung 执行同一清单。
+- 金测:`test/emo_cli/emo_cli_test.ml` 的 `wasi_examples`(67 个 demo 与 Node 金测逐字节一致),`devtools/wasmtime-smoke.sh` 的第二个 rung 执行同一清单。
 
 ## `beam`
 

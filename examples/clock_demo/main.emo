@@ -1,0 +1,28 @@
+require "time"
+
+// The clocks' golden: the time doors' run on every target, the WASI
+// 0.3 component included. Only derived facts print — a live reading
+// answers something else on every machine and every run, so the wall
+// clock's sanity rides comparisons against fixed moments, and the
+// monotonic clock's its own never-goes-back discipline (the
+// time_demo shape).
+
+const past = time.of(year: 2000, month: 1, day: 1, hour: 0, minute: 0, second: 0, ms: 0)
+
+// the wall clock answers a real moment: the year 2000's fixed instant
+// sits behind it
+const now = time.now()
+println(now.after?(past))
+println(now.before?(past))
+
+// the wall never goes back inside a process
+const again = time.now()
+println(again.before?(now))
+println(again.unix_ms() >= now.unix_ms())
+
+// the monotonic clock: nondecreasing. The positivity pin stays off —
+// the BEAM's monotonic epoch is its own and reads negative on this
+// machine (erlang:monotonic_time carries no sign contract), so the
+// never-goes-back property is the only cross-target fact.
+const start = time.mono()
+println(time.mono() >= start)

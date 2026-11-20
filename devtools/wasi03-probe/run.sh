@@ -47,3 +47,24 @@ else
     echo "wasi03-probe: FAILED — stdout '$GOT', exit $CODE (want 'hello', 42)" >&2
     exit 1
 fi
+
+# The clocks rung (T85.9): the two wasi:clocks@0.3.0 nows under the
+# production flags. The exit code names the leg: 43 both answer, 41
+# wall only, 42 mono only, 40 neither; stdout is the raw 12-byte
+# instant record (s64 seconds, u32 nanoseconds) the probe dumps for
+# the layout eyeball.
+"$WT" parse "$DIR/clock_probe.wat" -o "$OUT/clock.component.wasm"
+
+set +e
+wasmtime run -S cli -W component-model-more-async-builtins=y \
+    "$OUT/clock.component.wasm" > "$OUT/clock-record.bin" 2>/dev/null
+CODE=$?
+set -e
+if [ "$CODE" = "43" ]; then
+    echo "wasi03-probe: clocks ok — both nows answered; the instant record:" \
+        "$(od -An -tx1 "$OUT/clock-record.bin" | tr -s ' \n' '  ')"
+else
+    echo "wasi03-probe: clocks FAILED — exit $CODE (want 43; 41 wall only," \
+        "42 mono only, 40 neither)" >&2
+    exit 1
+fi

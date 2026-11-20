@@ -254,18 +254,25 @@ the package's own, and crossing it raises.
 
 `["ocaml", "c", "typescript", "wasm", "beam"]`. The clock half runs
 everywhere the package declares — on `wasm` through the two host
-imports (`time_now_ms`, `time_mono_ns`). The timing half raises at the
-call on `wasm`, naming the capability: the wasm driver runs the whole
-program synchronously inside one host call, and no honest park exists
-until the driver learns to await — the `os` package's process half is
-the precedent. `riscv64` stays undeclared: the bare-metal kernel owns
-its own tick. The `browser` target stays undeclared too — a browser
-program's timing is the page's own timers — though the TypeScript
-browser host already carries the doors, so declaring it later is the
-package's own manifest change, not a compiler one.
+imports (`time_now_ms`, `time_mono_ns`), and on the WASI 0.3
+component (`--wasi`) through `wasi:clocks` — the system clock's
+`instant` record composed into milliseconds, the monotonic clock's
+mark read flat. The timing half raises at the call on `wasm`, naming
+the capability: the wasm driver runs the whole program synchronously
+inside one host call, and no honest park exists until the driver
+learns to await — the `os` package's process half is the precedent.
+`riscv64` stays undeclared: the bare-metal kernel owns its own tick.
+The `browser` target stays undeclared too — a browser program's
+timing is the page's own timers — though the TypeScript browser host
+already carries the doors, so declaring it later is the package's own
+manifest change, not a compiler one.
 
 ## Reference
 
+- The clocks demo: `examples/clock_demo` — the live doors' derived
+  facts only (the wall against fixed moments, never going back, the
+  monotonic nondecreasing), byte-identical on every target including
+  the WASI 0.3 component.
 - The demo: `examples/time_demo` — a fixed moment built from parts,
   every format token, the calendar fields, the between family, the
   conversions, `mono` around a sleep, three ticks ending in `halt`,

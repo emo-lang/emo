@@ -614,6 +614,9 @@ let wasm_goldens =
        pure-Emo value; the random doors print only what the RFC
        fixes about them, so the golden rides every target *)
     "uuid_demo";
+    (* the clocks rung: the time doors on every target, the WASI 0.3
+       component included — derived facts only, the time_demo shape *)
+    "clock_demo";
     (* M24: the macro pilots — expansion rides before codegen, so the
        generated declarations compile to wasm like hand-written ones *)
     "trace_macro_demo";
@@ -871,6 +874,9 @@ let wasi_goldens =
     "derive_shared_macro_demo";
     "rand_demo";
     "uuid_demo";
+    (* the clocks rung: the time doors lower onto wasi:clocks@0.3.0
+       under wasmtime — derived facts only, the time_demo shape *)
+    "clock_demo";
     "file_read";
     "bufio_demo";
     "os_fs_demo";

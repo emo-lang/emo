@@ -4,7 +4,12 @@
 (`plan/step-85-wasi03.md`) ended on: a guest core module running the
 full stdout stream protocol against `wasi:cli/stdout@0.3.0`, then
 `exit-with-code(42)`. `run.sh` assembles it and runs it under wasmtime,
-asserting `hello` on stdout and exit code 42.
+asserting `hello` on stdout and exit code 42. `clock_probe.wat` is the
+clocks campaign's (T85.9): the two `wasi:clocks@0.3.0` nows the time
+doors lower onto, with the run naming the leg in its exit code (43
+both, 41 wall, 42 mono, 40 neither) and dumping the instant record's
+bytes on stdout. `wait_probe.wat` is the gate decision's archived
+rewrite starting point.
 
 ## What the campaign established
 
@@ -34,6 +39,14 @@ asserting `hello` on stdout and exit code 42.
 | 17 | The **waitable-set core builtins are ungated** on stock wasmtime (49.0.1, no flags): `waitable-set.new`/`drop` compile and validate plain, and the synchronous `waitable-set.wait` lowers with a `(memory)` option to `(param i32 i32) -> i32` — the async ABI's wait machinery needs no feature flag; only the sync stream/future **read/write** builtins sit behind `component-model-more-async-builtins` | `wait_probe.wat` compiles ungated; the gated set refuses at parse naming `stream.write` |
 | 18 | The gate decision (T85.8's round): **keep riding the flag**. It exists on the stable release the goldens run (the run path passes it explicitly), the alternative — async lowering plus a waitable-set poll loop — swaps it for the equally default-off `component-model-async` after a probe campaign and emitter surgery, and the ungated failure mode is honest and early (parse-time, naming the builtin). Revisit when wasmtime flips a default or a second runtime matters | the `wait_probe.wat` facts 17; the plan's T85.8 note |
 
+## What T85.9 added (the clocks campaign)
+
+| # | Fact | Evidence |
+| --- | --- | --- |
+| 19 | `wasi:clocks/system-clock@0.3.0` — not the 0.2 `wall-clock`; the record re-spelled `instant { seconds: s64, nanoseconds: u32 }`, sync `now: func() -> instant`. The sync lowering rides the retptr — two flat results, past the ABI's one-flat limit — with the `(memory)` option and **no realloc** (the host allocates nothing); the record's bytes land `s64 seconds` at +0, `u32 nanoseconds` at +8. The named record rides the `(eq)` export; the interface's `use types.{duration}` stays out of the subset (nothing references it) | `clock_probe.wat` exits 43 under the production flags and dumps the 12 record bytes; the decode sits on the host's `date` (seconds) and under 1e9 (nanoseconds) |
+| 20 | `wasi:clocks/monotonic-clock@0.3.0` `now` (sync; the `mark` alias rides the inline u64 primval, the filesize precedent) sync-lowers **bare** to `(result i64)` — one flat result, no memory option. Both clocks link under the run path's exact flags (`-S cli`, the more-async-builtins word) — no new `-S` and no clocks-specific flag exists to pass | `clock_probe.wat`: the bare lower assembles and answers; the component imports no `wasi:clocks/types@0.3.0` |
+| 21 | The component-model valtype bytes for the signed/wider integers: s64 `0x78`, u32 `0x79` (s8 `0x7e`, s16 `0x7c`, s32 `0x7a`, u16 `0x7b`); the encoder's standing `0x7d` u8 and `0x77` u64 confirmed. The first s64 landing used `0x76` and wasmtime's linker read it as f32 ("expected `s64` found `f32`") | the all-integer-types reference record assembled by wasm-tools, each field's byte read out |
+
 ## The validated stdout protocol
 
 ```
@@ -54,4 +67,8 @@ future.drop-readable(future)             ; guest cleanup
   dependency; `run.sh` takes `WASM_TOOLS`.
 - The normative WIT: `WebAssembly/WASI` `proposals/cli/wit/` (the
   package is `wasi:cli@0.3.2` on main; the encoder pins the `0.3.0`
-  version strings the probe validated).
+  version strings the probe validated). The clocks' normative shape
+  read from wasmtime's own copy — `crates/wasi/src/p3/wit/deps/clocks.wit`
+  at v49.0.1 (`wasi:clocks@0.3.0`: `types.duration`, `monotonic-clock`
+  with `mark` and async wait doors, `system-clock` with the `instant`
+  record).

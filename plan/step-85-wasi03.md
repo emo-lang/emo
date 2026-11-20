@@ -136,7 +136,9 @@ assumptions and pinned the encodings:
   door carries the rung; recorded as the follow-up if a runtime's
   default-flag posture or concurrency earns it.
 - `wasi:clocks` — the language has no clock primitive (the step-77
-  stance unchanged).
+  stance unchanged). *Superseded 2026-11-20: the `time` package
+  landed, and the rung closed as T85.9 below — the refusal this line
+  named was the pressure.*
 
 ## Tasks
 
@@ -211,12 +213,22 @@ assumptions and pinned the encodings:
       `os_fs_demo` join `wasi_examples` byte-identical with the
       Node list; the smoke rung runs 42/42.
 - [x] **T85.8** — The guest-side `%g`: the node host's
-      `floatStr`/`g6` ported wat level (the integral digits + `.0`
+      `floatStr`/`g6` rule ported wat level (the integral digits + `.0`
       off the i64, six significant digits fixed and exponent forms,
       the signed zero-padded exponent), seven wat-level bugs found
       and fixed on the way (see found and fixed below), the twenty
       float-rendering demos joining the goldens (66; the smoke rung
       62/62).
+- [x] **T85.9** — The clocks rung (2026-11-20): the two
+      `wasi:clocks@0.3.0` doors the time package's clock half lowers
+      onto — `system-clock`'s `now` (the `instant` record riding the
+      retptr, memory option, no realloc) and `monotonic-clock`'s `now`
+      (the mark as one flat i64, the bare lower), the probe campaign
+      pinning both shapes and the valtype bytes (facts 19–21), the
+      `time_now_ms`/`time_mono_ns` doors lowering onto them (the
+      milliseconds composed off the record, the sub-millisecond tail
+      truncated), `clock_demo` joining the goldens (67; the smoke rung
+      aligned), docs EN+zh grown. See the section below.
 
 ## Found and fixed (the encoder's first landing)
 
@@ -328,6 +340,45 @@ forced-36 probe reading the none tag of a bare-case answer) — and
 `wasi_err_text` takes the retptr to render it, falling back to the
 fixed text when the option is none. Previously every such error
 answered the fixed "the host refused the operation".
+
+## The clocks rung (T85.9, 2026-11-20)
+
+The step closed with `wasi:clocks` out because the language had no
+clock primitive. The `time` package landed two days later, the
+preview1 host answered `clock_time_get`, and the refusal this plan
+recorded became the pressure: a program calling `time.now()` built
+under `--wasi` hit the remap's catch-all and answered the honest
+by-name refusal — while the same program ran on the Node leg. The
+rung grew the two doors:
+
+- `wasi:clocks/system-clock@0.3.0` — 0.3 renamed the 0.2 wall-clock
+  and re-spelled its record: `instant { seconds: s64,
+  nanoseconds: u32 }` (s64 — the pre-epoch instants are
+  representable). The sync lowering rides the retptr (two flat
+  results, past the ABI's one-flat limit), the `(memory)` option and
+  no realloc — the host allocates nothing; the fields sit at +0 and
+  +8, the declaration order the canonical ABI's layout. The named
+  record takes the `(eq)` export; the interface's `use
+  types.{duration}` stays out of the subset (nothing references it).
+- `wasi:clocks/monotonic-clock@0.3.0` — `now: func() -> mark`, the
+  `mark` alias riding the inline u64 primval (the filesize
+  precedent): one flat result, the bare lower, no memory option.
+
+The probe campaign (`clock_probe.wat`, facts 19–21) pinned the shapes
+before the encoder landed, and caught the one wrong byte on the way:
+the first s64 encoding used `0x76`, and wasmtime's linker read the
+field as f32 ("expected `s64` found `f32`") — the reference record
+assembled by wasm-tools with every integer width gave the true table
+(s64 `0x78`, u32 `0x79`; the standing u8/u64 bytes confirmed). The
+guest composes `time_now_ms` as `seconds * 1000 + nanoseconds / 1e6`
+(the sub-millisecond tail truncated, matching the Node host's epoch
+ms) and boxes `time_mono_ns` straight off the mark. The demo
+(`clock_demo`) prints derived facts only — the wall against fixed
+moments, never going back inside a process, the monotonic
+nondecreasing — and rides all six legs byte-identically; the BEAM's
+monotonic epoch reads negative on this machine (erlang's
+`monotonic_time` carries no sign contract), so the positivity pin the
+preview1 fixture asserts stays out of the demo's surface.
 
 ## The gate decision (settled 2026-11-15, T85.8's round)
 

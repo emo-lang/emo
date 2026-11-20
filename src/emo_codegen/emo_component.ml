@@ -13,7 +13,7 @@
 
 (* ---- Component-level types ---- *)
 
-type prim = U8 | U64 | Str
+type prim = U8 | U32 | S64 | U64 | Str
 type valtype = Prim of prim | TypeRef of int
 (* an index into the enclosing type space — the own/borrow handle
          types are declared as deftypes and referenced by index, the
@@ -454,6 +454,43 @@ let environment_instance : ctype =
       InnerExportFunc ("get-initial-cwd", 6);
     ]
 
+(* The wasi:clocks/system-clock@0.3.0 instance, subset: now. 0.3
+   renamed the 0.2 wall-clock and re-spelled its record — instant,
+   s64 seconds (the pre-epoch instants are representable) and u32
+   nanoseconds. The record is named, so it rides the (eq) export the
+   func's result references; the fields' declaration order is the
+   canonical ABI's layout order (seconds at +0, nanoseconds at +8).
+   The lowered shape is a retptr — two flat results, past the ABI's
+   one-flat limit — with the memory option and no realloc (the host
+   allocates nothing). *)
+let system_clock_instance : ctype =
+  CInstance
+    [
+      InnerType (CRecord [ ("seconds", Prim S64); ("nanoseconds", Prim U32) ]);
+      (* inner 0 *)
+      InnerExportType ("instant", 0);
+      (* inner 1 *)
+      InnerType
+        (CFunc { async_ = false; params = []; result = Some (TypeRef 1) });
+      (* inner 2 *)
+      InnerExportFunc ("now", 2);
+    ]
+
+(* The wasi:clocks/monotonic-clock@0.3.0 instance, subset: now. The
+   mark alias rides the inline u64 primval (the filesize precedent) —
+   one flat result, the bare lower. The wait doors are async-typed and
+   unneeded: the language's time surface reads the clock, never waits
+   on it (the sleep is the host's to refuse, the process half's
+   discipline). *)
+let monotonic_clock_instance : ctype =
+  CInstance
+    [
+      InnerType
+        (CFunc { async_ = false; params = []; result = Some (Prim U64) });
+      (* inner 0 *)
+      InnerExportFunc ("now", 0);
+    ]
+
 (* The memory provider: the memory the guest imports, plus the realloc
    function the canon lowers with host-written results call — the one
    piece of the canonical ABI the guest cannot export (the lowers must
@@ -547,16 +584,21 @@ let provider_module (pages : int) : string =
    stream/future/resource builtins from "stream"/"future"/"resource"
    (see the --wasi import table in Emo_wasm). [pages] is the provider's
    initial page count. Two index spaces build: the component instances
-   run imports 0-7, the exported run instance 8; the core instances run
-   provider 0, synthetics 1-10, the guest 11 — the with-args' indices
+   run imports 0-9, the exported run instance 10; the core instances run
+   provider 0, synthetics 1-12, the guest 13 — the with-args' indices
    below are the core space. Types: 0-4 the cli shapes, 5 the fs types
    interface, 6 the aliased descriptor, 7-9 preopens/random/environment,
    10-12 the stdio stream/result/future, 13-15 the fs error/result/
    future, 16-19 the directory-entry record and its stream, 20-21 the
-   run's bare result and async type. Core funcs: 0 the provider's
-   realloc, 1-3 the stdio lowers, 4-8 the stream builtins, 9-11 the
-   future builtins and descriptor drop, 12-21 the fs method lowers,
-   22-26 the preopens/random/environment lowers. *)
+   clocks' instance types, 22-23 the run's bare result and async type.
+   Component funcs: 0-2 the stdio aliases, 3-11 the fs methods,
+   12-16 preopens/random/environment, 17-18 the clocks' nows, 19 the
+   run lift. Core funcs: 0 the provider's realloc, 1-3 the stdio
+   lowers, 4-8 the stream builtins, 9-10 the directory-entry stream's
+   read and drop, 11-13 the future builtins and descriptor drop,
+   14 the descriptor resource drop, 15-23 the fs method lowers,
+   24-28 the preopens/random/environment lowers, 29-30 the clocks'
+   nows, 31 the guest's run. *)
 let entries (pages : int) (core_module_binary : string) : entry list =
   [
     EType types_instance;
@@ -736,6 +778,24 @@ let entries (pages : int) (core_module_binary : string) : entry list =
     (* core func 27: get-arguments *)
     ECanonLower (16, { mem = Some 0; realloc = Some 0; str_utf8 = true });
     (* core func 28: get-initial-cwd *)
+    EType system_clock_instance;
+    (* type 20 *)
+    EImportInstance ("wasi:clocks/system-clock@0.3.0", 20);
+    (* instance 8 *)
+    EAliasExportFunc (8, "now");
+    (* func 17 *)
+    EType monotonic_clock_instance;
+    (* type 21 *)
+    EImportInstance ("wasi:clocks/monotonic-clock@0.3.0", 21);
+    (* instance 9 *)
+    EAliasExportFunc (9, "now");
+    (* func 18 *)
+    ECanonLower (17, { mem = Some 0; realloc = None; str_utf8 = false });
+    (* core func 29: system now — the instant rides the retptr, the
+       host allocates nothing *)
+    ECanonLower (18, no_opts);
+    (* core func 30: monotonic now — the mark is one flat result, the
+       bare lower *)
     (* the synthetic instances the with-args map the guest's import
        module names onto *)
     ECoreInlineExports [ ("write-via-stream", CoreFuncE 1) ];
@@ -785,6 +845,10 @@ let entries (pages : int) (core_module_binary : string) : entry list =
         ("get-initial-cwd", CoreFuncE 28);
       ];
     (* core instance 10: the environment interface *)
+    ECoreInlineExports [ ("now", CoreFuncE 29) ];
+    (* core instance 11: the system-clock interface *)
+    ECoreInlineExports [ ("now", CoreFuncE 30) ];
+    (* core instance 12: the monotonic-clock interface *)
     ECoreModule core_module_binary;
     (* core module 1 *)
     ECoreInstantiate
@@ -800,19 +864,21 @@ let entries (pages : int) (core_module_binary : string) : entry list =
           ("wasi:filesystem/preopens@0.3.0", 8);
           ("wasi:random/random@0.3.0", 9);
           ("wasi:cli/environment@0.3.0", 10);
+          ("wasi:clocks/system-clock@0.3.0", 11);
+          ("wasi:clocks/monotonic-clock@0.3.0", 12);
           ("prov", 0);
         ] );
-    (* core instance 11 *)
-    EAliasCoreExport (CoreFuncE 0, 11, "run");
-    (* core func 27 *)
+    (* core instance 13 *)
+    EAliasCoreExport (CoreFuncE 0, 13, "run");
+    (* core func 31 *)
     EType (CResult (None, None));
-    (* type 20: the bare result *)
-    EType (CFunc { async_ = true; params = []; result = Some (TypeRef 20) });
-    (* type 21 *)
-    ECanonLift (29, 21);
-    (* func 14: the sync lift of the async-typed run *)
-    EExportInstance ("wasi:cli/run@0.3.0", [ ("run", 17) ]);
-    (* instance 8 + export *)
+    (* type 22: the bare result *)
+    EType (CFunc { async_ = true; params = []; result = Some (TypeRef 22) });
+    (* type 23 *)
+    ECanonLift (31, 23);
+    (* func 19: the sync lift of the async-typed run *)
+    EExportInstance ("wasi:cli/run@0.3.0", [ ("run", 19) ]);
+    (* instance 10 + export *)
   ]
 
 (* ---- The binary writer ---- *)
@@ -826,6 +892,8 @@ let valtype_bytes (buf : Buffer.t) (v : valtype) =
   match v with
   | TypeRef i -> Emo_wat.leb_u buf i
   | Prim U8 -> Buffer.add_char buf '\x7d'
+  | Prim U32 -> Buffer.add_char buf '\x79'
+  | Prim S64 -> Buffer.add_char buf '\x78'
   | Prim U64 -> Buffer.add_char buf '\x77'
   | Prim Str -> Buffer.add_char buf '\x73'
 
@@ -1228,6 +1296,8 @@ let valtype_text (v : valtype) : string =
   match v with
   | TypeRef i -> Printf.sprintf "%d" i
   | Prim U8 -> "u8"
+  | Prim U32 -> "u32"
+  | Prim S64 -> "s64"
   | Prim U64 -> "u64"
   | Prim Str -> "string"
 
