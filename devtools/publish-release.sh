@@ -33,6 +33,8 @@ if [ -z "$tag" ]; then
 fi
 host=${EMO_RELEASE_HOST:-ubuntu@www.emo-lang.cn}
 root=${EMO_RELEASE_STATIC_ROOT:-/home/ubuntu/sites/website-cn/static}
+# The repo root, for the installer that rides every publish below.
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 if [ ! -d "$dist" ]; then
   echo "publish-release.sh: no dist dir at $dist — build first" >&2
   exit 64
@@ -123,6 +125,13 @@ fi
 echo "publish: uploading the archives to $host"
 ssh "$host" "mkdir -p '$root/dist/$tag'"
 (cd "$work" && scp -q -- "$@" SHA256SUMS "$host:$root/dist/$tag/")
+
+# The one-line installer rides every publish, so the README's curl
+# URL never serves a stale copy.
+if [ -f "$repo/scripts/install.sh" ]; then
+  echo "publish: refreshing the installer"
+  scp -q "$repo/scripts/install.sh" "$host:$root/install.sh"
+fi
 
 echo "publish: pointing releases.json at $tag"
 scp -q "$json" "$host:$root/dist/releases.json.incoming"

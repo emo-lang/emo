@@ -48,6 +48,22 @@ if [ "$os" = macos ] && [ "$arch" = x86_64 ]; then
   exit 1
 fi
 
+# curl rides every platform the installer targets, but a box with wget
+# alone should not fall at the first step — fetch through whichever
+# exists.
+fetch() {
+  url=$1
+  out=$2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$out" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$out" "$url"
+  else
+    echo "install.sh: neither curl nor wget found — install one and retry" >&2
+    exit 1
+  fi
+}
+
 # The download site's dist/releases.json carries the latest-version
 # pointer. The file has one fixed shape — written by
 # publish-release.sh, first key on its own line — so a plain sed
@@ -55,8 +71,10 @@ fi
 if [ -n "${EMO_VERSION:-}" ]; then
   tag=$EMO_VERSION
 else
-  releases=$(curl -fsSL "$base/dist/releases.json")
-  tag=$(printf '%s\n' "$releases" | sed -n 's/^  "latest": "\([^"]*\)",$/\1/p')
+  tmp_json=$(mktemp "${TMPDIR:-/tmp}/emo-install-releases.XXXXXX")
+  fetch "$base/dist/releases.json" "$tmp_json"
+  tag=$(sed -n 's/^  "latest": "\([^"]*\)",$/\1/p' "$tmp_json")
+  rm -f "$tmp_json"
 fi
 case $tag in
 v*) ;;
@@ -74,7 +92,7 @@ archive=emo-$tag-$os-$arch.$ext
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/emo-install.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-curl -fsSL -o "$tmp/$archive" "$base/dist/$tag/$archive"
+fetch "$base/dist/$tag/$archive" "$tmp/$archive"
 
 if command -v sha256sum >/dev/null 2>&1; then
   checksum=sha256sum
@@ -84,7 +102,7 @@ else
   checksum=
 fi
 if [ -n "$checksum" ]; then
-  curl -fsSL -o "$tmp/SHA256SUMS" "$base/dist/$tag/SHA256SUMS"
+  fetch "$base/dist/$tag/SHA256SUMS" "$tmp/SHA256SUMS"
   expected=$(sed -n "s/^\([0-9a-f]*\)  $archive\$/\1/p" "$tmp/SHA256SUMS")
   if [ -z "$expected" ]; then
     echo "install.sh: $tag's SHA256SUMS has no entry for $archive" >&2
