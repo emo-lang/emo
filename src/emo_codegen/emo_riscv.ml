@@ -1597,10 +1597,17 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       end
   | Bytes_new n ->
       (* the zero-filled byte buffer, a String-layout block of its own
-         kind (T8.24); the length crosses as the tagged cell every
-         helper convention shares *)
+         kind (T8.24). The length rides raw: a boxed one detags inline
+         — the parity word's payload, two instructions, nothing
+         allocated. The shared box_if_numeric spent a cell per
+         construction, and the engines construct per operation —
+         Ed25519's field elements alone walked a megabyte dry in two
+         signatures. *)
       emit_expr env (d + 1) n;
-      box_if_numeric env n.Emo_ir.ety;
+      if not env.native then begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld a0, 8(a0)\n"
+      end;
       call_runtime env "emo_bytes_new"
   | Builder_new ->
       (* the growing array's empty birth (T8.25): one backing Array of
@@ -5823,12 +5830,12 @@ emo_alloc_bytes:
     addi sp, sp, 16
     ret
 
-# emo_bytes_new: a0 = the tagged length; a0 = a zeroed Bytes of it.
+# emo_bytes_new: a0 = the raw byte count (the emitter detags a boxed
+# one before the call); a0 = a zeroed Bytes of it.
     .globl emo_bytes_new
 emo_bytes_new:
-    andi t0, a0, -32
-    ld a0, 8(t0)
-    tail emo_alloc_bytes
+    tail emo_alloc_bytes    # a0 = the raw byte count (the emitter
+                            #   detags a boxed one before the call)
 
 # emo_bytes_at: a0 = a Bytes, a1 = the tagged index, a2 = the raw
 # width; t0 = the address of byte a1, or the named failure. A leaf —
