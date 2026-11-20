@@ -426,8 +426,10 @@ agreed:
 
 ## Targets and performance
 
-Targets: all five — `ocaml`, `c`, `typescript`, `wasm`, `beam` — and
-the interpreter, byte-identically. The interpreter is the slow leg:
+Targets: all five — `ocaml`, `c`, `typescript`, `wasm`, `beam` — the
+`riscv64` metal (since step 91; the raise gap that refused it whole is
+closed), and the interpreter, byte-identically. The interpreter is the
+slow leg:
 one Ed25519 signature or verification is about a third of a second,
 an X25519 agreement a tenth, a SHA-256 of a megabyte about twenty
 seconds, PBKDF2 at 4096 iterations a minute, a thousand X25519

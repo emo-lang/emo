@@ -88,7 +88,8 @@ runtime 是面下面的机器。
 这正是 README 说的"随二进制一起发布":编译产物
 自带运行时,既没有解释器也没有运行时下载。freestanding 目标
 **没有 host runtime**——它自带,含自己的分配器(step-19 的 bump
-分配器,"GC deferred")。
+分配器),自 step 91 起还有自己的收集器:`gc` 堆的门骑在镜像授予
+的区域上,其上是那份 Emo 包(见 [`gc-heap.md`](gc-heap.md))。
 
 为什么 runtime 对 GC、FFI 与 HPC 的讨论至关重要:runtime 掌管**值表示、
 内存管理与调度**。"无 GC"与"无缝 C FFI",底层都是在重写这一层——

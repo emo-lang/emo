@@ -473,6 +473,308 @@ let smoke_tests =
         ignore err);
   ]
 
+(* ---- the GC heap's metal golden (step 91, M52) ----
+
+   The GC demo's 24 gold lines (examples/gc_demo/expected.txt) walk
+   the kernel's metal: the demo package builds for the riscv64 user
+   profile from the compiler's own registry, the scratch kernel embeds
+   the image as its user program (user.S's incbin, the four desktop
+   apps riding beside it), and the boot's proof chain — the checksum
+   line the kernel prints, the five bytes the boot reads — hands the
+   machine to the demo, whose lines come through the gate. Three boots
+   compare against expected.txt byte for byte. The parity case pins
+   the metal demo's source to the gc demo's own, so the interpreter,
+   the c host and the metal answer the same program. The scratch trees
+   live under a fresh timestamped directory per run: no cleanup, no
+   stale build caches — the tree's own `.emo-build` cache carries no
+   compiler hash, so a reused tree could answer from a stale one. *)
+
+let gc_examples_dir = "../../examples"
+
+(* The demo's gold: the 24 lines from the demo's first line on — the
+   kernel's own boot lines ride before it and the REPL's prompt after,
+   and neither may interleave. The serial stream's CRLF renders back
+   where the SBI console added it. *)
+let gc_gold (serial : string) : string option =
+  let strip_cr s =
+    let n = String.length s in
+    if n > 0 && s.[n - 1] = '\r' then String.sub s 0 (n - 1) else s
+  in
+  let lines = Array.of_list (String.split_on_char '\n' serial) in
+  let n = Array.length lines in
+  let rec first i =
+    if i >= n then None
+    else if String.starts_with ~prefix:"heap words with garbage" lines.(i) then
+      Some i
+    else first (i + 1)
+  in
+  match first 0 with
+  | None -> None
+  | Some from when n - from >= 24 ->
+      Some
+        (String.concat "\n" (List.init 24 (fun k -> strip_cr lines.(from + k)))
+        ^ "\n")
+  | Some _ -> None
+
+let gc_metal_tests =
+  [
+    tc "the metal demo is the gc demo's own source" (fun () ->
+        Alcotest.(check string)
+          "the demo's source"
+          (read_file (Filename.concat gc_examples_dir "gc_demo/main.emo"))
+          (read_file (Filename.concat gc_examples_dir "gc_metal/main.emo")));
+    tc "the demo's 24 gold lines walk the kernel's metal" (fun () ->
+        if not (Lazy.force riscv64_available) then Alcotest.skip ();
+        let expected =
+          read_file (Filename.concat gc_examples_dir "gc_demo/expected.txt")
+        in
+        let root =
+          Filename.concat
+            (Filename.get_temp_dir_name ())
+            (Printf.sprintf "emo-gc-metal-%d"
+               (int_of_float (Unix.gettimeofday ())))
+        in
+        let demo_dir = Filename.concat root "demo" in
+        let kernel = Filename.concat root "kernel" in
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote demo_dir));
+        ignore (Sys.command ("mkdir -p " ^ Filename.quote kernel));
+        (* The demo's package: the sources and the lock the build
+           resolves against — the gc package the lock pins comes from
+           the compiler's own registry, so the build runs without the
+           desktop registry the apps below need. Whatever EMO_REGISTRY
+           an earlier leg left behind would point the resolution at a
+           tree without the gc package. *)
+        List.iter
+          (fun name ->
+            let source =
+              read_file
+                (Filename.concat
+                   (Filename.concat gc_examples_dir "gc_metal")
+                   name)
+            in
+            let oc = open_out_bin (Filename.concat demo_dir name) in
+            output_string oc source;
+            close_out oc)
+          [ "main.emo"; "package.emo"; "package.lock" ];
+        Unix.unsetenv "EMO_REGISTRY";
+        let demo_elf = Filename.concat root "gc-demo.elf" in
+        let demo_exit =
+          in_dir demo_dir (fun () ->
+              Emo_cli.build_file ~entry:"main.emo" ~output:demo_elf
+                ~specialize:false ~cclibs:[]
+                ~native:Emo_project.no_native_inputs ~target:"riscv64"
+                ~profile:"user" ~wasi:false)
+        in
+        Alcotest.(check int) "the demo's build exit" 0 demo_exit;
+        (* The kernel's tree: the smoke leg's file list without run.sh
+           (this leg drives the boot itself) and without hello's
+           sources (the user image is the demo). *)
+        List.iter
+          (fun name ->
+            let source = read_file (Filename.concat kernel_dir name) in
+            let oc = open_out_bin (Filename.concat kernel name) in
+            output_string oc source;
+            close_out oc)
+          [
+            "package.emo";
+            "main.emo";
+            "user.emo";
+            "gate.emo";
+            "notify.emo";
+            "frames.emo";
+            "sv39.emo";
+            "space.emo";
+            "fs.emo";
+            "exec.emo";
+            "runtime.S";
+            "trap.S";
+            "sv39.S";
+            "user.S";
+            "link.ld";
+          ];
+        ignore
+          (Sys.command
+             (Printf.sprintf "cp %s %s" (Filename.quote demo_elf)
+                (Filename.quote (Filename.concat kernel "hello.elf"))));
+        (* The apps' programs: each its own build root in the scratch
+           tree — user.S embeds the four ELFs, the boot installs them
+           on the disk. *)
+        let apps_dir = "../../projects/emo-desktop/fb/apps" in
+        List.iter
+          (fun app ->
+            List.iter
+              (fun name ->
+                let source =
+                  read_file
+                    (Filename.concat (Filename.concat apps_dir app) name)
+                in
+                let path = Filename.concat (Filename.concat kernel app) name in
+                let dir = Filename.dirname path in
+                if not (Sys.file_exists dir) then
+                  ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+                let oc = open_out_bin path in
+                output_string oc source;
+                close_out oc)
+              [ "package.emo"; "main.emo" ])
+          [ "counter"; "files"; "editor"; "spin" ];
+        (* The desktop's packages beside the syscall stub, staged the
+           way every gate stages one — the apps' builds resolve from
+           this registry through EMO_REGISTRY. *)
+        let registry = Filename.concat kernel "registry" in
+        List.iter
+          (fun (src, dst, names) ->
+            let dir = Filename.concat registry dst in
+            ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+            List.iter
+              (fun name ->
+                let source = read_file (Filename.concat src name) in
+                let oc = open_out_bin (Filename.concat dir name) in
+                output_string oc source;
+                close_out oc)
+              names)
+          [
+            ( "../../stdlib/registry/syscall/0.1.0",
+              "syscall/0.1.0",
+              [ "package.emo"; "syscall.emo" ] );
+            ( "../../projects/emo-ui",
+              "emo/ui/0.1.0",
+              [ "package.emo"; "ui.emo"; "debug.emo" ] );
+            ( "../../projects/emo-desktop/fb",
+              "emo/ui_fb/0.1.0",
+              [
+                "package.emo";
+                "ui_fb.emo";
+                "raster.emo";
+                "face_inter.emo";
+                "face_mono.emo";
+                "pointer.emo";
+              ] );
+            ( "../../projects/emo-desktop/fb/frame",
+              "emo/ui_fb_frame/0.1.0",
+              [ "package.emo"; "ui_fb_frame.emo"; "counter.emo" ] );
+            ( "../../projects/emo-desktop/fb/win",
+              "emo/ui_fb_win/0.1.0",
+              [ "package.emo"; "ui_fb_win.emo" ] );
+            ( "../../projects/emo-desktop/fb/desktop",
+              "emo_desktop/0.1.0",
+              [ "package.emo"; "emo_desktop.emo" ] );
+            ( "../../projects/emo-desktop/fb/apps",
+              "emo/ui_apps/0.1.0",
+              [
+                "package.emo";
+                "ui_apps.emo";
+                "counter.emo";
+                "files.emo";
+                "editor.emo";
+              ] );
+            ( "../../projects/emo-desktop/fb/winbuf",
+              "emo/ui_fb_winbuf/0.1.0",
+              [ "package.emo"; "ui_fb_winbuf.emo" ] );
+            ( "../../projects/emo-desktop/fb/notify",
+              "emo_notify/0.1.0",
+              [ "package.emo"; "emo_notify.emo" ] );
+          ];
+        Unix.putenv "EMO_REGISTRY" registry;
+        let app_build name =
+          let exit_code =
+            in_dir (Filename.concat kernel name) (fun () ->
+                Emo_cli.build_file ~entry:"main.emo"
+                  ~output:(Filename.concat kernel (name ^ ".elf"))
+                  ~specialize:false ~cclibs:[]
+                  ~native:Emo_project.no_native_inputs ~target:"riscv64"
+                  ~profile:"app" ~wasi:false)
+          in
+          Alcotest.(check int) (name ^ " build exit") 0 exit_code
+        in
+        app_build "counter";
+        app_build "files";
+        app_build "editor";
+        app_build "spin";
+        let kernel_exit =
+          in_dir kernel (fun () ->
+              Emo_cli.build_file ~entry:"main.emo" ~output:"main.elf"
+                ~specialize:false ~cclibs:[]
+                ~native:Emo_project.no_native_inputs ~target:"riscv64"
+                ~profile:"kernel" ~wasi:false)
+        in
+        Alcotest.(check int) "the kernel's build exit" 0 kernel_exit;
+        (* The boot: the machine takes the devices the kernel's own
+           services speak to — the disk the apps install onto, the
+           display the desktop's frame composes to, the input pair the
+           input service scans — and the serial carries both the boot's
+           proof chain and the demo's gold. The feed waits for the
+           checksum line (the kernel reads the five bytes there), the
+           gold waits for the demo's last line. *)
+        let boot i =
+          let log = Filename.concat root (Printf.sprintf "boot%d.log" i) in
+          let blk = Filename.concat root (Printf.sprintf "blk%d.img" i) in
+          let fifo = Filename.concat root (Printf.sprintf "in%d.fifo" i) in
+          let script =
+            Printf.sprintf
+              {|
+set -e
+mkfifo %s
+dd if=/dev/zero of=%s bs=4194304 count=1 status=none
+qemu-system-riscv64 -machine virt -nographic -display none -global virtio-mmio.force-legacy=false -drive file=%s,format=raw,if=none,id=emoos-blk -device virtio-blk-device,drive=emoos-blk -device virtio-gpu-device,xres=1920,yres=1080 -device virtio-keyboard-device -device virtio-tablet-device -kernel %s <%s >%s 2>&1 &
+qemu_pid=$!
+exec 3>%s
+for i in $(seq 1 300); do
+  if grep -qF '4999999950000000' %s 2>/dev/null; then break; fi
+  kill -0 $qemu_pid 2>/dev/null || break
+  sleep 0.2
+done
+printf 'abcde' >&3 || true
+for i in $(seq 1 900); do
+  if grep -qF 'chain after compact' %s 2>/dev/null; then break; fi
+  kill -0 $qemu_pid 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 $qemu_pid 2>/dev/null; then kill $qemu_pid 2>/dev/null || true; fi
+wait $qemu_pid 2>/dev/null || true
+|}
+              (Filename.quote fifo) (Filename.quote blk) (Filename.quote blk)
+              (Filename.quote (Filename.concat kernel "main.elf"))
+              (Filename.quote fifo) (Filename.quote log) (Filename.quote fifo)
+              (Filename.quote log) (Filename.quote log)
+          in
+          let _, _, status = run_cmd ~timeout:420.0 script in
+          (match status with
+          | Unix.WEXITED 0 -> ()
+          | s ->
+              Alcotest.fail
+                (Printf.sprintf "the boot did not drive through (run %d, %s)" i
+                   (match s with
+                   | Unix.WEXITED n -> "exit " ^ string_of_int n
+                   | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                   | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)));
+          let serial = read_file log in
+          match gc_gold serial with
+          | Some got ->
+              Alcotest.(check string)
+                (Printf.sprintf "the gold's 24 lines (run %d)" i)
+                expected got
+          | None ->
+              let n = String.length serial in
+              let from = if n > 900 then n - 900 else 0 in
+              Alcotest.fail
+                (Printf.sprintf
+                   "the demo's gold never arrived (run %d); the boot's tail:\n\
+                    %s"
+                   i
+                   (String.sub serial from (n - from)))
+        in
+        boot 1;
+        boot 2;
+        boot 3;
+        (* the leg's registry leaves with it: the suites after this one
+           resolve from their own staging, not this scratch tree *)
+        Unix.unsetenv "EMO_REGISTRY");
+  ]
+
 let () =
   Alcotest.run ~bail:true "emo_os"
-    [ ("parity_metal", parity_metal_tests); ("smoke", smoke_tests) ]
+    [
+      ("gc_metal", gc_metal_tests);
+      ("parity_metal", parity_metal_tests);
+      ("smoke", smoke_tests);
+    ]

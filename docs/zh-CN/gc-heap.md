@@ -2,7 +2,7 @@
 
 ## 决策
 
-GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨道:一个用 Emo 写的垃圾收集器,如同 wasm 运行时那样。解释器运行(`emo run`)是第一个宿主。Step 90 把机器的最后一块拼图放进了位:堆是**一个 arena** 的词,分配器——`gc` 包自己的自由表——通过 `heap_carve`/`heap_release` 刻块与释放,词走裸 `heap_load`/`heap_store` 通道。arena 之上的对象模型——定长 **struct** 块、带计数的 **array** 块、被追踪的 **ref**、mark-sweep、带切分与合并的自由表——全是 Emo 代码。一份源码服务每一个应答相同门的宿主;解释器模拟的 arena 就是 spec,内存真实的 target 在被授予的区域上实现同样的门(plan/step-90-gc-ladder.md 记录阶梯:分配器、载荷装箱、压缩收集、真实内存宿主)。
+GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨道:一个用 Emo 写的垃圾收集器,如同 wasm 运行时那样。解释器运行(`emo run`)是第一个宿主。Step 90 把机器的最后一块拼图放进了位:堆是**一个 arena** 的词,分配器——`gc` 包自己的自由表——通过 `heap_carve`/`heap_release` 刻块与释放,词走裸 `heap_load`/`heap_store` 通道。arena 之上的对象模型——定长 **struct** 块、带计数的 **array** 块、被追踪的 **ref**、mark-sweep、带切分与合并的自由表——全是 Emo 代码。一份源码服务每一个应答相同门的宿主;解释器模拟的 arena 就是 spec,内存真实的 target 在被授予的区域上实现同样的门(plan/step-90-gc-ladder.md 记录阶梯:分配器、载荷装箱、压缩收集、真实内存宿主——四级已全部走完;plan/step-91-riscv64-gc-host.md 把最后一个宿主放上金属,这条轨道自己的主顾)。
 
 本轨道不翻 T23.5 的案。宿主运行时的回收模型——identity 对象引用计数、值语义走 arena——原样成立;本轨道是自带托管堆的库,不改任何运行时的值模型。它先回答的是回收模型答不了的诉求:一个能走环的收集器(引用计数永远收不回环),以及 freestanding target 缺的那块拼图——`runtime-and-freestanding.md` 把「分配器、垃圾收集器」列为运行时自己的工作,金属上没有宿主可借。
 
@@ -79,9 +79,20 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 | --- | --- |
 | 解释器运行 | 准入——门就是这个运行的对象模型 |
 | `c` | 准入——运行时在真实 `malloc` 的词上持有 arena 与绑定(T90.4) |
-| `ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64` | 在检查期按名拒绝(E4032) |
+| `riscv64` | 准入——镜像给收集器授予一个区域;门是镜像的运行时助手(step 91) |
+| `ocaml`、`typescript`、`browser`、`wasm`、`beam` | 在检查期按名拒绝(E4032) |
 
-解释器运行以 target `interpreter` 检查(`emo run` 的检查传入它);`c` target 在自己的检查里准入。其余托管席位与 LSP 保持宿主默认,gc 门的程序在编辑器里显示拒绝,与 `peek8` 程序在 `riscv64` 之外的样子相同。在 `c` 宿主上,变异者纪律多了一条自己的规则:分配或生根的脚本级绑定是 `var`,绝不是 `const`——`c` target 会记忆化脚本 const,含副作用的初始化器会在首次读取时重跑,顶着第一个名字的第二次分配。所以 gc 门的程序在编辑器里显示拒绝,与 `peek8` 程序在 `riscv64` 之外的样子相同)。`Ref` 跨进程边界传递同一个格——注册表是这个运行自己的,一个根怎么算都是一个。`heap_words` 数物理词;解释器自己的块、装箱值、builder 存储仍是宿主的内存,没有门为它们命名。
+解释器运行以 target `interpreter` 检查(`emo run` 的检查传入它);`c` target 在自己的检查里准入,`riscv64` 与之同行。其余托管席位与 LSP 保持宿主默认,gc 门的程序在编辑器里显示拒绝,与 `peek8` 程序在 `riscv64` 之外的样子相同。在 `c` 宿主上,变异者纪律多了一条自己的规则:分配或生根的脚本级绑定是 `var`,绝不是 `const`——`c` target 会记忆化脚本 const,含副作用的初始化器会在首次读取时重跑,顶着第一个名字的第二次分配。金属上区域随每个 profile 的镜像走,kernel-profile 的程序可以裸调门但不能 `require` 包(E5014,kernel profile 自己的规则)。`Ref` 跨进程边界传递同一个格——注册表是这个运行自己的,一个根怎么算都是一个。`heap_words` 数物理词;解释器自己的块、装箱值、builder 存储仍是宿主的内存,没有门为它们命名。
+
+## 金属(riscv64)
+
+第三个宿主,也是这条轨道立项时的那位主顾:同样的二十四扇门,骑在镜像自己的内存上,没有宿主运行时可借。镜像在自己的 `.bss` 里给收集器授予一个区域——`emo_gc_region`:一 MiB 的 arena、绑定表(8192 项,每项 32 字节:offset、代数、kind、size)、根表(4096 格)、slide 的暂存。区域答不了的请求就是响亮的结局——门按名拒绝,解释器的文案上串口。
+
+门是随程序编译的运行时助手(`emo_gc_heap_new` 们),每个带检查的访问器对绑定表验证 kind、代数与边界,与解释器求值器的方式相同。区域之上的一切仍是同一份 Emo 包——demo 的分配器、收集器与压缩原样编译进镜像。
+
+`Ref` 落为 tagged 值模型的 kind 12,金属的 Map 落为 kind 13——都是运行时自身引用计数之下的 identity kind,归零的释放从根表摘链(c 宿主的精确 oracle 规则,用金属的话重述)。`raise` 在本宿主关上最后一道缺口:`Raise` 语句降为 `emo_raise`,异常值按 c 宿主的方式渲染(裸消息透传,`Exception` 实例从 field 0 取 message 字段),未捕获的 raise 是响亮结局的打印与退出。模块级 `var` 也降了——格在镜像的静态内存里,序言在体之前初始化——`gc` 包自己的 `by_start`/`by_end` 像任何值一样骑进镜像。
+
+验收是 demo 的 24 行金测在三个宿主上逐字节一致——解释器运行、编译的 `c`、金属——金属侧三 boot 稳定,经嵌入镜像的 EmoOS 内核引导(`@emo_os` 套件的 `gc_metal` 组驱动这条腿)。
 
 ## 错误
 
@@ -94,7 +105,7 @@ GC 自举(plan/step-89)开启了 runtime-independence 原则等待已久的轨�
 | E3055 | 块或 arena 越过尺寸护栏(2^23 / 2^41 词) |
 | E3056 | `heap_carve` 与绑定块重叠 |
 | E3057 | `heap_new` 造第二个 arena |
-| E4032 | 检查期拒绝,每门一条,解释器之外 |
+| E4032 | 检查期拒绝,每门一条,落在所有未准入堆的 target 上 |
 
 E3053(重复释放)随 `heap_free` 在 step 90 退休——已释放的块即未绑定,第二次释放与一切陈旧句柄同为 E3050。
 
@@ -102,4 +113,4 @@ E3053(重复释放)随 `heap_free` 在 step 90 退休——已释放的块即未
 
 自举的证明,随阶梯成长:分配器与收集器都是 Emo 代码,解释器是它们的宿主,`examples/gc_demo` 是验收——有根的链和被穿透标记的 array 活过杀死四千个无根节点的收集,环(引用计数永远收不回的形状)在根松手的瞬间死去,而**第二代分配落进 sweep 还回来的词里**(word 18 与 word 12027——junk 区和环自己的地址空间),arena 从不增长。金测:demo 的十七行在解释器运行上逐字节,checker 套件里的 `gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测。
 
-前方阶梯(plan/step-90-gc-ladder.md):float 与 byte 载荷装箱(T90.2)、偏移句柄已经让引用可重写的移动式/压缩收集器(T90.3)、以及真实内存宿主——c target 运行时、riscv64 tagged-word 堆——在被授予的区域上应答同样的门,同一份 Emo 分配器与收集器编译进去(T90.4)。
+阶梯已走完:float 与 byte 载荷装箱(T90.2)、偏移句柄已经让引用可重写的移动式/压缩收集器(T90.3)、以及真实内存宿主——c target 运行时(T90.4)与 riscv64 tagged-word 堆(step 91)——在被授予的内存上应答同样的门,同一份 Emo 分配器与收集器编译进去。轨道以第一位主顾被服侍而收口:EmoOS 用户程序的堆归收集器管,demo 的金测把三个宿主钉在一起。

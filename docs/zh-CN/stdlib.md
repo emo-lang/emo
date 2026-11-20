@@ -42,8 +42,8 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`dom`](#dom-包) | 严格 HTML 解析与 CSS 选择器查询 | 全部五个 |
 | [`template`](#template-包) | 文本加洞,从 json 上下文渲染,步步从严 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
-| [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个 |
-| [`hash`](#hash-包) | 机器的摘要孪生:SHA-256/224、常数时间比较、hex 渲染 | 全部五个与 `riscv64` |
+| [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个与 `riscv64` |
+| [`hash`](#hash-包) | 锁的摘要:SHA-256/224、常数时间比较、hex 渲染 | 全部五个与 `riscv64` |
 | [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam`、`wasm` |
 | [`uuid`](#uuid-包) | RFC 9562 UUID:v4/v7/v3/v5,严格的文本与字节形式 | 全部五个 |
 | [`csv`](#csv-包) | RFC 4180 CSV 记录,UTF-8 | 全部五个 |
@@ -61,7 +61,7 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
 | [`wayland`](#wayland-包) | Wayland 客户端协议:编解码器、核心与 xdg-shell 接口表、shm | `c` |
 | [`wasm`](wasm-包) | 用 Emo 写的 WebAssembly 运行时:解码、验证、执行、宿主 import | `ocaml`, `c` |
-| [`gc`](gc-包) | GC 堆的收集器:机器对象模型上的打标访问器,带环回收的 mark-sweep | 解释器运行 |
+| [`gc`](gc-包) | GC 堆的收集器:机器对象模型上的打标访问器,带环回收的 mark-sweep | 解释器运行、`c`、`riscv64` |
 
 "全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
 

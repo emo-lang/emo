@@ -70,6 +70,7 @@
 | M49 — 文件半边的第二环 | 88 | 目录可列、路径可 stat、突变落地:DIRECTORY oflag 打开目录(开前一次 stat,对文件答 ENOTDIR),fd 表长出宿主路径与授予根使每次解析都被围住,`fd_readdir` 无状态列出(调用者的 cookie 即位置,整条目入缓冲,d_type UNKNOWN、类型通道交给 `path_filestat_get`),`fd_filestat_get`/`path_filestat_get` 经新的路径形 `os_stat` 门取 stat(毫秒时间放大到纳秒;stdio 答字符设备;开后被删的文件如实答 miss),四个路径突变(建目录/删目录/解链/改名)骑既有的 os 门,errno 文本通道补 EEXIST/ENOTEMPTY/EXDEV/EPERM;lookupflags 的 symlink-follow 位必带,fixture 的链接拒绝探针换名 `fd_pread`(`CHECK.md`)。 |
 | M50 — GC 自举 | 89 | 解释器运行承载的机器对象模型,与 Emo 写的收集器:十六个裸名门——定长 `struct` 块、带计数的 `array` 块、有根的 `ref`,以及行走所需(`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`)——只由解释器运行准入(以 target `interpreter` 检查;所有 build target 按名拒绝,E4032),词靠奇偶自描述(偶数为移位标量,奇数为引用,`0` 为 null),每块的槽 0 是收集器的头词;`gc` 包用纯 Emo 实现 mark-sweep——打标访问器、工作栈排空、标记位切环——应答收回的词数;弱注册的根表让宿主收集器当活性 oracle,根立起变异者纪律(要被收集尊重的句柄放进 `ref`);金测:`examples/gc_demo` 的九行只在解释器运行上(有根的链与被穿透标记的 array 活过四千个无根节点的清除;环在根松手的瞬间死去——引用计数永远收不回的形状)、`gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测(`CHECK.md`、`docs/gc-heap.md`)。 |
 | M51 — GC 阶梯 | 90 | 堆长出自己的分配器与翅膀:step 90 落地 arena——`heap_new` 造它,裸 `heap_load`/`heap_store` 通道搬词,`heap_carve`/`heap_release` 绑定与解绑区间——`gc` 包的自由表(两张 Map 上的首适配、切分、邻合并)成为唯一分配器,`struct_new`/`array_new`/`heap_free` 随门退休;句柄携带 offset+代数,陈旧句柄无需墓碑即响亮死去;头词打包 magic/kind/代数/标记/尺寸;demo 的第二代落进 sweep 自己的词里,arena 从不增长(`CHECK.md`)。 |
+| M52 — GC 堆的 riscv64 宿主 | 91 | 金属加入堆的宿主环:镜像在自己的 `.bss` 里给收集器授予一个区域(一 MiB arena、绑定表、根表、slide 暂存),二十四扇门落成随程序编译的运行时助手,`Ref` 以 kind 12、金属的 Map 以 kind 13 加入 tagged 值模型(运行时引用计数之下的 identity kind,归零的释放从根表摘链),hash 孪生以来本宿主背负的 raise 缺口就此关上(`Raise` 降为 `emo_raise`,异常值按 `c` 宿主的方式渲染),模块级 `var` 也就位(静态内存里的格、序言初始化),`gc` 包自己的几何骑进镜像;demo 的 24 行金测在解释器、`c` 宿主与金属上逐字节一致——三 boot 稳定,经 EmoOS 内核与直跑皆然——调试轮的六面墙记录在 `CHECK.md`(序言的双重入池、Map 只落一半的 +8 平移、slide 的裸数组对、前向表的分裂键形状、只拷 `next` 的 rehash、不圆整的 arena 游标),金测腿骑 `@emo_os` 的 `gc_metal` 组(`CHECK.md`、`docs/gc-heap.md`、`plan/step-91-riscv64-gc-host.md`)。 |
 
 ## 设计闸门
 
@@ -2483,3 +2484,41 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       绑定改成了 `var`——`c` target 记忆化脚本 const,含副作用的
       初始化器在首次读取时重跑(CHECK.md 命名该边界)。riscv64 的
       tagged-word 堆仍是下一个宿主,未画。
+
+## M52 — GC 堆的 riscv64 宿主
+
+### Step 91 — 金属自己的堆:区域、门、kind,与三宿主上的 demo 金测
+
+**Status:** complete。(`plan/step-91-riscv64-gc-host.md` 是本步的
+记录,`docs/gc-heap.md` 是设计笔记。)
+
+- [x] **T91.1** — 准入:`base_env "riscv64"` 在裸内存绑定旁边收下
+      `gc_heap_bindings`——堆的门与裸通道在机器上共存,与内存模型
+      一直的意思相同——`gc` 包的 manifest 长出 `riscv64`、锁重钉,
+      E4032 拒绝的文案点名三个准入宿主、拒绝其余;准入测试把
+      riscv64 从拒绝名单翻进准入名单,map 字面量与 raise 的拒绝
+      测试随它们钉住的缺口一起退役。
+- [x] **T91.2** — 区域与门:`emo_gc_region` 进镜像的 `.bss`
+      (NOBITS,各 profile 统一)——一 MiB 的 arena、绑定表(8192
+      项 × 32 字节:offset、代数、kind、size)、根表、slide 暂存
+      ——二十四扇门落成随程序编译的运行时助手,响亮结局应答解释
+      器的文案;第一轮的最大墙在此找到:薄助手 tail-call 穿过一个
+      已被被调者花掉的 `ra`,陈旧返回地址反复重入助手,直到 arena
+      被走干。
+- [x] **T91.3** — kind 与缺口:`Ref` 以 kind 12 加入 tagged 值
+      模型(identity 计数,归零的释放从根表摘链),金属的 Map 以
+      kind 13(金属的话写成的哈希表,entries 的认领骑在格上,
+      `keys()` 按插入序应答),`Raise` 降为 `emo_raise`(`c` 宿主
+      的渲染规则——裸消息透传,`Exception` 实例取 message 字段),
+      模块级 `var` 也降(格在镜像的静态内存里,序言初始化,池的
+      预走查数它们的出生)。
+- [x] **T91.4** — 验收:`examples/gc_metal` 钉住 demo 自己的源,
+      24 行金测在解释器、`c` 宿主与金属上逐字节一致——金属经
+      EmoOS 内核三 boot 稳定(checksum 喂入、gate 的写出),直跑
+      三次;调试轮的六面墙逐一点名并修掉(CHECK.md 记录清单)。
+- [x] **T91.5** — 金测腿与文档:`@emo_os` 套件的 `gc_metal` 组
+      (parity 用例把金属 demo 的源钉在 demo 自己的源上;内核腿
+      ×3 对拍 `expected.txt`,与其他腿一样不进 `dune runtest`);
+      `docs/gc-heap.md` + zh(矩阵第三行、金属节),`docs/stdlib/
+      gc.md` + zh(三宿主),stdlib 索引行,本节 + zh 镜像,
+      `plan/step-91-riscv64-gc-host.md`,CHECK.md 的记录。

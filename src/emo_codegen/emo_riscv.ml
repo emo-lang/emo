@@ -513,11 +513,16 @@ let sp_store env reg (off : int) : unit =
    Box, the closure. The value kinds — the numerics, the string, the
    tuple, the array, the enum family, the Pid — carry no claims, and
    the Atomic crosses processes, so its cell carries no count either:
-   the helpers would answer no-ops, and the emitter skips the work. *)
+   the helpers would answer no-ops, and the emitter skips the work.
+   The Ref does count (step 91): its cell is the root registry's
+   resident, and a dropped root leaves the table the moment its last
+   claim releases — the same exactness the c runtime's EMO_REF gives
+   the collector. *)
 let may_own (t : Emo_check.t) : bool =
   match t with
   | Emo_check.Unknown | Emo_check.ClassType _ | Emo_check.InterfaceType _
-  | Emo_check.BoxType _ | Emo_check.FuncType _ ->
+  | Emo_check.BoxType _ | Emo_check.FuncType _ | Emo_check.Ref
+  | Emo_check.MapType _ ->
       true
   | _ -> false
 
@@ -873,6 +878,19 @@ let rec pool_expr env (ctr : int ref) (e : Emo_ir.expr) : unit =
       pool_expr env ctr x;
       incr ctr
   | Atomic_new x -> pool_expr env ctr x (* the cell carries no count *)
+  | Builtin { name; args }
+    when match name with
+         | "heap_new" | "heap_load" | "heap_carve" | "heap_rebind"
+         | "heap_slide" | "heap_float_bits" | "heap_bits_float" | "struct_get"
+         | "array_len" | "array_get" | "block_kind" | "block_size"
+         | "float_array_get" | "ref_new" | "ref_read" | "ref_roots"
+         | "heap_blocks" | "heap_words" ->
+             true
+         | _ -> false ->
+      List.iter (pool_expr env ctr) args;
+      (* the GC heap's doors (step 91): a door's answer pools like any
+         call's when its type owns — ref_new's cell the one that does *)
+      if may_own e.Emo_ir.ety then incr ctr
   | Closure _ | Global _ -> incr ctr (* a record's birth, captures or none *)
   | Field_read { obj; _ } ->
       pool_expr env ctr obj;
@@ -891,7 +909,10 @@ let rec pool_expr env (ctr : int ref) (e : Emo_ir.expr) : unit =
       pool_expr env ctr e
   | Interpolate es -> List.iter (pool_expr env ctr) es
   | Tuple es | Array_lit es -> List.iter (pool_expr env ctr) es
-  | Map_lit pairs -> List.iter (pool_expr env ctr) pairs
+  | Map_lit pairs ->
+      List.iter (pool_expr env ctr) pairs;
+      (* the map itself is the birth the pool holds *)
+      if may_own e.Emo_ir.ety then incr ctr
   | Spawn_value { f; args } ->
       pool_expr env ctr f;
       List.iter (pool_expr env ctr) args
@@ -902,8 +923,11 @@ let rec pool_expr env (ctr : int ref) (e : Emo_ir.expr) : unit =
   | Make_exception { message; data } ->
       pool_expr env ctr message;
       Option.iter (pool_expr env ctr) data
-  | Var _ | Const _ | Type_ref _ | Global_var _ | Builder_new | Make_enum _ ->
-      ()
+  | Global_var _ ->
+      (* the module-level `var`'s read pools a claim of the word the
+         cell owns (the emitter's read_claim) — the ceiling counts it *)
+      if may_own e.Emo_ir.ety then incr ctr
+  | Var _ | Const _ | Type_ref _ | Builder_new | Make_enum _ -> ()
 
 let rec pool_stmt env (ctr : int ref) (f : frame) (s : Emo_ir.stmt) : unit =
   (* the statement boundary: the drain fires where the pool holds births *)
@@ -957,7 +981,8 @@ let rec pool_stmt env (ctr : int ref) (f : frame) (s : Emo_ir.stmt) : unit =
       pool_stmt env ctr f post;
       pool_expr env ctr cond (* the wrap back to the test *)
   | Break | Continue -> ()
-  | Set_global_var _ | Raise _ -> () (* refused at emission *)
+  | Set_global_var { value; _ } -> pool_expr env ctr value
+  | Raise _ -> () (* the raise never returns; its value pools nowhere *)
 
 let pool_scan env (f : frame) (body : Emo_ir.stmt list) : unit =
   let ctr = ref 0 in
@@ -1013,6 +1038,16 @@ let box_result env (name : string) : unit =
 (* a const thunk's boxes join its build in the const region; every
      other emitter context — the def-value thunks included, whose frame
      is not the record's to name — takes the arena's own helper *)
+
+(* A module-level `var`'s static cell: one .bss word per global, the
+   mangled name sanitized the program's own way. *)
+let global_cell (g : string) : string =
+  let n =
+    String.split_on_char '.' g
+    |> List.map Emo_ir.sanitize_component
+    |> String.concat "__"
+  in
+  "emo_gv_" ^ Emo_ir.sanitize_ident n
 
 let box_if_numeric env (t : Emo_check.t) : unit =
   if env.native then
@@ -1562,15 +1597,259 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       end
   | Bytes_new n ->
       (* the zero-filled byte buffer, a String-layout block of its own
-         kind (T8.24); the length crosses as the tagged cell every
-         helper convention shares *)
+         kind (T8.24). The length rides raw: a boxed one detags inline
+         — the parity word's payload, two instructions, nothing
+         allocated. The shared box_if_numeric spent a cell per
+         construction, and the engines construct per operation —
+         Ed25519's field elements alone walked a megabyte dry in two
+         signatures. *)
       emit_expr env (d + 1) n;
-      box_if_numeric env n.Emo_ir.ety;
+      if not env.native then begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld a0, 8(a0)\n"
+      end;
       call_runtime env "emo_bytes_new"
   | Builder_new ->
       (* the growing array's empty birth (T8.25): one backing Array of
          no elements, one cell holding zero and it *)
       call_runtime env "emo_builder_new"
+  | Make_exception { message; data } -> (
+      (* the c host's own rule: the exception value IS the message cell,
+         the claim passing through untouched; a data map renders with the
+         message on the other hosts and waits for its metal turn *)
+      match data with
+      | None -> emit_expr env (d + 1) message
+      | Some _ -> refuse "an exception with a data map")
+  | Map_lit pairs ->
+      (* the metal's Map (step 91): the empty table first, then each
+         pair's insert — the map's word spilled across the pairs the
+         Bytes family's way, the birth pooled once *)
+      call_runtime env "emo_map_new_empty";
+      pool_result env e.Emo_ir.ety;
+      let m_slot = temp_offset env d in
+      put env "    sd a0, %d(sp)\n" m_slot;
+      List.iter
+        (fun pair ->
+          emit_expr env (d + 1) pair;
+          put env "    mv a1, a0\n";
+          put env "    ld a0, %d(sp)\n" m_slot;
+          call_runtime env "emo_map_insert_pair";
+          put env "    sd a0, %d(sp)\n" m_slot)
+        pairs;
+      put env "    ld a0, %d(sp)\n" m_slot
+  | Global_var g ->
+      (* the module-level `var`'s cell: the read takes one claim of the
+         word the cell owns and pools it, the raw numeric consumer
+         unboxing after — the c host's read *)
+      put env "    la t0, %s\n" (global_cell g);
+      put env "    ld a0, 0(t0)\n";
+      read_claim env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  (* ---- The GC heap's doors (step 91, docs/gc-heap.md): the raw
+     memory family's lowering shape — the numeric args box first, one
+     `emo_gc_*` runtime helper per door answers tagged, the native
+     consumer unboxes after. The guards live in the helpers; a refused
+     door is `emo_fail`'s announce, the loud end every other runtime
+     limit takes. ---- *)
+  | Builtin { name = "heap_new"; args = [ n ] } ->
+      emit_expr env (d + 1) n;
+      box_if_numeric env n.Emo_ir.ety;
+      call_runtime env "emo_gc_heap_new";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "heap_load"; args = [ addr ] } ->
+      emit_expr env (d + 1) addr;
+      box_if_numeric env addr.Emo_ir.ety;
+      call_runtime env "emo_gc_heap_load";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "heap_store"; args = [ addr; value ] } ->
+      let addr_slot = temp_offset env d in
+      emit_expr env (d + 1) addr;
+      box_if_numeric env addr.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" addr_slot;
+      emit_expr env (d + 1) value;
+      box_if_numeric env value.Emo_ir.ety;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" addr_slot;
+      call_runtime env "emo_gc_heap_store"
+  | Builtin { name = "heap_carve"; args = [ addr; n; kind ] } ->
+      let a_slot = temp_offset env d in
+      let n_slot = temp_offset env (d + 1) in
+      emit_expr env (d + 2) addr;
+      box_if_numeric env addr.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" a_slot;
+      emit_expr env (d + 2) n;
+      box_if_numeric env n.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" n_slot;
+      emit_expr env (d + 2) kind;
+      box_if_numeric env kind.Emo_ir.ety;
+      put env "    mv a2, a0\n";
+      put env "    ld a1, %d(sp)\n" n_slot;
+      put env "    ld a0, %d(sp)\n" a_slot;
+      call_runtime env "emo_gc_heap_carve";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "heap_release"; args = [ h ] } ->
+      emit_expr env (d + 1) h;
+      box_if_numeric env h.Emo_ir.ety;
+      call_runtime env "emo_gc_heap_release"
+  | Builtin { name = "heap_rebind"; args = [ h; addr ] } ->
+      let h_slot = temp_offset env d in
+      emit_expr env (d + 1) h;
+      box_if_numeric env h.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" h_slot;
+      emit_expr env (d + 1) addr;
+      box_if_numeric env addr.Emo_ir.ety;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" h_slot;
+      call_runtime env "emo_gc_heap_rebind";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "heap_slide"; args = [ pairs ] } ->
+      emit_expr env (d + 1) pairs;
+      call_runtime env "emo_gc_heap_slide";
+      pool_result env e.Emo_ir.ety
+  | Builtin { name = "heap_float_bits"; args = [ f ] } ->
+      emit_expr env (d + 1) f;
+      box_if_numeric env f.Emo_ir.ety;
+      call_runtime env "emo_gc_float_bits";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "heap_bits_float"; args = [ w ] } ->
+      emit_expr env (d + 1) w;
+      box_if_numeric env w.Emo_ir.ety;
+      call_runtime env "emo_gc_bits_float";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "struct_get"; args = [ h; i ] } ->
+      let h_slot = temp_offset env d in
+      emit_expr env (d + 1) h;
+      box_if_numeric env h.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" h_slot;
+      emit_expr env (d + 1) i;
+      box_if_numeric env i.Emo_ir.ety;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" h_slot;
+      call_runtime env "emo_gc_struct_get";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "struct_set"; args = [ h; i; w ] } ->
+      let h_slot = temp_offset env d in
+      let i_slot = temp_offset env (d + 1) in
+      emit_expr env (d + 2) h;
+      box_if_numeric env h.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" h_slot;
+      emit_expr env (d + 2) i;
+      box_if_numeric env i.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" i_slot;
+      emit_expr env (d + 2) w;
+      box_if_numeric env w.Emo_ir.ety;
+      put env "    mv a2, a0\n";
+      put env "    ld a1, %d(sp)\n" i_slot;
+      put env "    ld a0, %d(sp)\n" h_slot;
+      call_runtime env "emo_gc_struct_set"
+  | Builtin { name = "array_len"; args = [ h ] } ->
+      emit_expr env (d + 1) h;
+      box_if_numeric env h.Emo_ir.ety;
+      call_runtime env "emo_gc_array_len";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "array_get"; args = [ a; i ] } ->
+      let h_slot = temp_offset env d in
+      emit_expr env (d + 1) a;
+      box_if_numeric env a.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" h_slot;
+      emit_expr env (d + 1) i;
+      box_if_numeric env i.Emo_ir.ety;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" h_slot;
+      call_runtime env "emo_gc_array_get";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "array_set"; args = [ a; i; w ] } ->
+      let h_slot = temp_offset env d in
+      let i_slot = temp_offset env (d + 1) in
+      emit_expr env (d + 2) a;
+      box_if_numeric env a.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" h_slot;
+      emit_expr env (d + 2) i;
+      box_if_numeric env i.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" i_slot;
+      emit_expr env (d + 2) w;
+      box_if_numeric env w.Emo_ir.ety;
+      put env "    mv a2, a0\n";
+      put env "    ld a1, %d(sp)\n" i_slot;
+      put env "    ld a0, %d(sp)\n" h_slot;
+      call_runtime env "emo_gc_array_set"
+  | Builtin { name = "block_kind"; args = [ h ] } ->
+      emit_expr env (d + 1) h;
+      box_if_numeric env h.Emo_ir.ety;
+      call_runtime env "emo_gc_block_kind";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "block_size"; args = [ h ] } ->
+      emit_expr env (d + 1) h;
+      box_if_numeric env h.Emo_ir.ety;
+      call_runtime env "emo_gc_block_size";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "float_array_get"; args = [ a; i ] } ->
+      let h_slot = temp_offset env d in
+      emit_expr env (d + 1) a;
+      box_if_numeric env a.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" h_slot;
+      emit_expr env (d + 1) i;
+      box_if_numeric env i.Emo_ir.ety;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" h_slot;
+      call_runtime env "emo_gc_float_array_get";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "float_array_set"; args = [ a; i; w ] } ->
+      let h_slot = temp_offset env d in
+      let i_slot = temp_offset env (d + 1) in
+      emit_expr env (d + 2) a;
+      box_if_numeric env a.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" h_slot;
+      emit_expr env (d + 2) i;
+      box_if_numeric env i.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" i_slot;
+      emit_expr env (d + 2) w;
+      box_if_numeric env w.Emo_ir.ety;
+      put env "    mv a2, a0\n";
+      put env "    ld a1, %d(sp)\n" i_slot;
+      put env "    ld a0, %d(sp)\n" h_slot;
+      call_runtime env "emo_gc_float_array_set"
+  | Builtin { name = "ref_new"; args = [ w ] } ->
+      emit_expr env (d + 1) w;
+      box_if_numeric env w.Emo_ir.ety;
+      call_runtime env "emo_gc_ref_new";
+      pool_result env e.Emo_ir.ety
+  | Builtin { name = "ref_read"; args = [ r ] } ->
+      emit_expr env (d + 1) r;
+      call_runtime env "emo_gc_ref_read";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
+  | Builtin { name = "ref_write"; args = [ r; w ] } ->
+      let r_slot = temp_offset env d in
+      emit_expr env (d + 1) r;
+      put env "    sd a0, %d(sp)\n" r_slot;
+      emit_expr env (d + 1) w;
+      box_if_numeric env w.Emo_ir.ety;
+      put env "    mv a1, a0\n";
+      put env "    ld a0, %d(sp)\n" r_slot;
+      call_runtime env "emo_gc_ref_write"
+  | Builtin { name = "ref_roots"; args = [] } ->
+      call_runtime env "emo_gc_ref_roots";
+      pool_result env e.Emo_ir.ety
+  | Builtin { name = "heap_blocks"; args = [] } ->
+      call_runtime env "emo_gc_heap_blocks";
+      pool_result env e.Emo_ir.ety
+  | Builtin { name = "heap_words"; args = [] } ->
+      call_runtime env "emo_gc_heap_words";
+      pool_result env e.Emo_ir.ety;
+      unbox_if_numeric env e.Emo_ir.ety
   | Builtin { name; _ } -> refuse (Printf.sprintf "the `%s` builtin" name)
   | Runtime_impl { name; _ } ->
       refuse (Printf.sprintf "the `%s` runtime implementation" name)
@@ -2588,6 +2867,63 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld a0, %d(sp)\n" self_slot;
               call_runtime env "emo_array_append"
           | _ -> refuse (Printf.sprintf "the Array method `%s`" name))
+      | Emo_check.MapType _ -> (
+          (* the metal's Map (step 91): the receiver spills across the
+             arguments' evaluation, every helper answering tagged — the
+             c host's method set, the metal's own words. keys() walks
+             the entries array, so the order is the insertion's. *)
+          match (name, args) with
+          | "length", [] ->
+              emit_expr env d self_;
+              put env "    andi a0, a0, -32\n";
+              put env "    ld a0, 16(a0)\n";
+              if boxed then box_result env "emo_box_i64"
+          | "set", [ k; v ] ->
+              let m_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" m_slot;
+              emit_expr env (d + 2) k;
+              box_if_numeric env k.Emo_ir.ety;
+              put env "    sd a0, %d(sp)\n" (temp_offset env (d + 1));
+              emit_expr env (d + 2) v;
+              box_if_numeric env v.Emo_ir.ety;
+              put env "    mv a2, a0\n";
+              put env "    ld a1, %d(sp)\n" (temp_offset env (d + 1));
+              put env "    ld a0, %d(sp)\n" m_slot;
+              call_runtime env "emo_map_store";
+              put env "    ld a0, %d(sp)\n" m_slot
+          | "get", [ k ] ->
+              let m_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" m_slot;
+              emit_expr env (d + 1) k;
+              box_if_numeric env k.Emo_ir.ety;
+              put env "    mv a1, a0\n";
+              put env "    ld a0, %d(sp)\n" m_slot;
+              call_runtime env "emo_map_get"
+          | "has", [ k ] ->
+              let m_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" m_slot;
+              emit_expr env (d + 1) k;
+              box_if_numeric env k.Emo_ir.ety;
+              put env "    mv a1, a0\n";
+              put env "    ld a0, %d(sp)\n" m_slot;
+              call_runtime env "emo_map_has"
+          | "remove", [ k ] ->
+              let m_slot = temp_offset env d in
+              emit_expr env (d + 1) self_;
+              put env "    sd a0, %d(sp)\n" m_slot;
+              emit_expr env (d + 1) k;
+              box_if_numeric env k.Emo_ir.ety;
+              put env "    mv a1, a0\n";
+              put env "    ld a0, %d(sp)\n" m_slot;
+              call_runtime env "emo_map_remove";
+              put env "    ld a0, %d(sp)\n" m_slot
+          | "keys", [] ->
+              emit_expr env d self_;
+              call_runtime env "emo_map_keys"
+          | _ -> refuse (Printf.sprintf "the Map method `%s`" name))
       | Emo_check.Bytes -> (
           (* the mutable byte buffer (T8.24): every accessor is a
              runtime helper over the bounds-checked byte pointer, the
@@ -2622,21 +2958,52 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld a0, 8(a0)\n";
               if boxed then box_result env "emo_box_i64"
           | _, [ _ ] when get_helper <> None ->
+              (* the index rides raw: the helper reads the register, and
+                 a boxed one detags inline — the parity word's payload,
+                 two instructions, nothing allocated. The shared
+                 emit_args_from boxes every numeric argument, and a
+                 crypto loop walks whole blocks byte-wise — the boxes
+                 would walk the bump arena dry in twenty rounds. *)
               let self_slot = temp_offset env d in
-              emit_expr env (d + 1) self_;
+              let arg_slot = temp_offset env (d + 1) in
+              emit_expr env (d + 2) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
-              emit_args_from env (d + 1) ~from:1 args;
+              emit_expr env (d + 2) (List.hd args);
+              if boxed then begin
+                put env "    andi a0, a0, -32\n";
+                put env "    ld a0, 8(a0)\n"
+              end;
+              put env "    sd a0, %d(sp)\n" arg_slot;
               put env "    ld a0, %d(sp)\n" self_slot;
+              put env "    ld a1, %d(sp)\n" arg_slot;
               call_runtime env (Option.get get_helper);
-              if not boxed then unbox_if_numeric env ty
+              (* the helper answers raw — the byte or the word riding
+                 the register — so the dynamic frame boxes here, the
+                 native frame's word never leaving the register *)
+              if boxed then box_result env "emo_box_i64"
           | _, [ _; _ ] when set_helper <> None ->
               let self_slot = temp_offset env d in
-              emit_expr env (d + 1) self_;
+              let k_slot = temp_offset env (d + 1) in
+              let v_slot = temp_offset env (d + 2) in
+              emit_expr env (d + 3) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
-              emit_args_from env (d + 1) ~from:1 args;
+              emit_expr env (d + 3) (List.nth args 0);
+              if boxed then begin
+                put env "    andi a0, a0, -32\n";
+                put env "    ld a0, 8(a0)\n"
+              end;
+              put env "    sd a0, %d(sp)\n" k_slot;
+              emit_expr env (d + 3) (List.nth args 1);
+              if boxed then begin
+                put env "    andi a0, a0, -32\n";
+                put env "    ld a0, 8(a0)\n"
+              end;
+              put env "    sd a0, %d(sp)\n" v_slot;
               put env "    ld a0, %d(sp)\n" self_slot;
+              put env "    ld a1, %d(sp)\n" k_slot;
+              put env "    ld a2, %d(sp)\n" v_slot;
               call_runtime env (Option.get set_helper);
-              if not boxed then unbox_if_numeric env ty
+              if boxed then box_result env "emo_box_i64"
           | "to_string", [] ->
               (* the reinterpretation back: the same bytes as a fresh
                  String *)
@@ -3288,7 +3655,21 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       put env "    la a1, %s_end\n" label;
       call_runtime env "emo_fail";
       put env "%s:\n" l_ok
-  | Set_global_var _ -> refuse "module-level `var` assignment"
+  | Set_global_var { name; value } ->
+      (* the module-level `var`'s overwrite: the new word's claim lands
+         before the old drops — the c host's barrier order — and the
+         store follows *)
+      let v_slot = temp_offset env 0 in
+      emit_expr env 0 value;
+      box_if_numeric env value.Emo_ir.ety;
+      put env "    sd a0, %d(sp)\n" v_slot;
+      put env "    call emo_retain\n";
+      put env "    la t0, %s\n" (global_cell name);
+      put env "    ld a0, 0(t0)\n";
+      put env "    call emo_release\n";
+      put env "    la t1, %s\n" (global_cell name);
+      put env "    ld a0, %d(sp)\n" v_slot;
+      put env "    sd a0, 0(t1)\n"
   | Send { target; message } ->
       (* the send boundary: the message snapshots in emo_send and the
          sender yields — the call returns when this process is next
@@ -3387,7 +3768,13 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       put env "    li s0, 0\n";
       put env "    j %s\n" l_test;
       put env "%s:\n" l_end
-  | Raise _ -> refuse "raise"
+  | Raise e ->
+      (* the raise gap's close (step 91): the exception value crosses
+         tagged, the runtime renders its message and takes the profile's
+         own loud tail — the c runtime's uncaught-exception announce,
+         the metal's words *)
+      emit_expr env 0 e;
+      call_runtime env "emo_raise"
   | While { cond; body; _ } ->
       let head = fresh_label env "loop" in
       let exit_l = fresh_label env "endloop" in
@@ -3601,7 +3988,8 @@ let emit_const_function env (f : Emo_ir.func) : unit =
    label. *)
 let emit_function env ~(label : string) ~(fname : string)
     ~(params : (string * Emo_check.t) list) ~(captures : string list)
-    ~(conv : conv) ~(native : bool) ~(body : Emo_ir.stmt list) : unit =
+    ~(conv : conv) ~(native : bool) ~(pglobals : (string * Emo_ir.expr) list)
+    ~(body : Emo_ir.stmt list) : unit =
   if List.length params > 8 then refuse "a def with more than eight parameters";
   let f =
     {
@@ -3642,6 +4030,13 @@ let emit_function env ~(label : string) ~(fname : string)
   collect_stmts f body;
   f.temps <- stmts_depth body + 2;
   pool_scan env f body;
+  (* the globals' inits pool their births one after another with no
+     boundary between them — one walk carries the accumulation *)
+  if pglobals <> [] then begin
+    let ctr = ref 0 in
+    List.iter (fun (_, e) -> pool_expr env ctr e) pglobals;
+    if !ctr > f.pool then f.pool <- !ctr
+  end;
   f.size <-
     (8
     + (8 * (f.named + f.temps))
@@ -3698,10 +4093,30 @@ let emit_function env ~(label : string) ~(fname : string)
             gput env "    sd a0, %d(sp)\n" off
         | P_word -> ())
       conv.cparams;
-  gput env "%s:\n" f.body_start;
-  (* the pool word starts at zero: the frame is dirty stack memory,
-     and the first push reads it (T8.7's pool) *)
-  if f.pool > 0 then gput env "    sd zero, %d(sp)\n" (pool_offset f);
+  (* the pool word starts at zero before anything pools: the globals'
+     inits run ahead of the body, and the frame is dirty stack memory *)
+  (* the module vars' cells take their initializers before the body:
+     the pinit carries no Set_global_var for them, so the prologue is
+     the only writer — the c host's own init sequence. The inits pool
+     their births one after another with no boundary between them —
+     one walk carries the accumulation. *)
+  if f.pool > 0 then put env "    sd zero, %d(sp)\n" (pool_offset f);
+  let gctr = ref 0 in
+  List.iter
+    (fun (g, init) ->
+      pool_expr env gctr init;
+      emit_expr env 0 init;
+      box_if_numeric env init.Emo_ir.ety;
+      (* the birth's claim already rides the pool — emit_expr's arms
+         pool their own births, the walk's mirror — and the cell takes
+         its own with the retain; a second put would answer the drain
+         twice and free a word the cell still holds *)
+      put env "    call emo_retain\n";
+      put env "    la t0, %s\n" (global_cell g);
+      put env "    sd a0, 0(t0)\n")
+    pglobals;
+  if !gctr > f.pool then f.pool <- !gctr;
+  put env "%s:\n" f.body_start;
   emit_stmts env body;
   (* Fall-off: the statement walk already left a final expression
      statement's value in a0 (fa0 for a Float64-typed fall-off in a
@@ -4032,12 +4447,12 @@ let user_console_hook_asm =
     .globl emo_user_console_hook
 emo_user_console_hook:
     la t2, emo_user_console_byte
-    sb a0, 0(t2)
-    mv a0, t2
-    li a1, 1
-    li a7, 1
-    ecall
-    ret
+    sb a0, 0(t2)            # the byte parks in the cell
+    mv a0, t2               # the gate's write verb: (cell, one byte);
+    li a1, 1                #   under OpenSBI the same ecall renders the
+    li a7, 1                #   pointer's low byte, so this hook's world
+    ecall                   #   is the kernel's — the direct boot reads
+    ret                     #   the demo through the kernel's own serial
 
     .section .bss
     .globl emo_user_console_byte
@@ -4117,6 +4532,11 @@ emo_alloc:
     la t1, emo_cur_slot
     ld t1, 0(t1)            # the allocator is the current process
     ld t2, 576(t1)          # its arena cursor
+    addi t2, t2, 31
+    andi t2, t2, -32        # the block on the 32-line — the tagged word's
+                            #   low bits are the tag's, so every block's
+                            #   own address must leave them clear, whatever
+                            #   phase the arena's base came in with
     add t3, t2, t0
     ld t4, 584(t1)          # its arena end — the quota's edge, minus the
     addi t4, t4, -8         #   freelist head word the arena carries at its
@@ -4260,7 +4680,13 @@ emo_ident_new:
     .globl emo_pool_put
 emo_pool_put:
     ld t0, 0(a1)
-    bgeu t0, a2, .Lidn_over
+    bgeu t0, a2, .Lput_over
+    j .Lput_ok
+.Lput_over:
+    la a0, msg_pool
+    la a1, msg_pool_end
+    call emo_fail
+.Lput_ok:
     addi t1, a1, 8
     slli t2, t0, 3
     add t1, t1, t2
@@ -4320,6 +4746,10 @@ emo_retain:
     beq t0, t1, .Lret_bump
     li t1, 6                # Closure
     beq t0, t1, .Lret_bump
+    li t1, 12               # Ref: the root registry counts its cells
+    beq t0, t1, .Lret_bump
+    li t1, 13               # Map: the entries' claims ride the cell
+    beq t0, t1, .Lret_bump
     li t1, 7                # Instance
     bne t0, t1, .Lret_out
 .Lret_bump:
@@ -4370,6 +4800,10 @@ emo_release_walk:
     beq t0, t2, .Lrel_ident
     li t2, 7                # Instance
     beq t0, t2, .Lrel_ident
+    li t2, 12               # Ref: counted like the identity kinds —
+    beq t0, t2, .Lrel_ident #   the registry's exact oracle (step 91)
+    li t2, 13               # Map: counted like the identity kinds
+    beq t0, t2, .Lrel_ident
     j .Lrel_done            # every other kind carries no claim: the
                             #   value kinds (Tuple, Array among them) are
                             #   shared by value with no count of their
@@ -4387,6 +4821,11 @@ emo_release_walk:
     sd t3, 0(t2)
     srli t4, t3, 32
     bnez t4, .Lrel_done     # still held
+    li t4, 12               # the Ref's cell: unlink, no holdings walk —
+    beq t0, t4, .Lrel_ref   #   the payload is a raw heap word, never a
+                            #   tagged value the release may walk
+    li t4, 13               # Map: the entries' claims, then the two
+    beq t0, t4, .Lrel_map   #   backing blocks home to the freelist
     li t4, 5                # Box: the payload's one word
     beq t0, t4, .Lrel_box
     ld t4, 0(t2)            # the count: code or class id, then the rest
@@ -4406,6 +4845,90 @@ emo_release_walk:
     addi t6, t6, 8
     addi t5, t5, -1
     j .Lrel_seq_loop
+.Lrel_map:
+    # the entries' own words release first, then the entries block and
+    # the buckets block go home to the freelist — the cell itself rides
+    # the frame to the push the walk ends with. The walk's own state
+    # rides s-regs saved on a sub-frame of the release's own: the
+    # release takes every temp it finds.
+    addi sp, sp, -40
+    sd s2, 0(sp)
+    sd s3, 8(sp)
+    sd s4, 16(sp)
+    sd zero, 24(sp)         # the walk's index
+    ld s2, 56(sp)           # the map block (the release frame's word)
+    ld s1, 48(sp)           # the serving slot (the release frame's own)
+    ld s3, 32(s2)           # the entries block (payload word 3)
+    beqz s3, .Lrmp_buckets
+    ld s4, 16(s2)           # the count
+.Lrmp_walk:
+    ld t4, 24(sp)
+    bge t4, s4, .Lrmp_eblock
+    slli t5, t4, 3
+    slli t6, t4, 4
+    add t5, t5, t6          # the entry's 24-byte stride
+    add t5, s3, t5
+    ld a0, 0(t5)
+    call emo_release        # the key's claim
+    ld t4, 24(sp)
+    slli t5, t4, 3
+    slli t6, t4, 4
+    add t5, t5, t6
+    add t5, s3, t5
+    ld a0, 8(t5)
+    call emo_release        # the value's claim
+    ld t4, 24(sp)
+    addi t4, t4, 1
+    sd t4, 24(sp)
+    j .Lrmp_walk
+.Lrmp_eblock:
+    ld t2, 584(s1)
+    ld t3, -8(t2)
+    sd t3, 8(s3)            # the link rides the entries block's payload
+    sd s3, -8(t2)
+.Lrmp_buckets:
+    ld t0, 48(s2)           # the buckets block (payload word 5)
+    beqz t0, .Lrmp_done
+    ld t2, 584(s1)
+    ld t3, -8(t2)
+    sd t3, 8(t0)
+    sd t0, -8(t2)
+.Lrmp_done:
+    ld s2, 0(sp)
+    ld s3, 8(sp)
+    ld s4, 16(sp)
+    addi sp, sp, 40
+    j .Lrel_free
+.Lrel_ref:
+    # the cell's last claim: take its word out of the root registry —
+    # the swap-remove the c runtime's root unlink answers too — then
+    # the freelist, like any identity block
+    ld t2, 16(sp)           # the block
+    ori a0, t2, 24          # the Ref word the registry stored (kind 12)
+    la t4, emo_gc_roots_n
+    ld t5, 0(t4)
+    la t6, emo_gc_roots
+    li a2, 0
+.Lgcu_scan:
+    bge a2, t5, .Lgcu_free
+    slli a3, a2, 3
+    add a3, t6, a3
+    ld a4, 0(a3)
+    bne a4, a0, .Lgcu_next
+    addi t5, t5, -1
+    sd t5, 0(t4)            # the count drops first
+    slli a3, t5, 3
+    add a3, t6, a3
+    ld a4, 0(a3)            # the last root takes the emptied slot
+    slli a3, a2, 3
+    add a3, t6, a3
+    sd a4, 0(a3)
+    j .Lgcu_free
+.Lgcu_next:
+    addi a2, a2, 1
+    j .Lgcu_scan
+.Lgcu_free:
+    j .Lrel_free
 .Lrel_free:
     ld t0, 16(sp)           # the block
     ld t1, 8(sp)            # the serving slot
@@ -5307,12 +5830,12 @@ emo_alloc_bytes:
     addi sp, sp, 16
     ret
 
-# emo_bytes_new: a0 = the tagged length; a0 = a zeroed Bytes of it.
+# emo_bytes_new: a0 = the raw byte count (the emitter detags a boxed
+# one before the call); a0 = a zeroed Bytes of it.
     .globl emo_bytes_new
 emo_bytes_new:
-    andi t0, a0, -32
-    ld a0, 8(t0)
-    tail emo_alloc_bytes
+    tail emo_alloc_bytes    # a0 = the raw byte count (the emitter
+                            #   detags a boxed one before the call)
 
 # emo_bytes_at: a0 = a Bytes, a1 = the tagged index, a2 = the raw
 # width; t0 = the address of byte a1, or the named failure. A leaf —
@@ -5320,8 +5843,9 @@ emo_bytes_new:
     .globl emo_bytes_at
 emo_bytes_at:
     andi t0, a0, -32
-    andi t1, a1, -32
-    ld t1, 8(t1)
+    mv t1, a1               # the index raw: a native frame's register,
+                            #   a dynamic frame's detagged by the emitter
+                            #   before the call — no box changes hands
     ld t2, 8(t0)
     blt t1, zero, .Lb_at_fail
     add t3, t1, a2
@@ -5334,16 +5858,19 @@ emo_bytes_at:
     la a1, msg_bytes_range_end
     tail emo_fail
 
-# emo_bytes_get: a0 = a Bytes, a1 = the tagged index; a0 = the byte,
-# zero-extended, as a tagged Int64.
+# emo_bytes_get: a0 = a Bytes, a1 = the raw index; a0 = the byte,
+# zero-extended, raw.
     .globl emo_bytes_get
 emo_bytes_get:
     addi sp, sp, -16
     sd ra, 0(sp)
     li a2, 1
     call emo_bytes_at
-    lbu a0, 0(t0)
-    call emo_box_i64
+    lbu a0, 0(t0)           # the byte, raw: a native frame's Int64 rides
+                            #   the register, the dynamic frame's box is
+                            #   the emitter's (a crypto loop reads whole
+                            #   blocks byte-wise — a box per byte walked
+                            #   the bump arena dry in twenty rounds)
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -5360,8 +5887,7 @@ emo_bytes_get_u16_le:
     lbu t1, 0(t0)
     lbu t2, 1(t0)
     slli t2, t2, 8
-    or a0, t1, t2
-    call emo_box_i64
+    or a0, t1, t2           # raw, the box the emitter's
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -5381,8 +5907,7 @@ emo_bytes_get_u32_le:
     or t1, t1, t2
     lbu t2, 3(t0)
     slli t2, t2, 24
-    or a0, t1, t2
-    call emo_box_i64
+    or a0, t1, t2           # raw, the box the emitter's
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -5404,17 +5929,17 @@ emo_bytes_get_u64_le:
     addi t1, t1, 8
     li t2, 64
     bne t1, t2, .Lb_u64l
-    mv a0, s0
-    call emo_box_i64
+    mv a0, s0               # raw, the box the emitter's
     ld ra, 0(sp)
     ld s0, 8(sp)
     addi sp, sp, 16
     ret
 
 # emo_bytes_set / set_u16_le / set_u32_le / set_u64_le: a0 = a Bytes,
-# a1 = the tagged index, a2 = the tagged value; the masked bytes land,
-# a0 = the masked value as a tagged Int64 (the interpreter's own
-# answer).
+# a1 = the raw index, a2 = the raw value; the masked bytes land, a0 =
+# the masked value raw. The shapes are the emitter's: it detags a
+# dynamic frame's boxed arguments inline (two instructions, nothing
+# allocated) so a hot loop's byte-wise walk spends no box at all.
     .globl emo_bytes_set
 emo_bytes_set:
     addi sp, sp, -32
@@ -5423,12 +5948,9 @@ emo_bytes_set:
     mv s0, a2
     li a2, 1
     call emo_bytes_at
-    andi t1, s0, -32
-    ld t1, 8(t1)
-    andi t1, t1, 255
+    andi t1, s0, 255        # the value raw, masked in the register
     sb t1, 0(t0)
-    mv a0, t1
-    call emo_box_i64
+    mv a0, t1               # the masked byte, raw
     ld ra, 0(sp)
     ld s0, 8(sp)
     addi sp, sp, 32
@@ -5443,10 +5965,8 @@ emo_bytes_set_u16_le:
     mv s0, a2
     li a2, 2
     call emo_bytes_at
-    andi s1, s0, -32
-    ld s1, 8(s1)
     li t1, 0xFFFF
-    and s1, s1, t1
+    and s1, s0, t1          # the value raw, masked in the register
     li t2, 0                # the shift
 .Lb_s16l:
     srl t3, s1, t2
@@ -5456,8 +5976,7 @@ emo_bytes_set_u16_le:
     addi t2, t2, 8
     li t3, 16
     bne t2, t3, .Lb_s16l
-    mv a0, s1
-    call emo_box_i64
+    mv a0, s1               # the masked value, raw
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
@@ -5473,12 +5992,10 @@ emo_bytes_set_u32_le:
     mv s0, a2
     li a2, 4
     call emo_bytes_at
-    andi s1, s0, -32
-    ld s1, 8(s1)
     li t1, -1
     slli t1, t1, 32
     srli t1, t1, 32         # 0xFFFFFFFF
-    and s1, s1, t1
+    and s1, s0, t1          # the value raw, masked in the register
     li t2, 0
 .Lb_s32l:
     srl t3, s1, t2
@@ -5489,7 +6006,6 @@ emo_bytes_set_u32_le:
     li t3, 32
     bne t2, t3, .Lb_s32l
     mv a0, s1
-    call emo_box_i64
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
@@ -5504,8 +6020,7 @@ emo_bytes_set_u64_le:
     mv s0, a2
     li a2, 8
     call emo_bytes_at
-    andi t1, s0, -32
-    ld s1, 8(t1)
+    mv s1, s0               # the value raw
     li t2, 0
 .Lb_s64l:
     srl t3, s1, t2
@@ -5515,8 +6030,7 @@ emo_bytes_set_u64_le:
     addi t2, t2, 8
     li t3, 64
     bne t2, t3, .Lb_s64l
-    mv a0, s1
-    call emo_box_i64
+    mv a0, s1               # the masked value, raw
     ld ra, 0(sp)
     ld s0, 8(sp)
     addi sp, sp, 32
@@ -9295,6 +9809,1196 @@ emo_copy_out_at:
    which emo-desktop A9.1's windowed session needed said), then the
    heap-death route — the shim's loud report, the slot done, the
    machine continuing (T5.1). *)
+(* The GC heap's doors (step 91, docs/gc-heap.md): the same doors the
+   interpreter's eval and the c runtime answer, over the image's own
+   .bss region. The convention is the raw-memory family's — tagged
+   words in, tagged words out, the box adapters at the call sites — and
+   the guards are the interpreter's, in the interpreter's order, the
+   loud end being `emo_fail`'s announce. The binding table stays
+   sorted by offset: `heap_blocks` answers in address order and the
+   overlap checks read the neighbors; the generation rides the entry,
+   reset when a released offset binds again — the interpreter's own
+   rule. *)
+let gc_doors_asm =
+  {asm|
+# ---- The GC heap's doors (step 91) ----
+
+# emo_gc_live: a0 = a handle word. a0 = the bound entry ([off][gen]
+# [kind][size], 32 bytes), the loud end otherwise: an even word, a
+# generation the binding outgrew, and an unknown offset are the same
+# stale-handle end the interpreter's E3050 names.
+emo_gc_live:
+    andi t0, a0, 1
+    beqz t0, .Lgcl_even
+    srli t1, a0, 1
+    li t2, 0x1FFFFFFFFFF
+    and t3, t1, t2          # the offset, 41 bits
+    srli t4, a0, 42         # the generation
+    la t5, emo_gc_bound_n
+    ld t6, 0(t5)
+    la t5, emo_gc_bound
+.Lgcl_scan:
+    beqz t6, .Lgcl_none
+    ld a1, 0(t5)
+    bne a1, t3, .Lgcl_next
+    ld a1, 8(t5)
+    bne a1, t4, .Lgcl_stale
+    mv a0, t5               # the entry answers, not the handle
+    ret
+.Lgcl_next:
+    addi t5, t5, 32
+    addi t6, t6, -1
+    j .Lgcl_scan
+.Lgcl_even:
+    la a0, msg_gc_even
+    la a1, msg_gc_even_end
+    call emo_fail
+.Lgcl_stale:
+    la a0, msg_gc_stale
+    la a1, msg_gc_stale_end
+    call emo_fail
+.Lgcl_none:
+    la a0, msg_gc_notlive
+    la a1, msg_gc_notlive_end
+    call emo_fail
+
+# emo_gc_gen_at: a0 = a word offset. a0 = the generation the next
+# binding of that offset takes: the entry's own generation moved one
+# on (a slide's own words, rebound in place), one otherwise — the
+# interpreter's `gc_next_gen`, which reads no other memory.
+emo_gc_gen_at:
+    la t0, emo_gc_bound_n
+    ld t1, 0(t0)
+    la t2, emo_gc_bound
+.Lgga_scan:
+    beqz t1, .Lgga_fresh
+    ld t3, 0(t2)
+    bne t3, a0, .Lgga_next
+    ld a0, 8(t2)
+    addi a0, a0, 1
+    li t4, 0x3FFFFF
+    ble a0, t4, .Lgga_out
+    li a0, 1
+.Lgga_out:
+    ret
+.Lgga_next:
+    addi t2, t2, 32
+    addi t1, t1, -1
+    j .Lgga_scan
+.Lgga_fresh:
+    li a0, 1
+    ret
+
+# emo_gc_heap_new: a0 = the tagged word count. One arena per run; the
+# metal's size guard is the region's own 131072 words — a real heap is
+# finite and the door says so.
+emo_gc_heap_new:
+    andi t0, a0, -32
+    ld t0, 8(t0)
+    la t1, emo_gc_created
+    ld t2, 0(t1)
+    bnez t2, .Lgn_once
+    bltz t0, .Lgn_neg
+    li t3, 131072
+    bgeu t0, t3, .Lgn_big
+    la t3, emo_gc_limit
+    sd t0, 0(t3)
+    li t2, 1
+    sd t2, 0(t1)
+    mv a0, t0
+    tail emo_box_i64
+.Lgn_once:
+    la a0, msg_gc_once
+    la a1, msg_gc_once_end
+    call emo_fail
+.Lgn_neg:
+    la a0, msg_gc_neg
+    la a1, msg_gc_neg_end
+    call emo_fail
+.Lgn_big:
+    la a0, msg_gc_big
+    la a1, msg_gc_big_end
+    call emo_fail
+
+# emo_gc_heap_load: a0 = the tagged address.
+emo_gc_heap_load:
+    andi t0, a0, -32
+    ld t0, 8(t0)
+    la t1, emo_gc_limit
+    ld t2, 0(t1)
+    bgeu t0, t2, .Lgld_oob
+    la t3, emo_gc_region
+    slli t4, t0, 3
+    add t3, t3, t4
+    ld a0, 0(t3)
+    tail emo_box_i64
+.Lgld_oob:
+    la a0, msg_gc_load_oob
+    la a1, msg_gc_load_oob_end
+    call emo_fail
+
+# emo_gc_heap_store: a0 = the tagged address, a1 = the tagged word.
+emo_gc_heap_store:
+    andi t0, a0, -32
+    ld t0, 8(t0)
+    andi t1, a1, -32
+    ld t1, 8(t1)
+    la t2, emo_gc_limit
+    ld t3, 0(t2)
+    bgeu t0, t3, .Lgst_oob
+    la t2, emo_gc_region
+    slli t4, t0, 3
+    add t2, t2, t4
+    sd t1, 0(t2)
+    ret
+.Lgst_oob:
+    la a0, msg_gc_store_oob
+    la a1, msg_gc_store_oob_end
+    call emo_fail
+
+# emo_gc_heap_carve: a0 = the tagged address, a1 = the tagged size,
+# a2 = the tagged kind. The guards in the interpreter's order, the
+# neighbors read before the entry lands, the header word packed the
+# interpreter's way.
+emo_gc_heap_carve:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    andi t0, a0, -32
+    ld s0, 8(t0)            # addr
+    andi t0, a1, -32
+    ld s1, 8(t0)            # n
+    andi t0, a2, -32
+    ld s2, 8(t0)            # kind
+    la t0, emo_gc_created
+    ld t1, 0(t0)
+    beqz t1, .Lgcv_noheap
+    li t1, 1
+    beq s2, t1, .Lgcv_kok
+    li t1, 2
+    beq s2, t1, .Lgcv_kok
+    li t1, 3
+    beq s2, t1, .Lgcv_kok
+    j .Lgcv_kind
+.Lgcv_kok:
+    bltz s1, .Lgcv_neg
+    li t1, 8388608
+    bgeu s1, t1, .Lgcv_big
+    bltz s0, .Lgcv_oob
+    add t1, s0, s1
+    addi t1, t1, 1
+    la t2, emo_gc_limit
+    ld t3, 0(t2)
+    bgt t1, t3, .Lgcv_oob
+    la t2, emo_gc_bound_n
+    ld s3, 0(t2)            # count
+    la s4, emo_gc_bound     # the scan rides s4 to the insert position
+    li t5, 0
+.Lgcv_scan:
+    bge t5, s3, .Lgcv_found
+    ld t6, 0(s4)
+    bgt t6, s0, .Lgcv_found
+    addi s4, s4, 32
+    addi t5, t5, 1
+    j .Lgcv_scan
+.Lgcv_found:
+    beqz t5, .Lgcv_nonext
+    ld t6, -32(s4)          # the previous block's offset
+    ld a2, -8(s4)           # its size
+    add a2, a2, t6
+    addi a2, a2, 1          # its physical end
+    bgt a2, s0, .Lgcv_overlap
+.Lgcv_nonext:
+    bge t5, s3, .Lgcv_insert
+    ld a2, 0(s4)            # the next block's offset
+    add a3, s0, s1
+    addi a3, a3, 1          # this block's physical end
+    bgt a3, a2, .Lgcv_overlap
+.Lgcv_insert:
+    mv a2, s3               # the shift: entry[j] = entry[j-1], down to i
+.Lgcv_shift:
+    bge t5, a2, .Lgcv_put
+    la t6, emo_gc_bound
+    slli a3, a2, 5
+    add a3, t6, a3
+    addi a4, a3, -32
+    ld a5, 0(a4)
+    sd a5, 0(a3)
+    ld a5, 8(a4)
+    sd a5, 8(a3)
+    ld a5, 16(a4)
+    sd a5, 16(a3)
+    ld a5, 24(a4)
+    sd a5, 24(a3)
+    addi a2, a2, -1
+    j .Lgcv_shift
+.Lgcv_put:
+    sd s0, 0(s4)
+    li a2, 1
+    sd a2, 8(s4)            # a fresh offset binds at generation one
+    sd s2, 16(s4)
+    sd s1, 24(s4)
+    la t6, emo_gc_bound_n
+    addi a2, s3, 1
+    sd a2, 0(t6)
+    la t6, emo_gc_region
+    slli a2, s0, 3
+    add t6, t6, a2
+    li a3, 0xC0DE
+    slli a3, a3, 48
+    slli a4, s2, 46
+    li a5, 0x1000000        # the generation, bit 24
+    or a3, a3, a4
+    or a3, a3, a5
+    or a3, a3, s1
+    sd a3, 0(t6)
+    li a0, 0x40000000000    # the handle: (gen << 42) | (off << 1) | 1
+    slli a1, s0, 1
+    or a0, a0, a1
+    ori a0, a0, 1
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    addi sp, sp, 48
+    tail emo_box_i64
+.Lgcv_noheap:
+    la a0, msg_gc_noheap
+    la a1, msg_gc_noheap_end
+    call emo_fail
+.Lgcv_kind:
+    la a0, msg_gc_ckind
+    la a1, msg_gc_ckind_end
+    call emo_fail
+.Lgcv_neg:
+    la a0, msg_gc_neg
+    la a1, msg_gc_neg_end
+    call emo_fail
+.Lgcv_big:
+    la a0, msg_gc_cbig
+    la a1, msg_gc_cbig_end
+    call emo_fail
+.Lgcv_oob:
+    la a0, msg_gc_coob
+    la a1, msg_gc_coob_end
+    call emo_fail
+.Lgcv_overlap:
+    la a0, msg_gc_overlap
+    la a1, msg_gc_overlap_end
+    call emo_fail
+
+# emo_gc_heap_release: a0 = the tagged handle. The header zeroes, the
+# binding leaves the table in place (the shift keeps the sort).
+emo_gc_heap_release:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a0, -32
+    ld t0, 8(t0)
+    mv a0, t0
+    call emo_gc_live        # a0 = the entry
+    ld t1, 0(a0)            # the offset
+    la t2, emo_gc_region
+    slli t3, t1, 3
+    add t2, t2, t3
+    sd zero, 0(t2)
+    la t3, emo_gc_bound
+    sub t4, a0, t3
+    srli t4, t4, 5          # the entry's index
+    la t5, emo_gc_bound_n
+    ld t6, 0(t5)
+    mv a2, t4
+.Lgre_shift:
+    addi a3, a2, 1
+    bge a3, t6, .Lgre_done
+    slli a4, a2, 5
+    add a4, t3, a4
+    slli a5, a3, 5
+    add a5, t3, a5
+    ld a0, 0(a5)
+    sd a0, 0(a4)
+    ld a0, 8(a5)
+    sd a0, 8(a4)
+    ld a0, 16(a5)
+    sd a0, 16(a4)
+    ld a0, 24(a5)
+    sd a0, 24(a4)
+    addi a2, a2, 1
+    j .Lgre_shift
+.Lgre_done:
+    addi t6, t6, -1
+    sd t6, 0(t5)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_gc_heap_rebind: a0 = the tagged handle, a1 = the tagged new
+# address. The binding moves, the words do not — the collector copies
+# them through the raw lane itself.
+emo_gc_heap_rebind:
+    addi sp, sp, -96
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    andi t0, a0, -32
+    ld s0, 8(t0)            # the handle word
+    andi t0, a1, -32
+    ld s1, 8(t0)            # the new address
+    mv a0, s0
+    call emo_gc_live        # a0 = the entry
+    mv s2, a0
+    ld s3, 24(a0)           # the size
+    bltz s1, .Lgrb_oob
+    add t1, s1, s3
+    addi t1, t1, 1
+    la t2, emo_gc_limit
+    ld t3, 0(t2)
+    bgt t1, t3, .Lgrb_oob
+    la t2, emo_gc_bound_n
+    ld s4, 0(t2)            # count
+    la s5, emo_gc_bound     # scan ptr
+    li t5, 0
+.Lgrb_scan:
+    bge t5, s4, .Lgrb_scanned
+    beq s5, s2, .Lgrb_skip  # the moving block's own entry
+    ld t6, 0(s5)            # off
+    ld a2, 24(s5)           # size
+    add a3, t6, a2          # off + size
+    blt a3, s1, .Lgrb_skip  # ends before the new address
+    add a4, s1, s3          # new + size
+    blt a4, t6, .Lgrb_skip  # starts after the block
+    j .Lgrb_overlap
+.Lgrb_skip:
+    addi s5, s5, 32
+    addi t5, t5, 1
+    j .Lgrb_scan
+.Lgrb_scanned:
+    ld s5, 0(s2)            # the old offset
+    ld a5, 16(s2)           # the kind
+    sd s5, 56(sp)
+    sd a5, 64(sp)
+    sd s3, 72(sp)
+    # the generation: the entry at the new address is the mover itself
+    # when a slide rebinds its own words, one otherwise
+    mv a0, s1
+    call emo_gc_gen_at      # a0 = gen (s-regs preserved by it)
+    mv s3, a0
+    # remove the old entry
+    la t3, emo_gc_bound
+    sub t4, s2, t3
+    srli t4, t4, 5
+    la t5, emo_gc_bound_n
+    ld t6, 0(t5)
+    mv a2, t4
+.Lgrb_shift:
+    addi a3, a2, 1
+    bge a3, t6, .Lgrb_rmdone
+    slli a4, a2, 5
+    add a4, t3, a4
+    slli a5, a3, 5
+    add a5, t3, a5
+    ld a0, 0(a5)
+    sd a0, 0(a4)
+    ld a0, 8(a5)
+    sd a0, 8(a4)
+    ld a0, 16(a5)
+    sd a0, 16(a4)
+    ld a0, 24(a5)
+    sd a0, 24(a4)
+    addi a2, a2, 1
+    j .Lgrb_shift
+.Lgrb_rmdone:
+    addi t6, t6, -1
+    sd t6, 0(t5)
+    # the old header zeroes
+    la t2, emo_gc_region
+    slli t3, s5, 3
+    add t2, t2, t3
+    sd zero, 0(t2)
+    # the new header: magic | kind << 46 | gen << 24 | size
+    la t2, emo_gc_region
+    slli t3, s1, 3
+    add t2, t2, t3
+    li a3, 0xC0DE
+    slli a3, a3, 48
+    ld a4, 64(sp)
+    slli a4, a4, 46
+    slli a5, s3, 24
+    ld a2, 72(sp)
+    or a3, a3, a4
+    or a3, a3, a5
+    or a3, a3, a2
+    sd a3, 0(t2)
+    # insert the entry at the new address, in sort
+    la t2, emo_gc_bound_n
+    ld s4, 0(t2)
+    la s5, emo_gc_bound
+    li t5, 0
+.Lgrb_iscan:
+    bge t5, s4, .Lgrb_ifound
+    ld t6, 0(s5)
+    bgt t6, s1, .Lgrb_ifound
+    addi s5, s5, 32
+    addi t5, t5, 1
+    j .Lgrb_iscan
+.Lgrb_ifound:
+    mv a2, s4
+.Lgrb_ishift:
+    bge t5, a2, .Lgrb_iput
+    la t6, emo_gc_bound
+    slli a3, a2, 5
+    add a3, t6, a3
+    addi a4, a3, -32
+    ld a5, 0(a4)
+    sd a5, 0(a3)
+    ld a5, 8(a4)
+    sd a5, 8(a3)
+    ld a5, 16(a4)
+    sd a5, 16(a3)
+    ld a5, 24(a4)
+    sd a5, 24(a3)
+    addi a2, a2, -1
+    j .Lgrb_ishift
+.Lgrb_iput:
+    sd s1, 0(s5)
+    sd s3, 8(s5)
+    ld a2, 64(sp)
+    sd a2, 16(s5)
+    ld a2, 72(sp)
+    sd a2, 24(s5)
+    la t6, emo_gc_bound_n
+    addi a2, s4, 1
+    sd a2, 0(t6)
+    # the new handle
+    slli a0, s3, 42
+    slli a1, s1, 1
+    or a0, a0, a1
+    ori a0, a0, 1
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 96
+    tail emo_box_i64
+.Lgrb_oob:
+    la a0, msg_gc_roob
+    la a1, msg_gc_roob_end
+    call emo_fail
+.Lgrb_overlap:
+    la a0, msg_gc_overlap
+    la a1, msg_gc_overlap_end
+    call emo_fail
+
+# emo_gc_heap_slide: a0 = the tagged pairs array. The pairs name every
+# bound block in destination order, contiguous from zero; the host
+# validates the whole slide before the first word moves.
+emo_gc_heap_slide:
+    addi sp, sp, -80
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    la t0, emo_gc_created
+    ld t1, 0(t0)
+    beqz t1, .Lgsl_noheap
+    andi s0, a0, -32        # the pairs block
+    ld t1, 8(s0)            # the element count
+    andi t2, t1, 1
+    bnez t2, .Lgsl_even
+    la t3, emo_gc_bound_n
+    ld t4, 0(t3)
+    slli t5, t4, 1
+    bne t5, t1, .Lgsl_names
+    mv s1, t4               # the block count
+    li s2, 0                # the expected destination
+    li s3, 0                # i
+    addi s4, s0, 16         # the elements cursor
+    ld s5, 0(s0)            # the pairs' header word: the raw builder's
+                            #   array marks itself -1 and its payloads lie
+                            #   bare — a tagged array's elements ride box
+                            #   cells and need the detag
+.Lgsl_valid:
+    bge s3, s1, .Lgsl_vdone
+    ld a0, 0(s4)
+    bgez s5, .Lgsl_htag
+    j .Lgsl_hhave
+.Lgsl_htag:
+    andi t0, a0, -32
+    ld a0, 8(t0)            # the handle word
+.Lgsl_hhave:
+    call emo_gc_live        # a0 = the entry
+    ld t1, 24(a0)           # the size
+    ld t2, 8(s4)
+    bgez s5, .Lgsl_dtag
+    j .Lgsl_dhave
+.Lgsl_dtag:
+    andi t2, t2, -32
+    ld t2, 8(t2)            # the destination
+.Lgsl_dhave:
+    bne t2, s2, .Lgsl_dest
+    add t3, t2, t1
+    addi t3, t3, 1
+    la t4, emo_gc_limit
+    ld t5, 0(t4)
+    bgt t3, t5, .Lgsl_oob
+    la t4, emo_gc_stage
+    slli t5, s3, 4
+    add t4, t4, t5
+    ld t6, 0(a0)
+    sd t6, 0(t4)            # the old offset
+    sd t2, 8(t4)            # the destination
+    addi s2, s2, 1
+    add s2, s2, t1
+    addi s4, s4, 16
+    addi s3, s3, 1
+    j .Lgsl_valid
+.Lgsl_vdone:
+    li s3, 0                # the move pass
+.Lgsl_move:
+    bge s3, s1, .Lgsl_mdone
+    la t0, emo_gc_stage
+    slli t1, s3, 4
+    add t0, t0, t1
+    ld s4, 0(t0)            # the old offset
+    ld s5, 8(t0)            # the destination
+    la t2, emo_gc_bound
+    li t3, 0
+.Lgsl_find:
+    ld a2, 0(t2)
+    beq a2, s4, .Lgsl_found
+    addi t2, t2, 32
+    addi t3, t3, 1
+    j .Lgsl_find
+.Lgsl_found:
+    ld a3, 24(t2)           # the size
+    sd a3, 72(sp)
+    ld a3, 16(t2)           # the kind
+    sd a3, 64(sp)
+    sd t3, 56(sp)           # the entry's index
+    mv a0, s5
+    call emo_gc_gen_at      # a0 = the generation
+    mv t6, a0
+    # copy slots 1..size
+    la t0, emo_gc_region
+    slli t1, s4, 3
+    add t1, t0, t1          # the old words
+    slli t2, s5, 3
+    add t2, t0, t2          # the new words
+    li t3, 1
+.Lgsl_copy:
+    ld a4, 72(sp)
+    bge t3, a4, .Lgsl_copied
+    slli a4, t3, 3
+    add a5, t1, a4
+    ld a0, 0(a5)
+    add a5, t2, a4
+    sd a0, 0(a5)
+    addi t3, t3, 1
+    j .Lgsl_copy
+.Lgsl_copied:
+    # remove the entry at the old offset
+    la t3, emo_gc_bound
+    ld t4, 56(sp)           # the entry's index
+    la t5, emo_gc_bound_n
+    ld t0, 0(t5)
+    mv a2, t4
+.Lgsl_shift:
+    addi a3, a2, 1
+    bge a3, t0, .Lgsl_rmdone
+    slli a4, a2, 5
+    add a4, t3, a4
+    slli a5, a3, 5
+    add a5, t3, a5
+    ld a0, 0(a5)
+    sd a0, 0(a4)
+    ld a0, 8(a5)
+    sd a0, 8(a4)
+    ld a0, 16(a5)
+    sd a0, 16(a4)
+    ld a0, 24(a5)
+    sd a0, 24(a4)
+    addi a2, a2, 1
+    j .Lgsl_shift
+.Lgsl_rmdone:
+    addi t0, t0, -1
+    sd t0, 0(t5)
+    # the old header zeroes
+    la t0, emo_gc_region
+    slli t1, s4, 3
+    add t0, t0, t1
+    sd zero, 0(t0)
+    # the new header
+    la t0, emo_gc_region
+    slli t1, s5, 3
+    add t0, t0, t1
+    li a3, 0xC0DE
+    slli a3, a3, 48
+    ld a4, 64(sp)
+    slli a4, a4, 46
+    slli a5, t6, 24
+    ld a2, 72(sp)
+    or a3, a3, a4
+    or a3, a3, a5
+    or a3, a3, a2
+    sd a3, 0(t0)
+    # insert the entry at the destination, in sort
+    la t2, emo_gc_bound_n
+    ld a2, 0(t2)            # the count
+    la t3, emo_gc_bound
+    li t4, 0
+.Lgsl_iscan:
+    bge t4, a2, .Lgsl_ifound
+    ld a5, 0(t3)
+    bgt a5, s5, .Lgsl_ifound
+    addi t3, t3, 32
+    addi t4, t4, 1
+    j .Lgsl_iscan
+.Lgsl_ifound:
+    mv a5, a2
+.Lgsl_ishift:
+    bge t4, a5, .Lgsl_iput
+    la a0, emo_gc_bound
+    slli a1, a5, 5
+    add a0, a0, a1          # dst = bound + j*32
+    addi a1, a0, -32        # src
+    ld a2, 0(a1)
+    sd a2, 0(a0)
+    ld a2, 8(a1)
+    sd a2, 8(a0)
+    ld a2, 16(a1)
+    sd a2, 16(a0)
+    ld a2, 24(a1)
+    sd a2, 24(a0)
+    addi a5, a5, -1
+    j .Lgsl_ishift
+.Lgsl_iput:
+    sd s5, 0(t3)            # the slot the scan stopped at
+    sd t6, 8(t3)
+    ld a0, 64(sp)
+    sd a0, 16(t3)
+    ld a0, 72(sp)
+    sd a0, 24(t3)
+    la t0, emo_gc_bound_n
+    ld a1, 0(t0)
+    addi a1, a1, 1
+    sd a1, 0(t0)
+    # the stage's old-offset slot answers the new handle
+    slli a1, t6, 42
+    slli a2, s5, 1
+    or a1, a1, a2
+    ori a1, a1, 1
+    la t0, emo_gc_stage
+    slli t1, s3, 4
+    add t0, t0, t1
+    sd a1, 0(t0)
+    addi s3, s3, 1
+    j .Lgsl_move
+.Lgsl_mdone:
+    # the answer: an Array of the new handles — one boxed Int64 cell
+    # per element, the loop's state living in s-regs only (the box
+    # allocates, and the allocator takes every temp it finds)
+    mv s2, s1               # the count
+    addi a0, s1, 1
+    call emo_alloc          # a0 = the block
+    mv s1, a0               # the block base
+    addi t1, a0, 8
+    sd s2, 0(t1)            # the length
+    addi s3, a0, 16         # the element cursor
+    la s4, emo_gc_stage     # the answers cursor
+    li s5, 0
+.Lgsl_ans:
+    bge s5, s2, .Lgsl_adone
+    ld a0, 0(s4)            # the new handle
+    call emo_box_i64
+    sd a0, 0(s3)
+    addi s3, s3, 8
+    addi s4, s4, 16
+    addi s5, s5, 1
+    j .Lgsl_ans
+.Lgsl_adone:
+    ori a0, s1, 8           # the Array word (kind 4)
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 80
+    ret
+.Lgsl_noheap:
+    la a0, msg_gc_noheap
+    la a1, msg_gc_noheap_end
+    call emo_fail
+.Lgsl_even:
+    la a0, msg_gc_even_pairs
+    la a1, msg_gc_even_pairs_end
+    call emo_fail
+.Lgsl_names:
+    la a0, msg_gc_names
+    la a1, msg_gc_names_end
+    call emo_fail
+.Lgsl_dest:
+    la a0, msg_gc_dest
+    la a1, msg_gc_dest_end
+    call emo_fail
+.Lgsl_oob:
+    la a0, msg_gc_soob
+    la a1, msg_gc_soob_end
+    call emo_fail
+
+# ---- the checked accessors ----
+
+# emo_gc_checked: a0 = the tagged handle, a1 = the tagged slot, a2 =
+# the kind the door wants. a0 = the slot's address — the caller owns
+# the load or the store.
+emo_gc_checked:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    andi t0, a0, -32
+    ld t0, 8(t0)            # the handle word
+    andi s0, a1, -32
+    ld s0, 8(s0)            # the slot
+    mv s1, a2               # the kind arrives raw (the thin door's own)
+    mv a0, t0
+    call emo_gc_live        # a0 = the entry
+    ld t1, 16(a0)           # the block's kind
+    bne t1, s1, .Lgcc_kind
+    ld t2, 24(a0)           # the size
+    bltz s0, .Lgcc_slot
+    bgt s0, t2, .Lgcc_slot
+    ld t3, 0(a0)            # the offset
+    slli t3, t3, 3
+    slli t4, s0, 3
+    add t3, t3, t4
+    la a0, emo_gc_region
+    add a0, a0, t3
+    la t4, emo_gc_region
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    addi sp, sp, 32
+    ret
+.Lgcc_kind:
+    la a0, msg_gc_kind
+    la a1, msg_gc_kind_end
+    call emo_fail
+.Lgcc_slot:
+    la a0, msg_gc_slot
+    la a1, msg_gc_slot_end
+    call emo_fail
+
+emo_gc_struct_get:
+    addi sp, sp, -16
+    sd ra, 0(sp)            # the caller's return: the checked call takes
+    li a2, 1                #   ra, and the tail below answers it
+    call emo_gc_checked
+    ld a0, 0(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_box_i64
+
+emo_gc_struct_set:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a2, -32        # the word: the tagged cell detags to the
+    ld t0, 8(t0)            #   payload the door stores raw
+    sd t0, 8(sp)
+    li a2, 1
+    call emo_gc_checked
+    ld t0, 8(sp)
+    sd t0, 0(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+emo_gc_array_get:
+    addi sp, sp, -16
+    sd ra, 0(sp)            # the caller's return: the checked call takes
+    li a2, 2                #   ra, and the tail below answers it
+    call emo_gc_checked
+    ld a0, 0(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_box_i64
+
+emo_gc_array_set:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a2, -32        # the word: the tagged cell detags to the
+    ld t0, 8(t0)            #   payload the door stores raw
+    sd t0, 8(sp)
+    li a2, 2
+    call emo_gc_checked
+    ld t0, 8(sp)
+    sd t0, 0(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+emo_gc_float_array_get:
+    addi sp, sp, -16
+    sd ra, 0(sp)            # the caller's return: the checked call takes
+    li a2, 3                #   ra, and the tail below answers it
+    call emo_gc_checked
+    ld a0, 0(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_box_i64
+
+emo_gc_float_array_set:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a2, -32        # the bits: the tagged cell detags to the
+    ld t0, 8(t0)            #   payload the door stores raw
+    sd t0, 8(sp)
+    li a2, 3
+    call emo_gc_checked
+    ld t0, 8(sp)
+    sd t0, 0(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_gc_array_len: a0 = the tagged handle.
+emo_gc_array_len:
+    addi sp, sp, -16
+    sd ra, 0(sp)            # the caller's return: the live call takes
+    andi t0, a0, -32        #   ra, and the tail below answers it
+    ld t0, 8(t0)
+    mv a0, t0
+    call emo_gc_live
+    ld t1, 16(a0)
+    li t2, 2
+    bne t1, t2, .Lgcc_kind_j
+    ld a0, 24(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_box_i64
+.Lgcc_kind_j:
+    la a0, msg_gc_kind
+    la a1, msg_gc_kind_end
+    call emo_fail
+
+# emo_gc_block_kind / emo_gc_block_size: a0 = the tagged handle.
+emo_gc_block_kind:
+    addi sp, sp, -16
+    sd ra, 0(sp)            # the caller's return: the live call takes
+    andi t0, a0, -32        #   ra, and the tail below answers it
+    ld t0, 8(t0)
+    mv a0, t0
+    call emo_gc_live
+    ld a0, 16(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_box_i64
+
+emo_gc_block_size:
+    addi sp, sp, -16
+    sd ra, 0(sp)            # the caller's return: the live call takes
+    andi t0, a0, -32        #   ra, and the tail below answers it
+    ld t0, 8(t0)
+    mv a0, t0
+    call emo_gc_live
+    ld a0, 24(a0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_box_i64
+
+# ---- the float lane ----
+
+# emo_gc_float_bits: a0 = the tagged Float64 cell. a0 = the bits.
+emo_gc_float_bits:
+    andi t0, a0, -32
+    fld fa0, 8(t0)
+    fmv.x.d a0, fa0
+    tail emo_box_i64
+
+# emo_gc_bits_float: a0 = the tagged Int64. a0 = the tagged Float64.
+emo_gc_bits_float:
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    fmv.d.x fa0, a0
+    tail emo_box_f64
+
+# ---- the roots ----
+
+# emo_gc_ref_new: a0 = the tagged word. One Ref cell, born with the
+# creator's claim and the registry's: two counts, the second riding the
+# roots table — the c runtime's root link, the metal's own words.
+emo_gc_ref_new:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi t0, a0, -32
+    ld s0, 8(t0)            # the value word
+    li a0, 1
+    call emo_alloc          # a0 = the cell
+    sd s0, 8(a0)
+    ori s1, a0, 24          # the Ref word (kind 12)
+    mv a0, s1
+    call emo_retain         # the creator's claim
+    la t0, emo_gc_roots_n
+    ld t1, 0(t0)
+    li t2, 4096
+    bgeu t1, t2, .Lgrn_full
+    la t3, emo_gc_roots
+    slli t4, t1, 3
+    add t3, t3, t4
+    sd s1, 0(t3)
+    addi t1, t1, 1
+    sd t1, 0(t0)
+    mv a0, s1
+    call emo_retain         # the registry's claim
+    mv a0, s1
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    addi sp, sp, 32
+    ret
+.Lgrn_full:
+    la a0, msg_gc_rootsfull
+    la a1, msg_gc_rootsfull_end
+    call emo_fail
+
+# emo_gc_ref_read: a0 = the tagged Ref. a0 = the tagged word.
+emo_gc_ref_read:
+    andi t0, a0, -32
+    ld a0, 8(t0)
+    tail emo_box_i64
+
+# emo_gc_ref_write: a0 = the tagged Ref, a1 = the tagged word.
+emo_gc_ref_write:
+    andi t0, a0, -32
+    andi t1, a1, -32
+    ld t1, 8(t1)
+    sd t1, 8(t0)
+    ret
+
+# emo_gc_ref_roots: an Array of the root words, registration order —
+# the elements are the Ref words themselves, no boxing.
+emo_gc_ref_roots:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    la t0, emo_gc_roots_n
+    ld s1, 0(t0)
+    addi a0, s1, 1
+    call emo_alloc
+    mv s2, a0               # the block base
+    addi t1, a0, 8
+    sd s1, 0(t1)
+    la s0, emo_gc_roots
+    addi t1, s2, 16         # the element cursor
+    li t2, 0
+.Lgrr_loop:
+    bge t2, s1, .Lgrr_done
+    slli t3, t2, 3
+    add t3, s0, t3
+    ld t4, 0(t3)
+    sd t4, 0(t1)
+    addi t1, t1, 8
+    addi t2, t2, 1
+    j .Lgrr_loop
+.Lgrr_done:
+    ori a0, s2, 8
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    addi sp, sp, 32
+    ret
+
+# ---- the heap's own queries ----
+
+# emo_gc_heap_blocks: an Array of the handles, address order — the
+# table's own order.
+emo_gc_heap_blocks:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    la t0, emo_gc_bound_n
+    ld s1, 0(t0)
+    addi a0, s1, 1
+    call emo_alloc
+    mv s2, a0               # the block base
+    addi t1, a0, 8
+    sd s1, 0(t1)
+    la s0, emo_gc_bound     # the entry cursor
+    addi s3, s2, 16         # the element cursor
+.Lgbk_loop:
+    la t4, emo_gc_bound
+    slli t5, s1, 5
+    add t5, t4, t5
+    bgeu s0, t5, .Lgbk_done
+    ld t0, 0(s0)            # the offset
+    ld t1, 8(s0)            # the generation
+    slli t1, t1, 42
+    slli t0, t0, 1
+    or a0, t0, t1
+    ori a0, a0, 1
+    call emo_box_i64
+    sd a0, 0(s3)
+    addi s3, s3, 8
+    addi s0, s0, 32
+    j .Lgbk_loop
+.Lgbk_done:
+    ori a0, s2, 8
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    addi sp, sp, 48
+    ret
+
+# emo_gc_heap_words: the physical sum — every block's size plus its
+# header word.
+emo_gc_heap_words:
+    la t0, emo_gc_bound_n
+    ld t1, 0(t0)
+    la t2, emo_gc_bound
+    li t3, 0
+.Lgw_loop:
+    beqz t1, .Lgw_done
+    ld t4, 24(t2)
+    addi t4, t4, 1
+    add t3, t3, t4
+    addi t2, t2, 32
+    addi t1, t1, -1
+    j .Lgw_loop
+.Lgw_done:
+    mv a0, t3
+    tail emo_box_i64
+
+# ---- the raise (step 91) ----
+
+# emo_raise: a0 = the exception value. The message is the instance's
+# first field; a String renders whole, anything else names itself, and
+# the tail is `emo_fail`'s — the profile's own loud end.
+emo_raise:
+    andi t0, a0, -32
+    andi t1, a0, 31         # the word tag decides the shape
+    li t2, 4                # a String (kind 2)
+    beq t1, t2, .Lrs_str
+    li t2, 14               # an Instance (kind 7): the user's
+    beq t1, t2, .Lrs_inst   #   `Exception.new` — field 0 is the message
+    j .Lrs_plain
+.Lrs_str:
+    ld a1, 8(t0)            # the length
+    addi a0, t0, 16         # the bytes
+    add a1, a0, a1
+    tail emo_fail
+.Lrs_inst:
+    ld a0, 16(t0)           # the message word
+    andi t0, a0, -32
+    andi t1, a0, 31
+    li t2, 4
+    beq t1, t2, .Lrs_str
+    j .Lrs_plain
+.Lrs_plain:
+    la a0, msg_gc_raise
+    la a1, msg_gc_raise_end
+    tail emo_fail
+
+# ---- the doors' words ----
+
+    .section .rodata
+msg_gc_even:
+    .ascii "the word is even, but a handle is odd"
+msg_gc_even_end:
+msg_gc_stale:
+    .ascii "the handle is stale — the binding has moved on"
+msg_gc_stale_end:
+msg_gc_notlive:
+    .ascii "the handle does not name a live block"
+msg_gc_notlive_end:
+msg_gc_once:
+    .ascii "`heap_new` makes one arena per run"
+msg_gc_once_end:
+msg_gc_neg:
+    .ascii "the GC heap refuses a negative size"
+msg_gc_neg_end:
+msg_gc_big:
+    .ascii "the arena is past the GC heap's size guard"
+msg_gc_big_end:
+msg_gc_load_oob:
+    .ascii "`heap_load` reaches a word outside the arena"
+msg_gc_load_oob_end:
+msg_gc_store_oob:
+    .ascii "`heap_store` reaches a word outside the arena"
+msg_gc_store_oob_end:
+msg_gc_noheap:
+    .ascii "`heap_carve` reaches a heap no `heap_new` has made"
+msg_gc_noheap_end:
+msg_gc_ckind:
+    .ascii "`heap_carve` refuses a kind that is not 1, 2, or 3"
+msg_gc_ckind_end:
+msg_gc_cbig:
+    .ascii "the block is past the GC heap's size guard"
+msg_gc_cbig_end:
+msg_gc_coob:
+    .ascii "`heap_carve` reaches words outside the arena"
+msg_gc_coob_end:
+msg_gc_overlap:
+    .ascii "the block overlaps a bound block"
+msg_gc_overlap_end:
+msg_gc_roob:
+    .ascii "`heap_rebind` reaches words outside the arena"
+msg_gc_roob_end:
+msg_gc_kind:
+    .ascii "the door reaches a block of the wrong kind"
+msg_gc_kind_end:
+msg_gc_slot:
+    .ascii "the door reaches a slot outside the block"
+msg_gc_slot_end:
+msg_gc_even_pairs:
+    .ascii "`heap_slide` expects an even count of pairs"
+msg_gc_even_pairs_end:
+msg_gc_names:
+    .ascii "`heap_slide` must name every bound block, destination order"
+msg_gc_names_end:
+msg_gc_dest:
+    .ascii "`heap_slide` expects the destinations contiguous from zero"
+msg_gc_dest_end:
+msg_gc_soob:
+    .ascii "`heap_slide` reaches words outside the arena"
+msg_gc_soob_end:
+msg_gc_rootsfull:
+    .ascii "the root table is full"
+msg_gc_rootsfull_end:
+msg_gc_raise:
+    .ascii "uncaught exception"
+msg_gc_raise_end:
+
+    .section .text
+|asm}
+
 let fail_asm ~(profile : string) : string =
   match profile with
   | "kernel" ->
@@ -9447,6 +11151,756 @@ let init_tail_asm ~(profile : string) : string =
 |}
         floor floor
   | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
+
+(* The metal's Map (step 91): the c runtime's hash map in the metal's
+   words. One identity cell (kind 13, tag 26) over [count][cap][entries]
+   [mask][buckets] — the entries a plain arena block of {key, value,
+   next} triples, the buckets the head indices. The keys' legal kinds
+   are the c host's own (Bool, Char, Int64, Float64, String), the find a
+   bucket walk over the deep equality, and keys() answers in insertion
+   order — the entries array's own order — with remove compacting left.
+   The map owns its entries' words; the release walk takes them back
+   with the two backing blocks. *)
+let map_asm =
+  {asm|
+# ---- The Map (step 91) ----
+
+# emo_map_new_empty: a0 = the map, refcount 1, the caller's claim.
+emo_map_new_empty:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    li a0, 6                # the tag + the five fields
+    li a1, 0
+    li a2, 26               # the Map's word tag (kind 13)
+    li a3, 0
+    call emo_ident_new      # refcount 1, the requested count — the
+                            #   block may come off the freelist, so the
+                            #   fields zero here, not in ident_new
+    andi t0, a0, -32
+    sd zero, 8(t0)
+    sd zero, 16(t0)
+    sd zero, 24(t0)
+    sd zero, 32(t0)
+    sd zero, 40(t0)
+    sd zero, 48(t0)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# emo_map_key_ok: a0 = a word. a0 = 1 when the kind may key a map.
+emo_map_key_ok:
+    andi t0, a0, 7
+    li t1, 1
+    beq t0, t1, .Lmko_yes   # Bool
+    li t1, 3
+    beq t0, t1, .Lmko_yes   # Char
+    srli t1, a0, 1
+    andi t1, t1, 0xF
+    beqz t1, .Lmko_yes      # the Int64 cell
+    li t2, 1
+    beq t1, t2, .Lmko_yes   # Float64
+    li t2, 2
+    beq t1, t2, .Lmko_yes   # String
+    # the raw Int64: a raw array's element read answers the payload bare,
+    # an odd word whose kind bits name nothing — the same value its box
+    # carries, so the map takes it and key_eq matches the two shapes
+    andi t2, a0, 1
+    beqz t2, .Lmko_no
+    j .Lmko_yes
+.Lmko_no:
+    li a0, 0
+    ret
+.Lmko_yes:
+    li a0, 1
+    ret
+
+# emo_map_hash: a0 = the key. a0 = the mixed hash — the buckets never
+# escape, so any deterministic mix serves; the iteration order is the
+# entries array's own. A leaf: the caller's temps are its own.
+emo_map_hash:
+    andi t0, a0, 1
+    beqz t0, .Lmh_ptr
+    mv t3, a0
+    j .Lmh_mix
+.Lmh_ptr:
+    srli t0, a0, 1
+    andi t0, t0, 0xF
+    beqz t0, .Lmh_i64
+    li t1, 1
+    beq t0, t1, .Lmh_f64
+    # the String's FNV-1a
+    andi t0, a0, -32
+    ld t1, 8(t0)
+    addi t2, t0, 16
+    li t3, 0xCBF29CE484222325
+.Lmh_s:
+    beqz t1, .Lmh_mix
+    lbu t4, 0(t2)
+    xor t3, t3, t4
+    li t5, 0x100000001B3
+    mul t3, t3, t5
+    addi t2, t2, 1
+    addi t1, t1, -1
+    j .Lmh_s
+.Lmh_i64:
+    andi t0, a0, -32
+    ld t3, 8(t0)
+    j .Lmh_mix
+.Lmh_f64:
+    andi t0, a0, -32
+    ld t3, 8(t0)            # the bits mix as they lie
+.Lmh_mix:
+    li t4, 0x9E3779B97F4A7C15
+    mul t3, t3, t4
+    srli t4, t3, 29
+    xor t3, t3, t4
+    mv a0, t3
+    ret
+
+# emo_map_key_eq: a0, a1 = two key words. a0 = 1 when equal. A leaf.
+emo_map_key_eq:
+    andi t0, a0, 1
+    andi t1, a1, 1
+    bnez t0, .Lmke_a0imm
+    bnez t1, .Lmke_mix_b0   # a cell against a bare word: the Int64's
+    j .Lmke_ptrs            #   two shapes, matched by payload below
+.Lmke_a0imm:
+    bnez t1, .Lmke_imms
+    srli t3, a1, 1
+    andi t3, t3, 0xF
+    beqz t3, .Lmke_mix_b    # the cell (a1) is an Int64: its payload
+    j .Lmke_no              #   against the bare word (a0)
+.Lmke_mix_b0:
+    srli t2, a0, 1
+    andi t2, t2, 0xF
+    beqz t2, .Lmke_mix_a    # the cell (a0) is an Int64: its payload
+    j .Lmke_no              #   against the bare word (a1)
+.Lmke_imms:
+    beq a0, a1, .Lmke_yes
+    j .Lmke_no
+.Lmke_ptrs:
+    srli t2, a0, 1
+    andi t2, t2, 0xF
+    srli t3, a1, 1
+    andi t3, t3, 0xF
+    bne t2, t3, .Lmke_mixed
+    beqz t2, .Lmke_i64
+    li t4, 1
+    beq t2, t4, .Lmke_f64
+    li t4, 2
+    beq t2, t4, .Lmke_str
+    j .Lmke_no
+.Lmke_mixed:
+    # the box and the bare payload of one Int64 — the raw array's
+    # element read answers the bare word, the box carries it inside;
+    # one value, two shapes, equal keys
+    beqz t2, .Lmke_mix_a
+    beqz t3, .Lmke_mix_b
+    j .Lmke_no
+.Lmke_mix_a:
+    andi t2, a1, 1
+    beqz t2, .Lmke_no
+    srli t4, a0, 31
+    beqz t4, .Lmke_no       # the cell side must be a real RAM address:
+    andi t0, a0, -32        #   a bare 0 or 1 wears kind bits 0 too
+    ld t0, 8(t0)
+    beq t0, a1, .Lmke_yes
+    j .Lmke_no
+.Lmke_mix_b:
+    andi t2, a0, 1
+    beqz t2, .Lmke_no
+    srli t4, a1, 31
+    beqz t4, .Lmke_no       # the cell side must be a real RAM address
+    andi t1, a1, -32
+    ld t1, 8(t1)
+    beq t1, a0, .Lmke_yes
+    j .Lmke_no
+.Lmke_i64:
+    srli t4, a0, 31
+    beqz t4, .Lmke_i64_a    # a bare word wearing kind bits zero: its
+    srli t4, a1, 31         #   value IS the word, no cell behind it
+    beqz t4, .Lmke_i64_b
+    andi t0, a0, -32
+    ld t0, 8(t0)
+    andi t1, a1, -32
+    ld t1, 8(t1)
+    beq t0, t1, .Lmke_yes
+    j .Lmke_no
+.Lmke_i64_a:
+    andi t0, a1, -32
+    ld t0, 8(t0)
+    beq t0, a0, .Lmke_yes
+    j .Lmke_no
+.Lmke_i64_b:
+    andi t0, a0, -32
+    ld t0, 8(t0)
+    beq t0, a1, .Lmke_yes
+    j .Lmke_no
+.Lmke_f64:
+    andi t0, a0, -32
+    fld ft0, 8(t0)
+    fmv.x.d t0, ft0
+    andi t1, a1, -32
+    fld ft1, 8(t1)
+    fmv.x.d t1, ft1
+    beq t0, t1, .Lmke_yes
+    j .Lmke_no
+.Lmke_str:
+    andi t0, a0, -32
+    andi t1, a1, -32
+    ld t2, 8(t0)
+    ld t3, 8(t1)
+    bne t2, t3, .Lmke_no
+    addi t0, t0, 16
+    addi t1, t1, 16
+.Lmke_s:
+    beqz t2, .Lmke_yes
+    lbu t4, 0(t0)
+    lbu t5, 0(t1)
+    bne t4, t5, .Lmke_no
+    addi t0, t0, 1
+    addi t1, t1, 1
+    addi t2, t2, -1
+    j .Lmke_s
+.Lmke_yes:
+    li a0, 1
+    ret
+.Lmke_no:
+    li a0, 0
+    ret
+
+# emo_map_find: a0 = the map, a1 = the key. a0 = the entry's index or -1.
+emo_map_find:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    andi s0, a0, -32
+    mv s1, a1
+    ld s2, 32(s0)           # the entries
+    beqz s2, .Lmf_none
+    ld s3, 16(s0)           # the count
+    li s4, 0
+.Lmf_loop:
+    bge s4, s3, .Lmf_none
+    slli t0, s4, 3
+    slli t1, s4, 4
+    add t0, t0, t1          # the entry's 24-byte stride
+    add t0, s2, t0
+    ld a0, 0(t0)
+    mv a1, s1
+    call emo_map_key_eq
+    beqz a0, .Lmf_next
+    mv a0, s4
+    j .Lmf_out
+.Lmf_next:
+    addi s4, s4, 1
+    j .Lmf_loop
+.Lmf_none:
+    li a0, -1
+.Lmf_out:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    addi sp, sp, 48
+    ret
+
+# emo_map_store: a0 = the map, a1 = the key, a2 = the value. The hit
+# replaces with the barrier (the new claims land before the old drop);
+# the miss grows the table when full, appends, and the map takes the
+# key's and the value's claims. a0 = the map. The grow's rehash keeps
+# its loop state on the frame — the hash call takes every temp, and the
+# old blocks re-read from the cell they still live in.
+emo_map_store:
+    addi sp, sp, -96
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    mv s0, a0
+    mv s1, a1
+    mv s2, a2
+    mv a0, s0
+    mv a1, s1
+    call emo_map_find       # a0 = the index or -1
+    bgez a0, .Lms_hit
+    # the miss
+    andi t0, s0, -32
+    ld t1, 16(t0)           # the count
+    ld t2, 24(t0)           # the cap
+    bgeu t1, t2, .Lms_grow
+    j .Lms_append
+.Lms_hit:
+    mv s3, a0               # the hit's index
+    andi t0, s0, -32
+    ld t1, 32(t0)           # the entries
+    slli t2, s3, 3
+    slli t3, s3, 4
+    add t2, t2, t3
+    add s3, t1, t2          # the entry, riding s3 across the calls —
+                            #   the retain and the release take the temps
+    mv a0, s1
+    call emo_retain         # the new key's claim first
+    mv a0, s2
+    call emo_retain         # then the new value's
+    ld a0, 0(s3)
+    call emo_release        # the old key drops
+    ld a0, 8(s3)
+    call emo_release        # the old value drops
+    sd s1, 0(s3)
+    sd s2, 8(s3)
+    mv a0, s0
+    call emo_retain         # the answer is a claim of the map itself
+    j .Lms_out
+.Lms_grow:
+    andi t0, s0, -32
+    ld t2, 24(t0)           # the cap
+    beqz t2, .Lms_cap8
+    slli t3, t2, 1          # the cap doubles
+    j .Lms_have
+.Lms_cap8:
+    li t3, 8
+.Lms_have:
+    mv s5, t3               # the new cap, across the two allocs
+    slli t4, t3, 1
+    add t4, t4, t3          # ncap * 3 words
+    mv a0, t4
+    call emo_alloc
+    mv s3, a0               # the new entries block
+    mv a0, s5
+    call emo_alloc
+    mv s4, a0               # the new buckets block
+    mv t5, s4
+    mv t6, s5
+.Lms_fill:
+    beqz t6, .Lms_filled
+    li t0, -1
+    sd t0, 0(t5)
+    addi t5, t5, 8
+    addi t6, t6, -1
+    j .Lms_fill
+.Lms_filled:
+    andi t0, s0, -32
+    ld t5, 32(t0)           # the old entries
+    beqz t5, .Lms_swap
+    ld t1, 16(t0)           # the count
+    sd t1, 72(sp)           # the rehash's count, on the frame
+    sd zero, 80(sp)         # the rehash's index
+    addi t1, s5, -1
+    sd t1, 88(sp)           # the rehash's mask
+.Lms_rehash:
+    ld t1, 80(sp)
+    ld t2, 72(sp)
+    bge t1, t2, .Lms_oldfree
+    andi t0, s0, -32
+    ld t3, 32(t0)           # the old entries, still in the cell
+    slli t4, t1, 3
+    slli t5, t1, 4
+    add t4, t4, t5
+    add t4, t3, t4          # the old entry
+    ld a0, 0(t4)
+    call emo_map_hash
+    ld t1, 88(sp)
+    and a0, a0, t1
+    slli a0, a0, 3
+    add a0, s4, a0          # the new bucket slot
+    ld a5, 0(a0)
+    ld t1, 80(sp)
+    slli t2, t1, 3
+    slli t3, t1, 4
+    add t2, t2, t3
+    add t2, s3, t2          # the new entry slot
+    # the key and the value ride across too: the hash's leaf spent the
+    # temps, so the old entry re-derives from the cell it still sits in
+    andi t0, s0, -32
+    ld t5, 32(t0)           # the old entries
+    slli t3, t1, 3
+    mv t4, t1
+    slli t4, t4, 4
+    add t3, t3, t4
+    add t3, t5, t3          # the old entry, again
+    ld t4, 0(t3)
+    sd t4, 0(t2)            # the key
+    ld t4, 8(t3)
+    sd t4, 8(t2)            # the value
+    sd a5, 16(t2)           # next
+    sd t1, 0(a0)            # the head
+    addi t1, t1, 1
+    sd t1, 80(sp)
+    j .Lms_rehash
+.Lms_oldfree:
+    andi t0, s0, -32
+    ld t5, 32(t0)           # the old entries
+    beqz t5, .Lms_swap
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t2, 584(t1)          # the arena's end
+    ld t3, -8(t2)
+    sd t3, 8(t5)
+    sd t5, -8(t2)           # the old entries home
+    ld t5, 48(t0)           # the old buckets
+    ld t3, -8(t2)
+    sd t3, 8(t5)
+    sd t5, -8(t2)           # and the old buckets after them
+.Lms_swap:
+    andi t0, s0, -32
+    sd s3, 32(t0)           # the new entries
+    sd s4, 48(t0)           # the new buckets
+    addi t1, s5, -1
+    sd t1, 40(t0)           # the new mask
+    sd s5, 24(t0)           # the new cap
+.Lms_append:
+    andi t0, s0, -32
+    ld t1, 16(t0)           # the count (fresh after a grow)
+    ld t2, 32(t0)           # the entries
+    slli t3, t1, 3
+    slli t4, t1, 4
+    add t3, t3, t4          # i * 24
+    add s3, t2, t3          # the entry slot, across the hash — the
+                            #   hash is a leaf and takes every temp
+    mv a0, s1
+    call emo_map_hash
+    andi t0, s0, -32        # the cell re-reads after the leaf
+    ld t3, 40(t0)           # the mask
+    and a0, a0, t3
+    slli a0, a0, 3
+    ld t5, 48(t0)           # the buckets
+    add t5, t5, a0          # the bucket slot
+    ld a2, 0(t5)            # the old head
+    sd a2, 16(s3)           # entry.next
+    ld t6, 16(t0)           # the count, the entry's index
+    sd t6, 0(t5)            # buckets[b] = i
+    sd s1, 0(s3)            # entry.key
+    sd s2, 8(s3)            # entry.value
+    addi t6, t6, 1
+    sd t6, 16(t0)           # the count rises
+    mv a0, s1
+    call emo_retain         # the map takes the key's claim
+    mv a0, s2
+    call emo_retain         # and the value's
+    mv a0, s0
+    call emo_retain         # the answer is a claim of the map itself
+.Lms_out:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 96
+    ret
+
+# emo_map_get: a0 = the map, a1 = the key. a0 = the value's word, the
+# caller's claim taken; a missing key is the loud end.
+emo_map_get:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    mv s0, a0
+    mv s1, a1
+    mv a0, s1               # the key's kind is what the door checks
+    call emo_map_key_ok
+    beqz a0, .Lmg_bad
+    mv a0, s0
+    mv a1, s1
+    call emo_map_find
+    bgez a0, 1f
+    la a0, msg_map_nokey
+    la a1, msg_map_nokey_end
+    call emo_fail
+1:
+    andi t0, s0, -32
+    ld t1, 32(t0)           # the entries
+    slli t2, a0, 3
+    slli t3, a0, 4
+    add t2, t2, t3
+    add t2, t1, t2          # the entry
+    ld a0, 8(t2)            # the value's word
+    call emo_retain         # the caller's claim
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    addi sp, sp, 32
+    ret
+.Lmg_bad:
+    la a0, msg_map_keyrule
+    la a1, msg_map_keyrule_end
+    call emo_fail
+
+# emo_map_has: a0 = the map, a1 = the key. a0 = the Bool immediate; a
+# foreign key's kind holds nothing, the c host's own answer.
+emo_map_has:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    mv s0, a0
+    mv s1, a1
+    mv a0, s1               # the key's kind is what the door checks
+    call emo_map_key_ok
+    beqz a0, .Lmh2_no
+    mv a0, s0
+    mv a1, s1
+    call emo_map_find
+    bgez a0, 1f
+    li a0, 1                # the false immediate
+    j .Lmh2_done
+1:
+    li a0, 17               # the true immediate
+    j .Lmh2_done
+.Lmh2_no:
+    li a0, 1                # the false immediate
+.Lmh2_done:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    addi sp, sp, 32
+    ret
+
+# emo_map_remove: a0 = the map, a1 = the key. The entry's claims drop,
+# the array compacts left (the insertion order survives), the buckets
+# rebuild. a0 = the map. s3 = the entries and s4 = the count ride the
+# whole walk; the repush's index rides s5, the hash call taking the
+# temps it wants.
+emo_map_remove:
+    addi sp, sp, -96
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    mv s0, a0
+    mv s1, a1
+    mv a0, s1               # the key's kind is what the door checks
+    call emo_map_key_ok
+    beqz a0, .Lmr_out
+    andi t0, s0, -32
+    ld s3, 32(t0)           # the entries
+    beqz s3, .Lmr_out
+    ld s4, 16(t0)           # the count
+    mv a0, s0
+    mv a1, s1
+    call emo_map_find
+    bgez a0, 1f
+    j .Lmr_out              # the key holds nothing: the map answers
+1:
+    mv s2, a0               # the removed index
+    mv a0, s1
+    call emo_map_hash
+    andi t0, s0, -32
+    ld t1, 40(t0)           # the mask
+    and a0, a0, t1
+    slli a0, a0, 3
+    ld t1, 48(t0)           # the buckets
+    add t1, t1, a0          # the bucket slot
+.Lmr_unlink:
+    ld t2, 0(t1)            # the chain's current index
+    beq t2, s2, 2f
+    slli t3, t2, 3
+    slli t4, t2, 4
+    add t3, t3, t4
+    add t3, s3, t3          # the current entry
+    addi t1, t3, 16         # the link lives in entry.next
+    j .Lmr_unlink
+2:
+    slli t2, s2, 3
+    slli t3, s2, 4
+    add t2, t2, t3
+    add t2, s3, t2          # the removed entry
+    ld t3, 16(t2)           # its next
+    sd t3, 0(t1)            # the chain skips it
+    ld a0, 0(t2)
+    call emo_release        # the key's claim drops — the release takes
+                            #   the temps, the entry recomputes from
+                            #   the index the s-regs keep
+    slli t2, s2, 3
+    slli t3, s2, 4
+    add t2, t2, t3
+    add t2, s3, t2
+    ld a0, 8(t2)
+    call emo_release        # the value's claim drops
+    addi s5, s2, 1          # the shift's source index
+.Lmr_shift:
+    bge s5, s4, 3f
+    slli t2, s5, 3
+    slli t3, s5, 4
+    add t2, t2, t3          # src = j * 24
+    add t2, s3, t2
+    addi t3, s5, -1
+    slli t4, t3, 3
+    slli t5, t3, 4
+    add t4, t4, t5          # dst = (j-1) * 24
+    add t4, s3, t4
+    ld t5, 0(t2)
+    sd t5, 0(t4)
+    ld t5, 8(t2)
+    sd t5, 8(t4)
+    ld t5, 16(t2)
+    sd t5, 16(t4)
+    addi s5, s5, 1
+    j .Lmr_shift
+3:
+    addi t2, s4, -1         # the last index
+    slli t2, t2, 3
+    addi t3, s4, -1
+    slli t3, t3, 4
+    add t2, t2, t3
+    add t2, s3, t2
+    sd zero, 0(t2)
+    sd zero, 8(t2)
+    sd zero, 16(t2)
+    addi t2, s4, -1
+    andi t0, s0, -32
+    sd t2, 16(t0)           # the count falls
+    ld s4, 16(t0)           # the register reloads the cell's truth —
+                            #   the repush walks no tombstone
+    ld t3, 48(t0)           # the buckets
+    ld t4, 24(t0)           # the cap
+    mv t5, t3
+.Lmr_zb:
+    beqz t4, .Lmr_repush
+    li t2, -1
+    sd t2, 0(t5)
+    addi t5, t5, 8
+    addi t4, t4, -1
+    j .Lmr_zb
+.Lmr_repush:
+    li s5, 0                # the walk's index
+.Lmr_rp:
+    bge s5, s4, .Lmr_out
+    slli t2, s5, 3
+    slli t3, s5, 4
+    add t2, t2, t3
+    add t2, s3, t2          # the entry
+    ld a0, 0(t2)
+    call emo_map_hash
+    andi t0, s0, -32
+    ld t3, 40(t0)           # the mask
+    and a0, a0, t3
+    slli a0, a0, 3
+    ld t3, 48(t0)           # the buckets
+    add t3, t3, a0
+    ld a5, 0(t3)            # the current head
+    slli t4, s5, 3
+    slli t5, s5, 4
+    add t4, t4, t5
+    add t4, s3, t4          # the entry again
+    sd a5, 16(t4)           # entry.next
+    sd s5, 0(t3)            # the head
+    addi s5, s5, 1
+    j .Lmr_rp
+.Lmr_out:
+    mv a0, s0
+    call emo_retain         # the answer is a claim of the map itself
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 96
+    ret
+
+# emo_map_keys: a0 = the map. a0 = an Array of the keys, insertion
+# order — the keys are stored tagged, so the words copy as they are.
+emo_map_keys:
+    addi sp, sp, -56
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    andi s0, a0, -32
+    ld s1, 16(s0)           # the count
+    addi a0, s1, 1
+    call emo_alloc
+    mv s2, a0               # the block
+    addi t1, a0, 8
+    sd s1, 0(t1)            # the length
+    ld s3, 32(s0)           # the entries
+    addi s4, s2, 16         # the element cursor
+    li s5, 0                # the index — the walk's state lives in
+                            #   s-regs only: the box call below spends
+                            #   every temp it finds
+.Lmk_walk:
+    bge s5, s1, .Lmk_done
+    slli t4, s5, 3
+    slli t5, s5, 4
+    add t4, t4, t5
+    add t4, s3, t4
+    ld t6, 0(t4)            # the key's word
+    andi t0, t6, 1
+    beqz t0, .Lmk_key_tag   # a pointer key rides as it is
+    srli t0, t6, 1
+    andi t0, t0, 0xF
+    beqz t0, .Lmk_key_tag   # the Int64 cell rides as it is
+    li t2, 1
+    beq t0, t2, .Lmk_key_tag
+    li t2, 2
+    beq t0, t2, .Lmk_key_tag
+    mv a0, t6
+    call emo_box_i64        # the raw Int64's key boxes here: the answer
+    mv t6, a0               #   array is a tagged one and the accessor
+    j .Lmk_put              #   reads its elements through the box
+.Lmk_key_tag:
+.Lmk_put:
+    sd t6, 0(s4)
+    addi s4, s4, 8
+    addi s5, s5, 1
+    j .Lmk_walk
+.Lmk_done:
+    ori a0, s2, 8           # the Array word (kind 4)
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 56
+    ret
+
+# emo_map_insert_pair: a0 = the map, a1 = the (key, value) pair's cell.
+# a0 = the map.
+emo_map_insert_pair:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    andi t0, a1, -32
+    ld a1, 16(t0)           # the key
+    ld a2, 24(t0)           # the value
+    call emo_map_store
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    ret
+
+# ---- the Map's words ----
+
+    .section .rodata
+msg_map_nokey:
+    .ascii "the Map has no such key"
+msg_map_nokey_end:
+msg_map_keyrule:
+    .ascii "this key's kind cannot key a Map"
+msg_map_keyrule_end:
+
+    .section .text
+|asm}
 
 let arena_gone_asm ~(profile : string) : string =
   match profile with
@@ -9699,6 +12153,40 @@ emo_const_cur:
     .globl emo_const_lim
 emo_const_lim:
     .zero 8
+
+# ---- The GC heap's region (step 91, docs/gc-heap.md) ----
+#
+# The arena the doors carve, the binding the host keeps, the roots the
+# Ref cells register at, and the slide's staging — all NOBITS, cleared
+# by the entry stub with the rest of .bss. One region per image, the
+# way the c host's arena is one per run: heap_new refuses the second
+# call (the same E3057), and the region's 131072 words are the metal
+# answer to the size guard — a real heap is finite, and the door says
+# so. The binding table stays sorted by offset: heap_blocks answers in
+# address order and the overlap checks read the neighbors.
+
+    .align 8
+    .globl emo_gc_region
+emo_gc_region:
+    .zero 1048576
+    .globl emo_gc_limit
+emo_gc_limit:
+    .zero 8
+    .globl emo_gc_created
+emo_gc_created:
+    .zero 8
+    .globl emo_gc_bound_n
+emo_gc_bound_n:
+    .zero 8
+emo_gc_bound:
+    .zero 262144
+    .globl emo_gc_roots_n
+emo_gc_roots_n:
+    .zero 8
+emo_gc_roots:
+    .zero 32768
+emo_gc_stage:
+    .zero 131072
 
 # ---- The process world (EmoOS T3.3): the slot table, the per-process
 # ---- stacks, and the run queue ----
@@ -10114,7 +12602,6 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
     | "user" | "app" -> user_boot_stub_asm
     | other -> invalid_arg ("riscv: unknown image profile `" ^ other ^ "`")
   in
-  if program.pglobals <> [] then refuse "module-level `var`";
   const_thunks := program.Emo_ir.pconsts;
   const_region_words := 0;
   (* Class metadata: ids, fields (init-assignment order), methods. *)
@@ -10224,6 +12711,8 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
   gput env "%s" arch_directive;
   if boot_stub then gput env "%s\n" profile_stub;
   gput env "%s\n" runtime_asm;
+  gput env "%s\n" gc_doors_asm;
+  gput env "%s\n" map_asm;
   gput env "%s\n" (fail_asm ~profile);
   gput env "%s\n" (init_tail_asm ~profile);
   gput env "%s\n" (arena_gone_asm ~profile);
@@ -10257,7 +12746,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
               (match conv_of f with
               | Some conv -> conv
               | None -> dynamic_conv (List.length f.fparams))
-            ~native ~body:f.fbody
+            ~native ~pglobals:[] ~body:f.fbody
         end)
     program.pfuncs;
   (* Constructors and methods, per class. *)
@@ -10281,16 +12770,24 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
               (match mconv with
               | Some conv -> conv
               | None -> dynamic_conv (List.length m.Emo_ir.fparams))
-            ~native:(mconv <> None) ~body:m.Emo_ir.fbody;
+            ~native:(mconv <> None) ~pglobals:[] ~body:m.Emo_ir.fbody;
           env.fclass <- None)
         c.Emo_ir.cmethods)
     program.pclasses;
   (* The entry the boot stub calls — the compiler's or a package's
      (EmoOS T3.1) — global so a stub in its own object reaches it. *)
   gput env "\n    .section .text\n    .globl emo_program\n";
+  if program.pglobals <> [] then begin
+    gput env "\n    .section .bss\n    .balign 8\n";
+    List.iter
+      (fun (g, _) -> gput env "%s:\n    .zero 8\n" (global_cell g))
+      program.pglobals;
+    gput env "\n    .section .text\n"
+  end;
   emit_function env ~label:"emo_program" ~fname:"__program__"
     ~params:([] : (string * Emo_check.t) list)
-    ~captures:[] ~conv:(dynamic_conv 0) ~native:false ~body:program.pinit;
+    ~captures:[] ~conv:(dynamic_conv 0) ~native:false ~pglobals:program.pglobals
+    ~body:program.pinit;
   (* Closure bodies queued during emission may queue more. *)
   let rec drain () =
     match env.deferred with
@@ -10299,7 +12796,7 @@ let emit ?(boot_stub : bool = true) ~(profile : string)
         env.deferred <- rest;
         emit_function env ~label ~fname:"" ~params:cparams ~captures:caps
           ~conv:(dynamic_conv (List.length cparams))
-          ~native:false ~body:cbody;
+          ~native:false ~pglobals:[] ~body:cbody;
         drain ()
   in
   drain ();

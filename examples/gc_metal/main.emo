@@ -1,0 +1,136 @@
+require "gc"
+
+// The GC bootstrap's acceptance (plan/step-89, docs/gc-heap.md): a
+// rooted chain survives the collection that kills the garbage around
+// it, an array block's references trace through the same walk, and a
+// cycle — the one shape reference counting can never reclaim — dies
+// the moment its root drops. Every count below is exact: a block's
+// physical size is its logical size plus the header slot, and the
+// only roots are the refs the mutator holds.
+
+// The arena, once per run: 65536 words the allocator carves from.
+// A finite arena is the point — after the collections below, the
+// second generation's allocations can only come from the words the
+// sweep gave back.
+//
+// Every binding that allocates or roots is a `var`, not a `const`:
+// the c target memoizes script consts, and an impure initializer
+// would re-run at the first read — a second allocation wearing the
+// first one's name. The interpreter evaluates in order; the demo
+// stays eager on both hosts.
+gc.arena(65536)
+
+// A list node: field 0 next (a handle or null), field 1 payload.
+def node(payload Int64) Int64 {
+  const n = gc.s_new(2)
+  gc.s_set_ref(n, 0, 0)
+  gc.s_set(n, 1, payload)
+  return n
+}
+
+// Walks a chain, answering the sum of its payloads — the proof the
+// chain's words still answer after a collection.
+def chain_sum(h Int64) Int64 {
+  var sum = 0
+  var cur = h
+  while cur != 0 {
+    sum = sum + gc.s_get(cur, 1)
+    cur = gc.s_get_ref(cur, 0)
+  }
+  return sum
+}
+
+// The chain: six nodes (payloads 10..60), grown from the tail and
+// rooted at the head once the shape stands — the root's binding keeps
+// the ref alive; an unbound ref dies at once and roots nothing.
+var head = node(10)
+for var i = 2; i <= 6; i = i + 1 {
+  var n = node(i * 10)
+  gc.s_set_ref(n, 0, head)
+  head = n
+}
+var root = ref_new(head)
+
+// The garbage: four thousand nodes nothing roots.
+for var i = 0; i < 4000; i = i + 1 {
+  node(i)
+}
+
+// An array block tracing two nodes the chain does not reach.
+var a = gc.a_new(2)
+var aroot = ref_new(a)
+gc.a_set_ref(a, 0, node(7))
+gc.a_set_ref(a, 1, node(8))
+
+println("heap words with garbage: " + heap_words().to_string())
+println("collected: " + gc.collect().to_string())
+println("heap words after: " + heap_words().to_string())
+println("chain sum: " + chain_sum(head).to_string())
+println("array children: " + (gc.s_get(gc.a_get_ref(a, 0), 1) + gc.s_get(gc.a_get_ref(a, 1), 1)).to_string())
+
+// The cycle: two structs pointing at each other through field 0. A
+// collection while the root holds them leaves both alive; the moment
+// the root lets go, the pair is unreachable from everywhere and the
+// next collection takes it.
+var ca = gc.s_new(2)
+var cb = gc.s_new(2)
+var croot = ref_new(ca)
+gc.s_set_ref(ca, 0, cb)
+gc.s_set_ref(cb, 0, ca)
+gc.s_set(ca, 1, 11)
+gc.s_set(cb, 1, 22)
+
+println("cycle collected: " + gc.collect().to_string())
+println("cycle survives: " + gc.s_get(gc.s_get_ref(ca, 0), 1).to_string())
+ref_write(croot, 0)
+println("cycle freed: " + gc.collect().to_string())
+println("heap words at rest: " + heap_words().to_string())
+
+// The reuse proof: the words the sweep gave back are the only words
+// left. Two fresh nodes carve from the freed geometry — first fit
+// takes the lowest range, the junk field's own address space — and a
+// final collection takes them back. The counts move, the arena does
+// not grow.
+println("free words: " + gc.free_words().to_string())
+var g1 = gc.s_new(2)
+gc.s_set(g1, 1, 77)
+var g2 = gc.s_new(2)
+gc.s_set(g2, 1, 88)
+var g2root = ref_new(g2)
+println("second generation at words: " + gc.addr_of(g1).to_string() + " and " + gc.addr_of(g2).to_string())
+println("heap words second generation: " + heap_words().to_string())
+println("free words after: " + gc.free_words().to_string())
+println("second generation reads: " + gc.s_get(g1, 1).to_string() + " and " + gc.s_get(g2, 1).to_string())
+ref_write(g2root, 0)
+println("second generation collected: " + gc.collect().to_string())
+println("heap words at rest again: " + heap_words().to_string())
+println("free words at rest: " + gc.free_words().to_string())
+
+// The payloads: floats and bytes ride the scalar lane, the bits the
+// field's own kind — the collector never cares, the accessors do.
+var pay = gc.a_new(3)
+var payroot = ref_new(pay)
+gc.a_set_byte(pay, 2, 200B)
+var temps = gc.fa_new(2)
+var tempsroot = ref_new(temps)
+gc.fa_set(temps, 0, 3.5)
+gc.fa_set(temps, 1, -2.25)
+println("floats: " + gc.fa_get(temps, 0).to_string() + " " + gc.fa_get(temps, 1).to_string())
+println("byte: " + gc.a_get_byte(pay, 2).to_int64().to_string())
+
+// The compaction: three allocations with a dead one in the middle —
+// the sweep leaves a hole, the slide takes the tail back, and every
+// reference the roots and fields hold reads through the new addresses.
+var c1 = gc.s_new(2)
+gc.s_set(c1, 1, 11)
+var c1r = ref_new(c1)
+var mid = gc.s_new(2)
+var c3 = gc.s_new(2)
+gc.s_set(c3, 1, 33)
+var c3r = ref_new(c3)
+gc.collect()
+println("ranges before: " + gc.free_ranges().to_string())
+println("compacted: " + gc.compact().to_string())
+println("ranges after: " + gc.free_ranges().to_string())
+println("survivors: " + gc.s_get(ref_read(c1r), 1).to_string() + " " + gc.s_get(ref_read(c3r), 1).to_string())
+println("chain after compact: " + chain_sum(ref_read(root)).to_string())
