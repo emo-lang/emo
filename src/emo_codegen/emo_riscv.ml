@@ -2951,21 +2951,52 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld a0, 8(a0)\n";
               if boxed then box_result env "emo_box_i64"
           | _, [ _ ] when get_helper <> None ->
+              (* the index rides raw: the helper reads the register, and
+                 a boxed one detags inline — the parity word's payload,
+                 two instructions, nothing allocated. The shared
+                 emit_args_from boxes every numeric argument, and a
+                 crypto loop walks whole blocks byte-wise — the boxes
+                 would walk the bump arena dry in twenty rounds. *)
               let self_slot = temp_offset env d in
-              emit_expr env (d + 1) self_;
+              let arg_slot = temp_offset env (d + 1) in
+              emit_expr env (d + 2) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
-              emit_args_from env (d + 1) ~from:1 args;
+              emit_expr env (d + 2) (List.hd args);
+              if boxed then begin
+                put env "    andi a0, a0, -32\n";
+                put env "    ld a0, 8(a0)\n"
+              end;
+              put env "    sd a0, %d(sp)\n" arg_slot;
               put env "    ld a0, %d(sp)\n" self_slot;
+              put env "    ld a1, %d(sp)\n" arg_slot;
               call_runtime env (Option.get get_helper);
-              if not boxed then unbox_if_numeric env ty
+              (* the helper answers raw — the byte or the word riding
+                 the register — so the dynamic frame boxes here, the
+                 native frame's word never leaving the register *)
+              if boxed then box_result env "emo_box_i64"
           | _, [ _; _ ] when set_helper <> None ->
               let self_slot = temp_offset env d in
-              emit_expr env (d + 1) self_;
+              let k_slot = temp_offset env (d + 1) in
+              let v_slot = temp_offset env (d + 2) in
+              emit_expr env (d + 3) self_;
               put env "    sd a0, %d(sp)\n" self_slot;
-              emit_args_from env (d + 1) ~from:1 args;
+              emit_expr env (d + 3) (List.nth args 0);
+              if boxed then begin
+                put env "    andi a0, a0, -32\n";
+                put env "    ld a0, 8(a0)\n"
+              end;
+              put env "    sd a0, %d(sp)\n" k_slot;
+              emit_expr env (d + 3) (List.nth args 1);
+              if boxed then begin
+                put env "    andi a0, a0, -32\n";
+                put env "    ld a0, 8(a0)\n"
+              end;
+              put env "    sd a0, %d(sp)\n" v_slot;
               put env "    ld a0, %d(sp)\n" self_slot;
+              put env "    ld a1, %d(sp)\n" k_slot;
+              put env "    ld a2, %d(sp)\n" v_slot;
               call_runtime env (Option.get set_helper);
-              if not boxed then unbox_if_numeric env ty
+              if boxed then box_result env "emo_box_i64"
           | "to_string", [] ->
               (* the reinterpretation back: the same bytes as a fresh
                  String *)
@@ -5805,8 +5836,9 @@ emo_bytes_new:
     .globl emo_bytes_at
 emo_bytes_at:
     andi t0, a0, -32
-    andi t1, a1, -32
-    ld t1, 8(t1)
+    mv t1, a1               # the index raw: a native frame's register,
+                            #   a dynamic frame's detagged by the emitter
+                            #   before the call — no box changes hands
     ld t2, 8(t0)
     blt t1, zero, .Lb_at_fail
     add t3, t1, a2
@@ -5819,16 +5851,19 @@ emo_bytes_at:
     la a1, msg_bytes_range_end
     tail emo_fail
 
-# emo_bytes_get: a0 = a Bytes, a1 = the tagged index; a0 = the byte,
-# zero-extended, as a tagged Int64.
+# emo_bytes_get: a0 = a Bytes, a1 = the raw index; a0 = the byte,
+# zero-extended, raw.
     .globl emo_bytes_get
 emo_bytes_get:
     addi sp, sp, -16
     sd ra, 0(sp)
     li a2, 1
     call emo_bytes_at
-    lbu a0, 0(t0)
-    call emo_box_i64
+    lbu a0, 0(t0)           # the byte, raw: a native frame's Int64 rides
+                            #   the register, the dynamic frame's box is
+                            #   the emitter's (a crypto loop reads whole
+                            #   blocks byte-wise — a box per byte walked
+                            #   the bump arena dry in twenty rounds)
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -5845,8 +5880,7 @@ emo_bytes_get_u16_le:
     lbu t1, 0(t0)
     lbu t2, 1(t0)
     slli t2, t2, 8
-    or a0, t1, t2
-    call emo_box_i64
+    or a0, t1, t2           # raw, the box the emitter's
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -5866,8 +5900,7 @@ emo_bytes_get_u32_le:
     or t1, t1, t2
     lbu t2, 3(t0)
     slli t2, t2, 24
-    or a0, t1, t2
-    call emo_box_i64
+    or a0, t1, t2           # raw, the box the emitter's
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
@@ -5889,17 +5922,17 @@ emo_bytes_get_u64_le:
     addi t1, t1, 8
     li t2, 64
     bne t1, t2, .Lb_u64l
-    mv a0, s0
-    call emo_box_i64
+    mv a0, s0               # raw, the box the emitter's
     ld ra, 0(sp)
     ld s0, 8(sp)
     addi sp, sp, 16
     ret
 
 # emo_bytes_set / set_u16_le / set_u32_le / set_u64_le: a0 = a Bytes,
-# a1 = the tagged index, a2 = the tagged value; the masked bytes land,
-# a0 = the masked value as a tagged Int64 (the interpreter's own
-# answer).
+# a1 = the raw index, a2 = the raw value; the masked bytes land, a0 =
+# the masked value raw. The shapes are the emitter's: it detags a
+# dynamic frame's boxed arguments inline (two instructions, nothing
+# allocated) so a hot loop's byte-wise walk spends no box at all.
     .globl emo_bytes_set
 emo_bytes_set:
     addi sp, sp, -32
@@ -5908,12 +5941,9 @@ emo_bytes_set:
     mv s0, a2
     li a2, 1
     call emo_bytes_at
-    andi t1, s0, -32
-    ld t1, 8(t1)
-    andi t1, t1, 255
+    andi t1, s0, 255        # the value raw, masked in the register
     sb t1, 0(t0)
-    mv a0, t1
-    call emo_box_i64
+    mv a0, t1               # the masked byte, raw
     ld ra, 0(sp)
     ld s0, 8(sp)
     addi sp, sp, 32
@@ -5928,10 +5958,8 @@ emo_bytes_set_u16_le:
     mv s0, a2
     li a2, 2
     call emo_bytes_at
-    andi s1, s0, -32
-    ld s1, 8(s1)
     li t1, 0xFFFF
-    and s1, s1, t1
+    and s1, s0, t1          # the value raw, masked in the register
     li t2, 0                # the shift
 .Lb_s16l:
     srl t3, s1, t2
@@ -5941,8 +5969,7 @@ emo_bytes_set_u16_le:
     addi t2, t2, 8
     li t3, 16
     bne t2, t3, .Lb_s16l
-    mv a0, s1
-    call emo_box_i64
+    mv a0, s1               # the masked value, raw
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
@@ -5958,12 +5985,10 @@ emo_bytes_set_u32_le:
     mv s0, a2
     li a2, 4
     call emo_bytes_at
-    andi s1, s0, -32
-    ld s1, 8(s1)
     li t1, -1
     slli t1, t1, 32
     srli t1, t1, 32         # 0xFFFFFFFF
-    and s1, s1, t1
+    and s1, s0, t1          # the value raw, masked in the register
     li t2, 0
 .Lb_s32l:
     srl t3, s1, t2
@@ -5974,7 +5999,6 @@ emo_bytes_set_u32_le:
     li t3, 32
     bne t2, t3, .Lb_s32l
     mv a0, s1
-    call emo_box_i64
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
@@ -5989,8 +6013,7 @@ emo_bytes_set_u64_le:
     mv s0, a2
     li a2, 8
     call emo_bytes_at
-    andi t1, s0, -32
-    ld s1, 8(t1)
+    mv s1, s0               # the value raw
     li t2, 0
 .Lb_s64l:
     srl t3, s1, t2
@@ -6000,8 +6023,7 @@ emo_bytes_set_u64_le:
     addi t2, t2, 8
     li t3, 64
     bne t2, t3, .Lb_s64l
-    mv a0, s1
-    call emo_box_i64
+    mv a0, s1               # the masked value, raw
     ld ra, 0(sp)
     ld s0, 8(sp)
     addi sp, sp, 32

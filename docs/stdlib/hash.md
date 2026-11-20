@@ -5,14 +5,17 @@ the constant-time comparison, and the lowercase hex rendering. Pure Emo
 over `Int64` and `Bytes`, so every target answers the same bytes, and
 the RFC vectors pin the engine.
 
-It is the machine's twin of the [`crypto`](crypto.md) package's SHA-2:
-the engine carried here word for word, because crypto's error surface
-(its guards raise) refuses the `riscv64` target whole — the compiler
-has no raise to lower there yet — and the machine's lock needs the
-digest without the rest of the crypto world. The two packages pin the
-same vectors, and the pins are the twin's proof: any byte this engine
-answers, crypto's answers too. When the compiler's `riscv64` raise gap
-closes, this package folds back into crypto and the twin retires.
+It began as the machine's twin of the [`crypto`](crypto.md) package's
+SHA-2: the engine carried here word for word, because crypto's error
+surface (its guards raise) refused the `riscv64` target whole — the
+compiler had no raise to lower there — and the machine's lock needed
+the digest without the rest of the crypto world. The raise gap closed
+(step 91) and crypto rides the metal now; this package **stays** — the
+decision, not a wall: the lock's surface is a digest, a compare, and a
+hex rendering, and a program that needs exactly that should not pull
+the ciphers and the signature scheme in with it. The two packages pin
+the same vectors, and the pins are the twin's proof: any byte this
+engine answers, crypto's answers too.
 
 Chinese translation: [`hash.zh-CN.md`](hash.zh-CN.md).
 

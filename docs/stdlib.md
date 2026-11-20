@@ -71,8 +71,8 @@ The packages:
 | [`dom`](#the-dom-package) | strict HTML parse and CSS-selector query | all five |
 | [`template`](#the-template-package) | text with holes rendered from a json context, strict at every step | all five |
 | [`base64`](#the-base64-package) | RFC 4648 base64 codec | all five |
-| [`crypto`](#the-crypto-package) | SHA-2/SHA-3, HMAC, HKDF/PBKDF2, ChaCha20-Poly1305, AES-GCM, Ed25519, X25519 | all five |
-| [`hash`](#the-hash-package) | the machine's digest twin: SHA-256/224, the constant-time compare, the hex rendering | all five and `riscv64` |
+| [`crypto`](#the-crypto-package) | SHA-2/SHA-3, HMAC, HKDF/PBKDF2, ChaCha20-Poly1305, AES-GCM, Ed25519, X25519 | all five and `riscv64` |
+| [`hash`](#the-hash-package) | the lock's digest: SHA-256/224, the constant-time compare, the hex rendering | all five and `riscv64` |
 | [`rand`](#the-rand-package) | OS entropy and a deterministic HMAC-DRBG stream | `ocaml`, `c`, `typescript`, `beam`, `wasm` |
 | [`uuid`](#the-uuid-package) | RFC 9562 UUIDs: v4/v7/v3/v5, the strict text and byte forms | all five |
 | [`csv`](#the-csv-package) | RFC 4180 CSV records, UTF-8 | all five |
