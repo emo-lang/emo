@@ -46,26 +46,18 @@ trap 'rm -rf "$work"' EXIT
 
 # The dist must carry the whole release: one macOS zip, two Linux
 # tar.gz — all named for this tag — and the checksums covering them.
-# Anything less means the build or notarize stopped midway.
+# Anything less means the build or notarize stopped midway. Older
+# releases may sit beside them; only this tag's set ships.
 sums=$dist/SHA256SUMS
 if [ ! -f "$sums" ]; then
   echo "publish-release.sh: $dist has no SHA256SUMS" >&2
   exit 65
 fi
-set -- $(cd "$dist" && ls emo-*.zip emo-*.tar.gz 2>/dev/null)
+set -- $(cd "$dist" && ls emo-"$tag"-*.zip emo-"$tag"-*.tar.gz 2>/dev/null)
 if [ "$#" -ne 3 ]; then
-  echo "publish-release.sh: expected 3 archives in $dist, found $#" >&2
+  echo "publish-release.sh: expected 3 archives for $tag in $dist, found $#" >&2
   exit 65
 fi
-for archive in "$@"; do
-  case $archive in
-  emo-"$tag"-*) ;;
-  *)
-    echo "publish-release.sh: $archive does not belong to $tag" >&2
-    exit 65
-    ;;
-  esac
-done
 
 # Verify the sums whole before anything leaves this machine — the
 # same check install.sh performs at the far end.

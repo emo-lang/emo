@@ -31,6 +31,18 @@ if [ ! -d "$dist" ]; then
 fi
 dist=$(CDPATH= cd -- "$dist" && pwd)
 
+# The dist dir accumulates past releases; the tag to notarize is the
+# one this tree's VERSION names.
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+tag=$(cat "$root/VERSION")
+case $tag in
+v*) ;;
+*)
+  echo "notarize-release.sh: $root/VERSION does not name a release" >&2
+  exit 64
+  ;;
+esac
+
 identity=${EMO_CODESIGN_IDENTITY:-}
 if [ -z "$identity" ]; then
   identity=$(
@@ -70,15 +82,12 @@ submit() {
 work=$(mktemp -d "${TMPDIR:-/tmp}/emo-notarize.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
-set -- "$dist"/emo-*.zip
-if [ ! -e "$1" ]; then
-  echo "notarize-release.sh: $dist has no macOS zip — build first" >&2
+zip=$dist/emo-$tag-macos-arm64.zip
+if [ ! -e "$zip" ]; then
+  echo "notarize-release.sh: $dist has no macOS zip for $tag — build first" >&2
   exit 65
 fi
-if [ "$#" -ne 1 ]; then
-  echo "notarize-release.sh: expected exactly one macOS zip in $dist, found $#" >&2
-  exit 65
-fi
+set -- "$zip"
 
 for zip in "$@"; do
   name=${zip%.zip}
@@ -138,13 +147,17 @@ if [ "$dry_run" = true ]; then
 fi
 
 # The re-zipped archive changed, so the checksum file must change with
-# it — recompute the sums over the whole release set.
+# it — recompute the sums over this tag's release set only; the dist
+# dir may hold past releases whose entries would only 404 here.
 (
   cd "$dist" &&
     if command -v sha256sum >/dev/null 2>&1; then
-      sha256sum emo-*.zip emo-*.tar.gz >SHA256SUMS
+      sha256sum emo-"$tag"-macos-arm64.zip emo-"$tag"-linux-aarch64.tar.gz \
+        emo-"$tag"-linux-amd64.tar.gz >SHA256SUMS
     else
-      shasum -a 256 emo-*.zip emo-*.tar.gz >SHA256SUMS
+      shasum -a 256 emo-"$tag"-macos-arm64.zip \
+        emo-"$tag"-linux-aarch64.tar.gz \
+        emo-"$tag"-linux-amd64.tar.gz >SHA256SUMS
     fi
 )
 
