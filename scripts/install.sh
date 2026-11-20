@@ -64,17 +64,23 @@ fetch() {
   fi
 }
 
+echo "install.sh: platform detected: $os/$arch"
+
 # The download site's dist/releases.json carries the latest-version
 # pointer. The file has one fixed shape — written by
 # publish-release.sh, first key on its own line — so a plain sed
-# resolves it without a jq dependency.
+# resolves it without a jq dependency. Every network step prints
+# before and after: a silent minute reads as a hang.
 if [ -n "${EMO_VERSION:-}" ]; then
   tag=$EMO_VERSION
+  echo "install.sh: using the pinned release $tag"
 else
+  echo "install.sh: resolving the latest release…"
   tmp_json=$(mktemp "${TMPDIR:-/tmp}/emo-install-releases.XXXXXX")
   fetch "$base/dist/releases.json" "$tmp_json"
   tag=$(sed -n 's/^  "latest": "\([^"]*\)",$/\1/p' "$tmp_json")
   rm -f "$tmp_json"
+  echo "install.sh: latest release is $tag"
 fi
 case $tag in
 v*) ;;
@@ -92,7 +98,9 @@ archive=emo-$tag-$os-$arch.$ext
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/emo-install.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
+echo "install.sh: downloading ${archive}…"
 fetch "$base/dist/$tag/$archive" "$tmp/$archive"
+echo "install.sh: download complete"
 
 if command -v sha256sum >/dev/null 2>&1; then
   checksum=sha256sum
@@ -102,6 +110,7 @@ else
   checksum=
 fi
 if [ -n "$checksum" ]; then
+  echo "install.sh: verifying the SHA256 checksum…"
   fetch "$base/dist/$tag/SHA256SUMS" "$tmp/SHA256SUMS"
   expected=$(sed -n "s/^\([0-9a-f]*\)  $archive\$/\1/p" "$tmp/SHA256SUMS")
   if [ -z "$expected" ]; then
@@ -115,10 +124,12 @@ if [ -n "$checksum" ]; then
     echo "  actual   $actual" >&2
     exit 1
   fi
+  echo "install.sh: checksum ok"
 else
   echo "install.sh: no sha256 tool found — skipping checksum verification" >&2
 fi
 
+echo "install.sh: unpacking…"
 case $ext in
 zip) unzip -q "$tmp/$archive" -d "$tmp" ;;
 tar.gz) tar -xzf "$tmp/$archive" -C "$tmp" ;;
@@ -134,6 +145,7 @@ fi
 # read-only destination for writing — so stage each file beside the
 # target and mv it into place, which replaces the directory entry and
 # works whatever the old file's mode.
+echo "install.sh: installing to ${prefix}…"
 mkdir -p "$prefix/bin" "$prefix/lib"
 rm -f "$prefix/bin/emo.incoming"
 cp "$root/bin/emo" "$prefix/bin/emo.incoming"
