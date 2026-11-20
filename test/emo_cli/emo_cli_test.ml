@@ -3860,6 +3860,10 @@ let riscv64_examples_tests =
 let riscv64_refusal_tests =
   [
     tc "a map literal lowers to the metal's Map (step 91)" (fun () ->
+        (* The positive control builds with the real cross binutils; a
+           machine without them cannot honor it — the same courtesy the
+           riscv64 examples extend, minus the QEMU half they also need. *)
+        if Emo_cli.riscv_binutils_prefix () = None then Alcotest.skip ();
         let entry = scratch_entry "riscv-map" {|println({ "a": 1 })|} in
         Alcotest.(check int)
           "exit" 0

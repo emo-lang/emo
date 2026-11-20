@@ -13,6 +13,7 @@ FROM ocaml/opam:ubuntu-22.04
 RUN sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends libssl-dev pkg-config && \
     sudo rm -rf /var/lib/apt/lists/* && \
+    opam update && \
     opam switch create 5.5.2 && \
     opam install -y dune cmdliner alcotest eio_main ssl yojson digestif && \
     opam clean
@@ -24,4 +25,11 @@ RUN sudo apt-get update && \
 RUN sudo apt-get install -y --no-install-recommends gnupg && \
     curl -fsSL https://deb.nodesource.com/setup_24.x | sudo bash - && \
     sudo apt-get install -y --no-install-recommends nodejs && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+# The riscv64 refusal suite's positive control builds with the real
+# cross binutils. QEMU stays out — the suite skips the boots the image
+# cannot run.
+RUN sudo apt-get update && \
+    sudo apt-get install -y --no-install-recommends binutils-riscv64-unknown-elf && \
     sudo rm -rf /var/lib/apt/lists/*

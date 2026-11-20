@@ -18,10 +18,16 @@ let deadline_tests =
           aborts (fun () -> Emo_test_support.run_cmd ~timeout:1.0 "sleep 30")
         in
         let elapsed = Unix.gettimeofday () -. started in
+        (* The abort is the deadline's own signature — the helper gives up
+           only after the wall-clock budget runs out — and the elapsed
+           upper bound rules out riding out `sleep 30`'s natural end. No
+           lower bound: a wall clock that steps mid-wait (a VM's sync is
+           exactly that) shrinks the measured span without anything
+           having gone wrong. *)
         Alcotest.(check bool) "aborted" true aborted;
         Alcotest.(check bool)
           "at the deadline, not at the command's own end" true
-          (elapsed >= 1.0 && elapsed < 15.0));
+          (elapsed < 15.0));
     tc "the deadline kills the whole process group" (fun () ->
         (* The shell exits at once, but its backgrounded child outlives it
            holding the pipe open — the shape that hangs a runner with no

@@ -8,7 +8,7 @@ const dir = "emo-os-demo.d"
 
 os.mkdir(dir)
 const (R.ok, fd) = os.open_write(dir + "/a.txt")
-println(fd)
+println(fd >= 3)
 const (R.ok, put) = os.write(fd, "written through fds\n")
 println(put)
 os.close(fd)

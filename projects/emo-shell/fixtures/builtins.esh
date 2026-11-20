@@ -1,5 +1,5 @@
 cd
-cd /tmp
+cd /usr
 pwd
 export EMOSH_ENV=exported
 printenv EMOSH_ENV
