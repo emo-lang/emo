@@ -151,25 +151,40 @@ echo "installed $prefix/bin/emo ($("$prefix/bin/emo" version))"
 
 # PATH setup: with bash or zsh as the login shell, append the export
 # to its rc file — idempotently; other shells keep the printed hint.
+# Every branch below leaves the current shell without the emo command,
+# so each speaks the same two-line warning, bold yellow when stdout is
+# a terminal — escape codes would only litter a piped log.
 line="export PATH=\"$prefix/bin:\$PATH\""
 rc=
 case "${SHELL:-}" in
 */zsh) rc=$HOME/.zshrc ;;
 */bash) rc=$HOME/.bashrc ;;
 esac
+if [ -t 1 ]; then
+  hl_on=$(printf '\033[1;33m')
+  hl_off=$(printf '\033[0m')
+else
+  hl_on=
+  hl_off=
+fi
+say() {
+  printf '%s%s%s\n' "$hl_on" "$1" "$hl_off"
+}
 case :$PATH: in
 *:$prefix/bin:*) ;;
 *)
   if [ -n "$rc" ]; then
     if [ -f "$rc" ] && grep -qF "$prefix/bin" "$rc"; then
-      echo "install.sh: $rc already lists $prefix/bin"
+      say "install.sh: $rc already lists $prefix/bin — this shell just has not loaded it."
+      say "install.sh: open a new shell, or run: source $rc"
     else
       printf '\n# added by the Emo installer\n%s\n' "$line" >>"$rc"
-      echo "install.sh: added $prefix/bin to PATH in $rc"
-      echo "install.sh: start a new shell, or run: source $rc"
+      say "install.sh: IMPORTANT — the emo command is not visible in THIS shell yet."
+      say "install.sh: open a new shell, or run right now: source $rc"
     fi
   else
-    echo "add it to PATH: $line"
+    say "install.sh: this shell is neither bash nor zsh — add emo to PATH yourself:"
+    say "install.sh: $line"
   fi
   ;;
 esac
