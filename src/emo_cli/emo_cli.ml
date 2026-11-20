@@ -2675,10 +2675,11 @@ let publish_cmd =
 
 (* ---- `emo doctor`: the target-aware environment check (T24.5) ----
 
-   One line per target: what it needs, what was found. The default
-   target's health decides the exit code — the other targets are
-   informational, and an unavailable one gets the honest fix named
-   rather than a raw toolchain error. *)
+   Two lines per target: the status word wears its traffic-light color
+   (green ok, yellow unavailable, red BROKEN — the default target's
+   health decides the exit code), and the explanation indents below it,
+   so a long fix never turns the status into an unreadable sentence.
+   Color rides only on a terminal; a piped run stays plain. *)
 
 let tool_version (name : string) : string =
   match probe_first_line (name ^ " --version 2>/dev/null") with
@@ -2741,54 +2742,67 @@ let doctor ~(emit : string -> unit) : int =
   emit (Printf.sprintf "emo %s" version);
   emit "stdlib: embedded in the binary";
   let broken = ref false in
+  let colors = Unix.isatty Unix.stdout in
+  let paint code text =
+    if colors then Printf.sprintf "\027[%sm%s\027[0m" code text else text
+  in
+  let ok_text = paint "32" "ok"
+  and warn_text = paint "33" "unavailable"
+  and broken_text = paint "31" "BROKEN" in
   let line name report = emit (Printf.sprintf "%-11s %s" name report) in
+  let detail text = emit ("            " ^ text) in
   (match cc_smoke () with
-  | Ok () -> line "c:" ("ok" ^ tool_version "cc" ^ " — compiles and runs")
+  | Ok () ->
+      line "c:" (ok_text ^ tool_version "cc");
+      detail "compiles and runs"
   | Error why ->
       broken := true;
-      line "c:" ("BROKEN — " ^ why ^ " (the default target needs a C compiler)"));
-  if ocaml_ok then
-    line "ocaml:" "ok — ocamlfind with the unix and ssl packages found"
-  else
-    line "ocaml:"
-      "unavailable — the ocaml target needs the OCaml toolchain on PATH \
-       (ocamlfind with the unix and ssl packages)";
-  if tool_exists "node" then line "typescript:" ("ok" ^ tool_version "node")
-  else line "typescript:" "unavailable — node not found";
-  if node_strip_ok () then line "browser:" ("ok" ^ tool_version "node")
-  else
-    line "browser:"
-      "unavailable — the browser target needs Node >= 22.13 \
-       (module.stripTypeScriptTypes)";
-  if tool_exists "erlc" then line "beam:" "ok"
-  else line "beam:" "unavailable — erlc not found";
-  if tool_exists "node" then
-    line "wasm:"
-      ("ok" ^ tool_version "node"
-     ^ " — `emo run --target wasm` runs it; `emo wasm run` needs no tools")
-  else
-    line "wasm:"
-      "ok — no external tools needed; `emo wasm run` executes WebAssembly \
-       artifacts (Node adds the `emo run --target wasm` path)";
-  if tool_exists "wasmtime" then
-    line "wasi:"
-      ("ok" ^ tool_version "wasmtime"
-     ^ " — `emo run --target wasm --wasi` runs it (wasmtime 46+)")
-  else
-    line "wasi:"
-      "unavailable — wasmtime 46+ not found (`emo run --target wasm --wasi` \
-       and the --wasi demos need it)";
+      line "c:" (broken_text ^ " — " ^ why);
+      detail "the default target needs a C compiler");
+  if ocaml_ok then (
+    line "ocaml:" ok_text;
+    detail "ocamlfind with the unix and ssl packages found")
+  else (
+    line "ocaml:" warn_text;
+    detail "the ocaml target needs the OCaml toolchain on PATH \
+            (ocamlfind with the unix and ssl packages)");
+  if tool_exists "node" then line "typescript:" (ok_text ^ tool_version "node")
+  else (
+    line "typescript:" warn_text;
+    detail "node not found");
+  if node_strip_ok () then line "browser:" (ok_text ^ tool_version "node")
+  else (
+    line "browser:" warn_text;
+    detail "the browser target needs Node >= 22.13 (module.stripTypeScriptTypes)");
+  if tool_exists "erlc" then line "beam:" ok_text
+  else (
+    line "beam:" warn_text;
+    detail "erlc not found");
+  if tool_exists "node" then (
+    line "wasm:" (ok_text ^ tool_version "node");
+    detail "`emo run --target wasm` runs it; `emo wasm run` needs no tools")
+  else (
+    line "wasm:" ok_text;
+    detail "no external tools needed; `emo wasm run` executes WebAssembly \
+            artifacts (Node adds the `emo run --target wasm` path)");
+  if tool_exists "wasmtime" then (
+    line "wasi:" (ok_text ^ tool_version "wasmtime");
+    detail "`emo run --target wasm --wasi` runs it (wasmtime 46+)")
+  else (
+    line "wasi:" warn_text;
+    detail "wasmtime 46+ not found (`emo run --target wasm --wasi` \
+            and the --wasi demos need it)");
   (match riscv_binutils_prefix () with
   | None ->
-      line "riscv64:"
-        "unavailable — the riscv64 target needs the GNU cross binutils on PATH \
-         (riscv64-unknown-elf-as/-ld or riscv64-elf-as/-ld)"
+      line "riscv64:" warn_text;
+      detail "the riscv64 target needs the GNU cross binutils on PATH \
+              (riscv64-unknown-elf-as/-ld or riscv64-elf-as/-ld)"
   | Some _ ->
       if tool_exists "qemu-system-riscv64" then
-        line "riscv64:" ("ok" ^ tool_version "qemu-system-riscv64")
-      else
-        line "riscv64:"
-          "unavailable — qemu-system-riscv64 not found (the dev loop needs it)");
+        line "riscv64:" (ok_text ^ tool_version "qemu-system-riscv64")
+      else (
+        line "riscv64:" warn_text;
+        detail "qemu-system-riscv64 not found (the dev loop needs it)"));
   if !broken then 1 else 0
 
 let doctor_cmd =

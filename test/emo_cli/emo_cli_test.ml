@@ -5093,8 +5093,9 @@ let doctor_tests =
             Alcotest.(check bool) ("reports " ^ name) true (contains text name))
           [ "c:"; "ocaml:"; "typescript:"; "browser:"; "beam:"; "wasm:" ];
         Alcotest.(check bool)
-          "the ocaml line names the toolchain, not the installation shape" true
-          (contains text "ok — ocamlfind" || contains text "unavailable");
+          "the ocaml row names the toolchain, not the installation shape" true
+          (contains text "ocamlfind with the unix and ssl packages"
+          || contains text "unavailable");
         Alcotest.(check bool)
           "the wasm line names the run path or the no-tools story" true
           (contains text "emo run --target wasm"
