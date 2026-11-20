@@ -3173,6 +3173,12 @@ static void emo_net_meta_register(int64_t fd, double timeout,
       m->desc = strdup(desc);
       if (m->desc == NULL) abort();
     }
+    /* The fd number was reused by a new connection: anything a timed-out
+       read on the previous connection stashed must not leak into this
+       one's reads. */
+    free(m->pending);
+    m->pending = NULL;
+    m->pending_len = 0;
     return;
   }
   m = malloc(sizeof *m);
@@ -3185,6 +3191,13 @@ static void emo_net_meta_register(int64_t fd, double timeout,
   } else {
     m->desc = NULL;
   }
+  /* malloc hands back recycled bytes: start zero-length, never the
+     previous chunk's. An uninitialized pending_len reads as garbage, and
+     the connection's first read_line grows its buffer to that size —
+     glibc's tcache makes this fatal on Linux, while macOS's allocator
+     happened to answer zeroed pages. */
+  m->pending = NULL;
+  m->pending_len = 0;
   m->next = emo_net_meta_slots;
   emo_net_meta_slots = m;
 }
