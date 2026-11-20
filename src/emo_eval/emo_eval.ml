@@ -4,6 +4,13 @@
 
 module Ast = Emo_ast
 
+(* The environment frame's table, functorized over String: every variable
+   read, bind, and assign walks it, and the polymorphic table's generic
+   compare dispatch showed in every profile — the String functor answers
+   its bucket scans with the string compare directly. Keys are always
+   the identifiers themselves. *)
+module Frame_tbl = Hashtbl.Make (String)
+
 exception Error of Emo_support.Diagnostic.t
 
 let error span ?hint code message =
@@ -166,7 +173,7 @@ and emo_map = {
   mutable order : value list; (* the keys, REVERSED insertion order *)
 }
 
-and env = { frame : (string, binding) Hashtbl.t; parent : env option }
+and env = { frame : binding Frame_tbl.t; parent : env option }
 and binding = { mutable bound : value; mutable_ : bool }
 
 (* Splits on a (possibly multi-character) separator. *)
@@ -319,51 +326,51 @@ and map_key_ok (k : value) : bool =
 and map_keys (m : emo_map) : value list = List.rev m.order
 
 let global_env () =
-  let env = { frame = Hashtbl.create 16; parent = None } in
+  let env = { frame = Frame_tbl.create 16; parent = None } in
   (* The language's own built-ins: the bare names every frame carries. *)
-  Hashtbl.replace env.frame "println"
+  Frame_tbl.replace env.frame "println"
     { bound = BuiltinFn "println"; mutable_ = false };
-  Hashtbl.replace env.frame "printf"
+  Frame_tbl.replace env.frame "printf"
     { bound = BuiltinFn "printf"; mutable_ = false };
-  Hashtbl.replace env.frame "self_pid"
+  Frame_tbl.replace env.frame "self_pid"
     { bound = BuiltinFn "self_pid"; mutable_ = false };
-  Hashtbl.replace env.frame "halt"
+  Frame_tbl.replace env.frame "halt"
     { bound = BuiltinFn "halt"; mutable_ = false };
-  Hashtbl.replace env.frame "fence"
+  Frame_tbl.replace env.frame "fence"
     { bound = BuiltinFn "fence"; mutable_ = false };
   (* The raw-memory builtins (docs/raw-memory.md): the interpreter owns
      no address space, so every call is the named refusal — the checker
      already refuses on every hosted target (E4028); these arms are the
      defense for any unchecked path. *)
-  Hashtbl.replace env.frame "peek8"
+  Frame_tbl.replace env.frame "peek8"
     { bound = BuiltinFn "peek8"; mutable_ = false };
-  Hashtbl.replace env.frame "poke8"
+  Frame_tbl.replace env.frame "poke8"
     { bound = BuiltinFn "poke8"; mutable_ = false };
-  Hashtbl.replace env.frame "peek64"
+  Frame_tbl.replace env.frame "peek64"
     { bound = BuiltinFn "peek64"; mutable_ = false };
-  Hashtbl.replace env.frame "poke64"
+  Frame_tbl.replace env.frame "poke64"
     { bound = BuiltinFn "poke64"; mutable_ = false };
-  Hashtbl.replace env.frame "peek32"
+  Frame_tbl.replace env.frame "peek32"
     { bound = BuiltinFn "peek32"; mutable_ = false };
-  Hashtbl.replace env.frame "poke32"
+  Frame_tbl.replace env.frame "poke32"
     { bound = BuiltinFn "poke32"; mutable_ = false };
-  Hashtbl.replace env.frame "device_wait"
+  Frame_tbl.replace env.frame "device_wait"
     { bound = BuiltinFn "device_wait"; mutable_ = false };
-  Hashtbl.replace env.frame "device_wake"
+  Frame_tbl.replace env.frame "device_wake"
     { bound = BuiltinFn "device_wake"; mutable_ = false };
-  Hashtbl.replace env.frame "gate_post"
+  Frame_tbl.replace env.frame "gate_post"
     { bound = BuiltinFn "gate_post"; mutable_ = false };
-  Hashtbl.replace env.frame "ecall"
+  Frame_tbl.replace env.frame "ecall"
     { bound = BuiltinFn "ecall"; mutable_ = false };
-  Hashtbl.replace env.frame "user_spawn"
+  Frame_tbl.replace env.frame "user_spawn"
     { bound = BuiltinFn "user_spawn"; mutable_ = false };
-  Hashtbl.replace env.frame "gate_reply"
+  Frame_tbl.replace env.frame "gate_reply"
     { bound = BuiltinFn "gate_reply"; mutable_ = false };
-  Hashtbl.replace env.frame "pid_num"
+  Frame_tbl.replace env.frame "pid_num"
     { bound = BuiltinFn "pid_num"; mutable_ = false };
-  Hashtbl.replace env.frame "pid_at"
+  Frame_tbl.replace env.frame "pid_at"
     { bound = BuiltinFn "pid_at"; mutable_ = false };
-  Hashtbl.replace env.frame "sfence"
+  Frame_tbl.replace env.frame "sfence"
     { bound = BuiltinFn "sfence"; mutable_ = false };
   (* The GC heap's doors (docs/gc-heap.md): the interpreter run admits
      them — this environment is the run — and the checker refuses them
@@ -371,7 +378,7 @@ let global_env () =
      refusal to defend. *)
   List.iter
     (fun name ->
-      Hashtbl.replace env.frame name
+      Frame_tbl.replace env.frame name
         { bound = BuiltinFn name; mutable_ = false })
     [
       "heap_new";
@@ -399,33 +406,35 @@ let global_env () =
       "heap_blocks";
       "heap_words";
     ];
-  Hashtbl.replace env.frame "expect_equal"
+  Frame_tbl.replace env.frame "expect_equal"
     { bound = BuiltinFn "expect_equal"; mutable_ = false };
-  Hashtbl.replace env.frame "expect_true"
+  Frame_tbl.replace env.frame "expect_true"
     { bound = BuiltinFn "expect_true"; mutable_ = false };
-  Hashtbl.replace env.frame "expect_false"
+  Frame_tbl.replace env.frame "expect_false"
     { bound = BuiltinFn "expect_false"; mutable_ = false };
-  Hashtbl.replace env.frame "expect_fail"
+  Frame_tbl.replace env.frame "expect_fail"
     { bound = BuiltinFn "expect_fail"; mutable_ = false };
   (* The capability types: the language's own types, import-free. *)
-  Hashtbl.replace env.frame "Int64"
+  Frame_tbl.replace env.frame "Int64"
     { bound = TypeValue "Int64"; mutable_ = false };
-  Hashtbl.replace env.frame "Byte"
+  Frame_tbl.replace env.frame "Byte"
     { bound = TypeValue "Byte"; mutable_ = false };
-  Hashtbl.replace env.frame "Float64"
+  Frame_tbl.replace env.frame "Float64"
     { bound = TypeValue "Float64"; mutable_ = false };
-  Hashtbl.replace env.frame "Box" { bound = TypeValue "Box"; mutable_ = false };
-  Hashtbl.replace env.frame "Atomic"
+  Frame_tbl.replace env.frame "Box"
+    { bound = TypeValue "Box"; mutable_ = false };
+  Frame_tbl.replace env.frame "Atomic"
     { bound = TypeValue "Atomic"; mutable_ = false };
-  Hashtbl.replace env.frame "Bytes"
+  Frame_tbl.replace env.frame "Bytes"
     { bound = TypeValue "Bytes"; mutable_ = false };
-  Hashtbl.replace env.frame "List"
+  Frame_tbl.replace env.frame "List"
     { bound = TypeValue "List"; mutable_ = false };
-  Hashtbl.replace env.frame "ArrayBuilder"
+  Frame_tbl.replace env.frame "ArrayBuilder"
     { bound = TypeValue "ArrayBuilder"; mutable_ = false };
-  Hashtbl.replace env.frame "Map" { bound = TypeValue "Map"; mutable_ = false };
+  Frame_tbl.replace env.frame "Map"
+    { bound = TypeValue "Map"; mutable_ = false };
   (* The shipped exception class: `raise Exception.new(message: "boom")`. *)
-  Hashtbl.replace env.frame "Exception"
+  Frame_tbl.replace env.frame "Exception"
     {
       bound =
         ClassDef
@@ -439,7 +448,7 @@ let global_env () =
     };
   (* The built-in result enum: `(R.ok, value)` beside `(R.error, reason)`,
      matched in `case`, no import needed. *)
-  Hashtbl.replace env.frame "R"
+  Frame_tbl.replace env.frame "R"
     {
       bound =
         EnumType
@@ -455,123 +464,123 @@ let global_env () =
     };
   (* The runtime's implementations of the standard library's packages: the
      bare names a package's own Emo source calls, never a surface. *)
-  Hashtbl.replace env.frame "net_connect"
+  Frame_tbl.replace env.frame "net_connect"
     { bound = RuntimeImplFn "net_connect"; mutable_ = false };
-  Hashtbl.replace env.frame "net_listen"
+  Frame_tbl.replace env.frame "net_listen"
     { bound = RuntimeImplFn "net_listen"; mutable_ = false };
-  Hashtbl.replace env.frame "net_resolve"
+  Frame_tbl.replace env.frame "net_resolve"
     { bound = RuntimeImplFn "net_resolve"; mutable_ = false };
-  Hashtbl.replace env.frame "net_env"
+  Frame_tbl.replace env.frame "net_env"
     { bound = RuntimeImplFn "net_env"; mutable_ = false };
-  Hashtbl.replace env.frame "net_udp_bind"
+  Frame_tbl.replace env.frame "net_udp_bind"
     { bound = RuntimeImplFn "net_udp_bind"; mutable_ = false };
-  Hashtbl.replace env.frame "net_connect_unix"
+  Frame_tbl.replace env.frame "net_connect_unix"
     { bound = RuntimeImplFn "net_connect_unix"; mutable_ = false };
-  Hashtbl.replace env.frame "net_listen_unix"
+  Frame_tbl.replace env.frame "net_listen_unix"
     { bound = RuntimeImplFn "net_listen_unix"; mutable_ = false };
-  Hashtbl.replace env.frame "net_sendmsg_fd"
+  Frame_tbl.replace env.frame "net_sendmsg_fd"
     { bound = RuntimeImplFn "net_sendmsg_fd"; mutable_ = false };
-  Hashtbl.replace env.frame "net_recvmsg_fd"
+  Frame_tbl.replace env.frame "net_recvmsg_fd"
     { bound = RuntimeImplFn "net_recvmsg_fd"; mutable_ = false };
-  Hashtbl.replace env.frame "os_shm_open"
+  Frame_tbl.replace env.frame "os_shm_open"
     { bound = RuntimeImplFn "os_shm_open"; mutable_ = false };
-  Hashtbl.replace env.frame "os_ftruncate"
+  Frame_tbl.replace env.frame "os_ftruncate"
     { bound = RuntimeImplFn "os_ftruncate"; mutable_ = false };
-  Hashtbl.replace env.frame "os_sleep_ms"
+  Frame_tbl.replace env.frame "os_sleep_ms"
     { bound = RuntimeImplFn "os_sleep_ms"; mutable_ = false };
-  Hashtbl.replace env.frame "os_pwrite"
+  Frame_tbl.replace env.frame "os_pwrite"
     { bound = RuntimeImplFn "os_pwrite"; mutable_ = false };
-  Hashtbl.replace env.frame "net_tls_connect"
+  Frame_tbl.replace env.frame "net_tls_connect"
     { bound = RuntimeImplFn "net_tls_connect"; mutable_ = false };
-  Hashtbl.replace env.frame "net_tls_connect_insecure"
+  Frame_tbl.replace env.frame "net_tls_connect_insecure"
     { bound = RuntimeImplFn "net_tls_connect_insecure"; mutable_ = false };
-  Hashtbl.replace env.frame "net_listen_tls"
+  Frame_tbl.replace env.frame "net_listen_tls"
     { bound = RuntimeImplFn "net_listen_tls"; mutable_ = false };
-  Hashtbl.replace env.frame "net_tls_connect_with"
+  Frame_tbl.replace env.frame "net_tls_connect_with"
     { bound = RuntimeImplFn "net_tls_connect_with"; mutable_ = false };
-  Hashtbl.replace env.frame "net_tls_wrap"
+  Frame_tbl.replace env.frame "net_tls_wrap"
     { bound = RuntimeImplFn "net_tls_wrap"; mutable_ = false };
-  Hashtbl.replace env.frame "net_listen_tls_with"
+  Frame_tbl.replace env.frame "net_listen_tls_with"
     { bound = RuntimeImplFn "net_listen_tls_with"; mutable_ = false };
-  Hashtbl.replace env.frame "file_read"
+  Frame_tbl.replace env.frame "file_read"
     { bound = RuntimeImplFn "file_read"; mutable_ = false };
-  Hashtbl.replace env.frame "file_write"
+  Frame_tbl.replace env.frame "file_write"
     { bound = RuntimeImplFn "file_write"; mutable_ = false };
-  Hashtbl.replace env.frame "os_getpid"
+  Frame_tbl.replace env.frame "os_getpid"
     { bound = RuntimeImplFn "os_getpid"; mutable_ = false };
-  Hashtbl.replace env.frame "os_getenv"
+  Frame_tbl.replace env.frame "os_getenv"
     { bound = RuntimeImplFn "os_getenv"; mutable_ = false };
-  Hashtbl.replace env.frame "os_getppid"
+  Frame_tbl.replace env.frame "os_getppid"
     { bound = RuntimeImplFn "os_getppid"; mutable_ = false };
-  Hashtbl.replace env.frame "os_fork"
+  Frame_tbl.replace env.frame "os_fork"
     { bound = RuntimeImplFn "os_fork"; mutable_ = false };
-  Hashtbl.replace env.frame "os_waitpid"
+  Frame_tbl.replace env.frame "os_waitpid"
     { bound = RuntimeImplFn "os_waitpid"; mutable_ = false };
-  Hashtbl.replace env.frame "os_pipe"
+  Frame_tbl.replace env.frame "os_pipe"
     { bound = RuntimeImplFn "os_pipe"; mutable_ = false };
-  Hashtbl.replace env.frame "os_execv"
+  Frame_tbl.replace env.frame "os_execv"
     { bound = RuntimeImplFn "os_execv"; mutable_ = false };
-  Hashtbl.replace env.frame "os__exit"
+  Frame_tbl.replace env.frame "os__exit"
     { bound = RuntimeImplFn "os__exit"; mutable_ = false };
-  Hashtbl.replace env.frame "os_open_read"
+  Frame_tbl.replace env.frame "os_open_read"
     { bound = RuntimeImplFn "os_open_read"; mutable_ = false };
-  Hashtbl.replace env.frame "os_open_write"
+  Frame_tbl.replace env.frame "os_open_write"
     { bound = RuntimeImplFn "os_open_write"; mutable_ = false };
-  Hashtbl.replace env.frame "os_open_append"
+  Frame_tbl.replace env.frame "os_open_append"
     { bound = RuntimeImplFn "os_open_append"; mutable_ = false };
-  Hashtbl.replace env.frame "os_lseek"
+  Frame_tbl.replace env.frame "os_lseek"
     { bound = RuntimeImplFn "os_lseek"; mutable_ = false };
-  Hashtbl.replace env.frame "os_stat"
+  Frame_tbl.replace env.frame "os_stat"
     { bound = RuntimeImplFn "os_stat"; mutable_ = false };
-  Hashtbl.replace env.frame "os_read"
+  Frame_tbl.replace env.frame "os_read"
     { bound = RuntimeImplFn "os_read"; mutable_ = false };
-  Hashtbl.replace env.frame "rand_bytes"
+  Frame_tbl.replace env.frame "rand_bytes"
     { bound = RuntimeImplFn "rand_bytes"; mutable_ = false };
-  Hashtbl.replace env.frame "os_write"
+  Frame_tbl.replace env.frame "os_write"
     { bound = RuntimeImplFn "os_write"; mutable_ = false };
-  Hashtbl.replace env.frame "os_close"
+  Frame_tbl.replace env.frame "os_close"
     { bound = RuntimeImplFn "os_close"; mutable_ = false };
-  Hashtbl.replace env.frame "os_list_dir"
+  Frame_tbl.replace env.frame "os_list_dir"
     { bound = RuntimeImplFn "os_list_dir"; mutable_ = false };
-  Hashtbl.replace env.frame "os_mkdir"
+  Frame_tbl.replace env.frame "os_mkdir"
     { bound = RuntimeImplFn "os_mkdir"; mutable_ = false };
-  Hashtbl.replace env.frame "os_rmdir"
+  Frame_tbl.replace env.frame "os_rmdir"
     { bound = RuntimeImplFn "os_rmdir"; mutable_ = false };
-  Hashtbl.replace env.frame "os_unlink"
+  Frame_tbl.replace env.frame "os_unlink"
     { bound = RuntimeImplFn "os_unlink"; mutable_ = false };
-  Hashtbl.replace env.frame "os_rename"
+  Frame_tbl.replace env.frame "os_rename"
     { bound = RuntimeImplFn "os_rename"; mutable_ = false };
-  Hashtbl.replace env.frame "os_getcwd"
+  Frame_tbl.replace env.frame "os_getcwd"
     { bound = RuntimeImplFn "os_getcwd"; mutable_ = false };
-  Hashtbl.replace env.frame "os_chdir"
+  Frame_tbl.replace env.frame "os_chdir"
     { bound = RuntimeImplFn "os_chdir"; mutable_ = false };
-  Hashtbl.replace env.frame "os_dup2"
+  Frame_tbl.replace env.frame "os_dup2"
     { bound = RuntimeImplFn "os_dup2"; mutable_ = false };
-  Hashtbl.replace env.frame "os_execvp"
+  Frame_tbl.replace env.frame "os_execvp"
     { bound = RuntimeImplFn "os_execvp"; mutable_ = false };
-  Hashtbl.replace env.frame "os_isatty"
+  Frame_tbl.replace env.frame "os_isatty"
     { bound = RuntimeImplFn "os_isatty"; mutable_ = false };
-  Hashtbl.replace env.frame "os_argv"
+  Frame_tbl.replace env.frame "os_argv"
     { bound = RuntimeImplFn "os_argv"; mutable_ = false };
-  Hashtbl.replace env.frame "os_getenv"
+  Frame_tbl.replace env.frame "os_getenv"
     { bound = RuntimeImplFn "os_getenv"; mutable_ = false };
-  Hashtbl.replace env.frame "os_setenv"
+  Frame_tbl.replace env.frame "os_setenv"
     { bound = RuntimeImplFn "os_setenv"; mutable_ = false };
-  Hashtbl.replace env.frame "os_unsetenv"
+  Frame_tbl.replace env.frame "os_unsetenv"
     { bound = RuntimeImplFn "os_unsetenv"; mutable_ = false };
-  Hashtbl.replace env.frame "os_signal_ignore"
+  Frame_tbl.replace env.frame "os_signal_ignore"
     { bound = RuntimeImplFn "os_signal_ignore"; mutable_ = false };
-  Hashtbl.replace env.frame "os_signal_default"
+  Frame_tbl.replace env.frame "os_signal_default"
     { bound = RuntimeImplFn "os_signal_default"; mutable_ = false };
-  Hashtbl.replace env.frame "os_kill"
+  Frame_tbl.replace env.frame "os_kill"
     { bound = RuntimeImplFn "os_kill"; mutable_ = false };
-  Hashtbl.replace env.frame "os_setpgid"
+  Frame_tbl.replace env.frame "os_setpgid"
     { bound = RuntimeImplFn "os_setpgid"; mutable_ = false };
-  Hashtbl.replace env.frame "time_now_ms"
+  Frame_tbl.replace env.frame "time_now_ms"
     { bound = RuntimeImplFn "time_now_ms"; mutable_ = false };
-  Hashtbl.replace env.frame "time_mono_ns"
+  Frame_tbl.replace env.frame "time_mono_ns"
     { bound = RuntimeImplFn "time_mono_ns"; mutable_ = false };
-  Hashtbl.replace env.frame "time_sleep_ms"
+  Frame_tbl.replace env.frame "time_sleep_ms"
     { bound = RuntimeImplFn "time_sleep_ms"; mutable_ = false };
   env
 
@@ -1316,15 +1325,15 @@ let runtime_is span v t =
         (Printf.sprintf "`is` checks instances and enum members, not %s"
            (type_name v))
 
-let child parent = { frame = Hashtbl.create 8; parent = Some parent }
+let child parent = { frame = Frame_tbl.create 8; parent = Some parent }
 
 (* Defines a name in exactly this frame; a later definition of the same name
    replaces the earlier one within the frame. *)
 let define env name ~mutable_ value =
-  Hashtbl.replace env.frame name { bound = value; mutable_ }
+  Frame_tbl.replace env.frame name { bound = value; mutable_ }
 
 let rec lookup env span name =
-  match Hashtbl.find_opt env.frame name with
+  match Frame_tbl.find_opt env.frame name with
   | Some { bound; _ } -> bound
   | None -> (
       match env.parent with
@@ -1332,7 +1341,7 @@ let rec lookup env span name =
       | None -> error span "E3002" (Printf.sprintf "`%s` is not defined" name))
 
 let rec lookup_opt env name =
-  match Hashtbl.find_opt env.frame name with
+  match Frame_tbl.find_opt env.frame name with
   | Some { bound; _ } -> Some bound
   | None -> (
       match env.parent with
@@ -1369,13 +1378,13 @@ and walk_type h segs : value option =
       | None -> None)
 
 let rec assign env span name value =
-  match Hashtbl.find_opt env.frame name with
-  | Some { mutable_ = true; _ } ->
-      Hashtbl.replace env.frame name { bound = value; mutable_ = true }
-  | Some { mutable_ = false; _ } ->
-      error span "E3003"
-        (Printf.sprintf "cannot assign to `%s`; it is a const" name)
-        ~hint:"use `var` for bindings that change"
+  match Frame_tbl.find_opt env.frame name with
+  | Some b ->
+      if b.mutable_ then b.bound <- value
+      else
+        error span "E3003"
+          (Printf.sprintf "cannot assign to `%s`; it is a const" name)
+          ~hint:"use `var` for bindings that change"
   | None -> (
       match env.parent with
       | Some parent -> assign parent span name value
@@ -2188,10 +2197,13 @@ and eval_method env span recv mname arg_exprs =
   match recv.Ast.desc with
   | Ast.Type_ident gname when Hashtbl.mem !group_registry gname ->
       let members = Hashtbl.find !group_registry gname in
-      if not (List.mem_assoc mname members) then
-        error span "E4001"
-          (Printf.sprintf "the group `%s` has no member `%s`" gname mname);
-      let v = List.assoc mname members in
+      let v =
+        match List.assoc_opt mname members with
+        | Some v -> v
+        | None ->
+            error span "E4001"
+              (Printf.sprintf "the group `%s` has no member `%s`" gname mname)
+      in
       let arity =
         match v with ArrowBlock c -> List.length c.params | _ -> 0
       in
@@ -2252,10 +2264,13 @@ and call_method_value env span base mname arg_exprs =
   | EmoGroup members, _ -> (
       (* a group member: defs apply, consts produce their value. A bare
          def reference (`Foo.hello` without a call) is the block itself. *)
-      if not (List.mem_assoc mname members) then
-        error span "E4001"
-          (Printf.sprintf "this group has no member `%s`" mname);
-      let v = List.assoc mname members in
+      let v =
+        match List.assoc_opt mname members with
+        | Some v -> v
+        | None ->
+            error span "E4001"
+              (Printf.sprintf "this group has no member `%s`" mname)
+      in
       match v with
       | ArrowBlock closure ->
           let args = eval_args_named () in
@@ -4976,32 +4991,36 @@ and eval_body closure span args =
 (* Runs a prepared frame. A [Tail_call] rebinds callee, arguments, and any
    extras (a method's `self`), and iterates in place — the OCaml stack stays
    flat however long the Emo-level recursion runs. *)
+and run_body closure span frame stmts =
+  match stmts with
+  | [] ->
+      if closure.void_ok then Void
+      else
+        error span "E3008"
+          (Printf.sprintf "reached the end of %s without `return`"
+             closure.def_name)
+  | stmt :: rest ->
+      (* The body's last statement is its exit: when the body
+         may end without a return, a bare call there is the
+         tail call the frame rebinds on. *)
+      let () =
+        match rest with
+        | [] -> eval_stmt frame stmt ~tail:true
+        | _ -> eval_stmt frame stmt
+      in
+      run_body closure span frame rest
+
+(* The hand unrolled [Fun.protect]: the finally pop rides the two
+   handlers instead of [protect]'s per-call [Left/Right] wrapper and
+   closure pair, and [run_body] sits beside as a sibling so a call
+   allocates nothing but its [call_trace] cons — the per-call tax the
+   interpreter's every function call used to pay. *)
 and eval_frame closure frame span =
   let rec loop closure frame =
     call_trace := (closure.def_name, span) :: !call_trace;
-    Fun.protect
-      (fun () ->
-        try
-          let rec run = function
-            | [] ->
-                if closure.void_ok then Void
-                else
-                  error span "E3008"
-                    (Printf.sprintf "reached the end of %s without `return`"
-                       closure.def_name)
-            | stmt :: rest ->
-                (* The body's last statement is its exit: when the body
-                   may end without a return, a bare call there is the
-                   tail call the frame rebinds on. *)
-                let () =
-                  match rest with
-                  | [] -> eval_stmt frame stmt ~tail:true
-                  | _ -> eval_stmt frame stmt
-                in
-                run rest
-          in
-          run closure.body
-        with
+    let v =
+      try
+        try run_body closure span frame closure.body with
         | Return_signal v -> v
         | Break_signal | Continue_signal ->
             (* The checker refuses `break` outside a loop and across a
@@ -5011,8 +5030,13 @@ and eval_frame closure frame span =
         | Tail_call (c, args, extras) ->
             let frame = bind_params c span args in
             List.iter (fun (k, v) -> define frame k ~mutable_:false v) extras;
-            loop c frame)
-      ~finally:(fun () -> call_trace := List.tl !call_trace)
+            loop c frame
+      with e ->
+        call_trace := List.tl !call_trace;
+        raise e
+    in
+    call_trace := List.tl !call_trace;
+    v
   in
   loop closure frame
 
@@ -5031,15 +5055,21 @@ and eval_stmt ?(tail = false) env s =
       | Ast.Call ({ Ast.desc = Ast.Member (recv, mname); _ }, arg_exprs) -> (
           let base = eval_expr env recv in
           match base with
-          | Instance i when List.mem_assoc mname i.iclass.cmethods ->
-              let closure = List.assoc mname i.iclass.cmethods in
-              let args =
-                List.map
-                  (fun { Ast.arg_name; arg_value } ->
-                    (arg_name, eval_expr env arg_value))
-                  arg_exprs
-              in
-              raise (Tail_call (closure, args, [ ("self", Instance i) ]))
+          | Instance i -> (
+              (* One scan answers both: the found closure tail-calls, the
+                 miss falls to the general dispatch, whose arms own every
+                 non-method receiver shape. *)
+              match List.assoc_opt mname i.iclass.cmethods with
+              | Some closure ->
+                  let args =
+                    List.map
+                      (fun { Ast.arg_name; arg_value } ->
+                        (arg_name, eval_expr env arg_value))
+                      arg_exprs
+                  in
+                  raise (Tail_call (closure, args, [ ("self", Instance i) ]))
+              | None -> ignore (call_method_value env span base mname arg_exprs)
+              )
           | _ -> ignore (call_method_value env span base mname arg_exprs))
       | Ast.Call (callee, arg_exprs) -> (
           match eval_expr env callee with
@@ -5130,15 +5160,21 @@ and eval_stmt ?(tail = false) env s =
           (* A method call in return position tail-calls with `self`. *)
           let base = eval_expr env recv in
           match base with
-          | Instance i when List.mem_assoc mname i.iclass.cmethods ->
-              let closure = List.assoc mname i.iclass.cmethods in
-              let args =
-                List.map
-                  (fun { Ast.arg_name; arg_value } ->
-                    (arg_name, eval_expr env arg_value))
-                  arg_exprs
-              in
-              raise (Tail_call (closure, args, [ ("self", Instance i) ]))
+          | Instance i -> (
+              (* One scan answers both, mirroring the tail path above. *)
+              match List.assoc_opt mname i.iclass.cmethods with
+              | Some closure ->
+                  let args =
+                    List.map
+                      (fun { Ast.arg_name; arg_value } ->
+                        (arg_name, eval_expr env arg_value))
+                      arg_exprs
+                  in
+                  raise (Tail_call (closure, args, [ ("self", Instance i) ]))
+              | None ->
+                  raise
+                    (Return_signal
+                       (call_method_value env span base mname arg_exprs)))
           | _ ->
               raise
                 (Return_signal (call_method_value env span base mname arg_exprs))
@@ -5621,8 +5657,8 @@ and run_macro_body ~(macro : Ast.fun_def) ~(input : syntax_tree)
       (Printf.sprintf "the macro `%s` takes %d compile-time argument(s), got %d"
          macro.Ast.def_name (List.length leading) (List.length arg_exprs));
   let param = tree_param in
-  let env = { frame = Hashtbl.create 8; parent = Some (global_env ()) } in
-  Hashtbl.replace env.frame "Syntax"
+  let env = { frame = Frame_tbl.create 8; parent = Some (global_env ()) } in
+  Frame_tbl.replace env.frame "Syntax"
     {
       bound =
         EmoGroup
@@ -5978,7 +6014,7 @@ let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
     env * (string * string) list =
   step_budget := Some budget;
   step_count := 0;
-  let env = { frame = Hashtbl.create 8; parent = None } in
+  let env = { frame = Frame_tbl.create 8; parent = None } in
   let deps : (string * string) list ref = ref [] in
   let is_literal (e : Ast.expr) =
     let rec go (e : Ast.expr) =
@@ -6003,7 +6039,7 @@ let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
     | _ -> None
   in
   let define_field target name (init : Ast.expr) =
-    if Hashtbl.mem target.frame name then raise (Duplicate_field name);
+    if Frame_tbl.mem target.frame name then raise (Duplicate_field name);
     if not (is_literal init) then raise (Impure_field name);
     count_step ();
     define target name ~mutable_:false (eval_expr env init)

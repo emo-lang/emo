@@ -1699,62 +1699,77 @@ and recvmsg_fd_loop state proc
            (Printf.sprintf "recvmsg failed: %s" (Unix.error_message err)))
 
 (* Fires due timers, then polls fd readiness once and wakes the parked
-   operations whose fd is ready. Waiters that stay parked are untouched. *)
+   operations whose fd is ready. Waiters that stay parked are untouched.
+   One fold builds both interest lists, the kind checks are pattern
+   matches rather than polymorphic compares, and a stale fd's liveness
+   costs one fstat — the sweep answers the kept list instead of a
+   separate wake pass plus a filter pass re-asking. *)
 let pump_io state =
   let now = Unix.gettimeofday () in
   let due, later = List.partition (fun (d, _) -> d <= now) state.timers in
   state.timers <- later;
   List.iter (fun (_, wake) -> wake ()) due;
-  let read_fds =
+  let read_fds, write_fds =
     Hashtbl.fold
       (fun fd l acc ->
-        if List.exists (fun w -> w.iokind = `R) l then fd :: acc else acc)
-      state.io []
-  in
-  let write_fds =
-    Hashtbl.fold
-      (fun fd l acc ->
-        if List.exists (fun w -> w.iokind = `W) l then fd :: acc else acc)
-      state.io []
+        let rec scan reads writes = function
+          | [] -> (reads, writes)
+          | w :: rest -> (
+              match w.iokind with
+              | `R -> scan true writes rest
+              | `W -> scan reads true rest)
+        in
+        let has_r, has_w = scan false false l in
+        let reads, writes = acc in
+        ( (if has_r then fd :: reads else reads),
+          if has_w then fd :: writes else writes ))
+      state.io ([], [])
   in
   if read_fds <> [] || write_fds <> [] || later <> [] then begin
     let timeout =
-      List.fold_left
-        (fun acc (d, _) -> min acc (max 0.001 (d -. now)))
-        1.0 later
+      match later with
+      | [] -> 1.0
+      | _ ->
+          List.fold_left
+            (fun acc (d, _) -> min acc (max 0.001 (d -. now)))
+            1.0 later
     in
     let readable, writable, _ =
       (* A fd closed out from under its wait — an error path elsewhere
          closing it — must not poison the whole select with EBADF: drop
          the stale registration and wake its waiters, whose next read
          or write observes the closure for itself. *)
-      let alive fd =
-        match Unix.fstat fd with
-        | _ -> true
-        | exception Unix.Unix_error (Unix.EBADF, _, _) -> false
+      let sweep fds =
+        let rec go acc = function
+          | [] -> acc
+          | fd :: rest -> (
+              match Unix.fstat fd with
+              | exception Unix.Unix_error (Unix.EBADF, _, _) ->
+                  (match Hashtbl.find_opt state.io fd with
+                  | Some l ->
+                      Hashtbl.remove state.io fd;
+                      List.iter (fun w -> w.iowake ()) l
+                  | None -> ());
+                  go acc rest
+              | _ -> go (fd :: acc) rest)
+        in
+        List.rev (go [] fds)
       in
-      let wake_dead fds =
-        List.iter
-          (fun fd ->
-            if not (alive fd) then
-              match Hashtbl.find_opt state.io fd with
-              | Some l ->
-                  Hashtbl.remove state.io fd;
-                  List.iter (fun w -> w.iowake ()) l
-              | None -> ())
-          fds
-      in
-      wake_dead read_fds;
-      wake_dead write_fds;
-      let read_fds = List.filter alive read_fds in
-      let write_fds = List.filter alive write_fds in
+      let read_fds = sweep read_fds in
+      let write_fds = sweep write_fds in
       Unix.select read_fds write_fds [] timeout
     in
     let take_ready fd kind =
       match Hashtbl.find_opt state.io fd with
       | None -> ()
       | Some l ->
-          let ready, keep = List.partition (fun w -> w.iokind = kind) l in
+          let rec part acc_ready acc_keep = function
+            | [] -> (List.rev acc_ready, List.rev acc_keep)
+            | w :: rest ->
+                if w.iokind == kind then part (w :: acc_ready) acc_keep rest
+                else part acc_ready (w :: acc_keep) rest
+          in
+          let ready, keep = part [] [] l in
           if keep = [] then Hashtbl.remove state.io fd
           else Hashtbl.replace state.io fd keep;
           List.iter (fun w -> w.iowake ()) ready

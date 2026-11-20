@@ -145,7 +145,7 @@ let parse_manifest ~(file : string) ~(source : string) : manifest =
   (* Strict fixed schema: nothing besides name, version, targets, link,
      pkg_config, frameworks, and registry may be defined in the package
      block. *)
-  Hashtbl.iter
+  Emo_eval.Frame_tbl.iter
     (fun k _ ->
       if
         not

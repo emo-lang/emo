@@ -1968,7 +1968,7 @@ let run_tests ?(fail_fast = false) () : test_result list =
              if fail_fast then raise Stop
          | Ok env ->
              let tests =
-               Hashtbl.fold
+               Emo_eval.Frame_tbl.fold
                  (fun name binding acc ->
                    match binding.Emo_eval.bound with
                    | Emo_eval.ArrowBlock c
