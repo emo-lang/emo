@@ -327,7 +327,7 @@ let exception_new (message : Emo_eval.value) : Emo_eval.value =
     {
       Emo_eval.cname = "Exception";
       cinit = None;
-      cmethods = [];
+      cmethods = Emo_eval.Frame_tbl.create 8;
       builtin_exception = true;
     }
   in

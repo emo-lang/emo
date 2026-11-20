@@ -11,6 +11,24 @@ module Ast = Emo_ast
    the identifiers themselves. *)
 module Frame_tbl = Hashtbl.Make (String)
 
+(* The compiled-body caches key on physical identity: the same AST body
+   stages once no matter how many times a lambda expression re-evaluates,
+   and a fresh closure record over an already-staged body lands on that one
+   staged copy. Hashing stays structural (bounded), equality stays physical. *)
+module Body_key_tbl = Hashtbl.Make (struct
+  type t = Ast.param list * Ast.stmt list
+
+  let equal = ( == )
+  let hash = Hashtbl.hash
+end)
+
+module Item_tbl = Hashtbl.Make (struct
+  type t = Ast.item
+
+  let equal = ( == )
+  let hash = Hashtbl.hash
+end)
+
 exception Error of Emo_support.Diagnostic.t
 
 let error span ?hint code message =
@@ -74,7 +92,7 @@ and syntax_tree =
 and class_def_value = {
   cname : string;
   cinit : closure option; (* at most one init, per the parser *)
-  cmethods : (string * closure) list;
+  cmethods : closure Frame_tbl.t; (* built once at the class definition *)
   builtin_exception : bool; (* the shipped `Exception` class *)
 }
 
@@ -137,6 +155,9 @@ and closure = {
       (* the body may end without `return` — a def with no return type
          (Void) and any arrow block; the checker rejects stray returns in
          these, so falling off the end yields Void instead of an error *)
+  mutable code : scode array option;
+      (* the body staged into closures; [None] until the first call, then
+         fetched from the shared cache keyed on the body itself *)
 }
 
 and module_handle = {
@@ -175,6 +196,20 @@ and emo_map = {
 
 and env = { frame : binding Frame_tbl.t; parent : env option }
 and binding = { mutable bound : value; mutable_ : bool }
+
+(* The staged shapes: an expression's compiled read and a statement's
+   compiled effect, both taking the frame they run against. *)
+and code = env -> value
+and scode = env -> unit
+
+(* A method call's argument source: the count answers arity checks before
+   anything evaluates, and each arm pulls the arguments lazily exactly
+   where the tree walk did — named-keeping or positional-only. *)
+and method_args = {
+  ma_count : int;
+  ma_named : env -> (string option * value) list;
+  ma_positional : env -> value list;
+}
 
 (* Splits on a (possibly multi-character) separator. *)
 let split_on_string sep s =
@@ -441,7 +476,7 @@ let global_env () =
           {
             cname = "Exception";
             cinit = None;
-            cmethods = [];
+            cmethods = Frame_tbl.create 8;
             builtin_exception = true;
           };
       mutable_ = false;
@@ -1314,7 +1349,7 @@ let runtime_is span v t =
       | Some sigs ->
           List.for_all
             (fun (m, arity) ->
-              match List.assoc_opt m i.iclass.cmethods with
+              match Frame_tbl.find_opt i.iclass.cmethods m with
               | Some closure -> List.length closure.params = arity
               | None -> false)
             sigs
@@ -1880,7 +1915,7 @@ let net_raise span message =
             {
               cname = "Exception";
               cinit = None;
-              cmethods = [];
+              cmethods = Frame_tbl.create 8;
               builtin_exception = true;
             };
           ifields =
@@ -1923,8 +1958,77 @@ external emo_stub_recvmsg_fd : int -> int -> int * string * int
 external emo_stub_ftruncate : int -> int64 -> unit = "emo_stub_ftruncate"
 external emo_stub_pwrite : int -> Bytes.t -> int64 -> int = "emo_stub_pwrite"
 
+(* ---- The staging helpers ----
+
+   The compiled-body layer stages a body's statements into OCaml closures
+   once, and every later execution replays the array. The staging is a
+   faithful transcription — the same [count_step] sites, the same spans,
+   the same evaluation order, the same lazy arms — so staged and
+   unstaged paths stay observationally identical. Scope depths ride
+   along: the staging walk knows which frame a name binds in, so a
+   compiled read climbs straight to that frame and hashes the name once,
+   where the tree walk hashed it at every level of the chain. *)
+
+type scope = (string * int) list
+(* name → the relative depth of the frame it binds in, nearest first *)
+
+let body_cache : scode array Body_key_tbl.t = Body_key_tbl.create 64
+let item_cache : (env -> unit) Item_tbl.t = Item_tbl.create 64
+
+(* The top-level binders seen so far, for staging later items: items run
+   in the persistent top frame, so every binder an earlier item defined
+   (or a REPL entry defined) is a depth-0 name for the next one. *)
+let top_scope : scope ref = ref []
+
+(* The names a pattern binds — its [Pattern_binding] leaves. *)
+let rec pattern_names (p : Ast.pattern) : string list =
+  match p.Ast.pattern_desc with
+  | Ast.Enum_member _ | Ast.Pattern_literal _ | Ast.Wildcard -> []
+  | Ast.Pattern_binding name -> [ name ]
+  | Ast.Tuple_pattern ps -> List.concat_map pattern_names ps
+
+(* Climbs [k] parents of a frame chain; runs out silently at the root,
+   where the caller's own miss path answers. *)
+let frame_at (env : env) (k : int) : env =
+  let rec up k e =
+    if k = 0 then e
+    else match e.parent with Some p -> up (k - 1) p | None -> e
+  in
+  up k env
+
+(* The un-staged variable read: the frame chain, then the module tree.
+   A staged read lands here whenever its static depth misses, so a
+   dynamically defined name (a REPL binding, a conditional one) resolves
+   exactly as the tree walk would. *)
+let ident_full env span name =
+  match lookup_opt env name with
+  | Some v -> v
+  | None -> (
+      match !module_handle_of [ name ] with
+      | Some h -> Module h
+      | None -> lookup env span name)
+
+(* The top-level names an item binds; the item runners extend [top_scope]
+   with these as they stage items in order. *)
+let item_binders (item : Ast.item) : scope =
+  match item.Ast.item_desc with
+  | Ast.Item_def d -> [ (d.Ast.def_name, 0) ]
+  | Ast.Item_class c -> [ (c.Ast.class_name, 0) ]
+  | Ast.Item_interface i -> [ (i.Ast.interface_name, 0) ]
+  | Ast.Item_enum e -> [ (e.Ast.enum_name, 0) ]
+  | Ast.Item_emo_group g ->
+      List.map (fun d -> (d.Ast.def_name, 0)) g.Ast.group_defs
+      @ List.map (fun (_, cname, _) -> (cname, 0)) g.Ast.group_consts
+  | Ast.Item_stmt { stmt_desc = Ast.Binding { pattern; _ }; _ } ->
+      List.map (fun n -> (n, 0)) (pattern_names pattern)
+  | Ast.Item_require _ | Ast.Item_foreign _ | Ast.Item_stmt _ -> []
+
 let rec eval_unary env span op x =
   let v = eval_expr env x in
+  unary_value env span op v
+
+(* The value half of a unary operator: the operand stands evaluated. *)
+and unary_value env span op v =
   match (op, v) with
   | Ast.Not, Bool b -> Bool (not b)
   | Ast.Not, v ->
@@ -1942,31 +2046,6 @@ let rec eval_unary env span op x =
         (Printf.sprintf "operator `~` expects an Int64, got %s" (type_name v))
 
 and eval_binary env span op left_expr right_expr =
-  let op_name = function
-    | Ast.Eq -> "=="
-    | Ast.Ne -> "!="
-    | Ast.Lt -> "<"
-    | Ast.Le -> "<="
-    | Ast.Gt -> ">"
-    | Ast.Ge -> ">="
-    | Ast.Add -> "+"
-    | Ast.Sub -> "-"
-    | Ast.Mul -> "*"
-    | Ast.Div -> "/"
-    | Ast.Mod -> "%"
-    | Ast.Bit_and -> "&"
-    | Ast.Bit_or -> "|"
-    | Ast.Bit_xor -> "^"
-    | Ast.Shl -> "<<"
-    | Ast.Shr -> ">>"
-    | Ast.And -> "&&"
-    | Ast.Or -> "||"
-  in
-  (* `&&` and `||` short-circuit: the right operand evaluates only when
-     its value is needed, matching the compiled targets, whose
-     `&&`/`||` lower to branches. The eager path below would run a
-     guarded right side (`i < n && data.get(i) == 32`) even when the
-     guard is false. *)
   match op with
   | Ast.And | Ast.Or ->
       let bool_of what v =
@@ -1984,158 +2063,189 @@ and eval_binary env span op left_expr right_expr =
         else Bool false
       else if left then Bool true
       else Bool (bool_of what (eval_expr env right_expr))
-  | _ -> (
+  | _ ->
       let left = eval_expr env left_expr in
       let right = eval_expr env right_expr in
-      let type_mismatch expects =
-        error span "E3001"
-          (Printf.sprintf "operator `%s` expects %s, got %s and %s" (op_name op)
-             expects (type_name left) (type_name right))
-      in
-      let as_float = function
-        | Int64 x -> Int64.to_float x
-        | Float f -> f
-        | v -> type_mismatch "two numbers"
-      in
-      let check_bool v =
-        match v with Bool b -> b | v -> type_mismatch "two Bools"
-      in
-      let is_pair64 x y =
-        match (x, y) with Int64 _, Int64 _ -> true | _ -> false
-      in
-      let is_pair_byte x y =
-        match (x, y) with Byte _, Byte _ -> true | _ -> false
-      in
-      let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
-      let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
-      (* Fixed-width arithmetic wraps in two's complement; Byte, being
+      binary_value env span op left right
+
+(* The operator's name, for the operator's own diagnostics. *)
+and op_name = function
+  | Ast.Eq -> "=="
+  | Ast.Ne -> "!="
+  | Ast.Lt -> "<"
+  | Ast.Le -> "<="
+  | Ast.Gt -> ">"
+  | Ast.Ge -> ">="
+  | Ast.Add -> "+"
+  | Ast.Sub -> "-"
+  | Ast.Mul -> "*"
+  | Ast.Div -> "/"
+  | Ast.Mod -> "%"
+  | Ast.Bit_and -> "&"
+  | Ast.Bit_or -> "|"
+  | Ast.Bit_xor -> "^"
+  | Ast.Shl -> "<<"
+  | Ast.Shr -> ">>"
+  | Ast.And -> "&&"
+  | Ast.Or -> "||"
+
+(* The value half of an eager binary operator: both operands stand
+   evaluated, and the operator dispatch and its diagnostics live here so
+   the staged expressions call it directly. The lazy arms in
+   [eval_binary] keep the short-circuit — an eager path would run a
+   guarded right side (`i < n && data.get(i) == 32`) even when the
+   guard is false. *)
+and binary_value env span op left right =
+  let type_mismatch expects =
+    error span "E3001"
+      (Printf.sprintf "operator `%s` expects %s, got %s and %s" (op_name op)
+         expects (type_name left) (type_name right))
+  in
+  let as_float = function
+    | Int64 x -> Int64.to_float x
+    | Float f -> f
+    | v -> type_mismatch "two numbers"
+  in
+  let check_bool v =
+    match v with Bool b -> b | v -> type_mismatch "two Bools"
+  in
+  let is_pair64 x y =
+    match (x, y) with Int64 _, Int64 _ -> true | _ -> false
+  in
+  let is_pair_byte x y =
+    match (x, y) with Byte _, Byte _ -> true | _ -> false
+  in
+  let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
+  let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
+  (* Fixed-width arithmetic wraps in two's complement; Byte, being
      unsigned, wraps modulo 256. Shift counts are non-negative and
      saturate at the width, matching the Int64 rule. *)
-      let i64_bin f = Int64 (f (i64_of left) (i64_of right)) in
-      let byte_bin f = Byte (f (byte_of left) (byte_of right) land 255) in
-      let i64_div f =
-        if i64_of right = 0L then error span "E3005" "division by zero";
-        i64_bin f
+  let i64_bin f = Int64 (f (i64_of left) (i64_of right)) in
+  let byte_bin f = Byte (f (byte_of left) (byte_of right) land 255) in
+  let i64_div f =
+    if i64_of right = 0L then error span "E3005" "division by zero";
+    i64_bin f
+  in
+  let byte_div f =
+    if byte_of right = 0 then error span "E3005" "division by zero";
+    byte_bin f
+  in
+  let i64_shift_count () =
+    let c = i64_of right in
+    if c < 0L then error span "E3005" "shift count must be non-negative";
+    c
+  in
+  let i64_shl () =
+    let c = i64_shift_count () in
+    if c >= 64L then Int64 0L
+    else Int64 (Int64.shift_left (i64_of left) (Int64.to_int c))
+  in
+  let i64_shr () =
+    let c = i64_shift_count () in
+    if c >= 64L then Int64 (if i64_of left < 0L then -1L else 0L)
+    else Int64 (Int64.shift_right (i64_of left) (Int64.to_int c))
+  in
+  let byte_shl () =
+    let c = byte_of right in
+    if c >= 8 then Byte 0 else Byte ((byte_of left lsl c) land 255)
+  in
+  let byte_shr () =
+    let c = byte_of right in
+    if c >= 8 then Byte 0 else Byte (byte_of left lsr c)
+  in
+  match op with
+  | Ast.And -> Bool (if check_bool left then check_bool right else false)
+  | Ast.Or -> Bool (if check_bool left then true else check_bool right)
+  | Ast.Eq -> Bool (equal_value left right)
+  | Ast.Ne -> Bool (not (equal_value left right))
+  | Ast.Lt when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) < 0)
+  | Ast.Lt when is_pair_byte left right -> Bool (byte_of left < byte_of right)
+  | Ast.Le when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) <= 0)
+  | Ast.Le when is_pair_byte left right -> Bool (byte_of left <= byte_of right)
+  | Ast.Gt when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) > 0)
+  | Ast.Gt when is_pair_byte left right -> Bool (byte_of left > byte_of right)
+  | Ast.Ge when is_pair64 left right ->
+      Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
+  | Ast.Ge when is_pair_byte left right -> Bool (byte_of left >= byte_of right)
+  | Ast.Lt -> Bool (as_float left < as_float right)
+  | Ast.Le -> Bool (as_float left <= as_float right)
+  | Ast.Gt -> Bool (as_float left > as_float right)
+  | Ast.Ge -> Bool (as_float left >= as_float right)
+  | Ast.Add when is_pair64 left right -> i64_bin Int64.add
+  | Ast.Sub when is_pair64 left right -> i64_bin Int64.sub
+  | Ast.Mul when is_pair64 left right -> i64_bin Int64.mul
+  | Ast.Div when is_pair64 left right -> i64_div Int64.div
+  | Ast.Mod when is_pair64 left right -> i64_div Int64.rem
+  | Ast.Add when is_pair_byte left right -> byte_bin ( + )
+  | Ast.Sub when is_pair_byte left right -> byte_bin ( - )
+  | Ast.Mul when is_pair_byte left right -> byte_bin ( * )
+  | Ast.Div when is_pair_byte left right -> byte_div ( / )
+  | Ast.Mod when is_pair_byte left right -> byte_div ( mod )
+  | Ast.Bit_and when is_pair64 left right -> i64_bin Int64.logand
+  | Ast.Bit_or when is_pair64 left right -> i64_bin Int64.logor
+  | Ast.Bit_xor when is_pair64 left right -> i64_bin Int64.logxor
+  | Ast.Shl when is_pair64 left right -> i64_shl ()
+  | Ast.Shr when is_pair64 left right -> i64_shr ()
+  | Ast.Bit_and when is_pair_byte left right ->
+      Byte (byte_of left land byte_of right)
+  | Ast.Bit_or when is_pair_byte left right ->
+      Byte (byte_of left lor byte_of right)
+  | Ast.Bit_xor when is_pair_byte left right ->
+      Byte (byte_of left lxor byte_of right)
+  | Ast.Shl when is_pair_byte left right -> byte_shl ()
+  | Ast.Shr when is_pair_byte left right -> byte_shr ()
+  | Ast.Add -> (
+      match (left, right) with
+      | Float x, Float y -> Float (x +. y)
+      | Int64 x, Float y -> Float (Int64.to_float x +. y)
+      | Float x, Int64 y -> Float (x +. Int64.to_float y)
+      | String x, String y -> String (x ^ y)
+      | _ -> type_mismatch "two numbers or two strings")
+  | Ast.Sub -> (
+      match (left, right) with
+      | Float x, Float y -> Float (x -. y)
+      | Int64 x, Float y -> Float (Int64.to_float x -. y)
+      | Float x, Int64 y -> Float (x -. Int64.to_float y)
+      | _ -> type_mismatch "two numbers")
+  | Ast.Mul -> (
+      match (left, right) with
+      | Float x, Float y -> Float (x *. y)
+      | Int64 x, Float y -> Float (Int64.to_float x *. y)
+      | Float x, Int64 y -> Float (x *. Int64.to_float y)
+      | _ -> type_mismatch "two numbers")
+  | Ast.Div | Ast.Mod -> (
+      let zero_check d =
+        match d with
+        | Float f when f = 0.0 -> error span "E3005" "division by zero"
+        | _ -> ()
       in
-      let byte_div f =
-        if byte_of right = 0 then error span "E3005" "division by zero";
-        byte_bin f
-      in
-      let i64_shift_count () =
-        let c = i64_of right in
-        if c < 0L then error span "E3005" "shift count must be non-negative";
-        c
-      in
-      let i64_shl () =
-        let c = i64_shift_count () in
-        if c >= 64L then Int64 0L
-        else Int64 (Int64.shift_left (i64_of left) (Int64.to_int c))
-      in
-      let i64_shr () =
-        let c = i64_shift_count () in
-        if c >= 64L then Int64 (if i64_of left < 0L then -1L else 0L)
-        else Int64 (Int64.shift_right (i64_of left) (Int64.to_int c))
-      in
-      let byte_shl () =
-        let c = byte_of right in
-        if c >= 8 then Byte 0 else Byte ((byte_of left lsl c) land 255)
-      in
-      let byte_shr () =
-        let c = byte_of right in
-        if c >= 8 then Byte 0 else Byte (byte_of left lsr c)
-      in
-      match op with
-      | Ast.And -> Bool (if check_bool left then check_bool right else false)
-      | Ast.Or -> Bool (if check_bool left then true else check_bool right)
-      | Ast.Eq -> Bool (equal_value left right)
-      | Ast.Ne -> Bool (not (equal_value left right))
-      | Ast.Lt when is_pair64 left right ->
-          Bool (Int64.compare (i64_of left) (i64_of right) < 0)
-      | Ast.Lt when is_pair_byte left right ->
-          Bool (byte_of left < byte_of right)
-      | Ast.Le when is_pair64 left right ->
-          Bool (Int64.compare (i64_of left) (i64_of right) <= 0)
-      | Ast.Le when is_pair_byte left right ->
-          Bool (byte_of left <= byte_of right)
-      | Ast.Gt when is_pair64 left right ->
-          Bool (Int64.compare (i64_of left) (i64_of right) > 0)
-      | Ast.Gt when is_pair_byte left right ->
-          Bool (byte_of left > byte_of right)
-      | Ast.Ge when is_pair64 left right ->
-          Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
-      | Ast.Ge when is_pair_byte left right ->
-          Bool (byte_of left >= byte_of right)
-      | Ast.Lt -> Bool (as_float left < as_float right)
-      | Ast.Le -> Bool (as_float left <= as_float right)
-      | Ast.Gt -> Bool (as_float left > as_float right)
-      | Ast.Ge -> Bool (as_float left >= as_float right)
-      | Ast.Add when is_pair64 left right -> i64_bin Int64.add
-      | Ast.Sub when is_pair64 left right -> i64_bin Int64.sub
-      | Ast.Mul when is_pair64 left right -> i64_bin Int64.mul
-      | Ast.Div when is_pair64 left right -> i64_div Int64.div
-      | Ast.Mod when is_pair64 left right -> i64_div Int64.rem
-      | Ast.Add when is_pair_byte left right -> byte_bin ( + )
-      | Ast.Sub when is_pair_byte left right -> byte_bin ( - )
-      | Ast.Mul when is_pair_byte left right -> byte_bin ( * )
-      | Ast.Div when is_pair_byte left right -> byte_div ( / )
-      | Ast.Mod when is_pair_byte left right -> byte_div ( mod )
-      | Ast.Bit_and when is_pair64 left right -> i64_bin Int64.logand
-      | Ast.Bit_or when is_pair64 left right -> i64_bin Int64.logor
-      | Ast.Bit_xor when is_pair64 left right -> i64_bin Int64.logxor
-      | Ast.Shl when is_pair64 left right -> i64_shl ()
-      | Ast.Shr when is_pair64 left right -> i64_shr ()
-      | Ast.Bit_and when is_pair_byte left right ->
-          Byte (byte_of left land byte_of right)
-      | Ast.Bit_or when is_pair_byte left right ->
-          Byte (byte_of left lor byte_of right)
-      | Ast.Bit_xor when is_pair_byte left right ->
-          Byte (byte_of left lxor byte_of right)
-      | Ast.Shl when is_pair_byte left right -> byte_shl ()
-      | Ast.Shr when is_pair_byte left right -> byte_shr ()
-      | Ast.Add -> (
-          match (left, right) with
-          | Float x, Float y -> Float (x +. y)
-          | Int64 x, Float y -> Float (Int64.to_float x +. y)
-          | Float x, Int64 y -> Float (x +. Int64.to_float y)
-          | String x, String y -> String (x ^ y)
-          | _ -> type_mismatch "two numbers or two strings")
-      | Ast.Sub -> (
-          match (left, right) with
-          | Float x, Float y -> Float (x -. y)
-          | Int64 x, Float y -> Float (Int64.to_float x -. y)
-          | Float x, Int64 y -> Float (x -. Int64.to_float y)
-          | _ -> type_mismatch "two numbers")
-      | Ast.Mul -> (
-          match (left, right) with
-          | Float x, Float y -> Float (x *. y)
-          | Int64 x, Float y -> Float (Int64.to_float x *. y)
-          | Float x, Int64 y -> Float (x *. Int64.to_float y)
-          | _ -> type_mismatch "two numbers")
-      | Ast.Div | Ast.Mod -> (
-          let zero_check d =
-            match d with
-            | Float f when f = 0.0 -> error span "E3005" "division by zero"
-            | _ -> ()
-          in
-          match (left, right) with
-          | Float x, Float y ->
-              zero_check right;
-              if op = Ast.Div then Float (x /. y) else Float (Float.rem x y)
-          | Int64 x, Float y ->
-              zero_check right;
-              if op = Ast.Div then Float (Int64.to_float x /. y)
-              else Float (Float.rem (Int64.to_float x) y)
-          | Float x, Int64 y ->
-              zero_check right;
-              if op = Ast.Div then Float (x /. Int64.to_float y)
-              else Float (Float.rem x (Int64.to_float y))
-          | _ -> type_mismatch "two numbers")
-      | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
-          type_mismatch "two Int64s or two Bytes")
+      match (left, right) with
+      | Float x, Float y ->
+          zero_check right;
+          if op = Ast.Div then Float (x /. y) else Float (Float.rem x y)
+      | Int64 x, Float y ->
+          zero_check right;
+          if op = Ast.Div then Float (Int64.to_float x /. y)
+          else Float (Float.rem (Int64.to_float x) y)
+      | Float x, Int64 y ->
+          zero_check right;
+          if op = Ast.Div then Float (x /. Int64.to_float y)
+          else Float (Float.rem x (Int64.to_float y))
+      | _ -> type_mismatch "two numbers")
+  | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
+      type_mismatch "two Int64s or two Bytes"
 
 and eval_index env span base index =
   let b = eval_expr env base in
   let i = eval_expr env index in
+  index_value env span b i
+
+(* The value half of an indexing read: the container and the index stand
+   evaluated. *)
+and index_value env span b i =
   let at len =
     let len64 = Int64.of_int len in
     match i with
@@ -2222,29 +2332,60 @@ and eval_method env span recv mname arg_exprs =
       apply v span args
   | _ ->
       let base = eval_expr env recv in
-      call_method_value env span base mname arg_exprs
+      call_method_value env span base mname
+        (method_args_of_exprs env span arg_exprs)
 
 (* The value half of a method call: the receiver stands evaluated and
    this dispatches the name against it. The tail-call sniffs in `eval_stmt`
    land here with the receiver they already evaluated, so a
    side-effecting receiver expression never runs twice. *)
-and call_method_value env span base mname arg_exprs =
-  let argc = List.length arg_exprs in
-  let eval_args () =
-    List.map
-      (fun { Ast.arg_name; arg_value } ->
-        match arg_name with
-        | Some n ->
-            error span "E3007"
-              (Printf.sprintf "methods take positional arguments only (`%s`)" n)
-        | None -> eval_expr env arg_value)
-      arg_exprs
-  in
-  let eval_args_named () =
-    List.map
-      (fun { Ast.arg_name; arg_value } -> (arg_name, eval_expr env arg_value))
-      arg_exprs
-  in
+(* Argument sources for a method call: one built from the syntax (the
+   tree walk), one from staged closures (a compiled call). Both pull
+   lazily, arm by arm, exactly where the dispatch asks for them. *)
+and method_args_of_exprs env span arg_exprs : method_args =
+  {
+    ma_count = List.length arg_exprs;
+    ma_named =
+      (fun _ ->
+        List.map
+          (fun { Ast.arg_name; arg_value } ->
+            (arg_name, eval_expr env arg_value))
+          arg_exprs);
+    ma_positional =
+      (fun _ ->
+        List.map
+          (fun { Ast.arg_name; arg_value } ->
+            match arg_name with
+            | Some n ->
+                error span "E3007"
+                  (Printf.sprintf
+                     "methods take positional arguments only (`%s`)" n)
+            | None -> eval_expr env arg_value)
+          arg_exprs);
+  }
+
+and method_args_of_codes span (codes : (string option * code) list) :
+    method_args =
+  {
+    ma_count = List.length codes;
+    ma_named = (fun env -> List.map (fun (n, c) -> (n, c env)) codes);
+    ma_positional =
+      (fun env ->
+        List.map
+          (fun (n, c) ->
+            match n with
+            | Some n ->
+                error span "E3007"
+                  (Printf.sprintf
+                     "methods take positional arguments only (`%s`)" n)
+            | None -> c env)
+          codes);
+  }
+
+and call_method_value env span base mname args =
+  let argc = args.ma_count in
+  let eval_args () = args.ma_positional env in
+  let eval_args_named () = args.ma_named env in
   let none_expected what =
     if argc = 0 then ()
     else
@@ -2290,8 +2431,8 @@ and call_method_value env span base mname arg_exprs =
       let v = module_member span h mname in
       let args = eval_args_named () in
       apply v span args
-  | Instance i, mname when List.mem_assoc mname i.iclass.cmethods ->
-      let closure = List.assoc mname i.iclass.cmethods in
+  | Instance i, mname when Frame_tbl.mem i.iclass.cmethods mname ->
+      let closure = Frame_tbl.find i.iclass.cmethods mname in
       let args = eval_args_named () in
       let frame = bind_params closure span args in
       define frame "self" ~mutable_:false (Instance i);
@@ -3039,52 +3180,85 @@ and apply f span args =
 (* Binds the arguments to the parameters: positionals fill the first free
    slot left to right, named arguments address their parameter directly. *)
 and bind_params closure span args =
-  let params = Array.of_list closure.params in
-  let positional = Queue.create () in
-  let named = Hashtbl.create 4 in
-  List.iter
-    (fun (name, value) ->
-      match name with
-      | None -> Queue.push value positional
-      | Some name ->
-          if Hashtbl.mem named name then
-            error span "E3007"
-              (Printf.sprintf "the argument `%s` is passed twice" name);
-          Hashtbl.replace named name value)
-    args;
-  let positional_count = Queue.length positional in
-  let named_count = Hashtbl.length named in
-  if positional_count + named_count <> Array.length params then
-    error span "E3007"
-      (Printf.sprintf "`%s` expects %d argument%s, got %d" closure.def_name
-         (Array.length params)
-         (if Array.length params = 1 then "" else "s")
-         (positional_count + named_count));
-  let frame = child closure.env in
-  Array.iter
-    (fun { Ast.param_name; _ } ->
-      let value =
-        match Hashtbl.find_opt named param_name with
-        | Some v ->
-            Hashtbl.remove named param_name;
-            v
-        | None ->
-            if Queue.is_empty positional then
-              error span "E3007"
-                (Printf.sprintf "`%s` is missing an argument for `%s`"
-                   closure.def_name param_name)
-            else Queue.pop positional
-      in
-      define frame param_name ~mutable_:false value)
-    params;
-  let leftover =
-    Hashtbl.fold (fun k _ acc -> if acc = None then Some k else acc) named None
+  (* The every-call shape — all positional, arity matching — binds
+     straight down the parameter list: no queue, no named-argument
+     table, no array copy. Anything else (named arguments, arity
+     mismatches) takes the general path below, whose diagnostics are
+     the same either way. *)
+  let rec all_positional = function
+    | [] -> true
+    | (None, _) :: rest -> all_positional rest
+    | (Some _, _) :: _ -> false
   in
-  match leftover with
-  | Some name ->
+  if all_positional args then (
+    let positional_count = List.length args in
+    if positional_count <> List.length closure.params then
       error span "E3007"
-        (Printf.sprintf "`%s` has no parameter named `%s`" closure.def_name name)
-  | None -> frame
+        (Printf.sprintf "`%s` expects %d argument%s, got %d" closure.def_name
+           (List.length closure.params)
+           (if List.length closure.params = 1 then "" else "s")
+           positional_count);
+    let frame = child closure.env in
+    let rec bind params args =
+      match (params, args) with
+      | [], [] -> frame
+      | p :: ps, (_, v) :: rest ->
+          define frame p.Ast.param_name ~mutable_:false v;
+          bind ps rest
+      | _ -> assert false
+      (* the count check above pins both lists to the same length *)
+    in
+    bind closure.params args)
+  else
+    let params = Array.of_list closure.params in
+    let positional = Queue.create () in
+    let named = Hashtbl.create 4 in
+    List.iter
+      (fun (name, value) ->
+        match name with
+        | None -> Queue.push value positional
+        | Some name ->
+            if Hashtbl.mem named name then
+              error span "E3007"
+                (Printf.sprintf "the argument `%s` is passed twice" name);
+            Hashtbl.replace named name value)
+      args;
+    let positional_count = Queue.length positional in
+    let named_count = Hashtbl.length named in
+    if positional_count + named_count <> Array.length params then
+      error span "E3007"
+        (Printf.sprintf "`%s` expects %d argument%s, got %d" closure.def_name
+           (Array.length params)
+           (if Array.length params = 1 then "" else "s")
+           (positional_count + named_count));
+    let frame = child closure.env in
+    Array.iter
+      (fun { Ast.param_name; _ } ->
+        let value =
+          match Hashtbl.find_opt named param_name with
+          | Some v ->
+              Hashtbl.remove named param_name;
+              v
+          | None ->
+              if Queue.is_empty positional then
+                error span "E3007"
+                  (Printf.sprintf "`%s` is missing an argument for `%s`"
+                     closure.def_name param_name)
+              else Queue.pop positional
+        in
+        define frame param_name ~mutable_:false value)
+      params;
+    let leftover =
+      Hashtbl.fold
+        (fun k _ acc -> if acc = None then Some k else acc)
+        named None
+    in
+    match leftover with
+    | Some name ->
+        error span "E3007"
+          (Printf.sprintf "`%s` has no parameter named `%s`" closure.def_name
+             name)
+    | None -> frame
 
 and apply_closure closure span args = eval_body closure span args
 
@@ -4982,45 +5156,651 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf "unknown runtime implementation `%s`" name)
 
+(* Stages a call's argument syntax into (name, code) pairs; the method
+   dispatch pulls them lazily, arm by arm, where the tree walk did. *)
+and compile_args d scope arg_exprs : (string option * code) list =
+  List.map
+    (fun { Ast.arg_name; arg_value } ->
+      (arg_name, compile_expr d scope arg_value))
+    arg_exprs
+
+(* Stages an expression. Every arm begins with the same [count_step] the
+   tree walk performs at [eval_expr]'s entry, so the step budget and the
+   curfew count identical steps on both paths. Arms whose work is
+   already value-level (binary, unary, member, index) call the extracted
+   halves; arms owned by runtime registries or effects ([Quote], [Do])
+   delegate to the tree walk whole. *)
+and compile_expr d scope e : code =
+  let span = e.Ast.span in
+  match e.Ast.desc with
+  | Ast.Int64 n ->
+      fun _ ->
+        count_step ();
+        Int64 n
+  | Ast.Byte n ->
+      fun _ ->
+        count_step ();
+        Byte n
+  | Ast.Float f ->
+      fun _ ->
+        count_step ();
+        Float f
+  | Ast.Bool b ->
+      fun _ ->
+        count_step ();
+        Bool b
+  | Ast.Char c ->
+      fun _ ->
+        count_step ();
+        Char c
+  | Ast.String s ->
+      fun _ ->
+        count_step ();
+        String s
+  | Ast.Ident name -> (
+      match List.assoc_opt name scope with
+      | Some depth -> (
+          (* [depth] counts frames from the body's root; this read runs
+             [d] frames down, so the binder sits [d - depth] parents up. *)
+          let up = d - depth in
+          fun env ->
+            count_step ();
+            match Frame_tbl.find_opt (frame_at env up).frame name with
+            | Some b -> b.bound
+            | None -> ident_full env span name)
+      | None ->
+          fun env ->
+            count_step ();
+            ident_full env span name)
+  | Ast.Type_ident t -> (
+      fun env ->
+        count_step ();
+        match lookup_opt env t with Some v -> v | None -> TypeValue t)
+  | Ast.Interpolated parts ->
+      let parts =
+        List.map
+          (function
+            | Ast.Literal_text s -> fun _ -> s
+            | Ast.Part_expr e ->
+                let c = compile_expr d scope e in
+                fun env -> to_string (c env))
+          parts
+      in
+      fun env ->
+        count_step ();
+        String (String.concat "" (List.map (fun p -> p env) parts))
+  | Ast.Self -> (
+      (* `self` binds in the method frame at depth 0; the staged body's
+         scope carries it, and the miss path answers the way the tree
+         walk's own read does. *)
+      match List.assoc_opt "self" scope with
+      | Some depth -> (
+          let up = d - depth in
+          fun env ->
+            count_step ();
+            match Frame_tbl.find_opt (frame_at env up).frame "self" with
+            | Some b -> b.bound
+            | None -> lookup env span "self")
+      | None ->
+          fun env ->
+            count_step ();
+            lookup env span "self")
+  | Ast.Member (inner, name) ->
+      let cinner = compile_expr d scope inner in
+      fun env ->
+        count_step ();
+        member_read env span name (cinner env)
+  | Ast.Index (base, index) ->
+      let cbase = compile_expr d scope base in
+      let cindex = compile_expr d scope index in
+      fun env ->
+        count_step ();
+        index_value env span (cbase env) (cindex env)
+  | Ast.Tuple es ->
+      let cs = List.map (compile_expr d scope) es in
+      fun env ->
+        count_step ();
+        Tuple (List.map (fun c -> c env) cs)
+  | Ast.Array_literal es ->
+      let cs = List.map (compile_expr d scope) es in
+      fun env ->
+        count_step ();
+        Array (Array.of_list (List.map (fun c -> c env) cs))
+  | Ast.Map_literal entries ->
+      let cs =
+        List.map
+          (fun (k, v) -> (compile_expr d scope k, compile_expr d scope v))
+          entries
+      in
+      fun env ->
+        count_step ();
+        let m = fresh_map () in
+        List.iter (fun (ck, cv) -> map_set span m (ck env) (cv env)) cs;
+        Map m
+  | Ast.Arrow_block (params, body) ->
+      fun env ->
+        count_step ();
+        ArrowBlock
+          {
+            def_name = "<arrow block>";
+            params;
+            body;
+            env;
+            void_ok = true;
+            code = None;
+          }
+  | Ast.Unary (op, x) ->
+      let cx = compile_expr d scope x in
+      fun env ->
+        count_step ();
+        unary_value env span op (cx env)
+  | Ast.Binary (((Ast.And | Ast.Or) as op), l, r) ->
+      let cl = compile_expr d scope l in
+      let cr = compile_expr d scope r in
+      let what = op_name op in
+      let bool_of v =
+        match v with
+        | Bool b -> b
+        | v ->
+            error span "E3001"
+              (Printf.sprintf "operator `%s` expects two Bools, got %s" what
+                 (type_name v))
+      in
+      if op = Ast.And then (fun env ->
+        count_step ();
+        if bool_of (cl env) then Bool (bool_of (cr env)) else Bool false)
+      else fun env ->
+        count_step ();
+        if bool_of (cl env) then Bool true else Bool (bool_of (cr env))
+  | Ast.Binary (op, l, r) ->
+      let cl = compile_expr d scope l in
+      let cr = compile_expr d scope r in
+      fun env ->
+        count_step ();
+        binary_value env span op (cl env) (cr env)
+  | Ast.If_expr { cond; then_expr; else_expr } -> (
+      let ccond = compile_expr d scope cond in
+      let cthen = compile_expr d scope then_expr in
+      let celse = compile_expr d scope else_expr in
+      fun env ->
+        count_step ();
+        match ccond env with
+        | Bool true -> cthen env
+        | Bool false -> celse env
+        | v ->
+            error span "E3001"
+              (Printf.sprintf
+                 "the if expression's condition must be a Bool, got %s"
+                 (type_name v)))
+  | Ast.Call (callee, arg_exprs) -> (
+      match callee.Ast.desc with
+      | Ast.Member (recv, mname) ->
+          compile_call_maybe_group d span scope e recv mname arg_exprs
+      | _ ->
+          let ccallee = compile_expr d scope callee in
+          let args =
+            method_args_of_codes span (compile_args d scope arg_exprs)
+          in
+          fun env ->
+            count_step ();
+            let f = ccallee env in
+            apply f span (args.ma_named env))
+  | Ast.Quote _ | Ast.Do _ -> fun env -> eval_expr env e
+
+(* A [Type_ident] receiver rides the tree path whole: the group registry
+   the [eval_method] arm consults is runtime state, not a staging-time
+   fact, so the staged call delegates when the receiver is a type name. *)
+and compile_call_maybe_group d span scope e recv mname arg_exprs : code =
+  match recv.Ast.desc with
+  | Ast.Type_ident _ -> fun env -> eval_expr env e
+  | _ ->
+      let crecv = compile_expr d scope recv in
+      let args = method_args_of_codes span (compile_args d scope arg_exprs) in
+      fun env ->
+        count_step ();
+        let base = crecv env in
+        call_method_value env span base mname args
+
+(* Stages a statement. The [count_step] at [eval_stmt]'s entry opens
+   every arm; delegated arms ([Receive] — the mailbox protocol — and
+   anything whose receiver shape belongs to runtime registries) hand the
+   whole statement to the tree walk, which performs that step itself. *)
+and compile_stmt d scope ~tail s : scode =
+  let span = s.Ast.stmt_span in
+  match s.Ast.stmt_desc with
+  | Ast.Expr_stmt e when tail -> (
+      match e.Ast.desc with
+      | Ast.Call ({ Ast.desc = Ast.Member (recv, mname); _ }, arg_exprs) -> (
+          match recv.Ast.desc with
+          | Ast.Type_ident _ -> fun env -> eval_stmt env s ~tail
+          | _ -> (
+              let crecv = compile_expr d scope recv in
+              let args =
+                method_args_of_codes span (compile_args d scope arg_exprs)
+              in
+              fun env ->
+                count_step ();
+                let base = crecv env in
+                match base with
+                | Instance i -> (
+                    match Frame_tbl.find_opt i.iclass.cmethods mname with
+                    | Some closure ->
+                        let vals = args.ma_named env in
+                        raise
+                          (Tail_call (closure, vals, [ ("self", Instance i) ]))
+                    | None ->
+                        ignore (call_method_value env span base mname args))
+                | _ -> ignore (call_method_value env span base mname args)))
+      | Ast.Call (callee, arg_exprs) -> (
+          let ccallee = compile_expr d scope callee in
+          let args =
+            method_args_of_codes span (compile_args d scope arg_exprs)
+          in
+          fun env ->
+            count_step ();
+            match ccallee env with
+            | ArrowBlock closure ->
+                let vals = args.ma_named env in
+                raise (Tail_call (closure, vals, []))
+            | not_a_closure ->
+                ignore (apply not_a_closure span (args.ma_named env)))
+      | _ ->
+          let ce = compile_expr d scope e in
+          fun env ->
+            count_step ();
+            ignore (ce env))
+  | Ast.Expr_stmt e ->
+      let ce = compile_expr d scope e in
+      fun env ->
+        count_step ();
+        ignore (ce env)
+  | Ast.Binding { mutable_; pattern; init } -> (
+      match pattern.Ast.pattern_desc with
+      | Ast.Pattern_binding name ->
+          let cinit = compile_expr d scope init in
+          fun env ->
+            count_step ();
+            define env name ~mutable_ (cinit env)
+      | _ ->
+          let cinit = compile_expr d scope init in
+          fun env ->
+            count_step ();
+            let v = cinit env in
+            if not (match_pattern env span pattern v) then
+              error span "E3006"
+                (Printf.sprintf "no `case` branch matched this %s value"
+                   (type_name v)))
+  | Ast.Assign { target; value } -> (
+      let cvalue = compile_expr d scope value in
+      match target.Ast.desc with
+      | Ast.Ident name ->
+          fun env ->
+            count_step ();
+            assign env span name (cvalue env)
+      | Ast.Member ({ Ast.desc = Ast.Self; _ }, name) -> (
+          fun env ->
+            count_step ();
+            let v = cvalue env in
+            match lookup env span "self" with
+            | Instance i ->
+                if List.mem_assoc name i.ifields then
+                  i.ifields <-
+                    List.map
+                      (fun (n, old) ->
+                        if String.equal n name then (n, v) else (n, old))
+                      i.ifields
+                else i.ifields <- i.ifields @ [ (name, v) ]
+            | v ->
+                error span "E3003"
+                  (Printf.sprintf
+                     "`self.x = ...` needs an instance under construction, got \
+                      %s"
+                     (type_name v)))
+      | Ast.Index (base, idx) -> (
+          let cbase = compile_expr d scope base in
+          let cindex = compile_expr d scope idx in
+          fun env ->
+            count_step ();
+            let v = cvalue env in
+            match cbase env with
+            | Array xs -> (
+                match cindex env with
+                | Int64 i when i >= 0L && i < Int64.of_int (Array.length xs) ->
+                    xs.(Int64.to_int i) <- v
+                | Int64 i ->
+                    error span "E3004"
+                      (Printf.sprintf
+                         "index %Ld is out of bounds for a length-%d Array" i
+                         (Array.length xs))
+                | bad ->
+                    error span "E3001"
+                      (Printf.sprintf "the index must be an Int64, got %s"
+                         (type_name bad)))
+            | Tuple _ ->
+                error span "E3003" "a tuple is immutable; nothing to assign"
+            | other ->
+                error span "E3003"
+                  (Printf.sprintf "`a[i] = v` assigns into an Array, got %s"
+                     (type_name other)))
+      | _ ->
+          fun env ->
+            count_step ();
+            let _v = cvalue env in
+            error span "E3003" "invalid assignment target")
+  | Ast.Return None ->
+      fun env ->
+        count_step ();
+        not_yet span "a valueless `return`"
+  | Ast.Return (Some e) -> (
+      match e.Ast.desc with
+      | Ast.Call ({ Ast.desc = Ast.Member (recv, mname); _ }, arg_exprs) -> (
+          match recv.Ast.desc with
+          | Ast.Type_ident _ -> fun env -> eval_stmt env s
+          | _ -> (
+              let crecv = compile_expr d scope recv in
+              let args =
+                method_args_of_codes span (compile_args d scope arg_exprs)
+              in
+              fun env ->
+                count_step ();
+                let base = crecv env in
+                match base with
+                | Instance i -> (
+                    match Frame_tbl.find_opt i.iclass.cmethods mname with
+                    | Some closure ->
+                        let vals = args.ma_named env in
+                        raise
+                          (Tail_call (closure, vals, [ ("self", Instance i) ]))
+                    | None ->
+                        raise
+                          (Return_signal
+                             (call_method_value env span base mname args)))
+                | _ ->
+                    raise
+                      (Return_signal
+                         (call_method_value env span base mname args))))
+      | Ast.Call (callee, arg_exprs) -> (
+          let ccallee = compile_expr d scope callee in
+          let args =
+            method_args_of_codes span (compile_args d scope arg_exprs)
+          in
+          fun env ->
+            count_step ();
+            match ccallee env with
+            | ArrowBlock closure ->
+                let vals = args.ma_named env in
+                raise (Tail_call (closure, vals, []))
+            | not_a_closure ->
+                let vals =
+                  List.map
+                    (fun (n, v) ->
+                      match n with
+                      | Some n ->
+                          error span "E3007"
+                            (Printf.sprintf
+                               "builtins take positional arguments only (`%s`)"
+                               n)
+                      | None -> v)
+                    (args.ma_named env)
+                in
+                raise
+                  (Return_signal
+                     (apply not_a_closure span
+                        (List.map (fun v -> (None, v)) vals))))
+      | _ ->
+          let ce = compile_expr d scope e in
+          fun env ->
+            count_step ();
+            raise (Return_signal (ce env)))
+  | Ast.If { cond; then_body; else_body } -> (
+      let ccond = compile_expr d scope cond in
+      let cthen = compile_stmts_arr d scope ~tail then_body in
+      let celse = Option.map (compile_stmts_arr d scope ~tail) else_body in
+      fun env ->
+        count_step ();
+        match ccond env with
+        | Bool true -> Array.iter (fun c -> c env) cthen
+        | Bool false -> (
+            match celse with
+            | Some body -> Array.iter (fun c -> c env) body
+            | None -> ())
+        | v ->
+            error cond.Ast.span "E3001"
+              (Printf.sprintf "the `if` condition must be a Bool, got %s"
+                 (type_name v)))
+  | Ast.Case { scrutinee; branches } ->
+      let cscrutinee = compile_expr d scope scrutinee in
+      let cbranches =
+        List.map
+          (fun branch ->
+            let names = pattern_names branch.Ast.pattern in
+            let scope_branch =
+              List.fold_left (fun acc n -> (n, d + 1) :: acc) scope names
+            in
+            let cguard =
+              Option.map (compile_expr (d + 1) scope_branch) branch.Ast.guard
+            in
+            let cbody =
+              compile_stmts_arr (d + 1) scope_branch ~tail branch.Ast.body
+            in
+            (branch.Ast.pattern, cguard, cbody))
+          branches
+      in
+      fun env ->
+        count_step ();
+        let v = cscrutinee env in
+        let rec try_branches = function
+          | [] ->
+              error span "E3006"
+                (Printf.sprintf "no `case` branch matched this %s value"
+                   (type_name v))
+          | (pattern, cguard, cbody) :: rest ->
+              let frame = child env in
+              if not (match_pattern frame span pattern v) then try_branches rest
+              else
+                let guard_holds =
+                  match cguard with
+                  | Some cg -> (
+                      match cg frame with
+                      | Bool b -> b
+                      | gv ->
+                          error span "E3001"
+                            (Printf.sprintf
+                               "a `when` guard must be a Bool, got %s"
+                               (type_name gv)))
+                  | None -> true
+                in
+                if guard_holds then Array.iter (fun c -> c frame) cbody
+                else try_branches rest
+        in
+        try_branches cbranches
+  | Ast.Receive _ -> fun env -> eval_stmt env s ~tail
+  | Ast.Send { target; message } ->
+      let ctarget = compile_expr d scope target in
+      let cmessage = compile_expr d scope message in
+      fun env ->
+        count_step ();
+        let pid =
+          match ctarget env with
+          | Pid pid -> pid
+          | other ->
+              error span "E3001"
+                (Printf.sprintf "`<-` delivers to a pid, got %s"
+                   (type_name other))
+        in
+        Effect.perform (Send (pid, cmessage env, span))
+  | Ast.Raise e ->
+      let ce = compile_expr d scope e in
+      fun env ->
+        count_step ();
+        let v = ce env in
+        (match v with
+        | Instance i when i.iclass.builtin_exception -> ()
+        | other ->
+            error span "E4024"
+              (Printf.sprintf "`raise` carries an `Exception` instance, got %s"
+                 (type_name other)));
+        raise (Emo_raise (v, span, !call_trace))
+  | Ast.While { cond; body } -> (
+      let ccond = compile_expr d scope cond in
+      let cbody = compile_stmts_arr (d + 1) scope ~tail:false body in
+      fun env ->
+        count_step ();
+        let rec iterate () =
+          count_step ();
+          match ccond env with
+          | Bool true ->
+              let body_env = child env in
+              (try Array.iter (fun c -> c body_env) cbody
+               with Continue_signal -> ());
+              iterate ()
+          | Bool false -> ()
+          | v ->
+              error cond.Ast.span "E3001"
+                (Printf.sprintf "the `while` condition must be a Bool, got %s"
+                   (type_name v))
+        in
+        try iterate () with Break_signal -> ())
+  | Ast.For { init; cond; post; body } -> (
+      (* The header `var` binds in the loop's own frame (depth d+1), so
+         the condition, the post clause, and the body all stage against
+         the scope extended with it; the body's statements stage one
+         deeper, for the fresh per-iteration frame. *)
+      let init_names =
+        match init.Ast.stmt_desc with
+        | Ast.Binding { pattern; _ } -> pattern_names pattern
+        | _ -> []
+      in
+      let scope_loop =
+        List.fold_left (fun acc n -> (n, d + 1) :: acc) scope init_names
+      in
+      let cinit = compile_stmt (d + 1) scope_loop ~tail:false init in
+      let ccond = compile_expr (d + 1) scope_loop cond in
+      let cpost = compile_stmt (d + 1) scope_loop ~tail:false post in
+      let cbody = compile_stmts_arr (d + 2) scope_loop ~tail:false body in
+      fun env ->
+        count_step ();
+        let loop_env = child env in
+        cinit loop_env;
+        let rec iterate () =
+          count_step ();
+          match ccond loop_env with
+          | Bool true ->
+              let body_env = child loop_env in
+              (try Array.iter (fun c -> c body_env) cbody
+               with Continue_signal -> ());
+              cpost loop_env;
+              iterate ()
+          | Bool false -> ()
+          | v ->
+              error cond.Ast.span "E3001"
+                (Printf.sprintf "the `for` condition must be a Bool, got %s"
+                   (type_name v))
+        in
+        try iterate () with Break_signal -> ())
+  | Ast.Break ->
+      fun env ->
+        count_step ();
+        raise Break_signal
+  | Ast.Continue ->
+      fun env ->
+        count_step ();
+        raise Continue_signal
+
+(* Stages a statement list: every statement but the last runs without
+   tailness, the last inherits it — the same shape [eval_stmts] walks. *)
+and compile_stmts_arr d scope ~tail stmts : scode array =
+  let rec build scope acc = function
+    | [] -> List.rev acc
+    | [ last ] -> List.rev (compile_stmt d scope ~tail last :: acc)
+    | s :: rest -> (
+        match s.Ast.stmt_desc with
+        | Ast.Binding { pattern; _ } ->
+            let c = compile_stmt d scope ~tail:false s in
+            let names = pattern_names pattern in
+            build
+              (List.fold_left (fun a n -> (n, d) :: a) scope names)
+              (c :: acc) rest
+        | _ ->
+            let c = compile_stmt d scope ~tail:false s in
+            build scope (c :: acc) rest)
+  in
+  Array.of_list (build scope [] stmts)
+
+(* The staged body: fetched from the cache keyed on the body itself, so
+   a lambda expression that re-evaluates in a loop lands on the copy
+   staged the first time. The scope carries the parameters and `self`,
+   each bound in the call frame at depth 0. *)
+and body_code (closure : closure) : scode array =
+  let key = (closure.params, closure.body) in
+  match Body_key_tbl.find_opt body_cache key with
+  | Some c -> c
+  | None ->
+      let scope =
+        List.map (fun p -> (p.Ast.param_name, 0)) closure.params
+        @ [ ("self", 0) ]
+      in
+      let c = compile_stmts_arr 0 scope ~tail:true closure.body in
+      Body_key_tbl.replace body_cache key c;
+      c
+
+(* Replays a staged body: statements run in order, the last one staged
+   with the exit's tailness. A body that runs off its end — empty or
+   not — answers per [void_ok], exactly where [run_body]'s [] case
+   answered. A return or a tail call unwinds through the signals the
+   frame loop handles. *)
+and run_code closure span frame (code : scode array) : value =
+  let fell_off () =
+    if closure.void_ok then Void
+    else
+      error span "E3008"
+        (Printf.sprintf "reached the end of %s without `return`"
+           closure.def_name)
+  in
+  match Array.length code with
+  | 0 -> fell_off ()
+  | n ->
+      let last = n - 1 in
+      let rec go i =
+        if i = last then (
+          code.(i) frame;
+          fell_off ())
+        else (
+          code.(i) frame;
+          go (i + 1))
+      in
+      go 0
+
 (* The function frame. A [Tail_call] rebinds callee and arguments and
    iterates in place; the OCaml stack stays flat however long the Emo-level
    recursion runs. *)
 and eval_body closure span args =
   eval_frame closure (bind_params closure span args) span
 
-(* Runs a prepared frame. A [Tail_call] rebinds callee, arguments, and any
-   extras (a method's `self`), and iterates in place — the OCaml stack stays
-   flat however long the Emo-level recursion runs. *)
-and run_body closure span frame stmts =
-  match stmts with
-  | [] ->
-      if closure.void_ok then Void
-      else
-        error span "E3008"
-          (Printf.sprintf "reached the end of %s without `return`"
-             closure.def_name)
-  | stmt :: rest ->
-      (* The body's last statement is its exit: when the body
-         may end without a return, a bare call there is the
-         tail call the frame rebinds on. *)
-      let () =
-        match rest with
-        | [] -> eval_stmt frame stmt ~tail:true
-        | _ -> eval_stmt frame stmt
-      in
-      run_body closure span frame rest
-
 (* The hand unrolled [Fun.protect]: the finally pop rides the two
    handlers instead of [protect]'s per-call [Left/Right] wrapper and
-   closure pair, and [run_body] sits beside as a sibling so a call
-   allocates nothing but its [call_trace] cons — the per-call tax the
-   interpreter's every function call used to pay. *)
+   closure pair, so a call allocates nothing but its [call_trace] cons —
+   the per-call tax the interpreter's every function call used to pay.
+   The body replays from its staged array ([body_code] stages on first
+   call, keyed on the body itself); a [Tail_call] rebinds callee,
+   arguments, and any extras (a method's `self`), and iterates in place —
+   the OCaml stack stays flat however long the Emo-level recursion runs. *)
 and eval_frame closure frame span =
   let rec loop closure frame =
     call_trace := (closure.def_name, span) :: !call_trace;
     let v =
       try
-        try run_body closure span frame closure.body with
+        try
+          let code =
+            match closure.code with
+            | Some c -> c
+            | None ->
+                let c = body_code closure in
+                closure.code <- Some c;
+                c
+          in
+          run_code closure span frame code
+        with
         | Return_signal v -> v
         | Break_signal | Continue_signal ->
             (* The checker refuses `break` outside a loop and across a
@@ -5059,7 +5839,7 @@ and eval_stmt ?(tail = false) env s =
               (* One scan answers both: the found closure tail-calls, the
                  miss falls to the general dispatch, whose arms own every
                  non-method receiver shape. *)
-              match List.assoc_opt mname i.iclass.cmethods with
+              match Frame_tbl.find_opt i.iclass.cmethods mname with
               | Some closure ->
                   let args =
                     List.map
@@ -5068,9 +5848,14 @@ and eval_stmt ?(tail = false) env s =
                       arg_exprs
                   in
                   raise (Tail_call (closure, args, [ ("self", Instance i) ]))
-              | None -> ignore (call_method_value env span base mname arg_exprs)
-              )
-          | _ -> ignore (call_method_value env span base mname arg_exprs))
+              | None ->
+                  ignore
+                    (call_method_value env span base mname
+                       (method_args_of_exprs env span arg_exprs)))
+          | _ ->
+              ignore
+                (call_method_value env span base mname
+                   (method_args_of_exprs env span arg_exprs)))
       | Ast.Call (callee, arg_exprs) -> (
           match eval_expr env callee with
           | ArrowBlock closure ->
@@ -5162,7 +5947,7 @@ and eval_stmt ?(tail = false) env s =
           match base with
           | Instance i -> (
               (* One scan answers both, mirroring the tail path above. *)
-              match List.assoc_opt mname i.iclass.cmethods with
+              match Frame_tbl.find_opt i.iclass.cmethods mname with
               | Some closure ->
                   let args =
                     List.map
@@ -5174,11 +5959,13 @@ and eval_stmt ?(tail = false) env s =
               | None ->
                   raise
                     (Return_signal
-                       (call_method_value env span base mname arg_exprs)))
+                       (call_method_value env span base mname
+                          (method_args_of_exprs env span arg_exprs))))
           | _ ->
               raise
-                (Return_signal (call_method_value env span base mname arg_exprs))
-          )
+                (Return_signal
+                   (call_method_value env span base mname
+                      (method_args_of_exprs env span arg_exprs))))
       | Ast.Call (callee, arg_exprs) -> (
           let f = eval_expr env callee in
           match f with
@@ -5359,6 +6146,50 @@ and eval_stmts env stmts ~tail =
       eval_stmt env s;
       eval_stmts env rest ~tail
 
+(* The value half of a member read: the receiver stands evaluated and
+   the name resolves against it. *)
+and member_read env span name base =
+  match base with
+  | Instance i -> (
+      match List.assoc_opt name i.ifields with
+      | Some v -> v
+      | None ->
+          error span "E3007"
+            (Printf.sprintf "`%s` has no field `%s`" i.iclass.cname name))
+  | Obj o -> (
+      match List.assoc_opt name o.ofields with
+      | Some v -> v
+      | None ->
+          error span "E3007"
+            (Printf.sprintf "`%s` has no field `%s`" o.ocname name))
+  | EnumType e -> (
+      match List.assoc_opt name e.emembers with
+      | Some v -> v
+      | None ->
+          error span "E3007"
+            (Printf.sprintf "enum `%s` has no member `%s`" e.ename name))
+  | Module h -> module_member span h name
+  | EmoGroup members -> (
+      match List.assoc_opt name members with
+      | Some v -> v
+      | None ->
+          error span "E3007"
+            (Printf.sprintf "this group has no member `%s`" name))
+  | TypeValue t -> (
+      (* A cross-module enum: the bare name binds only in its own
+         module's environment, so member access resolves through the
+         program's owner index (CHECK.md, cross-module types). *)
+      match !type_owner_of t with
+      | Some (EnumType e) -> (
+          match List.assoc_opt name e.emembers with
+          | Some v -> v
+          | None ->
+              error span "E3007"
+                (Printf.sprintf "enum `%s` has no member `%s`" e.ename name))
+      | _ ->
+          error span "E3007" "a member access must be a call, like `x.read()`")
+  | _ -> error span "E3007" "a member access must be a call, like `x.read()`"
+
 and eval_expr env e =
   count_step ();
   let span = e.Ast.span in
@@ -5393,51 +6224,9 @@ and eval_expr env e =
                 | Ast.Part_expr e -> to_string (eval_expr env e))
               parts))
   | Ast.Self -> lookup env span "self"
-  | Ast.Member (inner, name) -> (
+  | Ast.Member (inner, name) ->
       let base = eval_expr env inner in
-      match base with
-      | Instance i -> (
-          match List.assoc_opt name i.ifields with
-          | Some v -> v
-          | None ->
-              error span "E3007"
-                (Printf.sprintf "`%s` has no field `%s`" i.iclass.cname name))
-      | Obj o -> (
-          match List.assoc_opt name o.ofields with
-          | Some v -> v
-          | None ->
-              error span "E3007"
-                (Printf.sprintf "`%s` has no field `%s`" o.ocname name))
-      | EnumType e -> (
-          match List.assoc_opt name e.emembers with
-          | Some v -> v
-          | None ->
-              error span "E3007"
-                (Printf.sprintf "enum `%s` has no member `%s`" e.ename name))
-      | Module h -> module_member span h name
-      | EmoGroup members -> (
-          match List.assoc_opt name members with
-          | Some v -> v
-          | None ->
-              error span "E3007"
-                (Printf.sprintf "this group has no member `%s`" name))
-      | TypeValue t -> (
-          (* A cross-module enum: the bare name binds only in its own
-             module's environment, so member access resolves through the
-             program's owner index (CHECK.md, cross-module types). *)
-          match !type_owner_of t with
-          | Some (EnumType e) -> (
-              match List.assoc_opt name e.emembers with
-              | Some v -> v
-              | None ->
-                  error span "E3007"
-                    (Printf.sprintf "enum `%s` has no member `%s`" e.ename name)
-              )
-          | _ ->
-              error span "E3007"
-                "a member access must be a call, like `x.read()`")
-      | _ ->
-          error span "E3007" "a member access must be a call, like `x.read()`")
+      member_read env span name base
   | Ast.Index (base, index) -> eval_index env span base index
   | Ast.Tuple es -> Tuple (List.map (eval_expr env) es)
   | Ast.Array_literal es -> Array (Array.of_list (List.map (eval_expr env) es))
@@ -5452,7 +6241,14 @@ and eval_expr env e =
       Map m
   | Ast.Arrow_block (params, body) ->
       ArrowBlock
-        { def_name = "<arrow block>"; params; body; env; void_ok = true }
+        {
+          def_name = "<arrow block>";
+          params;
+          body;
+          env;
+          void_ok = true;
+          code = None;
+        }
   | Ast.Unary (op, x) -> eval_unary env span op x
   | Ast.Binary (op, l, r) -> eval_binary env span op l r
   | Ast.If_expr { cond; then_expr; else_expr } -> (
@@ -5522,6 +6318,7 @@ let method_closure class_name env d =
     body = d.Ast.def_body;
     env;
     void_ok = may_end_without_return d;
+    code = None;
   }
 
 (* Type identity is the qualified name — `sync.WaitGroup` — so two
@@ -5548,6 +6345,7 @@ let eval_item ?(module_path = []) env item =
              body = d.Ast.def_body;
              env;
              void_ok = may_end_without_return d;
+             code = None;
            })
   | Ast.Item_class c ->
       let cname = qualify_ename module_path c.Ast.class_name in
@@ -5560,10 +6358,13 @@ let eval_item ?(module_path = []) env item =
                  (fun d -> method_closure c.Ast.class_name env d)
                  c.Ast.class_init;
              cmethods =
-               List.map
-                 (fun d ->
-                   (d.Ast.def_name, method_closure c.Ast.class_name env d))
-                 c.Ast.class_methods;
+               (let tbl = Frame_tbl.create 8 in
+                List.iter
+                  (fun d ->
+                    Frame_tbl.replace tbl d.Ast.def_name
+                      (method_closure c.Ast.class_name env d))
+                  c.Ast.class_methods;
+                tbl);
              builtin_exception = false;
            })
   | Ast.Item_interface i ->
@@ -5597,6 +6398,7 @@ let eval_item ?(module_path = []) env item =
                  body = d.Ast.def_body;
                  env;
                  void_ok = may_end_without_return d;
+                 code = None;
                }))
         g.Ast.group_defs;
       List.iter
@@ -6010,6 +6812,27 @@ exception Manifest_shape_error of manifest_shape * Emo_support.Span.t
    builtins in scope), a step budget, and `package`/`deps` blocks whose
    bindings are collected into a dependency table instead of the scope.
    Returns the resulting environment and the collected (dep, value) pairs. *)
+(* Runs one top-level item through its staged code: statement items
+   compile once per item (the cache keys on the item itself); a
+   declaration item delegates to [eval_item], which only runs once
+   anyway. The top-level binders each item defines extend [top_scope],
+   matching the persistent top frame the items run in. *)
+let run_item (env : env) (item : Ast.item) : unit =
+  let code =
+    match Item_tbl.find_opt item_cache item with
+    | Some c -> c
+    | None ->
+        let code =
+          match item.Ast.item_desc with
+          | Ast.Item_stmt s -> compile_stmt 0 !top_scope ~tail:false s
+          | _ -> fun env -> eval_item env item
+        in
+        top_scope := item_binders item @ !top_scope;
+        Item_tbl.replace item_cache item code;
+        code
+  in
+  code env
+
 let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
     env * (string * string) list =
   step_budget := Some budget;
@@ -6102,7 +6925,7 @@ let run_restricted ~(budget : int) ~(file : string) (items : Ast.item list) :
         body
   in
   let flatten item =
-    let eval_plain () = ignore (eval_item env item) in
+    let eval_plain () = run_item env item in
     match item.Ast.item_desc with
     | Ast.Item_stmt
         {
@@ -6130,7 +6953,7 @@ let run_items items =
   call_trace := [];
   let env = global_env () in
   (* Unscheduled runs refuse the process operations with E3009. *)
-  try run_without_scheduler (fun () -> List.iter (eval_item env) items)
+  try run_without_scheduler (fun () -> List.iter (run_item env) items)
   with Emo_raise (v, span, trace) ->
     raise (Error (uncaught_diagnostic (v, span, trace)))
 
