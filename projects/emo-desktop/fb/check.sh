@@ -82,6 +82,7 @@ sum=$(cat "$UI/package.emo" "$UI/ui.emo" "$UI/debug.emo" package.emo ui_fb.emo p
   canvas/package.emo canvas/ui_fb_canvas.emo frame/package.emo frame/ui_fb_frame.emo \
   frame/counter.emo win/package.emo win/ui_fb_win.emo \
   desktop/package.emo desktop/emo_desktop.emo desktop/emo_icons.emo \
+  desktop/emo_motion.emo \
   notify/package.emo notify/emo_notify.emo \
   apps/package.emo apps/ui_apps.emo apps/counter.emo apps/files.emo apps/editor.emo \
   winbuf/package.emo winbuf/ui_fb_winbuf.emo \

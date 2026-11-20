@@ -57,6 +57,28 @@ def tile_bottom(focused Bool) Int64 {
   return 0xFF3A4150
 }
 
+// The hover's grades (emo-desktop M32, A32.2): the hovered tile's
+// steel a step brighter than the quiet one and a step dimmer than the
+// focus's own — a different byte in every channel, so a hover shows
+// beside both.
+def tile_top_hover() Int64 {
+  return 0xFF5C6880
+}
+
+def tile_bottom_hover() Int64 {
+  return 0xFF44506A
+}
+
+// The hover's lift (emo-desktop M32, A32.2): the pixel the hovered
+// tile rises — its top row rides the shelf's own edge row, and the
+// travel's erase stays the grade's rows alone. One pixel is the
+// honest bound: a deeper lift's seats cross into the material's band
+// (the art's own rows the erase cannot rebuild without the art), and
+// the exit's seats would leave the tile's stale rows there.
+def tile_lift() Int64 {
+  return 1
+}
+
 // The tile index at a display position, or -1: outside the strip is
 // no dock's business, and a gap between tiles names no app. `count`
 // is the shell's app count, `w` and `h` the display's mode.
@@ -264,6 +286,41 @@ def paint(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
   }
 }
 
+// One tile's place repainted (emo-desktop M32, A32.2): the shelf
+// itself repainted first — the rounded's own walk, the tiles and dots
+// it carried cleared with the shelf's edges and corners exactly as the
+// strip's whole paint lays them (the shelf's coverage ring the only
+// twice-blended pixels, the arc's outside untouched) — then the tile
+// at its lifted seat, the grades the hover's and the focus's own, the
+// mark at three quarters, the running dot at its foot when the bit
+// carries it. `w` is the strip's own width, the shelf's span the erase
+// derives it from. The dock's hover and the focus's walk repaint
+// through this one tile at a time; the strip's whole paint stays for
+// the states that move the shelf's own.
+def paint_tile(s ui_fb.Surface, i Int64, icon_idx Int64, running Bool,
+               lift Int64, focused Bool, hovered Bool, w Int64) Void {
+  const tx = tile_x(i)
+  const ty = tile_y()
+  s.rounded(shelf_pad(), shelf_top_pad(), w - shelf_pad() * 2,
+    shelf_height(), shelf_radius(), shelf_top(), shelf_bottom())
+  const sy = ty - lift
+  var top = tile_top(focused)
+  var bottom = tile_bottom(focused)
+  if hovered {
+    top = tile_top_hover()
+    bottom = tile_bottom_hover()
+  }
+  s.rounded(tx, sy, tile_size(), tile_size(), 8, top, bottom)
+  emo_icons.paint_icon(s, icon_idx,
+    tx + (tile_size() - emo_icons.icon_size(tile_size())) / 2,
+    sy + (tile_size() - emo_icons.icon_size(tile_size())) / 2,
+    emo_icons.icon_size(tile_size()), emo_icons.icon_ink(),
+    ui_fb.grade(top, bottom, tile_size() / 2, tile_size()))
+  if running {
+    s.fill(tx + 14, sy + 26, 4, 4, ink())
+  }
+}
+
 // ---- the desktop's own canvas (emo-desktop A13) ----
 //
 // The macOS-like desktop's three surfaces: the wallpaper (role 4, the
@@ -371,6 +428,22 @@ def paint_icon(s ui_fb.Surface, idx Int64, x Int64, y Int64, size Int64,
 def paint_icon_straight(s ui_fb.Surface, idx Int64, x Int64, y Int64,
                         size Int64, fg Int64, back Int64) Void {
   emo_icons.paint_icon_straight(s, idx, x, y, size, fg, back)
+}
+
+// The motion's doors (emo-desktop M32, A32.1): the easing file is the
+// package's third module, the consumers' addresses these three — the
+// windows' rise and sink and the shell's motions walk the same
+// squares.
+def ease_out(r Int64, i Int64, steps Int64) Int64 {
+  return emo_motion.ease_out(r, i, steps)
+}
+
+def ease_in(r Int64, i Int64, steps Int64) Int64 {
+  return emo_motion.ease_in(r, i, steps)
+}
+
+def spring(r Int64, i Int64, steps Int64) Int64 {
+  return emo_motion.spring(r, i, steps)
 }
 
 // The wallpaper's colors: a deep navy at the top running into a dusky
@@ -538,12 +611,66 @@ def pager_empty_ink() Int64 {
   return 0x78B8BCC4
 }
 
+// The walk's paint (emo-desktop M32, A32.3, D13): the query verb's
+// word only ever fills the low twelve bits (the active desk and the
+// occupancy), and the slide's caller annotates the free half — the
+// cell the walk starts from, the frame and the steps, four bits each
+// from the twelfth up. An annotated word the pager paints the walk:
+// every cell in the state the walk starts from (the mask the
+// annotation's own — the occupancy the verb packed before the show),
+// none the accent's, and the accent itself on the eased x between the
+// cells, the vocabulary's own decay, carrying the destination's
+// number.
+def paint_pager_walk(s ui_fb.Surface, f ui_fb.raster.Strike,
+                     desks Int64, acc Int64) Void {
+  const wfrom = (desks >> 12) & 15
+  const wt = (desks >> 16) & 15
+  const wsteps = (desks >> 20) & 15
+  const wmask = (desks >> 8) & 15
+  const wto = desks & 255
+  var wi = 0
+  while wi < pager_count() {
+    const cell = pager_cell(f, wi)
+    const x = cell >> 32
+    const y = cell & 4294967295
+    var ground = 0
+    var ink_color = pager_empty_ink()
+    if (wmask >> wi) & 1 == 1 {
+      ground = pager_occupied_ground()
+      ink_color = pager_occupied_ink()
+    }
+    if ground != 0 {
+      s.rounded(x, y, pager_size(), pager_size(), 4, ground, ground)
+    }
+    const ns = "${wi + 1}"
+    ui_fb.text(f, ns, x + (pager_size() - ui_fb.text_width(f, ns)) / 2,
+      y + (pager_size() - f.line_height()) / 2, ink_color, s)
+    wi = wi + 1
+  }
+  const c0 = pager_cell(f, wfrom)
+  const c1 = pager_cell(f, wto)
+  const wx = (c0 >> 32) +
+    emo_motion.ease_out((c1 >> 32) - (c0 >> 32), wt, wsteps)
+  var wground = pager_active_ground()
+  if acc >= 0 {
+    wground = 0xFF000000 | acc
+  }
+  s.rounded(wx, c0 & 4294967295, pager_size(), pager_size(), 4, wground,
+    wground)
+  const wns = "${wto + 1}"
+  ui_fb.text(f, wns, wx + (pager_size() - ui_fb.text_width(f, wns)) / 2,
+    (c0 & 4294967295) + (pager_size() - f.line_height()) / 2,
+    pager_active_ink(), s)
+}
+
 // The four cells onto the bar's surface: the caller's `desks` word
 // decoded — the active desk in the low byte, the occupancy mask above —
 // one rounded ground where the state names one, the number centered in
 // every cell. The active cell's ground is the palette's accent (A31.2)
 // at the caller's own answer — the art's chroma when the walk gave it,
-// the rose constant the failure keeps when it did not.
+// the rose constant the failure keeps when it did not. The slide's
+// annotated word the walk's own paint carries (`paint_pager_walk`,
+// the header's dispatch).
 def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64,
                 acc Int64) Void {
   const active = desks & 255
@@ -577,28 +704,16 @@ def paint_pager(s ui_fb.Surface, f ui_fb.raster.Strike, desks Int64,
   }
 }
 
-// The header bar onto its own surface, whole from scratch: the
-// decoded art's rows under the header's scrim, row by row (A31.2 —
-// the material replays the runs, the formula's numbers gone), then
-// the wordmark one pad in — its ink the palette's accent, the art's
-// own chroma at the ink energy the ribbons carry, the cyan constant
-// the failure keeps — the bell and the pager after it, the wall clock
-// at the right edge and the running count before it. `mode` is the
-// display's own packed word (w above h, the shell's packing — the
-// eight arguments the machine's calls take are the wall here too).
-// The clock is
-// `now` — the seconds the caller read, never the bar's own (the bar
-// has no clock of its own; the time verb and the caller's wake are its
-// ground, D17) — and the count is the one fact the desktop keeps (its
-// own children's residency; the foreground app's name it does not
-// know, and the bar does not pretend to). The desks are the pager's
-// word — the query verb's own packing, the active desk in the low byte
-// and the occupancy mask above it (D18); the caller read it, the bar
-// does no verb of its own. The text sits centered in the bar's height,
-// the line box's own.
-def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
-                 mode Int64, running Int64, now Int64,
-                 desks Int64, art Array[Int64]) Void {
+// The header bar's chrome — the decoded art's rows under the header's
+// scrim, row by row (A31.2 — the material replays the runs, the
+// formula's numbers gone), then the wordmark one pad in — its ink the
+// palette's accent, the art's own chroma at the ink energy the ribbons
+// carry, the cyan constant the failure keeps — the wall clock at the
+// right edge and the running count before it. The accent the chrome
+// wore comes back, the pager's ground the caller's next paint wants.
+def paint_header_chrome(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
+                        mode Int64, running Int64, now Int64,
+                        art Array[Int64]) Int64 {
   var y = 0
   while y < header_height() {
     material_row(s, y, y, w, mode >> 32, header_scrim(), art)
@@ -614,7 +729,33 @@ def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
   const cw = ui_fb.text_width(f, clock_text(0))
   ui_fb.text(f, clock_text(now), w - icon_margin() - cw, ty, header_ink(), s)
   count_text(s, f, w - icon_margin() - cw - 16, ty, running, header_ink())
-  paint_pager(s, f, desks, extracted)
+  return extracted
+}
+
+// The header bar onto its own surface, whole from scratch: the chrome,
+// then the pager — the walk's paint when the desks word carries the
+// slide's annotation (M32, A32.3), the static paint it has always
+// been when the word is bare. `mode` is the display's own packed word
+// (w above h, the shell's packing — the eight arguments the machine's
+// calls take are the wall here too). The clock is
+// `now` — the seconds the caller read, never the bar's own (the bar
+// has no clock of its own; the time verb and the caller's wake are its
+// ground, D17) — and the count is the one fact the desktop keeps (its
+// own children's residency; the foreground app's name it does not
+// know, and the bar does not pretend to). The desks are the pager's
+// word — the query verb's own packing, the active desk in the low byte
+// and the occupancy mask above it (D18); the caller read it, the bar
+// does no verb of its own. The text sits centered in the bar's height,
+// the line box's own.
+def paint_header(s ui_fb.Surface, f ui_fb.raster.Strike, w Int64,
+                 mode Int64, running Int64, now Int64,
+                 desks Int64, art Array[Int64]) Void {
+  const extracted = paint_header_chrome(s, f, w, mode, running, now, art)
+  if desks >> 12 != 0 {
+    paint_pager_walk(s, f, desks, extracted)
+  } else {
+    paint_pager(s, f, desks, extracted)
+  }
 }
 
 // ---- the wall clock (emo-desktop M26, D17) ----

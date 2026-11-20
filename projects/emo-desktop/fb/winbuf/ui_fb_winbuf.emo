@@ -934,18 +934,18 @@ class Win {
 
   // The window's open (emo-desktop A15.2): the rise into place — the
   // frames between the first frame the caller painted a quarter of the
-  // window low and the loop's mount at the final seat, the offset
-  // easing out (the square decays, the metal's division truncating the
-  // model's way), the last move landing the final seat unpainted — the
-  // caller's next present closes the rise. The pacing is the present's
-  // own: the reply lands only after the composition has walked and
-  // flushed, the frame budget the damage rectangle measured.
+  // window low and the loop's mount at the final seat, the offset the
+  // motion vocabulary's `ease_out` walks (emo-desktop M32, A32.1), the
+  // last move landing the final seat unpainted — the caller's next
+  // present closes the rise. The pacing is the present's own: the
+  // reply lands only after the composition has walked and flushed, the
+  // frame budget the damage rectangle measured.
   def rise(x Int64, y Int64) {
     const steps = 8
     var r = self.height / 4
     var i = 1
     while i < steps - 1 {
-      var off = r * (steps - i) * (steps - i) / (steps * steps)
+      var off = emo_desktop.ease_out(r, i, steps)
       case syscall.win_move(self.grant, x, y + off) {
         (R.error, _) then { mark() }
         (R.ok, _) then {}
@@ -960,15 +960,15 @@ class Win {
   }
 
   // The window's close (emo-desktop A15.2): the mirror — the offset
-  // easing in, every frame on the wire, the window a quarter of itself
-  // low when the caller closes it and the desktop's next composition
-  // takes its rect for the wallpaper's.
+  // the motion vocabulary's `ease_in` walks, every frame on the wire,
+  // the window a quarter of itself low when the caller closes it and
+  // the desktop's next composition takes its rect for the wallpaper's.
   def sink(x Int64, y Int64) {
     const steps = 8
     var r = self.height / 4
     var i = 2
     while i <= steps {
-      var off = r * i * i / (steps * steps)
+      var off = emo_desktop.ease_in(r, i, steps)
       case syscall.win_move(self.grant, x, y + off) {
         (R.error, _) then { mark() }
         (R.ok, _) then {}

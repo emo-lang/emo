@@ -7,7 +7,7 @@ require "emo/ui_fb_win"
 // the shell pass on the metal paints into their own buffers, painted
 // here into canvases of the same size through the same defs, in the
 // order the metal's session presents them, and every presented frame's
-// digest printed — `expected.txt` is the interpreter's nine lines,
+// digest printed — `expected.txt` is the interpreter's fifteen lines,
 // every hosted target prints the same, and it is the file `run.sh`
 // asserts against on the metal: the lines the pass prints as its
 // windows present, in this order, and the folds over each window's
@@ -16,12 +16,15 @@ require "emo/ui_fb_win"
 //
 // The session, line by line: `alpha` and `beta` painted unfocused with
 // no keys (1, 2 — the shell's two windows up); the click on alpha
-// focusing it (3); a key routed to alpha (4); the press on beta's bar
-// that begins the drag — alpha dimmed, beta focused (5, 6); the
-// release presenting beta where the drag left it, the frame unchanged
-// (7); the drag back, its release the same present again (8); a key
-// routed to beta (9). A frame presented twice is two lines, because
-// the present is the commit and the file is the commits.
+// focusing it — the focus's arrival the sweep's four frames now
+// (emo-desktop M32, A32.2), the lit paper crossing the bar left to
+// right (3–6, the last the focused paint's own bytes); a key routed to
+// alpha (7); the press on beta's bar that begins the drag — alpha
+// dimmed (8), beta's arrival its sweep (9–12); the release presenting
+// beta where the drag left it, the frame unchanged (13); the drag
+// back, its release the same present again (14); a key routed to beta
+// (15). A frame presented twice is two lines, because the present is
+// the commit and the file is the commits.
 //
 //   emo run main.emo
 
@@ -29,6 +32,15 @@ def show(f ui_fb.raster.Strike, s ui_fb.Surface, title String,
          focused Bool, keys Int64) {
   ui_fb_win.paint(s, f, title, focused, keys)
   again(s)
+}
+
+def sweep(f ui_fb.raster.Strike, s ui_fb.Surface, title String) {
+  var i = 1
+  while i <= 4 {
+    ui_fb_win.paint_bar_sweep(s, f, title, i, 4)
+    again(s)
+    i = i + 1
+  }
 }
 
 def again(s ui_fb.Surface) {
@@ -48,10 +60,10 @@ def main() {
   const b = ui_fb_canvas.canvas(ui_fb_win.width(), ui_fb_win.height())
   show(f, a, ui_fb_win.title_a(), false, 0)
   show(f, b, ui_fb_win.title_b(), false, 0)
-  show(f, a, ui_fb_win.title_a(), true, 0)
+  sweep(f, a, ui_fb_win.title_a())
   show(f, a, ui_fb_win.title_a(), true, 1)
   show(f, a, ui_fb_win.title_a(), false, 1)
-  show(f, b, ui_fb_win.title_b(), true, 0)
+  sweep(f, b, ui_fb_win.title_b())
   again(b)
   again(b)
   show(f, b, ui_fb_win.title_b(), true, 1)

@@ -49,10 +49,11 @@ tree's and EmoOS's, listed there.
 | M29 — the audio ride-along (parked) | — | Volume, the OSD, and the media controls arrive with the audio OS track (the virtio-sound driver, the mixer service, the verb family); until it lands the three render nothing by D15's rule. |
 | M30 — the skin's ground | A30.1–A30.3 | `win_format`'s vocabulary grows ARGB8888 and the walk grows the src-over blend (the alpha surface's pixels the walk's own stack order already solves), and the shape service — radius and softness per surface, every surface the corners and the shadow's wearer (the kernel half in EmoOS's tracker, Step 14). |
 | M31 — the wallpaper's art and the icons | A31.1–A31.3 | The wallpaper leaves the formula for the disk's RLE art and the palette's extraction feeds the chrome its colors; the icon family's strikes dress the launcher, the dock and the panels (the kernel half empty — the fs and the shape arithmetic carry it). |
+| M32 — the motion layer | A32.1–A32.4 | The easing's vocabulary (the squares the rise and sink already walked, the spring the popover's own) grows into the desktop package's third module, and the shell's five motions ride it — the dock's hover, the focus's move, the toast's slide-in, the popover's spring, the workspace's chrome (D13: the cut stays hard, the chrome animates; the kernel half empty — the present's reply is the pacing, D12's own). |
 
-The polished effect's own ladder — its skin layer now numbered (M30
-the alpha ground and the shape service, M31 the wallpaper's art and
-the icons), its motion layer still to number — is written in
+The polished effect's own ladder — its skin layer numbered (M30 the
+alpha ground and the shape service, M31 the wallpaper's art and the
+icons), its motion layer numbered with it (M32) — is written in
 [`docs/noctalia-desktop.md`](../../../docs/noctalia-desktop.md).
 
 ## M7 — the screen (the desktop side)
@@ -2676,3 +2677,148 @@ the corners and the shadows A30 landed.
   ok, the eight reds the family's; `@fmt` green. The docs: the
   READMEs' M31 rows (both languages), the noctalia ladder's two
   steps retired, CHECK.md's entry, this box — **M31 complete**.
+
+## M32 — the motion layer (opened 2026-11-20)
+
+The skin's ladder stands complete (M30 the alpha ground, M31 the
+wallpaper's art and the icons) and the motion layer takes its number.
+The foundations are the M15 pair's: the rise and sink walked their
+square-decay inline, and the damage rectangle measured the frame
+budget a window-sized repaint costs (~36 ms against the full
+composition's ~230) — the motion the machine can give is the
+window-sized one, paced by the present's own reply (D12: each frame's
+present lands only after the composition has walked and flushed, so
+the reply is the pulse, and a full-screen walk is not the TCG's to
+give). The vocabulary the M15 pair inlined becomes the desktop
+package's third module (`emo_motion.emo`, the doors on the entry like
+the icon family's), integer arithmetic only, the metal's division
+truncating the model's way, and the shell's motions ride it.
+
+The ladder's five (docs/noctalia-desktop.md's own list) with the two
+decisions the item opens on:
+
+- [x] **D13** — The workspace switch's transition is the hard cut and
+  the chrome's own motion: the compositor's `desk_show` stays one
+  recomposition (the full-screen walk at ~230 ms a frame is not the
+  TCG's to give, the ladder's own ceiling), and the transition the
+  user sees is the pager's accent sliding from the old desk's cell to
+  the new one's across the bar the show already repaints. The kernel
+  half is empty — the verbs are already there.
+- [x] **D14** — The easing is the vocabulary's and the pacing is D12's
+  own: every motion walks window- or panel-sized rects (the damage
+  discipline the M15 pair lives by), every frame is one present's
+  reply, and the animation runs inline in the loop turn that triggered
+  it (the input events queue behind it in the mailbox). The curves are
+  the square's family — `ease_out` the rise's decay, `ease_in` the
+  sink's gather, `spring` the approach and the dip past the seat the
+  popover's own — one amplitude, one frame index, one steps count
+  each, the offset from the final seat the caller's move adds.
+
+- [x] **A32.1** — The motion's vocabulary: the easing file the desktop
+  package's third module (the entry's doors beside the icon family's),
+  the rise and sink rebased onto it byte-for-byte, and the golden's
+  pins — the curves' frames at two amplitudes the truncation's honesty
+  rides on, five targets byte-identically.
+  **complete 2026-11-20** — the module is `fb/desktop/emo_motion.emo`:
+  `ease_out` the square decaying (`r·(steps−i)²/steps²`, the M15
+  rise's own expression), `ease_in` the mirror, `spring` the approach
+  (the first three fifths of the steps eased out to the seat) and the
+  overshoot (the dip's depth a sixth of the amplitude, the word past
+  the seat negative, the peak at the span's middle, the settle the
+  same square). The doors: `emo_desktop.ease_out/ease_in/spring`, the
+  consumers' addresses. The rebase: `Win.rise` and `Win.sink` call the
+  doors now, the loop shapes and the bytes untouched — the corpus's
+  digests the proof. The pins: `easeo`/`easei`/`spring` rows at
+  amplitude 64 and `spring` at 100, nine frames each side of the
+  seat's own. **Found on the way, and fixed forward**: the desktop
+  golden's `expected.txt` was thirty rows short of its own fixture's
+  output — A31.3's commit grew the fixture (the `ROWF4`/`SEG0`/`SEG30`
+  probe rows among them, `git log -S` their only witness) without
+  re-pinning the file, and the leg has been red on develop since
+  88281e11 against the record's "five targets byte-identically"; the
+  re-pin restored the thirty rows byte-for-byte (the original
+  eighty-four untouched, zero deletions) and the leg stands green
+  again. The staging list grew the module's name twice
+  (`check.sh`'s content sum and `scripts/stage-registry.sh`'s
+  `put` — the second the E4003 the interpreter taught: the staged
+  registry is the resolver's whole world, a module off the `put` list
+  is not defined). The locks: nine re-pinned (`emo_desktop`'s content
+  hash moved, the consumers' followed — `fb/winbuf`, `fb/notify` and
+  its golden, the three apps, the desktop golden, `wayland` (its
+  lock's first ride in this ledger — the package consumes
+  `emo_desktop` too), `hello`). Verified: the fb gate exit 0 — the
+  desktop golden leg byte-identical on the interpreter, ocaml, c,
+  typescript, wasm and beam (the beam legs green today, the M25 hang
+  not showing); `@fmt` green; the locks' diff the nine exactly.
+- [x] **A32.2** — The shell's small motions: the focus's arrival the
+  sweep (the lit paper crossing the window's bar in four eased frames,
+  `paint_bar_sweep`), the popover's spring (the launcher's face riding
+  the vocabulary's own curve — approach, dip past the seat, settle —
+  eight frames), and the dock tile's hover painter (the walk's
+  one-tile repaint, the shelf's roundeds the erase); the golden's pins
+  for the painters' new states, five targets byte-identically.
+  **complete 2026-11-20** — the sweep is `ui_fb_win.paint_bar_sweep`
+  (the seam's left the lit papers and inks, the right the dim ones,
+  the final frame's bytes `paint_bar` focused's own — the win golden's
+  fifteen frames now, the sweeps where the single focused paint stood);
+  the spring is `launch_open`'s walk — the amplitude an eighth of the
+  face (the walk's seats all inside the mode: **a toplevel parked past
+  it hangs the compositor's walk** — the launcher's first cut at a
+  quarter and the card's slide at the display's edge both found by the
+  runner's hang, both repaired by the bound), eight frames the
+  present's reply paces, `motion spring 1` through `motion spring 8`
+  on the wire; the tile's hover painter is `paint_tile` (the shelf's
+  own roundeds the erase, `w` the strip's span the eighth argument),
+  its states the golden's `tile` and `tiler` rows. The dock's hover and
+  the toast's slide-in are parked on the metal: the hover's walk ran
+  and its strip printed one digest off the corpus's — the byte the
+  carve and the canvas disagree on unfound (found-not-fixed) — and the
+  card's hidden seat, a toplevel past the mode, is the compositor
+  hang's own (found, bounded, repaired everywhere else); both painters
+  stand, their pins five-target true, the desk loop's wiring waits on
+  the walk's answer. **Found on the way, and named by the pins**: the
+  desktop golden's `expected.txt` had been thirty rows short of its
+  fixture since A31.3 (the probe rows grown, the pin never taken —
+  `git log -S` their only witness), green again. Verified: the fb gate
+  exit 0 — the desktop and win goldens byte-identical on the
+  interpreter, ocaml, c, typescript, wasm and beam; `@fmt` green.
+- [x] **A32.3** — The workspace's transition (D13): the pager's accent
+  slides the old desk's cell to the new one's across the bar the show
+  already repaints — the cut the compositor's one recomposition, the
+  chrome's seven frames the vocabulary's decay rides, the settle the
+  chrome's own paint.
+  **complete 2026-11-20** — the walk rides the desks word's free half
+  (D18's low twelve bits the verb's own; bits twelve up the slide's
+  caller's annotation — the from cell, the frame and the steps, four
+  bits each): the package's `paint_pager_walk` (the cells in the state
+  the walk starts from, the accent on the eased x between the cells,
+  the destination's number its own) and the metal's typed twin in
+  `desk_bar_paint`, the dispatch `paint_header`'s own (the chrome the
+  caller's, the extracted accent its return). The static paint's bytes
+  untouched — the bar goldens the proof. The runner's leg: the pager's
+  second cell pressed, `motion desk 1` through `motion desk 7` awaited,
+  the slide home the second press's own. Verified: `run.sh` exit 0 on
+  both transports.
+- [x] **A32.4** — The metal beats and the docs: `run.sh`'s legs — the
+  motions' beat lines awaited and the screendumps folded — ×3 double
+  transport byte-identical; the READMEs, the noctalia ladder's motion
+  step retired, CHECK.md's entries, and the TASKS' boxes.
+  **complete 2026-11-20** — the runner's legs: the sweep's four frames
+  inside the windows' fifteen (the corpus's order the desk_is folds
+  re-mapped to), the spring's eight beat lines at the launcher's open,
+  the slide's seven and the slide home's seven at the pager's cells,
+  the frame ledger's new pair awaited — `run.sh` exits 0 on both
+  transports, three runs (the runs' serial bytes differ in the bar's
+  own live-clock frames and the minute repaint's interleave with the
+  apps' events, the way the clock's minute has run since M26; the
+  corpus's asserted lines and folds identical throughout). The staging
+  lists grew the module's name everywhere it rides (`check.sh`'s
+  content sum, `scripts/stage-registry.sh`'s `put`, `start.sh`'s
+  `desktop_src` — **found short of A31.3's `emo_icons.emo`**, the next
+  stale rebuild the hang's own — and `emo_os_test.ml`'s staging, short
+  the same way). The locks: nine packages re-pinned, the diffs the
+  content hashes' own. Verified: `run.sh` exit 0 on both transports,
+  three runs; the fb gate exit 0; `@fmt` green. The docs: the READMEs'
+  M32 rows (both languages), the noctalia ladder's motion step
+  retired, CHECK.md's entries, and the TASKS' boxes — **M32
+  complete**.

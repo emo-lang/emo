@@ -2308,12 +2308,21 @@ if peek64(desk_cell) != 0 {
           }
           focused = hit
           top = hit
-          if hit == ga {
-            ui_fb_win.paint(wa, tf, ui_fb_win.title_a(), true, keys_a)
-            wa.present()
-          } else {
-            ui_fb_win.paint(wb, tf, ui_fb_win.title_b(), true, keys_b)
-            wb.present()
+          // The focus's arrival (emo-desktop M32, A32.2): the lit paper
+          // sweeping in — four frames the present's reply paces, the
+          // bar the sweep's whole world — then the strip's repaint the
+          // corpus's frame pins.
+          var sweep_s = wa
+          var sweep_t = ui_fb_win.title_a()
+          if hit != ga {
+            sweep_s = wb
+            sweep_t = ui_fb_win.title_b()
+          }
+          var si = 1
+          while si <= 4 {
+            ui_fb_win.paint_bar_sweep(sweep_s, tf, sweep_t, si, 4)
+            sweep_s.present()
+            si = si + 1
           }
           var lit = -1
           if hit == ga {
@@ -2322,6 +2331,7 @@ if peek64(desk_cell) != 0 {
           if hit == gb {
             lit = 1
           }
+          println("motion focus ${lit}")
           desk_strip_paint(tf, base_d, gd, dw, mh, labels, lit, 0)
           desk_focus_line(hit)
         }
@@ -2857,6 +2867,8 @@ const desk_dock_base = 16112
 const desk_painted_minute = 16120 // the minute the bar's clock painted
 const cal_grant = 16128 // the calendar panel's grant and base —
 const cal_base = 16136 // 0 the panel shut, a toplevel while it shows
+const desk_hover = 16744 // the dock tile the pointer hovers, -1 none
+                         // (emo-desktop M32, A32.2; the walk parked — see the loop)
 
 // The wallpaper's file (emo-desktop M31, A31.1): the volume's RLE art
 // read once at boot into the shell's scratch — the bytes at 131072,
@@ -3422,38 +3434,92 @@ def desk_bar_paint(f ui_fb.raster.Strike, base Int64, mw Int64, mh Int64, runnin
   const cw = ui_fb.text_width(f, emo_desktop.clock_text(0))
   desk_text(f, base, mw, emo_desktop.header_height(), emo_desktop.clock_text(now), mw - emo_desktop.icon_margin() - cw, ty, emo_desktop.header_ink())
   desk_count_text(f, base, mw, emo_desktop.header_height(), mw - emo_desktop.icon_margin() - cw - 16, ty, running, emo_desktop.header_ink())
-  const active = desks & 255
-  const mask = (desks >> 8) & 15
-  var i = 0
-  while i < emo_desktop.pager_count() {
-    const pc = emo_desktop.pager_cell(f, i)
-    const px = pc >> 32
-    const py = pc & 4294967295
-    var ground = 0
-    var ink_color = emo_desktop.pager_empty_ink()
-    if i == active {
-      ground = emo_desktop.pager_active_ground()
-      if extracted >= 0 {
-        ground = 0xFF000000 | extracted
-      }
-      ink_color = emo_desktop.pager_active_ink()
-    } else {
-      if (mask >> i) & 1 == 1 {
+  // The walk's annotation (emo-desktop M32, A32.3, D13): the free half
+  // of the desks word the slide's caller annotates — the from cell,
+  // the frame and the steps, four bits each from the twelfth up; the
+  // mask the walk starts from the word's own occupancy field. The
+  // typed twin of the package's walk branch: the cells in the state
+  // the walk starts from, the accent on the eased x between the cells
+  // (the vocabulary's own decay), the destination's number its own.
+  if desks >> 12 != 0 {
+    const wfrom = (desks >> 12) & 15
+    const wt = (desks >> 16) & 15
+    const wsteps = (desks >> 20) & 15
+    const wmask = (desks >> 8) & 15
+    const wto = desks & 255
+    const dims = ui_fb_winbuf.pack(mw, emo_desktop.header_height())
+    var wi = 0
+    while wi < emo_desktop.pager_count() {
+      const pc = emo_desktop.pager_cell(f, wi)
+      const px = pc >> 32
+      const py = pc & 4294967295
+      var ground = 0
+      var ink_color = emo_desktop.pager_empty_ink()
+      if (wmask >> wi) & 1 == 1 {
         ground = emo_desktop.pager_occupied_ground()
         ink_color = emo_desktop.pager_occupied_ink()
       }
+      if ground != 0 {
+        ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(px, py),
+          ui_fb_winbuf.pack(emo_desktop.pager_size(), emo_desktop.pager_size()),
+          4, ground, ground)
+      }
+      const ns = "${wi + 1}"
+      desk_text(f, base, mw, emo_desktop.header_height(), ns,
+        px + (emo_desktop.pager_size() - ui_fb.text_width(f, ns)) / 2,
+        py + (emo_desktop.pager_size() - f.line_height()) / 2, ink_color)
+      wi = wi + 1
     }
-    const dims = ui_fb_winbuf.pack(mw, emo_desktop.header_height())
-    if ground != 0 {
-      ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(px, py),
-        ui_fb_winbuf.pack(emo_desktop.pager_size(), emo_desktop.pager_size()),
-        4, ground, ground)
+    const c0 = emo_desktop.pager_cell(f, wfrom)
+    const c1 = emo_desktop.pager_cell(f, wto)
+    const wx = (c0 >> 32) + emo_desktop.ease_out((c1 >> 32) - (c0 >> 32), wt,
+      wsteps)
+    var wground = emo_desktop.pager_active_ground()
+    if extracted >= 0 {
+      wground = 0xFF000000 | extracted
     }
-    const ns = "${i + 1}"
-    desk_text(f, base, mw, emo_desktop.header_height(), ns,
-      px + (emo_desktop.pager_size() - ui_fb.text_width(f, ns)) / 2,
-      py + (emo_desktop.pager_size() - f.line_height()) / 2, ink_color)
-    i = i + 1
+    ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(wx, c0 & 4294967295),
+      ui_fb_winbuf.pack(emo_desktop.pager_size(), emo_desktop.pager_size()),
+      4, wground, wground)
+    const wns = "${wto + 1}"
+    desk_text(f, base, mw, emo_desktop.header_height(), wns,
+      wx + (emo_desktop.pager_size() - ui_fb.text_width(f, wns)) / 2,
+      (c0 & 4294967295) + (emo_desktop.pager_size() - f.line_height()) / 2,
+      emo_desktop.pager_active_ink())
+  } else {
+    const active = desks & 255
+    const mask = (desks >> 8) & 15
+    var i = 0
+    while i < emo_desktop.pager_count() {
+      const pc = emo_desktop.pager_cell(f, i)
+      const px = pc >> 32
+      const py = pc & 4294967295
+      var ground = 0
+      var ink_color = emo_desktop.pager_empty_ink()
+      if i == active {
+        ground = emo_desktop.pager_active_ground()
+        if extracted >= 0 {
+          ground = 0xFF000000 | extracted
+        }
+        ink_color = emo_desktop.pager_active_ink()
+      } else {
+        if (mask >> i) & 1 == 1 {
+          ground = emo_desktop.pager_occupied_ground()
+          ink_color = emo_desktop.pager_occupied_ink()
+        }
+      }
+      const dims = ui_fb_winbuf.pack(mw, emo_desktop.header_height())
+      if ground != 0 {
+        ui_fb_winbuf.carve_rounded(base, dims, ui_fb_winbuf.pack(px, py),
+          ui_fb_winbuf.pack(emo_desktop.pager_size(), emo_desktop.pager_size()),
+          4, ground, ground)
+      }
+      const ns = "${i + 1}"
+      desk_text(f, base, mw, emo_desktop.header_height(), ns,
+        px + (emo_desktop.pager_size() - ui_fb.text_width(f, ns)) / 2,
+        py + (emo_desktop.pager_size() - f.line_height()) / 2, ink_color)
+      i = i + 1
+    }
   }
 }
 
@@ -3651,6 +3717,28 @@ def desk_strip_paint(f ui_fb.raster.Strike, base Int64, grant Int64, mw Int64, m
   }
 }
 
+// One tile's place repainted and the strip presented (emo-desktop M32,
+// A32.2): the package's painter through the carve's typed walk — the
+// shelf's own repaint clearing the tile's travel, the tile at its
+// lifted seat — then the strip's whole commit. The walk's states the
+// corpus pins; the tile-sized rect the present could name waits on the
+// compositor's answer to a partial one.
+def desk_tile_walk(i Int64, labels Array[String], running Bool, lift Int64,
+                   focused Bool, hovered Bool) Void {
+  const mode = peek64(buf + desk_mode_cell)
+  const mw = mode >> 32
+  const base = peek64(buf + desk_dock_base)
+  emo_desktop.paint_tile(Carve.new(base: base, width: mw,
+    height: emo_desktop.strip_height()), i,
+    emo_desktop.icon_of(labels[i]), running, lift, focused, hovered, mw)
+  frame_line(carve_digest(base, mw, emo_desktop.strip_height()))
+  case syscall.present(peek64(buf + desk_dock_grant), 0, 0, mw,
+    emo_desktop.strip_height()) {
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
+  }
+}
+
 // The name's byte under the box: the type's glyph of that byte's own
 // arithmetic, the missing glyph past the printable span — the package's
 // `text_byte` rule, through the carve's typed walk — and the advance the
@@ -3809,6 +3897,46 @@ def desk_chrome_live(f ui_fb.raster.Strike) Void {
   notify_bell_paint(f, base, mw)
   frame_line(carve_digest(base, mw, emo_desktop.header_height()))
   case syscall.present(peek64(buf + desk_bar_grant), 0, 0, mw, emo_desktop.header_height()) {
+    (R.error, _) then { mark() }
+    (R.ok, _) then {}
+  }
+}
+
+// The workspace's slide frame (emo-desktop M32, A32.3, D13): the bar
+// painted whole at the walk's annotated word — the cells in the state
+// the walk starts from, the accent on its eased way — the bell and the
+// digest's frame line and the bar's present after. The cut itself
+// stays the compositor's one recomposition; the chrome the user sees
+// move is these frames, the present's reply pacing each (D12).
+def desk_bar_slide_paint(f ui_fb.raster.Strike, od Int64, pd Int64, t Int64,
+                         steps Int64) Void {
+  const mode = peek64(buf + desk_mode_cell)
+  const mw = mode >> 32
+  const mh = mode & 4294967295
+  const m = desk_running_mask()
+  var running = 0
+  if (m & 1) == 1 {
+    running = running + 1
+  }
+  if (m & 2) == 2 {
+    running = running + 1
+  }
+  if (m & 4) == 4 {
+    running = running + 1
+  }
+  var now = 0
+  case syscall.time() {
+    (R.error, _) then { mark() }
+    (R.ok, tm) then { now = tm }
+  }
+  const desks = pd | (od & 0xF00) | ((od & 255) << 12) | (t << 16) |
+    (steps << 20)
+  const base = peek64(buf + desk_bar_base)
+  desk_bar_paint(f, base, mw, mh, running, now, desks)
+  notify_bell_paint(f, base, mw)
+  frame_line(carve_digest(base, mw, emo_desktop.header_height()))
+  case syscall.present(peek64(buf + desk_bar_grant), 0, 0, mw,
+    emo_desktop.header_height()) {
     (R.error, _) then { mark() }
     (R.ok, _) then {}
   }
@@ -4147,8 +4275,10 @@ def notify_card_make(f ui_fb.raster.Strike, c emo_notify.Center,
                      mw Int64) Void {
   const tw = emo_notify.toast_w()
   const th = emo_notify.toast_h()
+  var seat_x = mw - tw - emo_notify.toast_pad()
+  seat_x = seat_x - seat_x % 2
   if notify_open(buf + notify_toast_grant, buf + notify_toast_base, tw, th,
-    mw - tw - emo_notify.toast_pad(),
+    seat_x,
     emo_desktop.header_height() + 8) {
     notify_card_paint(f, peek64(buf + notify_toast_base), tw, th,
       c.live_notif())
@@ -4489,11 +4619,20 @@ def launch_close() Void {
 
 // The panel opened: the line empty, the catalog whole, the toplevel
 // raised at the panel's place.
+// The panel opened: the line empty, the catalog whole, the toplevel
+// raised an eighth of itself low and sprung home (emo-desktop M32,
+// A32.2) — the vocabulary's own curve, the approach the seat's touch
+// and the dip past it the overshoot carries, eight frames the
+// present's reply paces, the paint at the low seat the first frame's
+// own. The amplitude an eighth of the face — the walk's seats all
+// inside the mode (a toplevel parked past it hangs the compositor's
+// walk, found on the way).
 def launch_open(f ui_fb.raster.Strike, mw Int64, mh Int64) Void {
   poke64(buf + launch_len, 0)
+  const r = emo_desktop.launch_h() / 8
   if notify_open_role(buf + launch_grant, buf + launch_base,
     emo_desktop.launch_w(mw), emo_desktop.launch_h(),
-    emo_desktop.launch_x(mw), emo_desktop.launch_y(mh), 3) {
+    emo_desktop.launch_x(mw), emo_desktop.launch_y(mh) + r, 3) {
     // the face's own bytes carry their alpha (emo-desktop M30,
     // A30.1): the slab's grades declared ARGB8888 and the face itself
     // declared a panel — the walk's blend the wallpaper's own colors
@@ -4503,6 +4642,27 @@ def launch_open(f ui_fb.raster.Strike, mw Int64, mh Int64) Void {
       (R.ok, _) then {}
     }
     launch_paint(f, mw)
+    var i = 1
+    while i < 8 {
+      case syscall.win_move(peek64(buf + launch_grant),
+        emo_desktop.launch_x(mw),
+        emo_desktop.launch_y(mh) + emo_desktop.spring(r, i, 8)) {
+        (R.error, _) then { mark() }
+        (R.ok, _) then {}
+      }
+      notify_present(peek64(buf + launch_grant), peek64(buf + launch_base),
+        emo_desktop.launch_w(mw), emo_desktop.launch_h())
+      println("motion spring ${i}")
+      i = i + 1
+    }
+    case syscall.win_move(peek64(buf + launch_grant),
+      emo_desktop.launch_x(mw), emo_desktop.launch_y(mh)) {
+      (R.error, _) then { mark() }
+      (R.ok, _) then {}
+    }
+    notify_present(peek64(buf + launch_grant), peek64(buf + launch_base),
+      emo_desktop.launch_w(mw), emo_desktop.launch_h())
+    println("motion spring 8")
   }
 }
 
@@ -5077,9 +5237,27 @@ def desktop() Void {
                 // verdict the head would give.
                 const pd = emo_desktop.pager_hit(f, px, py)
                 if pd >= 0 {
+                  // The slide (emo-desktop M32, A32.3, D13): the word
+                  // the walk starts from read before the show, the
+                  // cut the compositor's own recomposition, then the
+                  // chrome's frames — the accent easing the old cell
+                  // to the new one's across the bar, seven the
+                  // vocabulary's steps, the settle the desk_chrome's
+                  // own paint.
+                  var od = 0
+                  case syscall.desk_workspace() {
+                    (R.error, _) then { mark() }
+                    (R.ok, d) then { od = d }
+                  }
                   case syscall.desk_show(pd) {
                     (R.error, _) then { mark() }
                     (R.ok, _) then {}
+                  }
+                  var st = 1
+                  while st < 8 {
+                    desk_bar_slide_paint(f, od, pd, st, 8)
+                    println("motion desk ${st}")
+                    st = st + 1
                   }
                   desk_chrome(f)
                 }

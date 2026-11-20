@@ -83,17 +83,18 @@ and the icons — the skin layer's four steps landed (2026-11-20):
    vocabulary: radius and softness per surface, popups and
    subsurfaces and panels wearing what only toplevels wore, at no
    app's effort.
-### 2. The motion layer
+### 2. The motion layer — numbered (M32), standing
 
-All of it the shell's own work on the frame callback — the verbs are
-already there: the workspace switch's transition (a slide or a
-crossfade — the compositor grows a small support for it, or the cut
-stays hard while the shell animates the chrome; a decision to make
-when the item opens), the toast's slide-in, the popover's spring, the
-dock's hover, the focus's move. The honest ceiling stands with them:
-full-screen animation at 60 fps is not the TCG's to give, and the
-animation walks window-sized rects, the damage discipline it already
-lives by.
+The easing's vocabulary is the desktop package's own (`emo_motion.emo`:
+the square's decay the rise walked, the mirror, the spring), and the
+shell's motions ride it at the window-sized rects the damage
+discipline lives by: the focus's arrival sweeps the window's bar in
+four frames, the launcher's face springs home in eight, the
+workspace's pager accent slides cell to cell across the bar (D13 — the
+cut stays hard, the chrome animates). Parked on the metal, painters
+and pins standing: the dock's hover and the toast's slide-in (the
+walk's digest off by one, the toplevel's off-mode seat hangs the walk
+— found-not-fixed, M32's record).
 
 ### 3. The seat's modifiers
 

@@ -1,0 +1,35 @@
+// The motion's vocabulary (emo-desktop M32, A32.1): the easing the
+// windows' rise and sink and the shell's motions walk. Integer
+// arithmetic only, the metal's division truncating the model's way,
+// so every target and the carve's twins answer the same offsets. A
+// curve takes the amplitude `r` (the distance the motion covers), the
+// frame's index `i` and the steps `steps`, and returns the offset from
+// the final seat — the caller's move adds it, the present's reply
+// paces the frame (D12). The square's decay is the family's ground:
+// `ease_out` spends the distance fast and settles slow, `ease_in` the
+// mirror gathering speed, `spring` the approach and then a dip past
+// the seat — the popover's own curve.
+
+def ease_out(r Int64, i Int64, steps Int64) Int64 {
+  return r * (steps - i) * (steps - i) / (steps * steps)
+}
+
+def ease_in(r Int64, i Int64, steps Int64) Int64 {
+  return r * i * i / (steps * steps)
+}
+
+// The spring's two phases: the approach the first three fifths of the
+// steps (the amplitude eased out to the seat, the steps five at
+// least), the overshoot the rest — the dip's depth a sixth of the
+// amplitude and the word past the seat negative (the move lands
+// beyond it), the peak at the span's middle, the settle the same
+// square back to zero.
+def spring(r Int64, i Int64, steps Int64) Int64 {
+  const a = steps * 3 / 5
+  if i <= a {
+    return ease_out(r, i, a)
+  }
+  const span = steps - a
+  const o = r / 6
+  return -o * (i - a) * (steps - i) * 4 / (span * span)
+}

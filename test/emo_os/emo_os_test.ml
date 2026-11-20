@@ -295,7 +295,12 @@ let smoke_tests =
               [ "package.emo"; "ui_fb_win.emo" ] );
             ( "../../projects/emo-desktop/fb/desktop",
               "emo_desktop/0.1.0",
-              [ "package.emo"; "emo_desktop.emo" ] );
+              [
+                "package.emo";
+                "emo_desktop.emo";
+                "emo_icons.emo";
+                "emo_motion.emo";
+              ] );
             ( "../../projects/emo-desktop/fb/apps",
               "emo/ui_apps/0.1.0",
               [

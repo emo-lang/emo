@@ -36,6 +36,25 @@ def main() {
   emo_desktop.paint(strip, f, 1920, 1040, ["a", "b"], 1, 0,
     wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
+  // The tile's place (emo-desktop M32, A32.2): the one-tile repaints
+  // the window shell's focus walks through, the strip's whole digest
+  // each — the walk-in's bytes the lit paint's own (the second frame's
+  // digest again), the walk-out's the quiet paint's (the first's), the
+  // second walk-in's the third's — the erase the shelf's own rounded,
+  // the grades the tile's. The walk's states the corpus pins by their
+  // own digests; the second walk-in's the strip the screendump's
+  // rounded-corner fold meets (the window shell's second focus
+  // leaves).
+  emo_desktop.paint_tile(strip, 0, emo_desktop.icon_of("a"), false, 0,
+    true, false, 1920)
+  println("tile ${ui_fb_frame.digest(strip)}")
+  emo_desktop.paint_tile(strip, 0, emo_desktop.icon_of("a"), false, 0,
+    false, false, 1920)
+  println("tile ${ui_fb_frame.digest(strip)}")
+  emo_desktop.paint_tile(strip, 1, emo_desktop.icon_of("b"), false, 0,
+    true, false, 1920)
+  println("tile ${ui_fb_frame.digest(strip)}")
+  println("tiler ${ui_fb_frame.round_digest(strip, 10)}")
   // the desktop era's residency, the launcher's four tiles: the
   // launcher's own first (emo-desktop M28, A28.1 — the `s` tile the
   // panel's door, the app tiles one slot right, the residency's bits
@@ -64,6 +83,26 @@ def main() {
   emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 2,
     wall_rle.runs())
   println("frame ${ui_fb_frame.digest(strip)}")
+  // The desk era's tile (emo-desktop M32, A32.2): the hover's states
+  // the desk loop's pointer walks — the walk's own repaint erases the
+  // tile's travel by repainting the shelf's roundeds whole, so the
+  // chain walks from the quiet strip the desk loop boots with (the
+  // frame above repainted bare, the dot the erase took): the seat
+  // restored, the lifted hovered seat (the tile's top row riding the
+  // shelf's edge row), the focused seat beside. The hover's strip the
+  // fold's number pins beside.
+  emo_desktop.paint(strip, f, 1920, 1040, ["s", "c", "f", "e"], -1, 0,
+    wall_rle.runs())
+  emo_desktop.paint_tile(strip, 1, emo_desktop.icon_of("counter.elf"),
+    false, 0, false, false, 1920)
+  println("tile ${ui_fb_frame.digest(strip)}")
+  emo_desktop.paint_tile(strip, 1, emo_desktop.icon_of("counter.elf"),
+    false, emo_desktop.tile_lift(), false, true, 1920)
+  println("tile ${ui_fb_frame.digest(strip)}")
+  println("tiler ${ui_fb_frame.round_digest(strip, 10)}")
+  emo_desktop.paint_tile(strip, 1, emo_desktop.icon_of("counter.elf"),
+    false, 0, true, false, 1920)
+  println("tile ${ui_fb_frame.digest(strip)}")
   var sg = 0
   while sg < 8 {
     var sf = 0
@@ -149,6 +188,26 @@ def main() {
   println("icon ${emo_desktop.icon_of("spin.elf")}")
   println("icon ${emo_desktop.icon_of("boot.txt")}")
 
+  // The motion's vocabulary (emo-desktop M32, A32.1): the easing's
+  // frames pinned — the rise's decay and the sink's gather at the
+  // quarter the window's own shape covers (the amplitude 64, eight
+  // steps), the spring's approach and its dip past the seat with the
+  // overshoot a sixth of the amplitude, and a second amplitude's rows
+  // the truncation's honesty rides on — every offset the move adds to
+  // the final seat, the present's reply pacing the frame (D12).
+  var mo = 0
+  while mo < 9 {
+    println("easeo ${mo} ${emo_desktop.ease_out(64, mo, 8)}")
+    println("easei ${mo} ${emo_desktop.ease_in(64, mo, 8)}")
+    println("spring ${mo} ${emo_desktop.spring(64, mo, 8)}")
+    mo = mo + 1
+  }
+  var mp = 0
+  while mp < 9 {
+    println("spring ${mp} ${emo_desktop.spring(100, mp, 8)}")
+    mp = mp + 1
+  }
+
   // The desktop's own canvas (emo-desktop A13): the wallpaper whole on
   // a quarter-mode canvas, twice (M31, A31.1) — the fixture's formula
   // first (the procedural art the package retired, living in the
@@ -189,6 +248,21 @@ def main() {
   emo_desktop.paint_header(bar, f, 256, (1920 << 32) | 1080, 2, 1785541260, 3843,
     wall_rle.runs())
   println("bar ${ui_fb_frame.digest(bar)}")
+  // The workspace's slide (emo-desktop M32, A32.3, D13): the bar at
+  // the walk's annotated words — desk 1's show from the quiet word's
+  // desk 0 (the annotation the from cell, the frame, the steps in the
+  // word's free half), the accent easing cell one's way to cell two's
+  // across eight steps, the eighth frame the settle's own bytes (the
+  // static paint's equal, the walk's landing).
+  var wt = 1
+  while wt <= 8 {
+    emo_desktop.paint_header(bar, f, 256, (1920 << 32) | 1080, 0,
+      1774775100, 1 | (wt << 16) | (8 << 20), wall_rle.runs())
+    println("barw ${wt} ${ui_fb_frame.digest(bar)}")
+    wt = wt + 1
+  }
+  // the settled bar the slide leaves — the fold's number beside
+  println("barr ${ui_fb_frame.round_digest(bar, 10)}")
   // the failure's fall (emo-desktop M31, A31.2): the same bar over the
   // gray art — the palette's walk refuses it, and the wordmark wears
   // the cyan constant the failure keeps, the bytes pinned beside the

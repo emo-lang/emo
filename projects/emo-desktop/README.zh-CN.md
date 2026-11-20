@@ -48,6 +48,7 @@ English version: [`README.md`](README.md).
 | M28 — launcher 与锁 | dock 第一格即搜索面之门——卷上的 `.elf` 包枚举、过滤、启动;锁在不透明面背后接管会话,帐户文件即 hash 包自己的摘要 | complete |
 | M30 — 皮肤地基 | `win_format` 的 ARGB8888 与 walk 的逐像素 source-over(launcher 面板即第一块 ARGB 面),以及形状词——`win_shape` 的逐面 radius 与 softness,toplevel 带缺省的 10 和 16,每个角色都穿圆角与影环 | complete |
 | M31 — 壁纸的艺术与图标 | 壁纸成为卷宗自己的 RLE 文件(`gen-wallpaper.py` 的渲染,boot 时解码),取色为 chrome 供给强调色与材质,图标家族的笔画从 shapes 文件为 dock 瓦片、启动器行与通知行换装 | complete |
+| M32 — 动效层 | 缓动词表(`emo_motion.emo`——方衰、镜像、spring)落进桌面包,焦点的到来走扫入(窗条上四帧),启动器面板弹跳落座,workspace 的 pager 强调块跨条滑向下一格(D13:硬切保留,chrome 动画);dock 悬停与 toast 滑入在金属上停靠,画师与钉行站立(found-not-fixed:走查的 digest 差一、越界座位的 toplevel 挂死 walk) | complete |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 

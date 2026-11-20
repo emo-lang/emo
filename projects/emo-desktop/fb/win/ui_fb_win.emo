@@ -112,6 +112,31 @@ def paint_bar(s ui_fb.Surface, f ui_fb.raster.Strike, title String,
   s.fill(0, bar_height() - 1, s.width(), 1, bar_divider(focused))
 }
 
+// The focus's arrival (emo-desktop M32, A32.2): the lit paper sweeping
+// in from the bar's left — `t` of the `steps` covered so far, the
+// seam's left the lit papers and inks and the right the dim ones, the
+// title and the button in the focused states they land with. The final
+// frame's bytes are `paint_bar` focused's own — the golden pins the
+// two one number — and the leaving half is the dim repaint the
+// caller's focus change already does, instant.
+def paint_bar_sweep(s ui_fb.Surface, f ui_fb.raster.Strike, title String,
+                    t Int64, steps Int64) Void {
+  const w = s.width()
+  const swept = w * t / steps
+  s.fill(0, 0, swept, bar_height(), bar_paper(true))
+  if swept < w {
+    s.fill(swept, 0, w - swept, bar_height(), bar_paper(false))
+  }
+  s.rounded(button_x(), button_y(), button_w(), button_h(), button_w() / 2,
+    button_color(true), button_color(true))
+  ui_fb.text(f, title, (w - ui_fb.text_width(f, title)) / 2,
+    (bar_height() - f.line_height()) / 2, bar_ink(true), s)
+  s.fill(0, bar_height() - 1, swept, 1, bar_divider(true))
+  if swept < w {
+    s.fill(swept, bar_height() - 1, w - swept, 1, bar_divider(false))
+  }
+}
+
 // A window's frame onto its own surface, the whole buffer from scratch:
 // the shared bar, the body's paper, and the keys line one pad in from
 // the body's corner.

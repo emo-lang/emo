@@ -31,9 +31,9 @@ launcher 枚举盘上的 Emo 包,把名字交给搜索面;锁屏查一个 hash �
 
 1. **逐像素 alpha 合成(M30,A30.1)**。声明 XRGB 的面保持字拷贝;`win_format` 词表长出 ARGB8888,合成器的 walk 长出 src-over 混合——逐像素的成本只落在声明的面上。依赖问题已由构造解决:walk 每次合成迭代整个栈,damage 盒只裁剪存储。这是其余三级站的地基——半透明面板、popover、柔和阴影都是 alpha 的消费者,不是各自的特性。
 2. **阴影与圆角成为服务(M30,A30.2)**。算术自 T9.2 起就是 walk 自己的——每个 toplevel 圆角 10、阴影 16——服务即词表:逐面的 radius 与 softness,popup、subsurface、panel 戴上只有 toplevel 戴过的东西,不费任何 app 的力。
-### 2. 动效层
+### 2. 动效层——已编号(M32),站立
 
-全是壳面自己的活,骑 frame callback——动词已经齐了:workspace 切换的过渡(滑动或交叉淡化——合成器长一点小支持,或者硬切、壳面只动画 chrome;开这一项时拍板)、toast 滑入、popover 弹跳、dock 悬停、焦点移动。诚实的上限和它们站在一起:全屏 60 fps 动画不是 TCG 能给的,动画走窗口尺寸的矩形,沿用它已经赖着的 damage 纪律。
+缓动词表是桌面包自己的了(`emo_motion.emo`:rise 走过的方衰、镜像、spring),壳面的动效骑在 damage 纪律赖着的窗口尺寸矩形上:焦点的到来在窗条上四帧扫入,启动器面板八帧弹跳落座,workspace 的 pager 强调块跨格滑过条面(D13——硬切保留,chrome 动画)。金属上停靠、画师与钉行站立:dock 悬停与 toast 滑入(走查的 digest 差一、越界座位的 toplevel 挂死 walk——found-not-fixed,M32 的记录)。
 
 ### 3. seat 的修饰键
 

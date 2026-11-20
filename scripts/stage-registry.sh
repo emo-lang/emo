@@ -77,7 +77,8 @@ mkfamily emo/ui_apps
 put "$FB/apps" emo/ui_apps package.emo ui_apps.emo counter.emo files.emo \
   editor.emo
 mkfamily emo_desktop
-put "$FB/desktop" emo_desktop package.emo emo_desktop.emo emo_icons.emo
+put "$FB/desktop" emo_desktop package.emo emo_desktop.emo emo_icons.emo \
+  emo_motion.emo
 mkfamily emo_notify
 put "$FB/notify" emo_notify package.emo emo_notify.emo
 
