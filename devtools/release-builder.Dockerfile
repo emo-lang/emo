@@ -10,9 +10,14 @@
 # cost, and the image is reused by every later release.)
 FROM ocaml/opam:ubuntu-22.04
 
+# The base image's opam repository is a local git snapshot opam never
+# fetches — update answers "no changes from git+file://..." — and it
+# was frozen before 5.5.2 was released, so the switch create below
+# finds no compiler until the repository points at the live upstream.
 RUN sudo apt-get update && \
     sudo apt-get install -y --no-install-recommends libssl-dev pkg-config && \
     sudo rm -rf /var/lib/apt/lists/* && \
+    opam repository set-url default https://opam.ocaml.org && \
     opam update && \
     opam switch create 5.5.2 && \
     opam install -y dune cmdliner alcotest eio_main ssl yojson digestif && \
