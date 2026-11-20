@@ -562,6 +562,9 @@ type env = {
   mutable consts : string list;
       (* the program's const-thunk names; a thunk memoizes into two
          module globals (see [memo_cell]) *)
+  mutable gvars : string list;
+      (* the program's module-level `var` names, in declaration order;
+         each owns one mutable anyref global (see [global_var_cell]) *)
   mutable memo_idx : (string * (int * int)) list;
       (* const thunk → (done-flag global, value global), assigned in
          first-emission order, most recent first *)
@@ -680,10 +683,16 @@ let string_pool_global env (s : string) : int =
   match List.assoc_opt s env.strings with
   | Some g -> g
   | None ->
-      (* The memo slots of every const thunk sit between the scheduler
-         cursor (global 0) and the pool, so the pool's base shifts by
-         two words per thunk — known up front from the IR's [pconsts]. *)
-      let g = 1 + (2 * List.length env.consts) + List.length env.string_pool in
+      (* The memo slots of every const thunk and the cell of every
+         module-level `var` sit between the scheduler cursor (global 0)
+         and the pool, so the pool's base shifts by two words per thunk
+         and one per `var` — known up front from the IR. *)
+      let g =
+        1
+        + (2 * List.length env.consts)
+        + List.length env.gvars
+        + List.length env.string_pool
+      in
       env.strings <- (s, g) :: env.strings;
       env.string_pool <- s :: env.string_pool;
       g
@@ -715,6 +724,20 @@ let memo_cell env fname =
       let pair = (1 + (2 * k), 2 + (2 * k)) in
       env.memo_idx <- (fname, pair) :: env.memo_idx;
       pair
+
+(* A module-level `var`'s cell: one mutable anyref global, fixed by the
+   var's position in the program's global list — the same
+   position-not-emission rule [memo_cell] runs on. It sits after the
+   const memo slots and before the string pool. *)
+let global_var_cell env gname =
+  let k =
+    let rec pos i = function
+      | [] -> failwith ("module-level var not registered: " ^ gname)
+      | g :: rest -> if g = gname then i else pos (i + 1) rest
+    in
+    pos 0 env.gvars
+  in
+  1 + (2 * List.length env.consts) + k
 
 (* The i32 truthiness of a bool-struct value: the value arrives as
    anyref, so it is narrowed to $vbool before the field read. *)
@@ -924,10 +947,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Struct_new t_vchar)
   | Const (L_string s) -> string_const env s
   | Type_ref name -> string_const env name
-  | Emo_ir.Global_var _ ->
-      raise
-        (Emo_ir.Lower_error
-           "the wasm target does not support module-level `var` yet")
+  | Emo_ir.Global_var g -> e env (W.Global_get (global_var_cell env g))
   | Var name -> (
       match List.assoc_opt name env.binders with
       | Some instrs -> es env instrs
@@ -3186,10 +3206,10 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       match List.assoc_opt name env.local_map with
       | Some idx -> expr_block env value @ [ W.Local_set idx ]
       | None -> failwith ("wasm: assignment to unbound " ^ name))
-  | Emo_ir.Set_global_var _ ->
-      raise
-        (Emo_ir.Lower_error
-           "the wasm target does not support module-level `var` yet")
+  | Emo_ir.Set_global_var { name; value } ->
+      (* the store leaves nothing: the global.set consumes the value,
+         the statement drops like an effect's *)
+      expr_block env value @ [ W.Global_set (global_var_cell env name) ]
   | Emo_ir.Set_field { self_; name; value } -> (
       let class_name =
         match self_.Emo_ir.ety with
@@ -11172,6 +11192,7 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
       classes = [];
       hidden = [];
       consts = program.Emo_ir.pconsts;
+      gvars = List.map fst program.Emo_ir.pglobals;
       memo_idx = [];
     }
   in
@@ -11328,7 +11349,18 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
   env.binders <- [];
   (* A trailing receive must lower in tail position (it parks the entry
      process); after it the driver loop takes over. *)
+  (* The module-level `var`s initialize in declaration order before the
+     entry's own top level, mirroring the interpreter: each initializer
+     evaluates once, and the cell keeps the value it lands. *)
+  let global_inits =
+    List.concat_map
+      (fun (g, init) ->
+        expr_block env init @ [ W.Global_set (global_var_cell env g) ])
+      program.Emo_ir.pglobals
+  in
   let main_stmts =
+    global_inits
+    @
     match List.rev program.Emo_ir.pinit with
     | (Emo_ir.Receive _ as last) :: rest_rev ->
         stmts env (List.rev rest_rev) ~tail:false
@@ -11338,11 +11370,16 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
   (* The pool fills while the entry lowers; init and globals read it
      after. *)
   let string_pool = List.rev env.string_pool in
-  (* the driver's globals sit after the string pool and the const
-     thunks' memo slots; the memo slot count follows the program's const
-     list, the same math string_const and memo_cell use *)
+  (* the driver's globals sit after the string pool, the const thunks'
+     memo slots, and the module-level `var` cells; the counts follow the
+     program's const and global lists, the same math string_const,
+     memo_cell, and global_var_cell use *)
   let g =
-    let base = 1 + (2 * List.length env.consts) + List.length string_pool in
+    let base =
+      1
+      + (2 * List.length env.consts)
+      + List.length env.gvars + List.length string_pool
+    in
     {
       g_cur = base;
       g_next = base + 1;
@@ -11387,7 +11424,9 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
   let t_void_i32 = type_idx env (W.FuncT ([], [ W.I32 ])) in
   let t_i32_void = type_idx env (W.FuncT ([ W.I32 ], [])) in
   let init_func =
-    rt_init string_pool ~pool_base:(1 + (2 * List.length env.consts)) ~g
+    rt_init string_pool
+      ~pool_base:(1 + (2 * List.length env.consts) + List.length env.gvars)
+      ~g
   in
   let hidden = List.rev env.hidden in
   let funcs =
@@ -11623,6 +11662,7 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
       :: List.concat_map
            (fun _ -> [ (W.I32, true); (W.Anyref, true) ])
            env.consts
+      @ List.map (fun _ -> (W.Anyref, true)) env.gvars
       @ List.map (fun _ -> (W.RefNull t_vstring, true)) string_pool
       @ [
           (W.I32, true);

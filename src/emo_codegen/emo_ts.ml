@@ -50,6 +50,13 @@ let fresh env =
    which no Emo identifier can contain, so the mangled name cannot
    collide with another local. Module-level names are mangled with
    `__` elsewhere and never meet this list. *)
+
+(* A module-level `var`'s cell: the same box shape a captured mutable
+   local takes, at module scope — the `.v` holds the current value. The
+   suffix rides the `__emo_cache` convention: the mangled name plus a
+   tail no Emo identifier reaches. *)
+let global_cell (g : string) : string = g ^ "__emo_cell"
+
 let ts_local (name : string) : string =
   let reserved =
     List.mem name
@@ -464,10 +471,7 @@ let rec expr env (e : Emo_ir.expr) : string =
       env.refs <- saved;
       env.in_loop <- saved_loop;
       Printf.sprintf "(async (%s) => {\n%s\n})" params body
-  | Emo_ir.Global_var _ ->
-      raise
-        (Emo_ir.Lower_error
-           "the typescript target does not support module-level `var` yet")
+  | Emo_ir.Global_var g -> Printf.sprintf "(%s.v)" (global_cell g)
 
 (* Sequenced statements: every line ends with `;`; a tail position
    returns. *)
@@ -508,10 +512,9 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : string =
       if List.mem name env.refs then
         Printf.sprintf "%s.v = %s;" (ts_local name) (expr env value)
       else Printf.sprintf "const %s = %s;" (ts_local name) (expr env value)
-  | Set_global_var _ ->
-      raise
-        (Emo_ir.Lower_error
-           "the typescript target does not support module-level `var` yet")
+  | Set_global_var { name; value } ->
+      let value_code = expr env value in
+      Printf.sprintf "%s.v = %s;" (global_cell name) value_code
   | Set_field { self_; name; value } ->
       Printf.sprintf "(%s).%s = %s;" (expr env self_) name (expr env value)
   | Assign_index { target; index; value } ->
@@ -916,8 +919,13 @@ let emit_program ~(browser : bool) ~(prelude : string)
       put env "%s\n" (emit_ctor_factory env c))
     program.Emo_ir.pclasses;
   (* A const thunk's module-level cache: declared before the functions
-     that read and fill it. *)
+     that read and fill it. A module-level `var`'s cell rides beside it
+     — declared before the bodies that read and write it, its value
+     fills inside the root body below. *)
   List.iter (fun c -> put env "let %s__emo_cache;\n" c) program.Emo_ir.pconsts;
+  List.iter
+    (fun (g, _) -> put env "let %s = { v: undefined };\n" (global_cell g))
+    program.Emo_ir.pglobals;
   List.iter
     (fun (f : Emo_ir.func) ->
       if f.Emo_ir.fforeign = None then put env "%s\n" (emit_func env f))
@@ -926,6 +934,20 @@ let emit_program ~(browser : bool) ~(prelude : string)
      and the page keeps running, like a native UI loop survives one bad
      event. Node reports it and exits 70, the compiler's external-step
      code. *)
+  (* The module-level `var`s initialize in declaration order before the
+     entry's own top level, mirroring the interpreter: each initializer
+     evaluates once, and the cell keeps the value it lands. *)
+  let global_inits =
+    List.concat_map
+      (fun (g, init) ->
+        let init_code = expr env init in
+        [ Printf.sprintf "%s.v = %s;" (global_cell g) init_code ])
+      program.Emo_ir.pglobals
+  in
+  let root_body =
+    String.concat "\n"
+      (global_inits @ [ stmts env program.Emo_ir.pinit ~tail:false ])
+  in
   put env
     "\n\
      E.runMain(async () => {\n\
@@ -939,7 +961,7 @@ let emit_program ~(browser : bool) ~(prelude : string)
     \      console.error(E.renderError(e));\n\
     \  %s\n\
      });\n"
-    (stmts env program.Emo_ir.pinit ~tail:false)
+    root_body
     (if browser then "" else "process.exitCode = 70;");
   Buffer.contents buf
 

@@ -446,6 +446,13 @@ and lower_expr env (e : Ast.expr) : expr =
                  evaluates it. *)
               expr (Call { func = mangled; args = [] })
           | Some (S_func { mangled; _ }) -> expr (Global mangled)
+          | Some (S_global { gname }) ->
+              (* A module-level `var` read through its module: the same
+                 live cell the owning module's unqualified read lowers
+                 to, so every target answers the current value (the
+                 interpreter's rule) instead of the inert module value
+                 the fallback Field_read produced. *)
+              expr (Global_var gname)
           | Some (S_class _) ->
               (* A class in value position — an `is()` target. *)
               expr (Type_ref (qualify_name path member))
