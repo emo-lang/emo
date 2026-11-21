@@ -3383,15 +3383,164 @@ def comp_surface_shadow(w Int64, h Int64, x Int64, y Int64, rad Int64,
   if y1 > dy1 {
     y1 = dy1
   }
+  // The straight zones inlined (feat/modern-desktop): a pixel half a
+  // pixel inside a straight edge — or beside one, within the soft
+  // reach — carries a distance the arc never touches, and the ink's
+  // own RGB is zero, so the store's mix reads `dst * (255 - ca)` and
+  // the calls come out of the per-pixel walk. The zones and their
+  // bounds are the originals' (the same pixels in the same order, the
+  // digest's sum included); the arc columns and the corner bands keep
+  // the shape's verdict through `comp_shadow_span`.
+  var dx0 = peek64(comp_dmg_x)
+  var dx1 = dx0 + peek64(comp_dmg_w)
+  var mw = peek64(comp_mode_w)
+  var scr = koff + screen_base
+  var s = soft
+  if s < 1 {
+    s = 1
+  }
+  var span = s * 256
+  var s128 = s * 128
   while row < y1 {
     if row < y || row >= y + h {
-      sum = sum + comp_shadow_span(x - pad, x + w + pad, row, w, h, x, y, rs)
+      // The band's row: the distance to the straight edge is the row's
+      // own constant across the middle columns — the cover and the
+      // covered ink once a row, the store's three mixes per pixel; a
+      // row past the soft reach covers nothing and stores nothing, the
+      // original's own skip.
+      var sd = 0
+      if row < y {
+        sd = (y - row) * 256 - 128
+      } else {
+        sd = (row - y - h) * 256 + 128
+      }
+      const c = comp_shadow_cover(sd, soft)
+      if c > 0 {
+        const cov = comp_cover(comp_shadow_ink, c)
+        const ca = (cov >> 24) & 0xFF
+        const sr = (cov >> 16) & 0xFF
+        const sg = (cov >> 8) & 0xFF
+        const sb = cov & 0xFF
+        var lo = x + rad
+        if lo < dx0 {
+          lo = dx0
+        }
+        var hi = x + w - rad
+        if hi > mw {
+          hi = mw
+        }
+        if hi > dx1 {
+          hi = dx1
+        }
+        var at = scr + (row * mw + lo) * 4
+        while lo < hi {
+          var d = peek32(at)
+          var t = sr * ca + ((d >> 16) & 0xFF) * (255 - ca) + 128
+          var r = (t + (t >> 8)) >> 8
+          t = sg * ca + ((d >> 8) & 0xFF) * (255 - ca) + 128
+          var g = (t + (t >> 8)) >> 8
+          t = sb * ca + (d & 0xFF) * (255 - ca) + 128
+          var b = (t + (t >> 8)) >> 8
+          var nv = (r << 16) | (g << 8) | b
+          poke32(at, nv)
+          sum = sum + nv
+          lo = lo + 1
+          at = at + 4
+        }
+      }
+      sum = sum + comp_shadow_span(x - pad, x + rad, row, w, h, x, y, rs)
+      sum = sum + comp_shadow_span(x + w - rad, x + w + pad, row, w, h, x, y, rs)
     } else {
-      sum = sum + comp_shadow_span(x - pad, x, row, w, h, x, y, rs)
-      sum = sum + comp_shadow_span(x + w, x + w + pad, row, w, h, x, y, rs)
       if row < y + rad || row >= y + h - rad {
+        // The corner band's row: the distance meets the arc on every
+        // side (sx and sy both positive — isqrt's own), the shape's
+        // verdict stands.
+        sum = sum + comp_shadow_span(x - pad, x, row, w, h, x, y, rs)
+        sum = sum + comp_shadow_span(x + w, x + w + pad, row, w, h, x, y, rs)
         sum = sum + comp_shadow_span(x, x + rad, row, w, h, x, y, rs)
         sum = sum + comp_shadow_span(x + w - rad, x + w, row, w, h, x, y, rs)
+      } else {
+        // The straight band's row: the distance to the side edge is
+        // linear in the column, no arc and no isqrt, the ink's RGB
+        // zero so the store's mix reads `dst * (255 - ca)`.
+        var lo = x - pad
+        if lo < 0 {
+          lo = 0
+        }
+        if lo < dx0 {
+          lo = dx0
+        }
+        var hi = x
+        if hi > mw {
+          hi = mw
+        }
+        if hi > dx1 {
+          hi = dx1
+        }
+        var at = scr + (row * mw + lo) * 4
+        while lo < hi {
+          const c_ = s128 - ((x - lo) * 256 - 128)
+          if c_ > 0 {
+            var cov = 255
+            if c_ < span {
+              const t = (c_ * 4096) / span
+              cov = (255 * t * t * (12288 - 2 * t) + 34359738368) / 68719476736
+            }
+            var ct = 128 * cov + 128
+            var cam = 255 - ((ct + (ct >> 8)) >> 8)
+            var d = peek32(at)
+            var t = ((d >> 16) & 0xFF) * cam + 128
+            var r = (t + (t >> 8)) >> 8
+            t = ((d >> 8) & 0xFF) * cam + 128
+            var g = (t + (t >> 8)) >> 8
+            t = (d & 0xFF) * cam + 128
+            var b = (t + (t >> 8)) >> 8
+            var nv = (r << 16) | (g << 8) | b
+            poke32(at, nv)
+            sum = sum + nv
+          }
+          lo = lo + 1
+          at = at + 4
+        }
+        lo = x + w
+        if lo > mw {
+          lo = mw
+        }
+        if lo < dx0 {
+          lo = dx0
+        }
+        hi = x + w + pad
+        if hi > mw {
+          hi = mw
+        }
+        if hi > dx1 {
+          hi = dx1
+        }
+        at = scr + (row * mw + lo) * 4
+        while lo < hi {
+          const c_ = s128 - ((lo - x - w) * 256 + 128)
+          if c_ > 0 {
+            var cov = 255
+            if c_ < span {
+              const t = (c_ * 4096) / span
+              cov = (255 * t * t * (12288 - 2 * t) + 34359738368) / 68719476736
+            }
+            var ct = 128 * cov + 128
+            var cam = 255 - ((ct + (ct >> 8)) >> 8)
+            var d = peek32(at)
+            var t = ((d >> 16) & 0xFF) * cam + 128
+            var r = (t + (t >> 8)) >> 8
+            t = ((d >> 8) & 0xFF) * cam + 128
+            var g = (t + (t >> 8)) >> 8
+            t = (d & 0xFF) * cam + 128
+            var b = (t + (t >> 8)) >> 8
+            var nv = (r << 16) | (g << 8) | b
+            poke32(at, nv)
+            sum = sum + nv
+          }
+          lo = lo + 1
+          at = at + 4
+        }
       }
     }
     row = row + 1
