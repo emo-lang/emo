@@ -3413,6 +3413,96 @@ and rec_pattern_bind env (src_off : int) (p : Emo_ast.pattern) : unit =
           rec_pattern_bind env (temp_offset env 1) sub)
         ps
 
+(* The branch's raw fast path (feat/modern-desktop): in a native body a
+   numeric comparison feeds its branch directly — the slt's 0/1 in t0
+   branches, and the tagged Bool is never built and re-tested. The
+   whitelist is the raw pair helpers' own: the Int64, Byte and Float64
+   orders, and the equality the immediates speak; everything else (And,
+   Or, Not, calls, dynamic operands) takes the tagged path. False with
+   nothing emitted means the caller falls back. *)
+and emit_raw_cond env (cond : Emo_ir.expr) (l_false : string) : bool =
+  let orders = [ Emo_ast.Lt; Emo_ast.Le; Emo_ast.Gt; Emo_ast.Ge ] in
+  let is_imm ty =
+    match ty with
+    | Emo_check.Bool | Emo_check.Char | Emo_check.Byte | Emo_check.EnumType _ ->
+        true
+    | _ -> false
+  in
+  let fast =
+    match (env.native, cond.Emo_ir.desc) with
+    | true, Binary (op, l, r) -> (
+        match (op, l.Emo_ir.ety, r.Emo_ir.ety) with
+        | op, Emo_check.Int64, Emo_check.Int64 when List.mem op orders -> true
+        | op, Emo_check.Byte, Emo_check.Byte when List.mem op orders -> true
+        | op, Emo_check.Float64, Emo_check.Float64 when List.mem op orders ->
+            true
+        | (Emo_ast.Eq | Emo_ast.Ne), Emo_check.Int64, Emo_check.Int64 -> true
+        | (Emo_ast.Eq | Emo_ast.Ne), ty, _ when is_imm ty -> true
+        | _ -> false)
+    | _ -> false
+  in
+  if not fast then false
+  else begin
+    let op, l, r =
+      match cond.Emo_ir.desc with
+      | Binary (op, l, r) -> (op, l, r)
+      | _ -> assert false
+    in
+    (match (op, l.Emo_ir.ety) with
+    | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Int64 -> (
+        emit_int_pair env 0 l r;
+        match op with
+        | Emo_ast.Lt -> put env "    slt t0, t0, t1\n"
+        | Emo_ast.Gt -> put env "    slt t0, t1, t0\n"
+        | Emo_ast.Le ->
+            put env "    slt t0, t1, t0\n";
+            put env "    xori t0, t0, 1\n"
+        | Emo_ast.Ge ->
+            put env "    slt t0, t0, t1\n";
+            put env "    xori t0, t0, 1\n"
+        | _ -> assert false)
+    | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Byte -> (
+        emit_byte_pair env 0 l r;
+        match op with
+        | Emo_ast.Lt -> put env "    slt t0, t0, t1\n"
+        | Emo_ast.Gt -> put env "    slt t0, t1, t0\n"
+        | Emo_ast.Le ->
+            put env "    slt t0, t1, t0\n";
+            put env "    xori t0, t0, 1\n"
+        | Emo_ast.Ge ->
+            put env "    slt t0, t0, t1\n";
+            put env "    xori t0, t0, 1\n"
+        | _ -> assert false)
+    | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Float64
+      -> (
+        emit_float_pair env 0 l r;
+        match op with
+        | Emo_ast.Lt -> put env "    flt.d t0, fa0, fa1\n"
+        | Emo_ast.Le -> put env "    fle.d t0, fa0, fa1\n"
+        | Emo_ast.Gt -> put env "    flt.d t0, fa1, fa0\n"
+        | Emo_ast.Ge ->
+            put env "    flt.d t0, fa1, fa0\n";
+            put env "    xori t0, t0, 1\n"
+        | _ -> assert false)
+    | (Emo_ast.Eq | Emo_ast.Ne), Emo_check.Int64 ->
+        emit_int_pair env 0 l r;
+        put env "    sub t0, t0, t1\n";
+        if op = Emo_ast.Eq then put env "    seqz t0, t0\n"
+        else put env "    snez t0, t0\n"
+    | (Emo_ast.Eq | Emo_ast.Ne), _ ->
+        (* immediates: equal iff the words are identical *)
+        emit_expr env 1 l;
+        put env "    sd a0, %d(sp)\n" (temp_offset env 0);
+        emit_expr env 1 r;
+        put env "    ld t0, %d(sp)\n" (temp_offset env 0);
+        put env "    xor t0, t0, a0\n";
+        if op = Emo_ast.Eq then put env "    seqz t0, t0\n"
+        else put env "    snez t0, t0\n"
+    | _ -> assert false);
+    put env "    beqz t0, %s\n" l_false;
+    true
+  end
+
 and emit_stmts env (stmts : Emo_ir.stmt list) : unit =
   (* The statement boundary is the borrow window (T8.7's pool): the
      births pooled inside one statement release together at the next,
@@ -3497,9 +3587,11 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       let l_else = fresh_label env "else" in
       let l_end = fresh_label env "endif" in
       let mark = List.length env.owned in
-      emit_expr env 0 cond;
-      put env "    andi t0, a0, 16\n";
-      put env "    beqz t0, %s\n" l_else;
+      if not (emit_raw_cond env cond l_else) then begin
+        emit_expr env 0 cond;
+        put env "    andi t0, a0, 16\n";
+        put env "    beqz t0, %s\n" l_else
+      end;
       emit_stmts env then_;
       unwind_owned env mark;
       put env "    j %s\n" l_end;
@@ -3780,9 +3872,11 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       let exit_l = fresh_label env "endloop" in
       let mark = List.length env.owned in
       put env "%s:\n" head;
-      emit_expr env 0 cond;
-      put env "    andi t0, a0, 16\n";
-      put env "    beqz t0, %s\n" exit_l;
+      if not (emit_raw_cond env cond exit_l) then begin
+        emit_expr env 0 cond;
+        put env "    andi t0, a0, 16\n";
+        put env "    beqz t0, %s\n" exit_l
+      end;
       env.loops <- (exit_l, head, mark) :: env.loops;
       emit_stmts env body;
       env.loops <- List.tl env.loops;
@@ -3803,9 +3897,11 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       let post_l = fresh_label env "post" in
       let exit_l = fresh_label env "endloop" in
       put env "%s:\n" head;
-      emit_expr env 0 cond;
-      put env "    andi t0, a0, 16\n";
-      put env "    beqz t0, %s\n" exit_l;
+      if not (emit_raw_cond env cond exit_l) then begin
+        emit_expr env 0 cond;
+        put env "    andi t0, a0, 16\n";
+        put env "    beqz t0, %s\n" exit_l
+      end;
       env.loops <- (exit_l, post_l, mark) :: env.loops;
       emit_stmts env body;
       env.loops <- List.tl env.loops;

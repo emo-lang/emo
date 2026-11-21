@@ -2784,14 +2784,29 @@ def comp_blit(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
     r1 = dy1
   }
   var stride = mw / 2
+  // The word-space geometry, hoisted (feat/modern-desktop): the source
+  // stride, the box's word columns and the destination's base word
+  // computed once per call — the per-word walk is the load, the store,
+  // the sum's word and the two pointers' steps, nothing recomputed, no
+  // thunk called. The addresses are the originals' (the same words in
+  // the same order, the digest's sum included).
+  var w2 = w / 2
+  var xw = x / 2
+  var i0 = (x0 - x) / 2
+  var i1 = (x1 - x) / 2
+  var n = i1 - i0
+  var dst0 = koff + screen_base + (xw + i0) * 8
   var r = r0
   while r < r1 {
-    var i = (x0 - x) / 2
-    var iend = (x1 - x) / 2
-    while i < iend {
-      var v = peek64(base + ((r - y) * (w / 2) + i) * 8)
-      poke64(koff + screen_base + (r * stride + x / 2 + i) * 8, v)
+    var src = base + ((r - y) * w2 + i0) * 8
+    var dst = dst0 + r * stride * 8
+    var i = 0
+    while i < n {
+      var v = peek64(src)
+      poke64(dst, v)
       sum = sum + v
+      src = src + 8
+      dst = dst + 8
       i = i + 1
     }
     r = r + 1
@@ -3147,17 +3162,29 @@ def comp_blit_alpha(base Int64, w Int64, h Int64, x Int64, y Int64) Int64 {
   if r1 > dy1 {
     r1 = dy1
   }
+  // The pixel-space geometry, hoisted (feat/modern-desktop): the box's
+  // pixel columns and the two row bases computed once per call and per
+  // row — the per-pixel walk is the two loads, the blend, the store and
+  // the two pointers' steps, nothing recomputed, no thunk called. The
+  // addresses are the originals' (the same pixels in the same order,
+  // the digest's sum included).
+  var c0 = x0 - x
+  var c1 = x1 - x
+  var n = c1 - c0
   var r = r0
   while r < r1 {
     var roff = r - y
-    var c = x0 - x
-    while c < x1 - x {
-      var src = peek32(base + (roff * w + c) * 4)
-      var at = koff + screen_base + ((r * mw) + x + c) * 4
-      var nv = comp_over_pack(src, peek32(at))
+    var src = base + (roff * w + c0) * 4
+    var at = koff + screen_base + ((r * mw) + x + c0) * 4
+    var i = 0
+    while i < n {
+      var s = peek32(src)
+      var nv = comp_over_pack(s, peek32(at))
       poke32(at, nv)
       sum = sum + nv
-      c = c + 1
+      src = src + 4
+      at = at + 4
+      i = i + 1
     }
     r = r + 1
   }
