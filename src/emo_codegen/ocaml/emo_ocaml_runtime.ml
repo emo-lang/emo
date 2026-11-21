@@ -2198,6 +2198,31 @@ module Emo_runtime = struct
   let map_key_rule =
     "a map key must be a String, Int64, Byte, Bool, Char, or Float64"
 
+  (* The sort's three-way compare. Floats answer `<` twice, then the
+     NaN rule: a NaN sorts after every number, two NaNs equal — a
+     total order, so every stable sort agrees on it. Strings answer
+     byte order. *)
+  let emo_scalar_compare (a : Emo_eval.value) (b : Emo_eval.value) : int =
+    match (a, b) with
+    | Emo_eval.Int64 x, Emo_eval.Int64 y -> Int64.compare x y
+    | Emo_eval.Float x, Emo_eval.Float y ->
+        if x < y then -1
+        else if y < x then 1
+        else if x <> x then if y <> y then 0 else 1
+        else if y <> y then -1
+        else 0
+    | Emo_eval.String x, Emo_eval.String y -> String.compare x y
+    | Emo_eval.Byte x, Emo_eval.Byte y -> Int.compare x y
+    | Emo_eval.Char x, Emo_eval.Char y ->
+        Int.compare (Char.code x) (Char.code y)
+    | Emo_eval.Bool x, Emo_eval.Bool y ->
+        Int.compare (if x then 1 else 0) (if y then 1 else 0)
+    | _ -> 0
+
+  let emo_array_sort (xs : Emo_eval.value array) : Emo_eval.value array =
+    xs |> Array.to_list |> List.stable_sort emo_scalar_compare
+    |> Array.of_list
+
   let map_insert (m : Emo_eval.emo_map) (k : Emo_eval.value)
       (v : Emo_eval.value) : unit =
     if not (map_key_ok k) then failwith map_key_rule;
@@ -2797,6 +2822,9 @@ module Emo_runtime = struct
     | Emo_eval.Array xs, "append" ->
         one_expected ();
         Emo_eval.Array (Array.append xs [| List.hd args |])
+    | Emo_eval.Array xs, "sort" ->
+        none_expected ();
+        Emo_eval.Array (emo_array_sort xs)
     | Emo_eval.Map m, "get" -> (
         one_expected ();
         match List.hd args with

@@ -3634,6 +3634,31 @@ and check_method_call ctx env span recv mname args : t =
         builtin0
           (ignore elem;
            Int64)
+    | ArrayType elem, "sort" -> (
+        (* the six comparable scalars are the map-key set: the element
+           type must pin one, and an unpinned element type cannot sort
+           because the static targets pick their compare from it *)
+        match arg_values with
+        | [] -> (
+            match elem with
+            | Int64 | Float64 | String | Byte | Char | Bool -> ArrayType elem
+            | Unknown ->
+                report ctx span "E4004"
+                  "`sort` needs a known element type; annotate the binding, \
+                   e.g. `const a Array[Int64] = []`";
+                ArrayType elem
+            | other ->
+                report ctx span "E4004"
+                  (Printf.sprintf
+                     "`sort` expects comparable elements (Int64, Float64, \
+                      String, Byte, Char, Bool), got %s"
+                     (to_string other));
+                ArrayType elem)
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`sort` expects no arguments, got %d"
+                 (List.length arg_values));
+            ArrayType elem)
     | TupleType _, "length" -> builtin0 Int64
     | BoxType elem, "read" -> builtin0 elem
     | BoxType elem, "replace" -> (

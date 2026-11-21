@@ -584,6 +584,84 @@ emo_value emo_array_append(emo_value arr, emo_value v) {
   return out;
 }
 
+/* The sort's compare modes, handed in by the emitter from the array's
+   static element type (the dynamic table infers the mode from the
+   first element). Floats answer `<` twice, then the NaN rule — a NaN
+   sorts after every number, two NaNs equal, a total order every
+   target agrees on. A Byte rides the dynamic world as an Int64 cell
+   carrying 0-255, so modes 0 and 3 share the arm. */
+static int64_t emo_sort_cmp(uintptr_t a, uintptr_t b, int64_t mode) {
+  switch (mode) {
+  case 1: {
+    double x = emo_unbox_f64(a), y = emo_unbox_f64(b);
+    if (x < y) return -1;
+    if (y < x) return 1;
+    if (x != x) return y != y ? 0 : 1;
+    if (y != y) return -1;
+    return 0;
+  }
+  case 2: {
+    emo_str sa = emo_str_of(a), sb = emo_str_of(b);
+    int64_t n = sa.len < sb.len ? sa.len : sb.len;
+    int r = memcmp(sa.bytes, sb.bytes, (size_t)n);
+    if (r != 0) return r < 0 ? -1 : 1;
+    return sa.len < sb.len ? -1 : sb.len < sa.len ? 1 : 0;
+  }
+  case 4: /* Char: the 0b011 immediate, its code in the top bits */
+  case 5: { /* Bool: the 0b001 immediate, 0/1 in the top bits */
+    uintptr_t x = a >> 3, y = b >> 3;
+    return x < y ? -1 : y < x ? 1 : 0;
+  }
+  default: { /* Int64, and a Byte in its Int64 cell */
+    int64_t x = emo_unbox_i64(a), y = emo_unbox_i64(b);
+    return x < y ? -1 : y < x ? 1 : 0;
+  }
+  }
+}
+
+/* Bottom-up merge sort: stable, two arena scratches of n words each
+   (the input array is only ever read — `sort` answers a new Array the
+   way `append` does, every holder of the original seeing it
+   untouched), the elements retained once into the fresh result
+   cell. */
+emo_value emo_array_sort(emo_value arr, int64_t mode) {
+  if (emo_cell_kind(arr) != EMO_ARRAY)
+    emo_fatal("`sort` sorts an Array");
+  int64_t n = emo_length(arr);
+  emo_value out = emo_cell_new(EMO_ARRAY, n + 1);
+  uintptr_t *dst = emo_payload(out) + 1;
+  emo_payload(out)[0] = (uintptr_t)n; /* the length, emo_array_new's own */
+  uintptr_t *buf1 = (uintptr_t *)emo_alloc(n * sizeof(uintptr_t));
+  uintptr_t *buf2 = (uintptr_t *)emo_alloc(n * sizeof(uintptr_t));
+  for (int64_t i = 0; i < n; i++) buf1[i] = emo_payload(arr)[i + 1];
+  uintptr_t *from = buf1;
+  uintptr_t *to = buf2;
+  for (int64_t width = 1; width < n; width *= 2) {
+    for (int64_t i = 0; i < n; i += 2 * width) {
+      int64_t mid = i + width < n ? i + width : n;
+      int64_t end = i + 2 * width < n ? i + 2 * width : n;
+      int64_t l = i, r = mid, k = i;
+      while (l < mid && r < end) {
+        if (emo_sort_cmp(from[r], from[l], mode) < 0)
+          to[k++] = from[r++]; /* the right run loses; a tie takes the
+                                  left run's element, which is the
+                                  stability */
+        else to[k++] = from[l++];
+      }
+      while (l < mid) to[k++] = from[l++];
+      while (r < end) to[k++] = from[r++];
+    }
+    uintptr_t *swap = from;
+    from = to;
+    to = swap;
+  }
+  for (int64_t i = 0; i < n; i++) {
+    dst[i] = from[i];
+    emo_retain((emo_value)from[i]);
+  }
+  return out;
+}
+
 /* The element store behind `arr[i] = v`: the array mutates in place,
    every holder of the value seeing the write. The bounds rule is the
    read's own (emo_index's text); the write barrier keeps the old
@@ -5754,6 +5832,30 @@ static emo_value emo_bm_append(emo_value recv, const emo_value *args) {
   return emo_array_append(recv, args[0]);
 }
 
+/* The dynamic send has no static element type to hand the sort, so the
+   first element's runtime shape picks the compare the way the
+   interpreter's own dispatch reads the values; an empty array never
+   compares and takes any mode. */
+static int64_t emo_sort_mode_of(emo_value arr) {
+  int64_t n = emo_length(arr);
+  if (n == 0) return 0;
+  uintptr_t v = emo_payload(arr)[1];
+  if ((v & 7) == 0b001) return 5; /* Bool */
+  if ((v & 7) == 0b011) return 4; /* Char */
+  if ((v & 7) == 0) {
+    uintptr_t k = emo_cell_kind(v);
+    if (k == EMO_FLOAT64) return 1;
+    if (k == EMO_STRING) return 2;
+    if (k == EMO_INT64) return 0; /* a Byte rides the Int64 cell */
+  }
+  return 0;
+}
+
+static emo_value emo_bm_sort(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_array_sort(recv, emo_sort_mode_of(recv));
+}
+
 static emo_value emo_bm_to_bytes(emo_value recv, const emo_value *args) {
   (void)args;
   return emo_bytes_of_str(recv);
@@ -5842,6 +5944,7 @@ static const emo_builtin_method emo_builtin_methods[] = {
     {"read", 0, emo_bm_read},
     {"replace", 1, emo_bm_replace},
     {"append", 1, emo_bm_append},
+    {"sort", 0, emo_bm_sort},
     {"to_bytes", 0, emo_bm_to_bytes},
     {"to_bits", 0, emo_bm_to_bits},
     {"to_byte", 0, emo_bm_to_byte},

@@ -366,6 +366,72 @@ function isChar(x: any): x is EChar {
   return x instanceof EChar;
 }
 
+// The sort's compare, the `<`-twice three-way shape every target
+// speaks, a NaN float sorting after every number; a string answers in
+// UTF-8 byte order — code point order, never UTF-16 unit order (a
+// supplementary character sorts above U+E000..FFFF, as the
+// interpreter's bytes do).
+function emoStrLt(a: string, b: string): boolean {
+  let ia = 0;
+  let ib = 0;
+  while (ia < a.length && ib < b.length) {
+    const ca = a.codePointAt(ia)!;
+    const cb = b.codePointAt(ib)!;
+    if (ca !== cb) return ca < cb;
+    ia += ca > 0xffff ? 2 : 1;
+    ib += cb > 0xffff ? 2 : 1;
+  }
+  return a.length - ia < b.length - ib;
+}
+
+function emoScalarLt(a: any, b: any): boolean {
+  if (typeof a === "bigint") return a < b;
+  if (typeof a === "number") return a < b;
+  if (typeof a === "boolean") return Number(a) < Number(b);
+  if (typeof a === "string") return emoStrLt(a, b);
+  if (isFloat(a)) {
+    if (a.v < b.v) return true;
+    if (b.v < a.v) return false;
+    const an = a.v !== a.v;
+    const bn = b.v !== b.v;
+    return !an && bn; // a NaN sorts after every number, two NaNs equal
+  }
+  if (isChar(a)) return a.c < b.c;
+  return false; // incomparable elements never move; the checker refused them
+}
+
+// Bottom-up merge sort: stable (the right element moves only when it
+// is strictly smaller), value semantic — a fresh array, the input's
+// items untouched, even when nothing moves.
+function emoArraySort(items: any[]): any[] {
+  const n = items.length;
+  const start = items.slice();
+  const scratch: any[] = new Array(n);
+  let from = start;
+  let to = scratch;
+  for (let width = 1; width < n; width *= 2) {
+    for (let i = 0; i < n; i += 2 * width) {
+      const mid = Math.min(i + width, n);
+      const end = Math.min(i + 2 * width, n);
+      let l = i;
+      let r = mid;
+      let k = i;
+      while (l < mid && r < end) {
+        if (emoScalarLt(from[r], from[l])) to[k++] = from[r++];
+        else to[k++] = from[l++];
+      }
+      while (l < mid) to[k++] = from[l++];
+      while (r < end) to[k++] = from[r++];
+    }
+    const swap = from;
+    from = to;
+    to = swap;
+  }
+  const result: any[] = new Array(n);
+  for (let i = 0; i < n; i++) result[i] = from[i];
+  return result;
+}
+
 function isInt(x: any): boolean {
   return typeof x === "number" && Number.isInteger(x);
 }
@@ -1695,6 +1761,8 @@ const E: any = {
         return BigInt(recv.items.length);
       if (name === "append" && recv instanceof EArray)
         return new EArray(recv.items.concat([args[0]]));
+      if (name === "sort" && recv instanceof EArray)
+        return new EArray(emoArraySort(recv.items));
       if (recv instanceof EMap) {
         if (name === "get") {
           const hit = recv.entries.get(emoMapKey(args[0]));

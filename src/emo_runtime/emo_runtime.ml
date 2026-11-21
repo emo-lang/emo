@@ -622,6 +622,9 @@ let method_call self name args =
   | Emo_eval.Array xs, "append" ->
       one_expected ();
       Emo_eval.Array (Array.append xs [| List.hd args |])
+  | Emo_eval.Array xs, "sort" ->
+      none_expected ();
+      Emo_eval.Array (Emo_eval.emo_array_sort xs)
   | Emo_eval.Map m, "get" -> (
       one_expected ();
       match List.hd args with

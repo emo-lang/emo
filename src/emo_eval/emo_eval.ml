@@ -360,6 +360,28 @@ and map_key_ok (k : value) : bool =
 
 and map_keys (m : emo_map) : value list = List.rev m.order
 
+(* The sort's three-way compare. Floats answer `<` twice, then the NaN
+   rule: a NaN sorts after every number, two NaNs equal — a total
+   order, so every stable sort agrees on it. Strings answer byte
+   order, which is the order the other string primitives speak. *)
+and emo_scalar_compare (a : value) (b : value) : int =
+  match (a, b) with
+  | Int64 x, Int64 y -> Int64.compare x y
+  | Float x, Float y ->
+      if x < y then -1
+      else if y < x then 1
+      else if x <> x then if y <> y then 0 else 1
+      else if y <> y then -1
+      else 0
+  | String x, String y -> String.compare x y
+  | Byte x, Byte y -> Int.compare x y
+  | Char x, Char y -> Int.compare (Char.code x) (Char.code y)
+  | Bool x, Bool y -> Int.compare (if x then 1 else 0) (if y then 1 else 0)
+  | _ -> 0
+
+and emo_array_sort (xs : value array) : value array =
+  xs |> Array.to_list |> List.stable_sort emo_scalar_compare |> Array.of_list
+
 let global_env () =
   let env = { frame = Frame_tbl.create 16; parent = None } in
   (* The language's own built-ins: the bare names every frame carries. *)
@@ -3066,6 +3088,9 @@ and call_method_value env span base mname args =
       | _ ->
           error span "E3007"
             (Printf.sprintf "`append` expects 1 argument, got %d" argc))
+  | Array xs, "sort" ->
+      none_expected "sort";
+      Array (emo_array_sort xs)
   | Map m, "get" -> (
       match eval_args () with
       | [ k ] -> map_get span m k

@@ -205,6 +205,7 @@ int32_t emo_char_of(emo_value v);
 emo_value emo_tuple_new(int64_t arity, emo_value *elems);
 emo_value emo_array_new(int64_t len, emo_value *elems);
 emo_value emo_array_append(emo_value arr, emo_value v); /* value semantics: a new array */
+emo_value emo_array_sort(emo_value arr, int64_t mode); /* value semantics: a new array; the mode picks the compare, the emitter's static element type or the dynamic table's inference */
 void emo_array_set(emo_value arr, int64_t i, emo_value v); /* mutates in place */
 emo_value emo_box_new(emo_value v);
 emo_value emo_box_read(emo_value box);

@@ -147,6 +147,7 @@ let unguarded_builtin_arms =
     ("lower", 0);
     ("split", 1);
     ("append", 1);
+    ("sort", 0);
     ("read", 0);
     ("replace", 1);
     ("push_front", 1);
@@ -988,6 +989,9 @@ and builtin_method_call env self_ name args =
       | "append", [ v ] ->
           put env "apply 'emo_array_append'/2 ";
           args_list env [ self_; v ]
+      | "sort", [] ->
+          put env "apply 'emo_array_sort'/1 ";
+          args_list env [ self_ ]
       | "substring", [ start; len ] ->
           put env "apply 'emo_str_substring'/3 ";
           args_list env [ self_; start; len ]
@@ -4960,6 +4964,43 @@ let rt_source =
 		       (apply 'emo_cells_table'/0 (), {_k, _i}, 2)})
 		 apply 'emo_array_copy_walk'/4
 		   (_k, _k2, call 'erlang':'+'(_i, 1), _len)
+	end
+
+%% the sort's comparator, the ≤ shape the stable merge asks for: the
+%%   elements answer Erlang's own order — integers (Int64, Byte, Char
+%%   codes) numerically, binaries byte-wise, atoms alphabetically
+%%   (false before true) — and a Float64 NaN sorts after every number,
+%%   two NaNs equal, the total order every target agrees on (a NaN
+%%   fails its own =/=, so the guard reads it)
+'emo_sort_le'/2 =
+    fun (_x, _y) ->
+	case _x of
+	  <_x> when call 'erlang':'is_float'(_x) ->
+	      case call 'erlang':'=/='(_x, _x) of
+		<'true'> when 'true' ->
+		    case call 'erlang':'=/='(_y, _y) of
+		      <'true'> when 'true' -> 'true'
+		      <_other> when 'true' -> 'false'
+		    end
+		<_other> when 'true' ->
+		    call 'erlang':'not'(call 'erlang':'<'(_y, _x))
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'not'(call 'erlang':'<'(_y, _x))
+	end
+
+'emo_array_sort'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_array', _k}> when 'true' ->
+	      %% value semantics: the sorted elements rebuild through the
+	      %%   literal's walk, the original rows untouched
+	      apply 'emo_array_lit'/1
+		(call 'lists':'sort'
+		   (fun (_u, _v) -> apply 'emo_sort_le'/2 (_u, _v),
+		     apply 'emo_array_elems'/1 (_a)))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_array', _other})
 	end
 
 'emo_array_elems'/1 =
