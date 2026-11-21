@@ -3768,13 +3768,31 @@ def comp_blit_scaled(base Int64, w Int64, h Int64, s Int64, x Int64,
   var r = r0
   while r < r1 {
     var sr = (r - y) / s
+    var sc = (x0 - x) / s
+    var rem = (x0 - x) - sc * s
+    var at = koff + screen_base + ((r * (mw / 2)) + x0 / 2) * 8
     var c = x0
     while c + 2 <= x1 {
-      sum = sum + comp_scaled_pair(base, w, s, x, sr, r, c)
+      var p0 = peek32(base + (sr * w + sc) * 4)
+      rem = rem + 1
+      if rem == s {
+        rem = 0
+        sc = sc + 1
+      }
+      var p1 = peek32(base + (sr * w + sc) * 4)
+      rem = rem + 1
+      if rem == s {
+        rem = 0
+        sc = sc + 1
+      }
+      var v = p0 | (p1 << 32)
+      poke64(at, v)
+      sum = sum + v
       c = c + 2
+      at = at + 8
     }
     if c < x1 {
-      var p = peek32(base + ((sr * w) + ((c - x) / s)) * 4)
+      var p = peek32(base + (sr * w + sc) * 4)
       poke32(koff + screen_base + ((r * mw) + c) * 4, p)
       sum = sum + p
     }
@@ -3847,6 +3865,14 @@ def comp_blit_scaled_masked(base Int64, w Int64, h Int64, s Int64,
   if r1 > dy1 {
     r1 = dy1
   }
+  // The pair walk inlined (feat/modern-desktop): the source column and
+  // its remainder walk the row once — a division to seat them, the
+  // increments after — and the destination's word address steps by its
+  // pair, so the straight spans' walk is two loads, the pack, the
+  // store and the sum's word. The addresses are the originals' (the
+  // same words in the same order, the digest's sum included).
+  var mwh = mw / 2
+  var scr = koff + screen_base
   var r = r0
   while r < r1 {
     var roff = r - y
@@ -3881,10 +3907,28 @@ def comp_blit_scaled_masked(base Int64, w Int64, h Int64, s Int64,
           cs = x0 - x
         }
         cs = cs + (cs & 1)
+        var sc = (cs - x) / s
+        var rem = (cs - x) - sc * s
+        var at = scr + ((r * mwh) + (x + cs) / 2) * 8
         var mc = cs
         while mc + 2 <= ms {
-          sum = sum + comp_scaled_pair(base, w, s, x, sr, r, x + mc)
+          var p0 = peek32(base + (sr * w + sc) * 4)
+          rem = rem + 1
+          if rem == s {
+            rem = 0
+            sc = sc + 1
+          }
+          var p1 = peek32(base + (sr * w + sc) * 4)
+          rem = rem + 1
+          if rem == s {
+            rem = 0
+            sc = sc + 1
+          }
+          var v = p0 | (p1 << 32)
+          poke64(at, v)
+          sum = sum + v
           mc = mc + 2
+          at = at + 8
         }
         var tail = mc
         while tail < ms {
@@ -3905,10 +3949,28 @@ def comp_blit_scaled_masked(base Int64, w Int64, h Int64, s Int64,
           c = c + 1
         }
       } else {
+        var sc = (x0 - x) / s
+        var rem = (x0 - x) - sc * s
+        var at = scr + ((r * mwh) + x0 / 2) * 8
         var c = x0
         while c + 2 <= x1 {
-          sum = sum + comp_scaled_pair(base, w, s, x, sr, r, c)
+          var p0 = peek32(base + (sr * w + sc) * 4)
+          rem = rem + 1
+          if rem == s {
+            rem = 0
+            sc = sc + 1
+          }
+          var p1 = peek32(base + (sr * w + sc) * 4)
+          rem = rem + 1
+          if rem == s {
+            rem = 0
+            sc = sc + 1
+          }
+          var v = p0 | (p1 << 32)
+          poke64(at, v)
+          sum = sum + v
           c = c + 2
+          at = at + 8
         }
         if c < x1 {
           sum = sum + comp_corner_pixel_scaled(base, w, s, sw, sh, x, y,
