@@ -5592,7 +5592,8 @@ let rt_bytes_label () : W.func_type =
       @ [ W.Struct_new t_vstring ];
   }
 
-let rt_cmp (int_body : W.instr list) (float_body : W.instr list) : W.func_type =
+let rt_cmp (int_body : W.instr list) (float_body : W.instr list)
+    (string_body : W.instr list) : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -5603,21 +5604,59 @@ let rt_cmp (int_body : W.instr list) (float_body : W.instr list) : W.func_type =
           ( W.Result W.Anyref,
             both_int 0 1,
             i64_of 0 @ i64_of 1 @ int_body,
-            num_to_f64 0 @ num_to_f64 1 @ float_body );
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [
+                    W.Local_get 0;
+                    W.Ref_test t_vstring;
+                    W.Local_get 1;
+                    W.Ref_test t_vstring;
+                    W.I32_and;
+                  ],
+                  string_body,
+                  num_to_f64 0 @ num_to_f64 1 @ float_body );
+            ] );
       ];
   }
 
+(* The strings' arm rides the sort's compare (mode 2: byte order, the
+   shorter length settling a matched prefix) with the operator's own
+   sign test against its -1/0/1. The wat vocabulary has no i32.le_s —
+   `<= 0` rides `< 1`. *)
+let rt_string_cmp (tail : W.instr list) : W.instr list =
+  [
+    W.Local_get 0;
+    W.Local_get 1;
+    W.I32_const 2;
+    W.Call (rt "emo_cmp");
+  ]
+  @ tail
+  @ [ W.Struct_new t_vbool ]
+
 let rt_lt () =
-  rt_cmp [ W.I64_lt_s; W.Struct_new t_vbool ] [ W.F64_lt; W.Struct_new t_vbool ]
+  rt_cmp
+    [ W.I64_lt_s; W.Struct_new t_vbool ]
+    [ W.F64_lt; W.Struct_new t_vbool ]
+    (rt_string_cmp [ W.I32_const 0; W.I32_lt_s ])
 
 let rt_le () =
-  rt_cmp [ W.I64_le_s; W.Struct_new t_vbool ] [ W.F64_le; W.Struct_new t_vbool ]
+  rt_cmp
+    [ W.I64_le_s; W.Struct_new t_vbool ]
+    [ W.F64_le; W.Struct_new t_vbool ]
+    (rt_string_cmp [ W.I32_const 1; W.I32_lt_s ])
 
 let rt_gt () =
-  rt_cmp [ W.I64_gt_s; W.Struct_new t_vbool ] [ W.F64_gt; W.Struct_new t_vbool ]
+  rt_cmp
+    [ W.I64_gt_s; W.Struct_new t_vbool ]
+    [ W.F64_gt; W.Struct_new t_vbool ]
+    (rt_string_cmp [ W.I32_const 0; W.I32_gt ])
 
 let rt_ge () =
-  rt_cmp [ W.I64_ge_s; W.Struct_new t_vbool ] [ W.F64_ge; W.Struct_new t_vbool ]
+  rt_cmp
+    [ W.I64_ge_s; W.Struct_new t_vbool ]
+    [ W.F64_ge; W.Struct_new t_vbool ]
+    (rt_string_cmp [ W.I32_const 0; W.I32_ge ])
 
 (* eq: primitives by content via deep_eq, boxed $vbool *)
 (* Equality over the program's shapes, built per module: primitives

@@ -1490,15 +1490,21 @@ const E: any = {
     return new EFloat(-unfloat(a));
   },
   lt(a: any, b: any) {
+    if (typeof a === "string" && typeof b === "string") return emoStrLt(a, b);
     return unfloat(a) < unfloat(b);
   },
   le(a: any, b: any) {
+    if (typeof a === "string" && typeof b === "string")
+      return !emoStrLt(b, a);
     return unfloat(a) <= unfloat(b);
   },
   gt(a: any, b: any) {
+    if (typeof a === "string" && typeof b === "string") return emoStrLt(b, a);
     return unfloat(a) > unfloat(b);
   },
   ge(a: any, b: any) {
+    if (typeof a === "string" && typeof b === "string")
+      return !emoStrLt(a, b);
     return unfloat(a) >= unfloat(b);
   },
 

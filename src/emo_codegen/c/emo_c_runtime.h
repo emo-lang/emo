@@ -360,6 +360,7 @@ emo_value emo_neg_dyn(emo_value v);
 bool emo_eq_dyn(emo_value a, emo_value b);
 bool emo_lt_dyn(emo_value a, emo_value b);
 bool emo_le_dyn(emo_value a, emo_value b);
+int64_t emo_str_cmp(emo_value a, emo_value b); /* byte order, the sort's compare */
 
 /* The one stringification rule over dynamic values: the scalar
    renderings, plus tuples "(a, b)", arrays "[a, b]", maps

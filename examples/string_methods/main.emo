@@ -60,3 +60,19 @@ dyn = dyn.append("ÀBC d")
 println(dyn[0].trim().to_int64())
 println(dyn[1].lower())
 println(dyn[1].index_of("d"))
+
+// The ordering operators compare byte-wise — code point order, the
+// compare `sort` answers: uppercase before lowercase, a prefix before
+// its longer self, supplementary characters above the BMP.
+println("apple" < "banana")
+println("apple" <= "apple")
+println("banana" > "apple")
+println("apple" >= "banana")
+println("apple" < "apple")
+println("" < "a")
+println("ab" < "b")
+println("abc" < "abcd")
+println("abcd" <= "abc")
+println("Zebra" < "apple")
+println("日本" < "ご")
+println("😀" > "日本")
