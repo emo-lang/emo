@@ -9218,13 +9218,13 @@ let rt_float_str (env : env) : W.func_type =
     fparams = [ "v" ];
     flocals = [ (4, W.I64); (7, W.I32); (3, W.F64) ];
     fbody =
-      (* NaN: v != v *)
+      (* NaN: v != v — the interpreter's own spelling *)
       [
         lg 0;
         lg 0;
         W.F64_eq;
         W.I32_eqz;
-        W.If (W.Void, string_bytes_instrs "NaN" @ [ W.Return ], []);
+        W.If (W.Void, string_bytes_instrs "nan" @ [ W.Return ], []);
       ]
       @ [
           lg 0;
@@ -9245,6 +9245,21 @@ let rt_float_str (env : env) : W.func_type =
           W.I64_shr_u;
           W.I32_wrap_i64;
           ls neg;
+        ]
+      @ [
+          (* infinity: |v| at the max finite double — the exponent walk
+             below would chase the 0x7FF biased exponent forever *)
+          lg ax;
+          f64 1.7976931348623157e308;
+          W.F64_ge;
+          W.If
+            ( W.Void,
+              [
+                lg neg;
+                W.If (W.Void, string_bytes_instrs "-inf" @ [ W.Return ], []);
+              ]
+              @ string_bytes_instrs "inf" @ [ W.Return ],
+              [] );
         ]
       @ [
           (* the integral door: floor(v) == v and |v| < 1e16 renders as

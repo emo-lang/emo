@@ -2360,18 +2360,43 @@ let rt_source =
 
 %% Emo prints a float the way OCaml's `%g` does — six significant digits,
 %% exponent form below 1e-4 and at 1e6 and above — except that an integral
-%% float within 1e16 keeps one decimal. `float_to_binary/2` decides the
+%% float within 1e16 keeps one decimal. NaN and the infinities answer the
+%% interpreter's own spellings before anything touches them: `trunc` of a
+%% NaN raises badarg, and the infinities would walk `emo_g6`'s exponent
+%% machinery into nonsense. `float_to_binary/2` decides the
 %% exponent itself, so the rounded scientific form is what picks the branch.
 'emo_float_to_str'/1 =
     fun (_f) ->
-	case call 'erlang':'=='(call 'erlang':'trunc'(_f), _f) of
+	case call 'erlang':'=/='(_f, _f) of
 	  <'true'> when 'true' ->
-	      case call 'erlang':'<'(call 'erlang':'abs'(_f), 10000000000000000.0) of
+	      #{#<110>(8,1,'integer',['unsigned'|['big']]),
+		#<97>(8,1,'integer',['unsigned'|['big']]),
+		#<110>(8,1,'integer',['unsigned'|['big']])}#
+	  <'false'> when 'true' ->
+	      case call 'erlang':'>'(call 'erlang':'abs'(_f), 1.7976931348623157e308) of
 		<'true'> when 'true' ->
-		    call 'erlang':'float_to_binary'(_f, [{'decimals',1}, 'compact'])
-		<'false'> when 'true' -> apply 'emo_g6'/1 (_f)
+		    case call 'erlang':'<'(_f, 0.0) of
+		      <'true'> when 'true' ->
+			  #{#<45>(8,1,'integer',['unsigned'|['big']]),
+			    #<105>(8,1,'integer',['unsigned'|['big']]),
+			    #<110>(8,1,'integer',['unsigned'|['big']]),
+			    #<102>(8,1,'integer',['unsigned'|['big']])}#
+		      <'false'> when 'true' ->
+			  #{#<105>(8,1,'integer',['unsigned'|['big']]),
+			    #<110>(8,1,'integer',['unsigned'|['big']]),
+			    #<102>(8,1,'integer',['unsigned'|['big']])}#
+		    end
+		<'false'> when 'true' ->
+		    case call 'erlang':'=='(call 'erlang':'trunc'(_f), _f) of
+		      <'true'> when 'true' ->
+			  case call 'erlang':'<'(call 'erlang':'abs'(_f), 10000000000000000.0) of
+			    <'true'> when 'true' ->
+				call 'erlang':'float_to_binary'(_f, [{'decimals',1}, 'compact'])
+			    <'false'> when 'true' -> apply 'emo_g6'/1 (_f)
+			  end
+		      <'false'> when 'true' -> apply 'emo_g6'/1 (_f)
+		    end
 	      end
-	  <'false'> when 'true' -> apply 'emo_g6'/1 (_f)
 	end
 
 'emo_g6'/1 =
@@ -2721,23 +2746,33 @@ let rt_source =
 
 %% erlc miscompiles a float bit-string *pattern* written as Core Erlang
 %% text (OTP 29 aborts with an internal consistency check), so the bits go
-%% back to a float through the external term format instead.
+%% back to a float through the external term format instead. The exponent
+%% field all ones — a NaN or an infinity — is refused first with a named
+%% error: OTP 29's binary_to_term answers a bare badarg for those bits,
+%% and no other path (arithmetic, parse, the math module) can build a
+%% non-finite float either — an Erlang float is finite by construction,
+%% so from_bits naming one is the honest end.
 'emo_from_bits'/1 =
     fun (_a) ->
 	case _a of
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      let <_u> = call 'erlang':'band'(_x, 18446744073709551615)
-	      in call 'erlang':'binary_to_term'(
-		   #{#<131>(8,1,'integer',['unsigned'|['big']]),
-		     #<70>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 56), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 48), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 40), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 32), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 24), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(_u, 255)>(8,1,'integer',['unsigned'|['big']])}#)
+	      in case call 'erlang':'=='(call 'erlang':'band'(_u, 9218868437227405312), 9218868437227405312) of
+		   <'true'> when 'true' ->
+		       call 'erlang':'error'({'emo_nan_bits', _u})
+		   <'false'> when 'true' ->
+		       call 'erlang':'binary_to_term'(
+			    #{#<131>(8,1,'integer',['unsigned'|['big']]),
+			      #<70>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 56), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 48), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 40), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 32), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 24), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(_u, 255)>(8,1,'integer',['unsigned'|['big']])}#)
+		 end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 

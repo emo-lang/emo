@@ -280,8 +280,13 @@ export const setMemory = (m) => {
 // OCaml's %g — the rule the interpreter's `emo_to_string` follows, and
 // the same one the TS runtime's `g6` implements: six significant
 // digits, exponent form below 1e-4 or at 1e6 and above, exponent
-// spelled with a sign and two digits.
+// spelled with a sign and two digits. NaN and the infinities answer
+// the special spellings before the digit walk — a NaN through
+// log10/toFixed would answer "NaN", an infinity "NaNe+Infinity".
 const g6 = (x) => {
+  if (Number.isNaN(x)) return "nan";
+  if (x === Infinity) return "inf";
+  if (x === -Infinity) return "-inf";
   const exp = Math.floor(Math.log10(Math.abs(x)));
   if (exp < -4 || exp >= 6) {
     let r = Number((x / Math.pow(10, exp)).toFixed(5));
