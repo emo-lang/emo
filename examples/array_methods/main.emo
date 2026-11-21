@@ -1,0 +1,37 @@
+// The Array's sort: a new array in ascending order, the receiver
+// untouched — the value rule `append` lives by. The six comparable
+// scalar element types answer: Int64, Float64, String, Byte, Char,
+// Bool. Strings answer byte order, which is code point order. A
+// Float64 NaN sorts after every number, two NaNs equal — the total
+// order every target's compare agrees on (the golden itself sticks to
+// the printable floats: NaN's own *spelling* is not yet uniform
+// across the five float formatters). Every target answers
+// byte-for-byte, as the interpreter does.
+//
+//   emo run main.emo
+
+const ints = [5, -3, 5, 0, 17, -3, 8]
+println(ints.sort())
+println(ints)
+println([9, 8, 7, 6, 5, 4, 3, 2, 1].sort())
+println([1, 2, 3].sort())
+println([42].sort())
+
+def nothing(xs Array[Int64]) Array[Int64] {
+  return xs.sort()
+}
+println(nothing([]))
+
+const floats = [2.5, -1.0, 2.5, 0.0, -7.25]
+println(floats.sort())
+println(floats)
+
+const words = ["pear", "Apple", "fig", "pear"]
+println(words.sort())
+println(words)
+println(["日本", "ご", "日本語", "a", "😀"].sort())
+println(["a", "ab", "aa", "a"].sort())
+
+println([200B, 3B, 200B, 0B].sort())
+println(['z', 'A', 'm', '0'].sort())
+println([true, false, true, false].sort())

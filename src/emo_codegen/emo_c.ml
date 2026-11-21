@@ -1322,6 +1322,29 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           finish_claim
             (Printf.sprintf "emo_array_append(%s, %s)" (as_dyn env self_)
                (as_dyn env v))
+      | "sort", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.ArrayType elem -> (
+                 match elem with
+                 | Emo_check.Int64 | Emo_check.Float64 | Emo_check.String
+                 | Emo_check.Byte | Emo_check.Char | Emo_check.Bool ->
+                     true
+                 | _ -> false)
+             | _ -> false ->
+          (* the element type picks the compare mode the runtime
+             dispatches on; the checker has already refused the rest *)
+          let mode =
+            match self_.Emo_ir.ety with
+            | Emo_check.ArrayType Emo_check.Float64 -> 1
+            | Emo_check.ArrayType Emo_check.String -> 2
+            | Emo_check.ArrayType Emo_check.Byte -> 3
+            | Emo_check.ArrayType Emo_check.Char -> 4
+            | Emo_check.ArrayType Emo_check.Bool -> 5
+            | _ -> 0
+          in
+          finish_claim
+            (Printf.sprintf "emo_array_sort(%s, INT64_C(%d))" (as_dyn env self_)
+               mode)
       (* The map's methods: the receiver's MapType keys the arm, and the
          runtime dispatches by kind — an Unknown receiver's `get` stays
          the Bytes accessor. *)

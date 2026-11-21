@@ -268,6 +268,7 @@ let builtin_type_members : (string * (string * string) list) list =
     ( "Array",
       [
         m "append" "def append(value T) Array[T]";
+        m "sort" "def sort() Array[T]";
         m "length" "def length() Int64";
       ] );
     ( "List",
