@@ -4132,13 +4132,23 @@ def comp_clear() Void {
   var dh = peek64(comp_dmg_h)
   var stride = peek64(comp_mode_w) / 2
   var pair = comp_background | (comp_background << 32)
-  var r = dy
-  var r1 = dy + dh
+  // The word-space geometry, hoisted (feat/modern-desktop): the box's
+  // word columns and the destination's base word computed once per
+  // call — the per-word walk is the store, the pointer's step and the
+  // counter's step, nothing recomputed, no thunk called. The addresses
+  // are the originals' (the same words in the same order).
+  var i0 = dx / 2
+  var i1 = (dx + dw) / 2
+  var n = i1 - i0
+  var dst0 = koff + screen_base + (dy * stride + i0) * 8
+  var r = 0
+  var r1 = dh
   while r < r1 {
-    var i = dx / 2
-    var i1 = (dx + dw) / 2
-    while i < i1 {
-      poke64(koff + screen_base + (r * stride + i) * 8, pair)
+    var dst = dst0 + r * stride * 8
+    var i = 0
+    while i < n {
+      poke64(dst, pair)
+      dst = dst + 8
       i = i + 1
     }
     r = r + 1
