@@ -265,6 +265,13 @@ let smoke_tests =
             ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
             List.iter
               (fun name ->
+                (match Filename.dirname name with
+                | "." | "" -> ()
+                | sub ->
+                    ignore
+                      (Sys.command
+                         (Printf.sprintf "mkdir -p %s"
+                            (Filename.quote (Filename.concat dir sub)))));
                 let source = read_file (Filename.concat src name) in
                 let oc = open_out_bin (Filename.concat dir name) in
                 output_string oc source;
@@ -274,6 +281,16 @@ let smoke_tests =
             ( "../../stdlib/registry/syscall/0.1.0",
               "syscall/0.1.0",
               [ "package.emo"; "syscall.emo" ] );
+            ( "../../stdlib/registry/hash/0.1.0",
+              "hash/0.1.0",
+              [
+                "package.emo";
+                "hash.emo";
+                "sha2.emo";
+                "internal/sha256.emo";
+                "internal/word.emo";
+                "internal/sha512.emo";
+              ] );
             ( "../../projects/emo-ui",
               "emo/ui/0.1.0",
               [ "package.emo"; "ui.emo"; "debug.emo" ] );
@@ -349,6 +366,16 @@ let smoke_tests =
         app_build "files";
         app_build "editor";
         app_build "spin";
+        (* The wallpaper's bytes (emo-desktop M31, A31.1): user.S embeds
+           the volume's art the assembler reads beside the sources — the
+           fixture mints it the way start.sh does, from the generator
+           the desktop package ships. *)
+        ignore
+          (Sys.command
+             (Printf.sprintf "python3 %s --out %s"
+                (Filename.quote
+                   "../../projects/emo-desktop/fb/desktop/gen-wallpaper.py")
+                (Filename.quote (Filename.concat scratch "wallpaper.rle"))));
         let exit_code =
           in_dir scratch (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:"main.elf"
@@ -437,13 +464,15 @@ let smoke_tests =
         Alcotest.(check bool)
           "the notification center's corpus file is in the tree" true
           (Sys.file_exists notify_expected);
-        (* The budget (2026-11-11): one run is two boots, each a whole
-           session — the spinner's loop alone measured 170 s a boot when
-           its bytes straddle a page boundary under TCG, 18 s when they
-           do not — so the whole run measured fourteen minutes at its
-           slowest; the budget holds that with room. *)
+        (* The budget (2026-11-11, re-read 2026-11-20): one run is two
+           boots, each a whole session — the spinner's loop alone
+           measured 170 s a boot when its bytes straddle a page boundary
+           under TCG, 18 s when they do not — and the choreography has
+           grown since (M24–M32's beats), the whole run now measured
+           past twenty-five minutes; the budget holds the measured
+           reality with room, the deadline still the hung runner's kill. *)
         let out, err, status =
-          run_cmd ~timeout:1500.0
+          run_cmd ~timeout:2400.0
             (Printf.sprintf
                "FRAME_EXPECTED=%s POINTER_SPRITE=%s WIN_EXPECTED=%s \
                 DOCK_EXPECTED=%s APPS_EXPECTED=%s GLYPHS_DIR=%s \
@@ -592,6 +621,16 @@ let gc_metal_tests =
             "user.S";
             "link.ld";
           ];
+        (* The wallpaper's bytes (emo-desktop M31, A31.1): user.S embeds
+           the volume's art the assembler reads beside the sources — the
+           fixture mints it the way start.sh does, from the generator
+           the desktop package ships. *)
+        ignore
+          (Sys.command
+             (Printf.sprintf "python3 %s --out %s"
+                (Filename.quote
+                   "../../projects/emo-desktop/fb/desktop/gen-wallpaper.py")
+                (Filename.quote (Filename.concat kernel "wallpaper.rle"))));
         ignore
           (Sys.command
              (Printf.sprintf "cp %s %s" (Filename.quote demo_elf)
@@ -657,7 +696,12 @@ let gc_metal_tests =
               [ "package.emo"; "ui_fb_win.emo" ] );
             ( "../../projects/emo-desktop/fb/desktop",
               "emo_desktop/0.1.0",
-              [ "package.emo"; "emo_desktop.emo" ] );
+              [
+                "package.emo";
+                "emo_desktop.emo";
+                "emo_icons.emo";
+                "emo_motion.emo";
+              ] );
             ( "../../projects/emo-desktop/fb/apps",
               "emo/ui_apps/0.1.0",
               [

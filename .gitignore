@@ -120,3 +120,4 @@ erl_crash.dump
 
 # the wallpaper's art (emo-desktop M31): generated, the build embeds it
 projects/emo-os/wallpaper.rle
+projects/emo-os/.cnt.ppm
