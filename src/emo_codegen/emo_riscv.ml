@@ -2322,20 +2322,40 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
     | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
         | Emo_ast.Bit_or | Emo_ast.Bit_xor | Emo_ast.Shl | Emo_ast.Shr ),
         Emo_check.Int64 ) ->
-        let lr, rr = int_operands env d l r in
-        let mnemonic =
-          match op with
-          | Emo_ast.Add -> "add"
-          | Emo_ast.Sub -> "sub"
-          | Emo_ast.Mul -> "mul"
-          | Emo_ast.Bit_and -> "and"
-          | Emo_ast.Bit_or -> "or"
-          | Emo_ast.Bit_xor -> "xor"
-          | Emo_ast.Shl -> "sll"
-          | Emo_ast.Shr -> "sra"
-          | _ -> assert false
-        in
-        put env "    %s a0, %s, %s\n" mnemonic lr rr;
+        (match int_imm r op with
+        | Some imm ->
+            (* the literal's own immediate form (feat/modern-desktop):
+               the right side never evaluates — the left rides its seat
+               or a0 straight into the one instruction. The dynamic
+               body's operand is the tagged cell: unboxed in place
+               first, the same discipline the spill road runs. *)
+            let lr =
+              match mapped_seat env l with
+              | Some s -> s
+              | None ->
+                  emit_expr env (d + 1) l;
+                  if not env.native then begin
+                    put env "    andi a0, a0, -32\n";
+                    put env "    ld a0, 8(a0)\n"
+                  end;
+                  "a0"
+            in
+            put env "    %s a0, %s, %s\n" (int_imm_mnemonic op) lr imm
+        | None ->
+            let lr, rr = int_operands env d l r in
+            let mnemonic =
+              match op with
+              | Emo_ast.Add -> "add"
+              | Emo_ast.Sub -> "sub"
+              | Emo_ast.Mul -> "mul"
+              | Emo_ast.Bit_and -> "and"
+              | Emo_ast.Bit_or -> "or"
+              | Emo_ast.Bit_xor -> "xor"
+              | Emo_ast.Shl -> "sll"
+              | Emo_ast.Shr -> "sra"
+              | _ -> assert false
+            in
+            put env "    %s a0, %s, %s\n" mnemonic lr rr);
         if boxed then box_result env "emo_box_i64"
     | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
         | Emo_ast.Bit_or | Emo_ast.Bit_xor ),
@@ -2548,6 +2568,38 @@ and int_operands env d (l : Emo_ir.expr) (r : Emo_ir.expr) : string * string =
         put env "    ld t0, %d(sp)\n" spill
       end;
       ("t0", "t1")
+
+(* The immediate a Const right operand folds to (feat/modern-desktop):
+   addi/andi/ori/xori carry a 12-bit signed immediate — the exact value
+   the literal names, sign-extension and all — and the shifts a 6-bit
+   count. Sub folds as the negated addend. Anything else, the register
+   road. *)
+and int_imm (e : Emo_ir.expr) (op : Emo_ast.binop) : string option =
+  match e.Emo_ir.desc with
+  | Const (Emo_ast.L_int v) -> (
+      match op with
+      | Emo_ast.Add when v >= -2048L && v <= 2047L -> Some (Int64.to_string v)
+      | Emo_ast.Sub when v >= -2047L && v <= 2048L ->
+          Some (Int64.to_string (Int64.neg v))
+      | (Emo_ast.Bit_and | Emo_ast.Bit_or | Emo_ast.Bit_xor)
+        when v >= -2048L && v <= 2047L ->
+          Some (Int64.to_string v)
+      | (Emo_ast.Shl | Emo_ast.Shr) when v >= 0L && v <= 63L ->
+          Some (Int64.to_string v)
+      | _ -> None)
+  | _ -> None
+
+(* The immediate mnemonic of an arithmetic op (feat/modern-desktop):
+   Sub already folded its negation into the immediate. *)
+and int_imm_mnemonic (op : Emo_ast.binop) : string =
+  match op with
+  | Emo_ast.Add | Emo_ast.Sub -> "addi"
+  | Emo_ast.Bit_and -> "andi"
+  | Emo_ast.Bit_or -> "ori"
+  | Emo_ast.Bit_xor -> "xori"
+  | Emo_ast.Shl -> "slli"
+  | Emo_ast.Shr -> "srai"
+  | _ -> assert false
 
 (* The Byte twin: immediates both, so decoding is a shift. Leaves the
    payloads in t0 (left) and t1 (right). *)
@@ -3726,49 +3778,71 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       if may_own ty && fresh then
         env.owned <- (name, slot_offset env name) :: env.owned
   | Assign_var { name; value } -> (
-      emit_expr env 0 value;
-      match env.cur with
-      | Some f when env.native -> (
-          (* The slot's convention was fixed at its declaration (or the
-             param list) and never moves: every store converts the
-             produced word into it. The convention used to follow the
-             assignment — a conditional `d = x` (a tagged word) flipped
-             the slot for every read after the branch, while the
-             skipped path still held the declaration's raw 0, and the
-             next read unboxed zero (T7.1's driver caught it: the read
-             request skipped the write's data receive). *)
-          match List.assoc_opt name f.raw with
-          | Some Emo_check.Float64 ->
-              (match value.Emo_ir.ety with
-              | Emo_check.Float64 -> () (* the raw bits already in fa0 *)
+      (* the self-bump folds onto the seat (feat/modern-desktop): x = x
+         + c is one immediate on the seat — the read, the add and the
+         write in a single instruction, no a0 round-trip *)
+      let bump =
+        match env.cur with
+        | Some f when env.native -> (
+            match value.Emo_ir.desc with
+            | Binary (op, l, r2) -> (
+                match l.Emo_ir.desc with
+                | Var self when String.equal self name -> (
+                    match (int_imm r2 op, List.assoc_opt name f.sregs) with
+                    | Some imm, Some i -> Some (int_imm_mnemonic op, imm, i)
+                    | _ -> None)
+                | _ -> None)
+            | _ -> None)
+        | _ -> None
+      in
+      match bump with
+      | Some (mn, imm, i) ->
+          put env "    %s %s, %s, %s\n" mn (sreg_name i) (sreg_name i) imm
+      | None -> (
+          emit_expr env 0 value;
+          match env.cur with
+          | Some f when env.native -> (
+              (* The slot's convention was fixed at its declaration (or the
+                 param list) and never moves: every store converts the
+                 produced word into it. The convention used to follow the
+                 assignment — a conditional `d = x` (a tagged word) flipped
+                 the slot for every read after the branch, while the
+                 skipped path still held the declaration's raw 0, and the
+                 next read unboxed zero (T7.1's driver caught it: the read
+                 request skipped the write's data receive). *)
+              match List.assoc_opt name f.raw with
+              | Some Emo_check.Float64 ->
+                  (match value.Emo_ir.ety with
+                  | Emo_check.Float64 -> () (* the raw bits already in fa0 *)
+                  | _ ->
+                      (* a tagged producer: the cell's bits into fa0 *)
+                      put env "    andi t0, a0, -32\n";
+                      put env "    fld fa0, 8(t0)\n");
+                  put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
+              | Some Emo_check.Int64 -> (
+                  (match value.Emo_ir.ety with
+                  | Emo_check.Int64 -> () (* the raw payload already in a0 *)
+                  | _ ->
+                      (* a tagged producer: the cell's payload into a0 *)
+                      put env "    andi a0, a0, -32\n";
+                      put env "    ld a0, 8(a0)\n");
+                  (* the loop's hot seat (feat/modern-desktop) *)
+                  match List.assoc_opt name f.sregs with
+                  | Some i -> put env "    mv %s, a0\n" (sreg_name i)
+                  | None -> put env "    sd a0, %d(sp)\n" (slot_offset env name)
+                  )
               | _ ->
-                  (* a tagged producer: the cell's bits into fa0 *)
-                  put env "    andi t0, a0, -32\n";
-                  put env "    fld fa0, 8(t0)\n");
-              put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
-          | Some Emo_check.Int64 -> (
-              (match value.Emo_ir.ety with
-              | Emo_check.Int64 -> () (* the raw payload already in a0 *)
-              | _ ->
-                  (* a tagged producer: the cell's payload into a0 *)
-                  put env "    andi a0, a0, -32\n";
-                  put env "    ld a0, 8(a0)\n");
-              (* the loop's hot seat (feat/modern-desktop) *)
-              match List.assoc_opt name f.sregs with
-              | Some i -> put env "    mv %s, a0\n" (sreg_name i)
-              | None -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
-          | _ ->
-              (* a tagged slot: a raw numeric producer boxes at the
+                  (* a tagged slot: a raw numeric producer boxes at the
                  store, and the slot takes the new claim before the old
                  drops (T8.7's pool) *)
-              box_if_numeric env value.Emo_ir.ety;
-              emit_barrier env (slot_offset env name);
-              put env "    sd a0, %d(sp)\n" (slot_offset env name))
-      | _ ->
-          (* the dynamic rule: every slot tagged, every write through
+                  box_if_numeric env value.Emo_ir.ety;
+                  emit_barrier env (slot_offset env name);
+                  put env "    sd a0, %d(sp)\n" (slot_offset env name))
+          | _ ->
+              (* the dynamic rule: every slot tagged, every write through
              the barrier *)
-          emit_barrier env (slot_offset env name);
-          put env "    sd a0, %d(sp)\n" (slot_offset env name))
+              emit_barrier env (slot_offset env name);
+              put env "    sd a0, %d(sp)\n" (slot_offset env name)))
   | If { cond; then_; else_ } ->
       let l_else = fresh_label env "else" in
       let l_end = fresh_label env "endif" in
