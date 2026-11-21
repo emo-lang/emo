@@ -2073,7 +2073,7 @@ PYLOCK
   abs 274 21239
   sleep 1
   hmp 'screendump .launch1.ppm'
-  notice_fold .launch1.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2; exit }' ../emo-desktop/fb/desktop/golden/expected.txt)" 'the launcher whole'
+  notice_fold .launch1.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2; exit }' "$dock_expected")" 'the launcher whole'
   printf 'e' >&3
   await_count 'comp 680 772' 2
   printf 'd' >&3
@@ -2081,7 +2081,7 @@ PYLOCK
   abs 274 21239
   sleep 1
   hmp 'screendump .launch2.ppm'
-  notice_fold .launch2.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2 }' ../emo-desktop/fb/desktop/golden/expected.txt | sed -n 2p)" 'the launcher narrowed'
+  notice_fold .launch2.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2 }' "$dock_expected" | sed -n 2p)" 'the launcher narrowed'
   # the line cleared first: the blank state the golden's own — the two
   # backspaces the 'ed' came from, the caret the only witness
   printf '\010\010' >&3
@@ -2093,13 +2093,13 @@ PYLOCK
   abs 274 21239
   sleep 1
   hmp 'screendump .launch3.ppm'
-  notice_fold .launch3.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2 }' ../emo-desktop/fb/desktop/golden/expected.txt | sed -n 3p)" 'the launcher blank'
+  notice_fold .launch3.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2 }' "$dock_expected" | sed -n 3p)" 'the launcher blank'
   printf '\010\010' >&3
   await_count 'comp 680 772' 7
   abs 274 21239
   sleep 1
   hmp 'screendump .launch4.ppm'
-  notice_fold .launch4.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2; exit }' ../emo-desktop/fb/desktop/golden/expected.txt)" 'the launcher whole again'
+  notice_fold .launch4.ppm 680 772 560 256 "$(awk '$1 == "launchr" { print $2; exit }' "$dock_expected")" 'the launcher whole again'
   printf 'c' >&3
   await_count 'comp 680 772' 8
   printf 'o' >&3

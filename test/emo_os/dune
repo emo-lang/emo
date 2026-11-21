@@ -26,6 +26,7 @@
   (source_tree ../../projects/emo-ui)
   (source_tree ../../projects/emo-desktop/fb)
   (source_tree ../../stdlib/registry/syscall)
+  (source_tree ../../stdlib/registry/hash)
   (source_tree ../../examples/parity_fake)
   (source_tree ../../examples/parity_metal)
   (source_tree ../../examples/gc_demo)
