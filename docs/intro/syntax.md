@@ -155,16 +155,16 @@ A raise cannot be caught — Emo has no catch construct — and the `raise` oper
 ## Mutability
 
 Mutability is layered, and every layer is explicit. The mutable surface is a
-closed set of six things — `var`, `Box`, `Bytes`, `List`, `Map`,
-`ArrayBuilder` — each an independent value type of its own; none is built out
-of another, and nothing else mutates in place. Mutation is alias-visible on all
-six — a change made through one binding is seen through every other — while
-`==` stays structural everywhere: a `Box` compares by contents, a `List`
-element-wise, an `ArrayBuilder` element-wise, a `Map` by entries, `Bytes` by
-bytes.
+closed set of seven things — `var`, `Box`, `Bytes`, `List`, `Map`,
+`ArrayBuilder`, and an Array's element slots — each an independent value type
+of its own; none is built out of another, and nothing else mutates in place.
+Mutation is alias-visible on all seven — a change made through one binding is
+seen through every other — while `==` stays structural everywhere: a `Box`
+compares by contents, a `List` or an `Array` element-wise, an `ArrayBuilder`
+element-wise, a `Map` by entries, `Bytes` by bytes.
 
 - `const` bindings never change; `var` bindings are mutable within their block and cannot escape it.
-- Arrays are immutable values: length is fixed and contents are never changed in place — operations that transform an array return a new one, and `==` compares element-wise. `sort` answers a new array in ascending order, the receiver untouched: the element type must be one of the comparable scalars — `String`, `Int64`, `Float64`, `Byte`, `Char`, `Bool` — with anything else (or an unannotated empty array) a compile error. Strings compare byte-wise, which is code point order, and a `Float64` NaN sorts after every number, two NaNs equal.
+- Arrays are fixed-length values whose element slots mutate in place: `a[i] = v` writes the slot — every holder of the array sees the write — and an out-of-bounds index is a runtime error on a read and a write alike. The length never changes: operations that transform an array (`append`, `sort`) answer a new array, and indexing is an Array-only form — `a[i] = v` on a tuple (or anything else) is a compile error. `==` compares element-wise, and sending an array to another process delivers a snapshot copy, so mutation never crosses a process boundary. `sort` answers a new array in ascending order, the receiver untouched: the element type must be one of the comparable scalars — `String`, `Int64`, `Float64`, `Byte`, `Char`, `Bool` — with anything else (or an unannotated empty array) a compile error. Strings compare byte-wise, which is code point order, and a `Float64` NaN sorts after every number, two NaNs equal.
 - A `Bytes` is a fixed-length mutable byte buffer: `Bytes.new(n)` allocates `n` bytes, `get` and `set` address them one by one (little-endian multi-byte accessors sit beside them), and `==` compares by content. The length never changes — `set` replaces bytes, it does not grow the buffer.
 - Maps are the mutable keyed collection: `Map.new(("foo", "bar"), ("hello", 123))` takes each pair only as an initialization source — keys and values are read once into a fresh map and the returned value is that map itself; later pairs overwrite earlier values, and the key keeps its first-insertion position. `set` and `remove` change the map in place (each returns the map), keys keep their insertion position across updates, and `==` compares entries rather than order. Keys must be primitive types — a non-primitive key is an error. A map sent to another process arrives as a snapshot copy, so map mutation never crosses a process boundary either.
 - Class fields are assigned only inside `init` and freeze afterwards.
