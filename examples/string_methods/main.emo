@@ -1,6 +1,7 @@
 // String's method surface: length, substring, and index_of count UTF-8
 // bytes; split and starts_with match bytes; trim strips only space, tab,
-// newline, carriage return, and form feed; lower folds A–Z alone; and
+// newline, carriage return, and form feed; lower folds A–Z alone,
+// upper folds a–z alone; and
 // to_int64 accepts an optional leading minus and digits, nothing else.
 // Every target answers byte-for-byte, as the interpreter does.
 //
@@ -44,6 +45,16 @@ println((vt.to_string() + "a" + vt.to_string()).trim().length())
 // lower folds ASCII letters only.
 println("ÉCOLE Σ İ ABC".lower())
 println("MiXeD 123 Z".lower())
+
+// upper folds a-z alone — the mirror of lower: non-ASCII bytes stay
+// where they stand, é and Σ and İ never become É and Σ and İ.
+println("hello world".upper())
+println("MiXeD 123 Z".upper())
+println("ÉCOLE Σ İ abc".upper())
+println("école Σ i abc".upper())
+println("".upper())
+println("日本語".upper())
+println("abc".lower().upper())
 
 // to_int64: an optional leading minus, then digits, within Int64.
 println("42".to_int64())

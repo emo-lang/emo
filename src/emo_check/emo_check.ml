@@ -3594,6 +3594,7 @@ and check_method_call ctx env span recv mname args : t =
             ArrayType String)
     | String, "trim" -> builtin0 String
     | String, "lower" -> builtin0 String
+    | String, "upper" -> builtin0 String
     | String, "index_of" -> (
         match arg_values with
         | [ (None, String) ] | [ (Some "needle", String) ] -> Int64
@@ -4068,7 +4069,7 @@ and check_binary ctx env span op l r =
         | _ -> false
       in
       if
-        not ((lt = String || rt = String) && string_pair_ok ())
+        (not ((lt = String || rt = String) && string_pair_ok ()))
         && not (numeric_pair_ok ())
       then mismatch "two strings or two numbers";
       Bool

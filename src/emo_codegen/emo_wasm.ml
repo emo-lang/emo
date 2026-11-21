@@ -525,6 +525,7 @@ let rt name =
      last slot is the allocator, the wasi build's the directory scan *)
   | "emo_cmp" -> if !wasi_mode then b + 121 else b + 105
   | "array_sort" -> if !wasi_mode then b + 122 else b + 106
+  | "str_upper" -> if !wasi_mode then b + 123 else b + 107
   | _ -> failwith ("wasm: bad runtime function: " ^ name)
 
 (* imports, then the runtime funcs above (the numeric core, the
@@ -542,7 +543,7 @@ let rt name =
    sort, the open-at and one-string-at wrappers, the environment scan,
    the argv array, the entropy fill, the directory-entry scan — and the
    Array sort's compare and merge pair after those in both modes. *)
-let runtime_count () = !import_base + if !wasi_mode then 123 else 107
+let runtime_count () = !import_base + if !wasi_mode then 124 else 108
 
 (* ---- Lowering state ---- *)
 
@@ -622,6 +623,7 @@ let unguarded_builtin_arms =
     ("index_of", 1);
     ("trim", 0);
     ("lower", 0);
+    ("upper", 0);
     ("split", 1);
     ("append", 1);
     ("read", 0);
@@ -2750,6 +2752,9 @@ and builtin_method_call env self_ name args =
   | "lower", [] ->
       expr env self_;
       e env (W.Call (rt "str_lower"))
+  | "upper", [] ->
+      expr env self_;
+      e env (W.Call (rt "str_upper"))
   | "split", [ sep ] ->
       expr env self_;
       expr env sep;
@@ -5625,14 +5630,8 @@ let rt_cmp (int_body : W.instr list) (float_body : W.instr list)
    sign test against its -1/0/1. The wat vocabulary has no i32.le_s —
    `<= 0` rides `< 1`. *)
 let rt_string_cmp (tail : W.instr list) : W.instr list =
-  [
-    W.Local_get 0;
-    W.Local_get 1;
-    W.I32_const 2;
-    W.Call (rt "emo_cmp");
-  ]
-  @ tail
-  @ [ W.Struct_new t_vbool ]
+  [ W.Local_get 0; W.Local_get 1; W.I32_const 2; W.Call (rt "emo_cmp") ]
+  @ tail @ [ W.Struct_new t_vbool ]
 
 let rt_lt () =
   rt_cmp
@@ -7845,6 +7844,69 @@ let rt_str_lower () : W.func_type =
                             W.Local_get 4;
                             W.I32_const 32;
                             W.I32_add;
+                            W.Local_set 4;
+                          ],
+                          [] );
+                      W.Local_get 2;
+                      W.Local_get 3;
+                      W.Local_get 4;
+                      W.Array_set t_bytes;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Local_get 2;
+          W.Struct_new t_vstring;
+        ];
+  }
+
+let rt_str_upper () : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "s" ];
+    flocals = [ (1, W.RefNull t_bytes); (1, W.RefNull t_bytes); (2, W.I32) ];
+    fbody =
+      bytes_of 0
+      @ [
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.Array_new_default t_bytes;
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 1;
+                      W.Array_len t_bytes;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 1;
+                      W.Local_get 3;
+                      W.Array_get_u t_bytes;
+                      W.Local_set 4;
+                      W.Local_get 4;
+                      W.I32_const 97;
+                      W.I32_ge;
+                      W.Local_get 4;
+                      W.I32_const 122;
+                      W.I32_gt;
+                      W.I32_eqz;
+                      W.I32_and;
+                      W.If
+                        ( W.Void,
+                          [
+                            W.Local_get 4;
+                            W.I32_const 32;
+                            W.I32_sub;
                             W.Local_set 4;
                           ],
                           [] );
@@ -12097,6 +12159,7 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
            rt map: the compare the merge calls, then the merge *)
         rt_emo_cmp ~t_sig:t_cmp ();
         rt_array_sort ~t_sig:t_sort ();
+        rt_str_upper ();
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

@@ -1553,6 +1553,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                 wrap_owned result_ty (Printf.sprintf "emo_vbool(%s)" v)
               else v
           | "lower", [] -> Printf.sprintf "emo_cell_lower(%s)" recv
+          | "upper", [] -> Printf.sprintf "emo_cell_upper(%s)" recv
           | "trim", [] -> Printf.sprintf "emo_cell_trim(%s)" recv
           | "to_int64", [] ->
               box_int env result_ty

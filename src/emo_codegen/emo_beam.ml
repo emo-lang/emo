@@ -145,6 +145,7 @@ let unguarded_builtin_arms =
     ("index_of", 1);
     ("trim", 0);
     ("lower", 0);
+    ("upper", 0);
     ("split", 1);
     ("append", 1);
     ("sort", 0);
@@ -1006,6 +1007,9 @@ and builtin_method_call env self_ name args =
           args_list env [ self_ ]
       | "lower", [] ->
           put env "apply 'emo_str_lower'/1 ";
+          args_list env [ self_ ]
+      | "upper", [] ->
+          put env "apply 'emo_str_upper'/1 ";
           args_list env [ self_ ]
       | "split", [ sep ] ->
           put env "apply 'emo_str_split'/2 ";
@@ -3428,6 +3432,21 @@ let rt_source =
 'emo_str_lower'/1 =
     fun (_s) ->
 	call 'erlang':'list_to_binary'(call 'lists':'map'(fun (_c) -> apply 'emo_lower_byte'/1 (_c), call 'erlang':'binary_to_list'(_s)))
+
+'emo_upper_byte'/1 =
+    fun (_c) ->
+	case call 'erlang':'>='(_c, 97) of
+	  <'false'> when 'true' -> _c
+	  <'true'> when 'true' ->
+	      case call 'erlang':'=<'(_c, 122) of
+		<'true'> when 'true' -> call 'erlang':'-'(_c, 32)
+		<'false'> when 'true' -> _c
+	      end
+	end
+
+'emo_str_upper'/1 =
+    fun (_s) ->
+	call 'erlang':'list_to_binary'(call 'lists':'map'(fun (_c) -> apply 'emo_upper_byte'/1 (_c), call 'erlang':'binary_to_list'(_s)))
 
 'emo_digits_ok'/3 =
     fun (_s, _i, _n) ->

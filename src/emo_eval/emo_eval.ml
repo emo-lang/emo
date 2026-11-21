@@ -3074,6 +3074,9 @@ and call_method_value env span base mname args =
   | String s, "lower" ->
       none_expected "lower";
       String (String.lowercase_ascii s)
+  | String s, "upper" ->
+      none_expected "upper";
+      String (String.uppercase_ascii s)
   | String s, "index_of" -> (
       match eval_args () with
       | [ String needle ] ->

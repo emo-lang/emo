@@ -2792,6 +2792,9 @@ module Emo_runtime = struct
     | Emo_eval.String s, "lower" ->
         none_expected ();
         Emo_eval.String (String.lowercase_ascii s)
+    | Emo_eval.String s, "upper" ->
+        none_expected ();
+        Emo_eval.String (String.uppercase_ascii s)
     | Emo_eval.String s, "index_of" -> (
         one_expected ();
         match List.hd args with
