@@ -4058,7 +4058,19 @@ and check_binary ctx env span op l r =
       if not (int_side_ok lt && int_side_ok rt) then mismatch "two Int64s";
       Int64
   | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge ->
-      if not (numeric_pair_ok ()) then mismatch "two numbers";
+      (* Strings order byte-wise — the code point order `sort` answers
+         — and nothing else the numbers leave behind: a String against
+         a number is the mismatch, an Unknown side dispatches at run
+         time. *)
+      let string_pair_ok () =
+        match (lt, rt) with
+        | String, String | String, Unknown | Unknown, String -> true
+        | _ -> false
+      in
+      if
+        not ((lt = String || rt = String) && string_pair_ok ())
+        && not (numeric_pair_ok ())
+      then mismatch "two strings or two numbers";
       Bool
   | Ast.Eq | Ast.Ne -> Bool
   | Ast.And | Ast.Or ->

@@ -2137,6 +2137,9 @@ and binary_value env span op left right =
   let is_pair_byte x y =
     match (x, y) with Byte _, Byte _ -> true | _ -> false
   in
+  let is_pair_str x y =
+    match (x, y) with String _, String _ -> true | _ -> false
+  in
   let i64_of = function Int64 x -> x | v -> type_mismatch "two Int64s" in
   let byte_of = function Byte x -> x | v -> type_mismatch "two Bytes" in
   (* Fixed-width arithmetic wraps in two's complement; Byte, being
@@ -2192,6 +2195,14 @@ and binary_value env span op left right =
   | Ast.Ge when is_pair64 left right ->
       Bool (Int64.compare (i64_of left) (i64_of right) >= 0)
   | Ast.Ge when is_pair_byte left right -> Bool (byte_of left >= byte_of right)
+  | Ast.Lt when is_pair_str left right ->
+      Bool (emo_scalar_compare left right < 0)
+  | Ast.Le when is_pair_str left right ->
+      Bool (emo_scalar_compare left right <= 0)
+  | Ast.Gt when is_pair_str left right ->
+      Bool (emo_scalar_compare left right > 0)
+  | Ast.Ge when is_pair_str left right ->
+      Bool (emo_scalar_compare left right >= 0)
   | Ast.Lt -> Bool (as_float left < as_float right)
   | Ast.Le -> Bool (as_float left <= as_float right)
   | Ast.Gt -> Bool (as_float left > as_float right)

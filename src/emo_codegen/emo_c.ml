@@ -2027,9 +2027,12 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     | Emo_check.Bool, And -> plain "&&"
     | Emo_check.Bool, Or -> plain "||"
     | Emo_check.Bool, _ -> refuse "this Boolean operation"
-    (* String: concatenation and content equality. *)
+    (* String: concatenation, content equality, and the byte order the
+       operators share with `sort`. *)
     | Emo_check.String, Eq -> Printf.sprintf "emo_str_eq(%s, %s)" a b
     | Emo_check.String, Ne -> Printf.sprintf "(!emo_str_eq(%s, %s))" a b
+    | Emo_check.String, (Lt | Le | Gt | Ge) ->
+        Printf.sprintf "(emo_str_cmp(%s, %s) %s 0)" a b (compare_text op)
     | Emo_check.String, _ -> refuse "this String operation"
     (* Char *)
     | Emo_check.Char, (Eq | Ne) -> plain (compare_text op)

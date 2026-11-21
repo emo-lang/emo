@@ -2514,6 +2514,21 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
             put env "    xori t0, t0, 1\n"
         | _ -> assert false);
         bool_of_t0 ()
+    | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.String ->
+        (* the strings' byte order, the dynamic compare's arm — the c
+           target's Gt/Ge swap onto Lt/Le *)
+        let a, b =
+          if op = Emo_ast.Gt || op = Emo_ast.Ge then (r, l) else (l, r)
+        in
+        emit_expr env (d + 1) a;
+        let spill = temp_offset env d in
+        put env "    sd a0, %d(sp)\n" spill;
+        emit_expr env (d + 1) b;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" spill;
+        call_runtime env
+          (if op = Emo_ast.Lt || op = Emo_ast.Gt then "emo_lt_dyn"
+           else "emo_le_dyn")
     | (Emo_ast.And | Emo_ast.Or), _ ->
         let l_end = fresh_label env "sc" in
         emit_expr env d l;
@@ -7933,7 +7948,16 @@ emo_lt_dyn:
     beqz t0, .Llt_int
     li t2, 2
     beq t0, t2, .Llt_float
+    li t2, 4
+    beq t0, t2, .Llt_str
     j .Ldyn_bad
+.Llt_str:
+    # the strings' order is the sort's compare (mode 2: bytes, the
+    # shorter length settling a matched prefix); `<` is its -1
+    li a2, 2
+    call emo_sort_cmp
+    slt t0, a0, zero
+    j .Lcmp_pack
 .Llt_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -7959,7 +7983,16 @@ emo_le_dyn:
     beqz t0, .Lle_int
     li t2, 2
     beq t0, t2, .Lle_float
+    li t2, 4
+    beq t0, t2, .Lle_str
     j .Ldyn_bad
+.Lle_str:
+    # `<=` on the sort's -1/0/1 is the compare below 1
+    li a2, 2
+    call emo_sort_cmp
+    li t1, 1
+    slt t0, a0, t1
+    j .Lcmp_pack
 .Lle_int:
     ld a0, 8(s0)
     ld a1, 8(s1)

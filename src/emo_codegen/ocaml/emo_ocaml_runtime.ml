@@ -2380,6 +2380,7 @@ module Emo_runtime = struct
 
   let lt a b =
     match (a, b) with
+    | Emo_eval.String x, Emo_eval.String y -> Emo_eval.Bool (String.compare x y < 0)
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x < y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x < y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x < y)
@@ -2389,6 +2390,7 @@ module Emo_runtime = struct
 
   let le a b =
     match (a, b) with
+    | Emo_eval.String x, Emo_eval.String y -> Emo_eval.Bool (String.compare x y <= 0)
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x <= y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x <= y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x <= y)
@@ -2398,6 +2400,7 @@ module Emo_runtime = struct
 
   let gt a b =
     match (a, b) with
+    | Emo_eval.String x, Emo_eval.String y -> Emo_eval.Bool (String.compare x y > 0)
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x > y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x > y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x > y)
@@ -2407,6 +2410,7 @@ module Emo_runtime = struct
 
   let ge a b =
     match (a, b) with
+    | Emo_eval.String x, Emo_eval.String y -> Emo_eval.Bool (String.compare x y >= 0)
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x >= y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x >= y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x >= y)

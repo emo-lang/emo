@@ -2178,15 +2178,20 @@ bool emo_eq_dyn(emo_value a, emo_value b) {
   }
 }
 
+/* The strings' three-way compare: byte order, the shorter length
+   settling a matched prefix — the compare `sort` answers and the
+   ordering operators share. */
+int64_t emo_str_cmp(emo_value a, emo_value b) {
+  emo_str sa = emo_str_of(a), sb = emo_str_of(b);
+  int64_t n = sa.len < sb.len ? sa.len : sb.len;
+  int r = memcmp(sa.bytes, sb.bytes, (size_t)n);
+  if (r != 0) return r < 0 ? -1 : 1;
+  return sa.len < sb.len ? -1 : (sa.len > sb.len ? 1 : 0);
+}
+
 static int emo_cmp_dyn(emo_value a, emo_value b) {
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
-  if (ka == EMO_STRING && kb == EMO_STRING) {
-    emo_str sa = emo_str_of(a), sb = emo_str_of(b);
-    int64_t n = sa.len < sb.len ? sa.len : sb.len;
-    int r = memcmp(sa.bytes, sb.bytes, (size_t)n);
-    if (r != 0) return r < 0 ? -1 : 1;
-    return sa.len < sb.len ? -1 : (sa.len > sb.len ? 1 : 0);
-  }
+  if (ka == EMO_STRING && kb == EMO_STRING) return emo_str_cmp(a, b);
   if (ka == EMO_INT64 && kb == EMO_INT64) {
     int64_t x = emo_unbox_i64(a), y = emo_unbox_i64(b);
     return x < y ? -1 : (x > y ? 1 : 0);

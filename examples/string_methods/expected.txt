@@ -34,3 +34,15 @@ mixed 123 z
 -15
 Àbc d
 5
+true
+true
+true
+false
+false
+true
+true
+true
+false
+true
+false
+true

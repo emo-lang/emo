@@ -2818,6 +2818,14 @@ let rt_source =
 		<_y> when call 'erlang':'is_float'(_y) -> {_x, _y}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
+	  <_x> when call 'erlang':'is_binary'(_x) ->
+	      %% binaries answer Erlang's own order — byte-wise, the
+	      %%   shorter length settling a matched prefix, the compare
+	      %%   `sort` hands out
+	      case _b of
+		<_y> when call 'erlang':'is_binary'(_y) -> {_x, _y}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	end
 
