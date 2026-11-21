@@ -2764,8 +2764,9 @@ let doctor ~(emit : string -> unit) : int =
     detail "ocamlfind with the unix and ssl packages found")
   else (
     line "ocaml:" warn_text;
-    detail "the ocaml target needs the OCaml toolchain on PATH \
-            (ocamlfind with the unix and ssl packages)");
+    detail
+      "the ocaml target needs the OCaml toolchain on PATH (ocamlfind with the \
+       unix and ssl packages)");
   if tool_exists "node" then line "typescript:" (ok_text ^ tool_version "node")
   else (
     line "typescript:" warn_text;
@@ -2773,7 +2774,8 @@ let doctor ~(emit : string -> unit) : int =
   if node_strip_ok () then line "browser:" (ok_text ^ tool_version "node")
   else (
     line "browser:" warn_text;
-    detail "the browser target needs Node >= 22.13 (module.stripTypeScriptTypes)");
+    detail
+      "the browser target needs Node >= 22.13 (module.stripTypeScriptTypes)");
   if tool_exists "erlc" then line "beam:" ok_text
   else (
     line "beam:" warn_text;
@@ -2783,20 +2785,23 @@ let doctor ~(emit : string -> unit) : int =
     detail "`emo run --target wasm` runs it; `emo wasm run` needs no tools")
   else (
     line "wasm:" ok_text;
-    detail "no external tools needed; `emo wasm run` executes WebAssembly \
-            artifacts (Node adds the `emo run --target wasm` path)");
+    detail
+      "no external tools needed; `emo wasm run` executes WebAssembly artifacts \
+       (Node adds the `emo run --target wasm` path)");
   if tool_exists "wasmtime" then (
     line "wasi:" (ok_text ^ tool_version "wasmtime");
     detail "`emo run --target wasm --wasi` runs it (wasmtime 46+)")
   else (
     line "wasi:" warn_text;
-    detail "wasmtime 46+ not found (`emo run --target wasm --wasi` \
-            and the --wasi demos need it)");
+    detail
+      "wasmtime 46+ not found (`emo run --target wasm --wasi` and the --wasi \
+       demos need it)");
   (match riscv_binutils_prefix () with
   | None ->
       line "riscv64:" warn_text;
-      detail "the riscv64 target needs the GNU cross binutils on PATH \
-              (riscv64-unknown-elf-as/-ld or riscv64-elf-as/-ld)"
+      detail
+        "the riscv64 target needs the GNU cross binutils on PATH \
+         (riscv64-unknown-elf-as/-ld or riscv64-elf-as/-ld)"
   | Some _ ->
       if tool_exists "qemu-system-riscv64" then
         line "riscv64:" (ok_text ^ tool_version "qemu-system-riscv64")

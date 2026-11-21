@@ -26,8 +26,7 @@ let deadline_tests =
            having gone wrong. *)
         Alcotest.(check bool) "aborted" true aborted;
         Alcotest.(check bool)
-          "at the deadline, not at the command's own end" true
-          (elapsed < 15.0));
+          "at the deadline, not at the command's own end" true (elapsed < 15.0));
     tc "the deadline kills the whole process group" (fun () ->
         (* The shell exits at once, but its backgrounded child outlives it
            holding the pipe open — the shape that hangs a runner with no
