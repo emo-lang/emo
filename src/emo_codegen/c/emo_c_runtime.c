@@ -437,6 +437,19 @@ emo_value emo_cell_lower(emo_value s) {
   return emo_autorelease(v);
 }
 
+emo_value emo_cell_upper(emo_value s) {
+  emo_str src = emo_str_of(s);
+  emo_value v = emo_cell_new(EMO_STRING, 1 + (src.len + 7) / 8);
+  uintptr_t *p = emo_payload(v);
+  p[0] = (uintptr_t)src.len;
+  for (int64_t i = 0; i < src.len; i++) {
+    char c = src.bytes[i];
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+    ((char *)(p + 1))[i] = c;
+  }
+  return emo_autorelease(v);
+}
+
 /* The five bytes `trim` strips, the interpreter's set: space, tab,
    newline, carriage return, form feed — not the vertical tab, and
    nothing else below 0x20. */
@@ -4900,6 +4913,17 @@ emo_str emo_str_lower(emo_str s) {
   return out;
 }
 
+emo_str emo_str_upper(emo_str s) {
+  char *p = emo_alloc(s.len);
+  for (int64_t i = 0; i < s.len; i++) {
+    char c = s.bytes[i];
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+    p[i] = c;
+  }
+  emo_str out = {s.len, p};
+  return out;
+}
+
 emo_str emo_str_trim(emo_str s) {
   int64_t lo = 0, hi = s.len;
   while (lo < hi && emo_trim_space((unsigned char)s.bytes[lo])) lo++;
@@ -5618,6 +5642,11 @@ static emo_value emo_bm_lower(emo_value recv, const emo_value *args) {
   return emo_box_str(emo_str_lower(emo_str_of(recv)));
 }
 
+static emo_value emo_bm_upper(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_box_str(emo_str_upper(emo_str_of(recv)));
+}
+
 static emo_value emo_bm_trim(emo_value recv, const emo_value *args) {
   (void)args;
   return emo_box_str(emo_str_trim(emo_str_of(recv)));
@@ -5906,6 +5935,7 @@ static const emo_builtin_method emo_builtin_methods[] = {
     {"index_of", 1, emo_bm_index_of},
     {"starts_with", 1, emo_bm_starts_with},
     {"lower", 0, emo_bm_lower},
+    {"upper", 0, emo_bm_upper},
     {"trim", 0, emo_bm_trim},
     {"to_int64", 0, emo_bm_to_int64},
     {"split", 1, emo_bm_split},

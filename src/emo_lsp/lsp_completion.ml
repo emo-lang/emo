@@ -243,6 +243,7 @@ let builtin_type_members : (string * (string * string) list) list =
         m "split" "def split(sep String) Array[String]";
         m "trim" "def trim() String";
         m "lower" "def lower() String";
+        m "upper" "def upper() String";
         m "index_of" "def index_of(needle String) Int64";
         m "starts_with" "def starts_with(prefix String) Bool";
         m "to_int64" "def to_int64() Int64";

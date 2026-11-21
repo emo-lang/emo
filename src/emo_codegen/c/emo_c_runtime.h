@@ -391,6 +391,7 @@ emo_value emo_cell_from_pid(int64_t v);
 emo_value emo_cell_from_cstr(const char *cs);
 emo_value emo_cell_substring(emo_value s, int64_t start, int64_t len);
 emo_value emo_cell_lower(emo_value s);
+emo_value emo_cell_upper(emo_value s);
 emo_value emo_cell_trim(emo_value s);
 emo_value emo_cell_split(emo_value s, emo_value sep); /* an Array of cells */
 
@@ -541,6 +542,7 @@ emo_str emo_str_substring(emo_str s, int64_t start, int64_t len);
 int64_t emo_str_index_of(emo_str s, emo_str needle);
 bool emo_str_starts_with(emo_str s, emo_str prefix);
 emo_str emo_str_lower(emo_str s);
+emo_str emo_str_upper(emo_str s);
 emo_str emo_str_trim(emo_str s);
 int64_t emo_str_length(emo_str s);
 int64_t emo_str_to_int64(emo_str s);

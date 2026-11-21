@@ -634,6 +634,10 @@ function asciiLower(s: string): string {
   return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
 }
 
+function asciiUpper(s: string): string {
+  return s.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 32));
+}
+
 // Deep equality: primitives by value, compounds element-wise,
 // instances through their class-declared content (__eq).
 function deepEq(a: any, b: any): boolean {
@@ -1835,6 +1839,7 @@ const E: any = {
       }
       if (name === "trim") return asciiTrim(recv);
       if (name === "lower") return asciiLower(recv);
+      if (name === "upper") return asciiUpper(recv);
       if (name === "index_of")
         return BigInt(utf8IndexOf(recv, args[0] as string));
       if (name === "starts_with") return recv.startsWith(args[0] as string);
