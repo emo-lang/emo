@@ -105,6 +105,9 @@ bash scripts/install-server.sh
 
 Press <kbd>F5</kbd> in VS Code to launch an Extension Development Host.
 
+See [REGISTRY_SYNC.md](REGISTRY_SYNC.md) for how `server/registry` is staged
+from `stdlib/registry` and when to restage it.
+
 ## License
 
 MIT — see the repository's [LICENSE](https://github.com/emo-lang/emo/blob/main/LICENSE)

@@ -205,6 +205,7 @@ int32_t emo_char_of(emo_value v);
 emo_value emo_tuple_new(int64_t arity, emo_value *elems);
 emo_value emo_array_new(int64_t len, emo_value *elems);
 emo_value emo_array_append(emo_value arr, emo_value v); /* value semantics: a new array */
+emo_value emo_array_sort(emo_value arr, int64_t mode); /* value semantics: a new array; the mode picks the compare, the emitter's static element type or the dynamic table's inference */
 void emo_array_set(emo_value arr, int64_t i, emo_value v); /* mutates in place */
 emo_value emo_box_new(emo_value v);
 emo_value emo_box_read(emo_value box);
@@ -359,6 +360,7 @@ emo_value emo_neg_dyn(emo_value v);
 bool emo_eq_dyn(emo_value a, emo_value b);
 bool emo_lt_dyn(emo_value a, emo_value b);
 bool emo_le_dyn(emo_value a, emo_value b);
+int64_t emo_str_cmp(emo_value a, emo_value b); /* byte order, the sort's compare */
 
 /* The one stringification rule over dynamic values: the scalar
    renderings, plus tuples "(a, b)", arrays "[a, b]", maps
@@ -389,6 +391,7 @@ emo_value emo_cell_from_pid(int64_t v);
 emo_value emo_cell_from_cstr(const char *cs);
 emo_value emo_cell_substring(emo_value s, int64_t start, int64_t len);
 emo_value emo_cell_lower(emo_value s);
+emo_value emo_cell_upper(emo_value s);
 emo_value emo_cell_trim(emo_value s);
 emo_value emo_cell_split(emo_value s, emo_value sep); /* an Array of cells */
 
@@ -539,6 +542,7 @@ emo_str emo_str_substring(emo_str s, int64_t start, int64_t len);
 int64_t emo_str_index_of(emo_str s, emo_str needle);
 bool emo_str_starts_with(emo_str s, emo_str prefix);
 emo_str emo_str_lower(emo_str s);
+emo_str emo_str_upper(emo_str s);
 emo_str emo_str_trim(emo_str s);
 int64_t emo_str_length(emo_str s);
 int64_t emo_str_to_int64(emo_str s);

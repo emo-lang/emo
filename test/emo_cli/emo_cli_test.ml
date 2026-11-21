@@ -577,6 +577,7 @@ let wasm_goldens =
     "error_matching";
     "float_methods";
     "string_methods";
+    "array_methods";
     "math_demo";
     "math_trig";
     "math_inverse_trig";
@@ -676,6 +677,7 @@ let beam_goldens =
     "error_matching";
     "float_methods";
     "string_methods";
+    "array_methods";
     "math_demo";
     "math_trig";
     "math_inverse_trig";
@@ -856,6 +858,7 @@ let wasi_goldens =
     "loops";
     "error_matching";
     "string_methods";
+    "array_methods";
     "branch_var";
     "builtin_names";
     "to_string_render";
@@ -1059,6 +1062,7 @@ let c_goldens =
     "error_matching";
     "float_methods";
     "string_methods";
+    "array_methods";
     "math_demo";
     "math_trig";
     "math_inverse_trig";
@@ -3836,6 +3840,7 @@ let riscv64_examples_tests =
       "typed_methods";
       "bytes";
       "array_builder";
+      "array_methods";
       "native_image";
       "processes";
       "arena_gone";

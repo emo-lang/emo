@@ -145,8 +145,10 @@ let unguarded_builtin_arms =
     ("index_of", 1);
     ("trim", 0);
     ("lower", 0);
+    ("upper", 0);
     ("split", 1);
     ("append", 1);
+    ("sort", 0);
     ("read", 0);
     ("replace", 1);
     ("push_front", 1);
@@ -988,6 +990,9 @@ and builtin_method_call env self_ name args =
       | "append", [ v ] ->
           put env "apply 'emo_array_append'/2 ";
           args_list env [ self_; v ]
+      | "sort", [] ->
+          put env "apply 'emo_array_sort'/1 ";
+          args_list env [ self_ ]
       | "substring", [ start; len ] ->
           put env "apply 'emo_str_substring'/3 ";
           args_list env [ self_; start; len ]
@@ -1002,6 +1007,9 @@ and builtin_method_call env self_ name args =
           args_list env [ self_ ]
       | "lower", [] ->
           put env "apply 'emo_str_lower'/1 ";
+          args_list env [ self_ ]
+      | "upper", [] ->
+          put env "apply 'emo_str_upper'/1 ";
           args_list env [ self_ ]
       | "split", [ sep ] ->
           put env "apply 'emo_str_split'/2 ";
@@ -2356,18 +2364,43 @@ let rt_source =
 
 %% Emo prints a float the way OCaml's `%g` does — six significant digits,
 %% exponent form below 1e-4 and at 1e6 and above — except that an integral
-%% float within 1e16 keeps one decimal. `float_to_binary/2` decides the
+%% float within 1e16 keeps one decimal. NaN and the infinities answer the
+%% interpreter's own spellings before anything touches them: `trunc` of a
+%% NaN raises badarg, and the infinities would walk `emo_g6`'s exponent
+%% machinery into nonsense. `float_to_binary/2` decides the
 %% exponent itself, so the rounded scientific form is what picks the branch.
 'emo_float_to_str'/1 =
     fun (_f) ->
-	case call 'erlang':'=='(call 'erlang':'trunc'(_f), _f) of
+	case call 'erlang':'=/='(_f, _f) of
 	  <'true'> when 'true' ->
-	      case call 'erlang':'<'(call 'erlang':'abs'(_f), 10000000000000000.0) of
+	      #{#<110>(8,1,'integer',['unsigned'|['big']]),
+		#<97>(8,1,'integer',['unsigned'|['big']]),
+		#<110>(8,1,'integer',['unsigned'|['big']])}#
+	  <'false'> when 'true' ->
+	      case call 'erlang':'>'(call 'erlang':'abs'(_f), 1.7976931348623157e308) of
 		<'true'> when 'true' ->
-		    call 'erlang':'float_to_binary'(_f, [{'decimals',1}, 'compact'])
-		<'false'> when 'true' -> apply 'emo_g6'/1 (_f)
+		    case call 'erlang':'<'(_f, 0.0) of
+		      <'true'> when 'true' ->
+			  #{#<45>(8,1,'integer',['unsigned'|['big']]),
+			    #<105>(8,1,'integer',['unsigned'|['big']]),
+			    #<110>(8,1,'integer',['unsigned'|['big']]),
+			    #<102>(8,1,'integer',['unsigned'|['big']])}#
+		      <'false'> when 'true' ->
+			  #{#<105>(8,1,'integer',['unsigned'|['big']]),
+			    #<110>(8,1,'integer',['unsigned'|['big']]),
+			    #<102>(8,1,'integer',['unsigned'|['big']])}#
+		    end
+		<'false'> when 'true' ->
+		    case call 'erlang':'=='(call 'erlang':'trunc'(_f), _f) of
+		      <'true'> when 'true' ->
+			  case call 'erlang':'<'(call 'erlang':'abs'(_f), 10000000000000000.0) of
+			    <'true'> when 'true' ->
+				call 'erlang':'float_to_binary'(_f, [{'decimals',1}, 'compact'])
+			    <'false'> when 'true' -> apply 'emo_g6'/1 (_f)
+			  end
+		      <'false'> when 'true' -> apply 'emo_g6'/1 (_f)
+		    end
 	      end
-	  <'false'> when 'true' -> apply 'emo_g6'/1 (_f)
 	end
 
 'emo_g6'/1 =
@@ -2717,23 +2750,33 @@ let rt_source =
 
 %% erlc miscompiles a float bit-string *pattern* written as Core Erlang
 %% text (OTP 29 aborts with an internal consistency check), so the bits go
-%% back to a float through the external term format instead.
+%% back to a float through the external term format instead. The exponent
+%% field all ones — a NaN or an infinity — is refused first with a named
+%% error: OTP 29's binary_to_term answers a bare badarg for those bits,
+%% and no other path (arithmetic, parse, the math module) can build a
+%% non-finite float either — an Erlang float is finite by construction,
+%% so from_bits naming one is the honest end.
 'emo_from_bits'/1 =
     fun (_a) ->
 	case _a of
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      let <_u> = call 'erlang':'band'(_x, 18446744073709551615)
-	      in call 'erlang':'binary_to_term'(
-		   #{#<131>(8,1,'integer',['unsigned'|['big']]),
-		     #<70>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 56), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 48), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 40), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 32), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 24), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
-		     #<call 'erlang':'band'(_u, 255)>(8,1,'integer',['unsigned'|['big']])}#)
+	      in case call 'erlang':'=='(call 'erlang':'band'(_u, 9218868437227405312), 9218868437227405312) of
+		   <'true'> when 'true' ->
+		       call 'erlang':'error'({'emo_nan_bits', _u})
+		   <'false'> when 'true' ->
+		       call 'erlang':'binary_to_term'(
+			    #{#<131>(8,1,'integer',['unsigned'|['big']]),
+			      #<70>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 56), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 48), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 40), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 32), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 24), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 16), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(call 'erlang':'bsr'(_u, 8), 255)>(8,1,'integer',['unsigned'|['big']]),
+			      #<call 'erlang':'band'(_u, 255)>(8,1,'integer',['unsigned'|['big']])}#)
+		 end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 
@@ -2777,6 +2820,14 @@ let rt_source =
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) -> {_x, _y}
 		<_y> when call 'erlang':'is_float'(_y) -> {_x, _y}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
+	  <_x> when call 'erlang':'is_binary'(_x) ->
+	      %% binaries answer Erlang's own order — byte-wise, the
+	      %%   shorter length settling a matched prefix, the compare
+	      %%   `sort` hands out
+	      case _b of
+		<_y> when call 'erlang':'is_binary'(_y) -> {_x, _y}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -3381,6 +3432,21 @@ let rt_source =
 'emo_str_lower'/1 =
     fun (_s) ->
 	call 'erlang':'list_to_binary'(call 'lists':'map'(fun (_c) -> apply 'emo_lower_byte'/1 (_c), call 'erlang':'binary_to_list'(_s)))
+
+'emo_upper_byte'/1 =
+    fun (_c) ->
+	case call 'erlang':'>='(_c, 97) of
+	  <'false'> when 'true' -> _c
+	  <'true'> when 'true' ->
+	      case call 'erlang':'=<'(_c, 122) of
+		<'true'> when 'true' -> call 'erlang':'-'(_c, 32)
+		<'false'> when 'true' -> _c
+	      end
+	end
+
+'emo_str_upper'/1 =
+    fun (_s) ->
+	call 'erlang':'list_to_binary'(call 'lists':'map'(fun (_c) -> apply 'emo_upper_byte'/1 (_c), call 'erlang':'binary_to_list'(_s)))
 
 'emo_digits_ok'/3 =
     fun (_s, _i, _n) ->
@@ -4960,6 +5026,43 @@ let rt_source =
 		       (apply 'emo_cells_table'/0 (), {_k, _i}, 2)})
 		 apply 'emo_array_copy_walk'/4
 		   (_k, _k2, call 'erlang':'+'(_i, 1), _len)
+	end
+
+%% the sort's comparator, the ≤ shape the stable merge asks for: the
+%%   elements answer Erlang's own order — integers (Int64, Byte, Char
+%%   codes) numerically, binaries byte-wise, atoms alphabetically
+%%   (false before true) — and a Float64 NaN sorts after every number,
+%%   two NaNs equal, the total order every target agrees on (a NaN
+%%   fails its own =/=, so the guard reads it)
+'emo_sort_le'/2 =
+    fun (_x, _y) ->
+	case _x of
+	  <_x> when call 'erlang':'is_float'(_x) ->
+	      case call 'erlang':'=/='(_x, _x) of
+		<'true'> when 'true' ->
+		    case call 'erlang':'=/='(_y, _y) of
+		      <'true'> when 'true' -> 'true'
+		      <_other> when 'true' -> 'false'
+		    end
+		<_other> when 'true' ->
+		    call 'erlang':'not'(call 'erlang':'<'(_y, _x))
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'not'(call 'erlang':'<'(_y, _x))
+	end
+
+'emo_array_sort'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_array', _k}> when 'true' ->
+	      %% value semantics: the sorted elements rebuild through the
+	      %%   literal's walk, the original rows untouched
+	      apply 'emo_array_lit'/1
+		(call 'lists':'sort'
+		   (fun (_u, _v) -> apply 'emo_sort_le'/2 (_u, _v),
+		     apply 'emo_array_elems'/1 (_a)))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_array', _other})
 	end
 
 'emo_array_elems'/1 =

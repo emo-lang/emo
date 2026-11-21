@@ -25,6 +25,13 @@ x y
 3
 École Σ İ abc
 mixed 123 z
+HELLO WORLD
+MIXED 123 Z
+ÉCOLE Σ İ ABC
+éCOLE Σ I ABC
+
+日本語
+ABC
 42
 -7
 42
@@ -34,3 +41,15 @@ mixed 123 z
 -15
 Àbc d
 5
+true
+true
+true
+false
+false
+true
+true
+true
+false
+true
+false
+true

@@ -3594,6 +3594,7 @@ and check_method_call ctx env span recv mname args : t =
             ArrayType String)
     | String, "trim" -> builtin0 String
     | String, "lower" -> builtin0 String
+    | String, "upper" -> builtin0 String
     | String, "index_of" -> (
         match arg_values with
         | [ (None, String) ] | [ (Some "needle", String) ] -> Int64
@@ -3634,6 +3635,31 @@ and check_method_call ctx env span recv mname args : t =
         builtin0
           (ignore elem;
            Int64)
+    | ArrayType elem, "sort" -> (
+        (* the six comparable scalars are the map-key set: the element
+           type must pin one, and an unpinned element type cannot sort
+           because the static targets pick their compare from it *)
+        match arg_values with
+        | [] -> (
+            match elem with
+            | Int64 | Float64 | String | Byte | Char | Bool -> ArrayType elem
+            | Unknown ->
+                report ctx span "E4004"
+                  "`sort` needs a known element type; annotate the binding, \
+                   e.g. `const a Array[Int64] = []`";
+                ArrayType elem
+            | other ->
+                report ctx span "E4004"
+                  (Printf.sprintf
+                     "`sort` expects comparable elements (Int64, Float64, \
+                      String, Byte, Char, Bool), got %s"
+                     (to_string other));
+                ArrayType elem)
+        | _ ->
+            report ctx span "E4009"
+              (Printf.sprintf "`sort` expects no arguments, got %d"
+                 (List.length arg_values));
+            ArrayType elem)
     | TupleType _, "length" -> builtin0 Int64
     | BoxType elem, "read" -> builtin0 elem
     | BoxType elem, "replace" -> (
@@ -4033,7 +4059,19 @@ and check_binary ctx env span op l r =
       if not (int_side_ok lt && int_side_ok rt) then mismatch "two Int64s";
       Int64
   | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge ->
-      if not (numeric_pair_ok ()) then mismatch "two numbers";
+      (* Strings order byte-wise — the code point order `sort` answers
+         — and nothing else the numbers leave behind: a String against
+         a number is the mismatch, an Unknown side dispatches at run
+         time. *)
+      let string_pair_ok () =
+        match (lt, rt) with
+        | String, String | String, Unknown | Unknown, String -> true
+        | _ -> false
+      in
+      if
+        (not ((lt = String || rt = String) && string_pair_ok ()))
+        && not (numeric_pair_ok ())
+      then mismatch "two strings or two numbers";
       Bool
   | Ast.Eq | Ast.Ne -> Bool
   | Ast.And | Ast.Or ->

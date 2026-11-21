@@ -1444,7 +1444,7 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
                  of its own (T8.7's pool) *)
               match name with
               | "read" | "replace" -> read_claim env e.Emo_ir.ety
-              | "append" | "length" -> ()
+              | "append" | "sort" | "length" -> ()
               | _ -> pool_result env e.Emo_ir.ety)
           | ty -> pool_result env ty))
   | Make_enum { enum_name; member } ->
@@ -2514,6 +2514,21 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
             put env "    xori t0, t0, 1\n"
         | _ -> assert false);
         bool_of_t0 ()
+    | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.String ->
+        (* the strings' byte order, the dynamic compare's arm — the c
+           target's Gt/Ge swap onto Lt/Le *)
+        let a, b =
+          if op = Emo_ast.Gt || op = Emo_ast.Ge then (r, l) else (l, r)
+        in
+        emit_expr env (d + 1) a;
+        let spill = temp_offset env d in
+        put env "    sd a0, %d(sp)\n" spill;
+        emit_expr env (d + 1) b;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" spill;
+        call_runtime env
+          (if op = Emo_ast.Lt || op = Emo_ast.Gt then "emo_lt_dyn"
+           else "emo_le_dyn")
     | (Emo_ast.And | Emo_ast.Or), _ ->
         let l_end = fresh_label env "sc" in
         emit_expr env d l;
@@ -3064,6 +3079,22 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
               put env "    ld a1, %d(sp)\n" (temp_offset env (d + 1));
               put env "    ld a0, %d(sp)\n" self_slot;
               call_runtime env "emo_array_append"
+          | "sort", [] ->
+              (* the static element type picks the compare mode the
+                 runtime dispatches on; the checker has already
+                 refused the incomparable *)
+              let mode =
+                match self_.Emo_ir.ety with
+                | Emo_check.ArrayType Emo_check.Float64 -> 1
+                | Emo_check.ArrayType Emo_check.String -> 2
+                | Emo_check.ArrayType Emo_check.Byte -> 3
+                | Emo_check.ArrayType Emo_check.Char -> 4
+                | Emo_check.ArrayType Emo_check.Bool -> 5
+                | _ -> 0
+              in
+              emit_expr env d self_;
+              put env "    li a1, %d\n" mode;
+              call_runtime env "emo_array_sort"
           | _ -> refuse (Printf.sprintf "the Array method `%s`" name))
       | Emo_check.MapType _ -> (
           (* the metal's Map (step 91): the receiver spills across the
@@ -7016,6 +7047,308 @@ emo_array_append:
     addi sp, sp, 48
     ret
 
+# emo_sort_cmp: a0 = a, a1 = b, a2 = the compare mode; a0 = -1 / 0 / 1.
+# Floats answer `<` twice, then the NaN rule the whole language
+# answers: a NaN sorts after every number, two NaNs equal. Modes:
+# 0 Int64 (a tag-0 cell, payload at 8), 1 Float64, 2 String (bytes,
+# the shorter length settling a matched prefix), 3 Byte (the (n<<4)|7
+# immediate), 4 Char, 5 Bool (false < true). The checker has already
+# refused anything else.
+    .globl emo_sort_cmp
+emo_sort_cmp:
+    addi sp, sp, -48
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    mv s0, a0
+    mv s1, a1
+    mv s2, a2
+    li t0, 1
+    beq s2, t0, .Lsc_f64
+    li t0, 2
+    beq s2, t0, .Lsc_str
+    li t0, 4
+    beq s2, t0, .Lsc_chr
+    li t0, 5
+    beq s2, t0, .Lsc_bool
+    # Int64 and Byte: an Int64 rides its tag-0 cell, a Byte the
+    # immediate; both answer a plain integer compare
+    li t0, 7
+    andi t1, s0, 15
+    beq t1, t0, 1f
+    andi t0, s0, -32
+    ld t0, 8(t0)
+    andi t1, s1, -32
+    ld t1, 8(t1)
+    j 2f
+1:  srli t0, s0, 4
+    srli t1, s1, 4
+2:  blt t0, t1, .Lsc_lt
+    blt t1, t0, .Lsc_gt
+    j .Lsc_eq
+.Lsc_f64:
+    andi t0, s0, -32
+    fld fa0, 8(t0)
+    andi t1, s1, -32
+    fld fa1, 8(t1)
+    flt.d t0, fa0, fa1
+    bnez t0, .Lsc_lt
+    flt.d t0, fa1, fa0
+    bnez t0, .Lsc_gt
+    # neither `<` held: a NaN decides — a NaN sorts after every
+    # number, two NaNs equal, the total order every target agrees on
+    feq.d t0, fa0, fa0
+    bnez t0, 4f               # a is a number: b's NaN answers
+    feq.d t0, fa1, fa1
+    beqz t0, .Lsc_eq          # both NaN
+    j .Lsc_gt                 # only a NaN: a last
+4:  feq.d t0, fa1, fa1
+    beqz t0, .Lsc_lt          # only b NaN: a first
+    j .Lsc_eq
+.Lsc_str:
+    andi t0, s0, -32
+    ld t1, 8(t0)              # the length of a
+    addi t2, t0, 16           # a's bytes
+    andi t0, s1, -32
+    ld t3, 8(t0)              # the length of b
+    addi t4, t0, 16           # b's bytes
+    bge t1, t3, 1f
+    mv t5, t1                 # m = the shorter length
+    j 2f
+1:  mv t5, t3
+2:  beqz t5, .Lsc_strlen
+    lbu a2, 0(t2)
+    lbu a3, 0(t4)
+    beq a2, a3, 3f
+    sltu t6, a2, a3
+    beqz t6, .Lsc_gt
+    j .Lsc_lt
+3:  addi t2, t2, 1
+    addi t4, t4, 1
+    addi t5, t5, -1
+    j 2b
+.Lsc_strlen:
+    sltu t6, t1, t3
+    bnez t6, .Lsc_lt
+    sltu t6, t3, t1
+    bnez t6, .Lsc_gt
+    j .Lsc_eq
+.Lsc_chr:
+    srli t0, s0, 4
+    srli t1, s1, 4
+    blt t0, t1, .Lsc_lt
+    blt t1, t0, .Lsc_gt
+    j .Lsc_eq
+.Lsc_bool:
+    blt s0, s1, .Lsc_lt
+    blt s1, s0, .Lsc_gt
+    j .Lsc_eq
+.Lsc_lt:
+    li a0, -1
+    j .Lsc_ret
+.Lsc_eq:
+    li a0, 0
+    j .Lsc_ret
+.Lsc_gt:
+    li a0, 1
+.Lsc_ret:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    addi sp, sp, 48
+    ret
+
+# emo_array_sort: a0 = an Array, a1 = the compare mode; a0 = a fresh
+# sorted Array (the original untouched, even when nothing moves — two
+# arena scratches carry the passes, the input only ever read). A
+# raw-numbers array re-enters tagged first, the append's bridge. The
+# merge is bottom-up and stable — the right run's element moves only
+# when it is strictly smaller.
+    .globl emo_array_sort
+emo_array_sort:
+    addi sp, sp, -128
+    sd ra, 0(sp)
+    sd s0, 8(sp)              # from
+    sd s1, 16(sp)             # to
+    sd s2, 24(sp)             # n
+    sd s3, 32(sp)             # width
+    sd s4, 40(sp)             # i
+    sd s5, 48(sp)             # the mode
+    sd s6, 56(sp)             # out
+    sd s7, 64(sp)             # buf1
+    sd s8, 72(sp)             # src
+    sd s9, 80(sp)             # l
+    sd s10, 88(sp)            # r
+    sd s11, 96(sp)            # k
+    # buf2 sits at 104(sp), mid at 112(sp), end at 120(sp)
+    mv s5, a1                 # the mode, out of the calls' way
+    andi t0, a0, -32
+    ld t1, 0(t0)
+    bgez t1, 2f               # a tagged array answers as it came
+    call emo_arr_tagged       # a raw-numbers array re-enters tagged
+2:  andi s8, a0, -32          # the source base
+    ld s2, 8(s8)              # n
+    addi a0, s2, 2            # buf1: header + length + n words
+    call emo_alloc
+    andi s7, a0, -32
+    sd s2, 8(s7)
+    addi a0, s2, 2            # buf2: the passes' other side
+    call emo_alloc
+    andi t0, a0, -32
+    sd s2, 8(t0)
+    sd t0, 104(sp)
+    addi a0, s2, 2            # out: the answer's own
+    call emo_alloc
+    andi s6, a0, -32
+    sd s2, 8(s6)
+    li t1, 0                  # buf1 takes the elements — the input is
+    j 8f                      #   only ever read
+7:  slli t2, t1, 3
+    add t3, t2, s8
+    addi t3, t3, 16
+    ld t4, 0(t3)
+    add t3, t2, s7
+    addi t3, t3, 16
+    sd t4, 0(t3)
+    addi t1, t1, 1
+8:  blt t1, s2, 7b            # under n: another element; past it: on
+    mv s0, s7                 # from = buf1
+    ld s1, 104(sp)            # to = buf2
+    li s3, 1                  # width = 1
+.Las_width:
+    bge s3, s2, .Las_done
+    li s4, 0                  # i = 0
+.Las_i:
+    bge s4, s2, .Las_nextw
+    # mid = min(i + width, n)
+    add t0, s4, s3
+    bge t0, s2, 3f
+    sd t0, 112(sp)
+    j 4f
+3:  sd s2, 112(sp)
+4:  # end = min(i + 2*width, n)
+    add t0, s4, s3
+    add t0, t0, s3
+    bge t0, s2, 5f
+    sd t0, 120(sp)
+    j 6f
+5:  sd s2, 120(sp)
+6:  mv s9, s4                 # l = i
+    ld s10, 112(sp)           # r = mid
+    mv s11, s4                # k = i
+.Las_merge:
+    ld t0, 120(sp)
+    bge s10, t0, .Las_rleft   # the right run spent: the left rest copies
+    ld t0, 112(sp)
+    bge s9, t0, .Las_rright   # the left run spent: the right rest copies
+    slli t0, s10, 3
+    add t0, t0, s0
+    addi t0, t0, 16
+    ld a0, 0(t0)              # from[r]
+    slli t1, s9, 3
+    add t1, t1, s0
+    addi t1, t1, 16
+    ld a1, 0(t1)              # from[l]
+    mv a2, s5
+    call emo_sort_cmp
+    bgez a0, .Las_takeleft    # a tie takes the left run's element
+    slli t0, s11, 3           # take right: from[r] moves to to[k]
+    add t0, t0, s1
+    addi t0, t0, 16
+    slli t1, s10, 3
+    add t1, t1, s0
+    addi t1, t1, 16
+    ld t2, 0(t1)
+    sd t2, 0(t0)
+    addi s10, s10, 1
+    addi s11, s11, 1
+    j .Las_merge
+.Las_takeleft:
+    slli t0, s11, 3           # take left: from[l] moves to to[k]
+    add t0, t0, s1
+    addi t0, t0, 16
+    slli t1, s9, 3
+    add t1, t1, s0
+    addi t1, t1, 16
+    ld t2, 0(t1)
+    sd t2, 0(t0)
+    addi s9, s9, 1
+    addi s11, s11, 1
+    j .Las_merge
+.Las_rleft:
+    ld t0, 112(sp)
+    bge s9, t0, .Las_mend     # the left rest drained
+    slli t1, s11, 3
+    add t1, t1, s1
+    addi t1, t1, 16
+    slli t2, s9, 3
+    add t2, t2, s0
+    addi t2, t2, 16
+    ld t3, 0(t2)
+    sd t3, 0(t1)
+    addi s9, s9, 1
+    addi s11, s11, 1
+    j .Las_rleft
+.Las_rright:
+    ld t0, 120(sp)
+    bge s10, t0, .Las_mend    # the right rest drained
+    slli t1, s11, 3
+    add t1, t1, s1
+    addi t1, t1, 16
+    slli t2, s10, 3
+    add t2, t2, s0
+    addi t2, t2, 16
+    ld t3, 0(t2)
+    sd t3, 0(t1)
+    addi s10, s10, 1
+    addi s11, s11, 1
+    j .Las_rright
+.Las_mend:
+    add s4, s4, s3            # i += 2*width
+    add s4, s4, s3
+    j .Las_i
+.Las_nextw:
+    mv t0, s0                 # the passes alternate: from <-> to
+    mv s0, s1
+    mv s1, t0
+    slli s3, s3, 1            # width *= 2
+    j .Las_width
+.Las_done:
+    li t0, 0                  # the sorted words land in `from`
+.Las_copy:
+    bge t0, s2, .Las_ret
+    slli t1, t0, 3
+    add t2, t1, s0
+    addi t2, t2, 16
+    ld t3, 0(t2)
+    add t2, t1, s6
+    addi t2, t2, 16
+    sd t3, 0(t2)
+    addi t0, t0, 1
+    j .Las_copy
+.Las_ret:
+    ori a0, s6, 8             # the Array word: tag 8
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    ld s6, 56(sp)
+    ld s7, 64(sp)
+    ld s8, 72(sp)
+    ld s9, 80(sp)
+    ld s10, 88(sp)
+    ld s11, 96(sp)
+    addi sp, sp, 128
+    ret
+
+
 # ---- Content equality ----
 
 # emo_eq_deep: a0 = a1 = dynamic values; a0 = a Bool immediate. Word
@@ -7322,9 +7655,56 @@ emo_dyn_method:
 .Ldm_arr:
     li t4, 6
     bne t1, t4, .Ldm_fail
-    la t3, name_append
-    la t6, .Ldm_append
+    li t4, 6
+    beq s1, t4, .Ldm_append   # a six-byte name is "append"
+    li t4, 4
+    bne s1, t4, .Ldm_fail
+    la t3, name_sort
+    la t6, .Ldm_sort
     j .Ldm_namecmp
+.Ldm_sort:
+    # no static element type rides a dynamic send: the first element's
+    # runtime shape picks the compare, the c runtime's inference; an
+    # empty array never compares and a raw-numbers array sorts as
+    # Int64
+    andi t0, a0, -32
+    ld t1, 0(t0)
+    bgez t1, 8f               # raw numbers: the Int64 compare
+    ld t2, 8(t0)
+    beqz t2, 8f               # empty: any mode, nothing compares
+    ld t3, 16(t0)
+    andi t4, t3, 1
+    bnez t4, 2f               # an immediate: Bool, Char, or Byte
+    andi t4, t3, 31
+    beqz t4, 8f               # tag 0: an Int64 cell
+    li t5, 2
+    beq t4, t5, 3f            # a Float64 cell
+    li t5, 4
+    beq t4, t5, 4f            # a String cell
+    j 8f
+2:  andi t4, t3, 15
+    li t5, 3
+    beq t4, t5, 5f            # Char
+    li t5, 7
+    beq t4, t5, 6f            # Byte
+    j 7f                      # Bool
+3:  li t6, 1
+    j 8f
+4:  li t6, 2
+    j 8f
+5:  li t6, 4
+    j 8f
+6:  li t6, 3
+    j 8f
+7:  li t6, 5
+8:  mv a1, t6                 # the mode rides the argument register
+    la t2, emo_array_sort
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    addi sp, sp, 32
+    jr t2
 .Ldm_box:
     li t4, 4
     beq t1, t4, .Ldm_box_r
@@ -7568,7 +7948,16 @@ emo_lt_dyn:
     beqz t0, .Llt_int
     li t2, 2
     beq t0, t2, .Llt_float
+    li t2, 4
+    beq t0, t2, .Llt_str
     j .Ldyn_bad
+.Llt_str:
+    # the strings' order is the sort's compare (mode 2: bytes, the
+    # shorter length settling a matched prefix); `<` is its -1
+    li a2, 2
+    call emo_sort_cmp
+    slt t0, a0, zero
+    j .Lcmp_pack
 .Llt_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -7594,7 +7983,16 @@ emo_le_dyn:
     beqz t0, .Lle_int
     li t2, 2
     beq t0, t2, .Lle_float
+    li t2, 4
+    beq t0, t2, .Lle_str
     j .Ldyn_bad
+.Lle_str:
+    # `<=` on the sort's -1/0/1 is the compare below 1
+    li a2, 2
+    call emo_sort_cmp
+    li t1, 1
+    slt t0, a0, t1
+    j .Lcmp_pack
 .Lle_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -8447,6 +8845,8 @@ name_length:
     .ascii "length"
 name_append:
     .ascii "append"
+name_sort:
+    .ascii "sort"
 name_read:
     .ascii "read"
 name_replace:

@@ -521,6 +521,11 @@ let rt name =
   | "wasi_argv_array" -> b + 118
   | "wasi_rand_fill" -> b + 119
   | "wasi_listdir_scan" -> b + 120
+  (* the sort pair rides after the mode's own tail: the hosted build's
+     last slot is the allocator, the wasi build's the directory scan *)
+  | "emo_cmp" -> if !wasi_mode then b + 121 else b + 105
+  | "array_sort" -> if !wasi_mode then b + 122 else b + 106
+  | "str_upper" -> if !wasi_mode then b + 123 else b + 107
   | _ -> failwith ("wasm: bad runtime function: " ^ name)
 
 (* imports, then the runtime funcs above (the numeric core, the
@@ -536,8 +541,9 @@ let rt name =
    error-code texts, the preopen fetch, the path resolution, the
    bounded stream read, the fs write cycle, the fd table, the name
    sort, the open-at and one-string-at wrappers, the environment scan,
-   the argv array, the entropy fill, the directory-entry scan. *)
-let runtime_count () = !import_base + if !wasi_mode then 121 else 105
+   the argv array, the entropy fill, the directory-entry scan — and the
+   Array sort's compare and merge pair after those in both modes. *)
+let runtime_count () = !import_base + if !wasi_mode then 124 else 108
 
 (* ---- Lowering state ---- *)
 
@@ -617,6 +623,7 @@ let unguarded_builtin_arms =
     ("index_of", 1);
     ("trim", 0);
     ("lower", 0);
+    ("upper", 0);
     ("split", 1);
     ("append", 1);
     ("read", 0);
@@ -2745,6 +2752,9 @@ and builtin_method_call env self_ name args =
   | "lower", [] ->
       expr env self_;
       e env (W.Call (rt "str_lower"))
+  | "upper", [] ->
+      expr env self_;
+      e env (W.Call (rt "str_upper"))
   | "split", [ sep ] ->
       expr env self_;
       expr env sep;
@@ -2753,6 +2763,21 @@ and builtin_method_call env self_ name args =
       expr env self_;
       expr env v;
       e env (W.Call (rt "append"))
+  | "sort", [] ->
+      (* the static element type picks the compare mode; the checker
+         has already refused the incomparable *)
+      let mode =
+        match self_.Emo_ir.ety with
+        | Emo_check.ArrayType Emo_check.Float64 -> 1
+        | Emo_check.ArrayType Emo_check.String -> 2
+        | Emo_check.ArrayType Emo_check.Byte -> 3
+        | Emo_check.ArrayType Emo_check.Char -> 4
+        | Emo_check.ArrayType Emo_check.Bool -> 5
+        | _ -> 0
+      in
+      expr env self_;
+      e env (W.I32_const mode);
+      e env (W.Call (rt "array_sort"))
   | "read", [] ->
       (* the receiver is a Box by construction; the cast is the check *)
       expr env self_;
@@ -5572,7 +5597,8 @@ let rt_bytes_label () : W.func_type =
       @ [ W.Struct_new t_vstring ];
   }
 
-let rt_cmp (int_body : W.instr list) (float_body : W.instr list) : W.func_type =
+let rt_cmp (int_body : W.instr list) (float_body : W.instr list)
+    (string_body : W.instr list) : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -5583,21 +5609,53 @@ let rt_cmp (int_body : W.instr list) (float_body : W.instr list) : W.func_type =
           ( W.Result W.Anyref,
             both_int 0 1,
             i64_of 0 @ i64_of 1 @ int_body,
-            num_to_f64 0 @ num_to_f64 1 @ float_body );
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [
+                    W.Local_get 0;
+                    W.Ref_test t_vstring;
+                    W.Local_get 1;
+                    W.Ref_test t_vstring;
+                    W.I32_and;
+                  ],
+                  string_body,
+                  num_to_f64 0 @ num_to_f64 1 @ float_body );
+            ] );
       ];
   }
 
+(* The strings' arm rides the sort's compare (mode 2: byte order, the
+   shorter length settling a matched prefix) with the operator's own
+   sign test against its -1/0/1. The wat vocabulary has no i32.le_s —
+   `<= 0` rides `< 1`. *)
+let rt_string_cmp (tail : W.instr list) : W.instr list =
+  [ W.Local_get 0; W.Local_get 1; W.I32_const 2; W.Call (rt "emo_cmp") ]
+  @ tail @ [ W.Struct_new t_vbool ]
+
 let rt_lt () =
-  rt_cmp [ W.I64_lt_s; W.Struct_new t_vbool ] [ W.F64_lt; W.Struct_new t_vbool ]
+  rt_cmp
+    [ W.I64_lt_s; W.Struct_new t_vbool ]
+    [ W.F64_lt; W.Struct_new t_vbool ]
+    (rt_string_cmp [ W.I32_const 0; W.I32_lt_s ])
 
 let rt_le () =
-  rt_cmp [ W.I64_le_s; W.Struct_new t_vbool ] [ W.F64_le; W.Struct_new t_vbool ]
+  rt_cmp
+    [ W.I64_le_s; W.Struct_new t_vbool ]
+    [ W.F64_le; W.Struct_new t_vbool ]
+    (rt_string_cmp [ W.I32_const 1; W.I32_lt_s ])
 
 let rt_gt () =
-  rt_cmp [ W.I64_gt_s; W.Struct_new t_vbool ] [ W.F64_gt; W.Struct_new t_vbool ]
+  rt_cmp
+    [ W.I64_gt_s; W.Struct_new t_vbool ]
+    [ W.F64_gt; W.Struct_new t_vbool ]
+    (rt_string_cmp [ W.I32_const 0; W.I32_gt ])
 
 let rt_ge () =
-  rt_cmp [ W.I64_ge_s; W.Struct_new t_vbool ] [ W.F64_ge; W.Struct_new t_vbool ]
+  rt_cmp
+    [ W.I64_ge_s; W.Struct_new t_vbool ]
+    [ W.F64_ge; W.Struct_new t_vbool ]
+    (rt_string_cmp [ W.I32_const 0; W.I32_ge ])
 
 (* eq: primitives by content via deep_eq, boxed $vbool *)
 (* Equality over the program's shapes, built per module: primitives
@@ -6402,6 +6460,441 @@ let rt_append () : W.func_type =
         W.Array_set t_anyarray;
         W.Local_get 4;
       ];
+  }
+
+(* emo_cmp(a, b, mode) -> i32: the sort's three-way compare, the mode
+   the emitter passes from the array's static element type (0 Int64,
+   1 Float64, 2 String, 3 Byte, 4 Char, 5 Bool — a Byte is a $vint, so
+   0 and 3 share the arm). Floats answer `<` twice, then the NaN rule
+   the whole language answers: a NaN sorts after every number, two
+   NaNs equal. Locals: two f64 words, two byte arrays, six i32
+   counters, two i64 words, two more i32 words. *)
+let rt_emo_cmp ~t_sig () : W.func_type =
+  {
+    W.ftype_idx = t_sig;
+    fparams = [ "a"; "b"; "mode" ];
+    flocals =
+      [
+        (1, W.F64);
+        (1, W.F64);
+        (1, W.RefNull t_bytes);
+        (1, W.RefNull t_bytes);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I64);
+        (1, W.I64);
+        (1, W.I32);
+        (1, W.I32);
+      ];
+    fbody =
+      (* the shared three-way shape: `<` on (a,b), then `<` on (b,a) *)
+      (let three_way ~lt_ab ~lt_ba =
+         [
+           W.If_else
+             ( W.Result W.I32,
+               lt_ab,
+               [ W.I32_const (-1) ],
+               [
+                 W.If_else
+                   (W.Result W.I32, lt_ba, [ W.I32_const 1 ], [ W.I32_const 0 ]);
+               ] );
+         ]
+       in
+       let mode_is n = [ W.Local_get 2; W.I32_const n; W.I32_eq ] in
+       let f64_arm () =
+         (* `<` twice, then the NaN rule: a NaN sorts after every
+           number, two NaNs equal — the total order every target
+           agrees on *)
+         let x_nan = [ W.Local_get 3; W.Local_get 3; W.F64_eq; W.I32_eqz ] in
+         let y_nan = [ W.Local_get 4; W.Local_get 4; W.F64_eq; W.I32_eqz ] in
+         [
+           W.Local_get 0;
+           W.Ref_cast t_vfloat;
+           W.Struct_get (t_vfloat, 0);
+           W.Local_set 3;
+           W.Local_get 1;
+           W.Ref_cast t_vfloat;
+           W.Struct_get (t_vfloat, 0);
+           W.Local_set 4;
+         ]
+         @ [
+             W.If_else
+               ( W.Result W.I32,
+                 [ W.Local_get 3; W.Local_get 4; W.F64_lt ],
+                 [ W.I32_const (-1) ],
+                 [
+                   W.If_else
+                     ( W.Result W.I32,
+                       [ W.Local_get 4; W.Local_get 3; W.F64_lt ],
+                       [ W.I32_const 1 ],
+                       [
+                         W.If_else
+                           ( W.Result W.I32,
+                             x_nan,
+                             [
+                               W.If_else
+                                 ( W.Result W.I32,
+                                   y_nan,
+                                   [ W.I32_const 0 ],
+                                   [ W.I32_const 1 ] );
+                             ],
+                             [
+                               W.If_else
+                                 ( W.Result W.I32,
+                                   y_nan,
+                                   [ W.I32_const (-1) ],
+                                   [ W.I32_const 0 ] );
+                             ] );
+                       ] );
+                 ] );
+           ]
+       in
+       let string_arm () =
+         [
+           W.Local_get 0;
+           W.Ref_cast t_vstring;
+           W.Struct_get (t_vstring, 0);
+           W.Local_set 5;
+           W.Local_get 1;
+           W.Ref_cast t_vstring;
+           W.Struct_get (t_vstring, 0);
+           W.Local_set 6;
+           W.Local_get 5;
+           W.Array_len t_bytes;
+           W.Local_set 7;
+           W.Local_get 6;
+           W.Array_len t_bytes;
+           W.Local_set 8;
+           (* m = the shorter length *)
+           W.If_else
+             ( W.Result W.I32,
+               [ W.Local_get 7; W.Local_get 8; W.I32_lt_s ],
+               [ W.Local_get 7 ],
+               [ W.Local_get 8 ] );
+           W.Local_set 9;
+           W.I32_const 0;
+           W.Local_set 10;
+           W.Block
+             ( W.Void,
+               [
+                 W.Loop
+                   ( W.Void,
+                     [
+                       (* exhausted: the prefix matched, the lengths
+                         settle it *)
+                       W.Local_get 10;
+                       W.Local_get 9;
+                       W.I32_ge;
+                       W.Br_if 1;
+                       W.Local_get 5;
+                       W.Local_get 10;
+                       W.Array_get_u t_bytes;
+                       W.Local_set 11;
+                       W.Local_get 6;
+                       W.Local_get 10;
+                       W.Array_get_u t_bytes;
+                       W.Local_set 12;
+                       (* a differing byte answers the byte compare *)
+                       W.If_else
+                         ( W.Void,
+                           [ W.Local_get 11; W.Local_get 12; W.I32_eq ],
+                           [],
+                           three_way
+                             ~lt_ab:
+                               [ W.Local_get 11; W.Local_get 12; W.I32_lt_s ]
+                             ~lt_ba:
+                               [ W.Local_get 12; W.Local_get 11; W.I32_lt_s ]
+                           @ [ W.Return ] );
+                       W.Local_get 10;
+                       W.I32_const 1;
+                       W.I32_add;
+                       W.Local_set 10;
+                       W.Br 0;
+                     ] );
+               ] );
+         ]
+         @ three_way
+             ~lt_ab:[ W.Local_get 7; W.Local_get 8; W.I32_lt_s ]
+             ~lt_ba:[ W.Local_get 8; W.Local_get 7; W.I32_lt_s ]
+       in
+       let word32_arm ~t () =
+         [
+           W.Local_get 0;
+           W.Ref_cast t;
+           W.Struct_get (t, 0);
+           W.Local_set 15;
+           W.Local_get 1;
+           W.Ref_cast t;
+           W.Struct_get (t, 0);
+           W.Local_set 16;
+         ]
+         @ three_way
+             ~lt_ab:[ W.Local_get 15; W.Local_get 16; W.I32_lt_s ]
+             ~lt_ba:[ W.Local_get 16; W.Local_get 15; W.I32_lt_s ]
+       in
+       let int_arm () =
+         [
+           W.Local_get 0;
+           W.Ref_cast t_vint;
+           W.Struct_get (t_vint, 0);
+           W.Local_set 13;
+           W.Local_get 1;
+           W.Ref_cast t_vint;
+           W.Struct_get (t_vint, 0);
+           W.Local_set 14;
+         ]
+         @ three_way
+             ~lt_ab:[ W.Local_get 13; W.Local_get 14; W.I64_lt_s ]
+             ~lt_ba:[ W.Local_get 14; W.Local_get 13; W.I64_lt_s ]
+       in
+       [
+         W.If_else
+           ( W.Result W.I32,
+             mode_is 1,
+             f64_arm (),
+             [
+               W.If_else
+                 ( W.Result W.I32,
+                   mode_is 2,
+                   string_arm (),
+                   [
+                     W.If_else
+                       ( W.Result W.I32,
+                         mode_is 4,
+                         word32_arm ~t:t_vchar (),
+                         [
+                           W.If_else
+                             ( W.Result W.I32,
+                               mode_is 5,
+                               word32_arm ~t:t_vbool (),
+                               int_arm () );
+                         ] );
+                   ] );
+             ] );
+       ]);
+  }
+
+(* array_sort(arr, mode) -> anyref: bottom-up merge sort over a
+   $anyarray, stable (a tie takes the left run's element), and value
+   semantic — the answer is a fresh array even when nothing moves, the
+   input only ever read. Two scratch arrays carry the passes, each
+   alternating between them. Locals: six array refs, twelve i32
+   words. *)
+let rt_array_sort ~t_sig () : W.func_type =
+  {
+    W.ftype_idx = t_sig;
+    fparams = [ "arr"; "mode" ];
+    flocals =
+      [
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+        (1, W.RefNull t_anyarray);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+        (1, W.I32);
+      ];
+    fbody =
+      (* 2 src, 3 buf1, 4 from, 5 to, 6 buf2, 7 out, 8 swap; 9 n, 10
+         width, 11 i, 12 mid, 13 end, 14 l, 15 r, 16 k, 17 cmp, 18 j *)
+      (let store_to to_arr dst_idx src_arr src_idx =
+         [
+           W.Local_get to_arr;
+           W.Local_get dst_idx;
+           W.Local_get src_arr;
+           W.Local_get src_idx;
+           W.Array_get t_anyarray;
+           W.Array_set t_anyarray;
+         ]
+       in
+       let incr local =
+         [ W.Local_get local; W.I32_const 1; W.I32_add; W.Local_set local ]
+       in
+       let run_copy ~guard ~body =
+         W.Block
+           ( W.Void,
+             [ W.Loop (W.Void, guard @ (W.Br_if 1 :: body) @ [ W.Br 0 ]) ] )
+       in
+       let merge_pass =
+         (* the two-run merge for [i, mid) and [mid, end), into
+           to[k..end): the right run's element moves only when it is
+           strictly smaller, which is the stability *)
+         [
+           run_copy
+             ~guard:
+               [
+                 W.Local_get 15;
+                 W.Local_get 13;
+                 W.I32_ge;
+                 W.Local_get 14;
+                 W.Local_get 12;
+                 W.I32_ge;
+                 W.I32_or;
+               ]
+             ~body:
+               ([
+                  W.Local_get 4;
+                  W.Local_get 15;
+                  W.Array_get t_anyarray;
+                  W.Local_get 4;
+                  W.Local_get 14;
+                  W.Array_get t_anyarray;
+                  W.Local_get 1;
+                  W.Call (rt "emo_cmp");
+                  W.Local_set 17;
+                  W.If_else
+                    ( W.Void,
+                      (* cmp >= 0 takes the left run's element — the tie
+                       and the right-bigger case both keep the order *)
+                      [ W.Local_get 17; W.I32_const 0; W.I32_ge ],
+                      store_to 5 16 4 14 @ incr 14,
+                      store_to 5 16 4 15 @ incr 15 );
+                ]
+               @ incr 16);
+           run_copy
+             ~guard:[ W.Local_get 14; W.Local_get 12; W.I32_ge ]
+             ~body:(store_to 5 16 4 14 @ incr 14 @ incr 16);
+           run_copy
+             ~guard:[ W.Local_get 15; W.Local_get 13; W.I32_ge ]
+             ~body:(store_to 5 16 4 15 @ incr 15 @ incr 16);
+         ]
+       in
+       [
+         W.Local_get 0;
+         W.Ref_cast t_anyarray;
+         W.Local_set 2;
+         W.Local_get 2;
+         W.Array_len t_anyarray;
+         W.Local_set 9;
+         (* out: a fresh array even when nothing moves — the value rule
+           `append` lives by. Two scratches carry the passes, the
+           input only ever read. *)
+         W.Local_get 9;
+         W.Array_new_default t_anyarray;
+         W.Local_set 7;
+         W.Local_get 9;
+         W.Array_new_default t_anyarray;
+         W.Local_set 3;
+         W.Local_get 9;
+         W.Array_new_default t_anyarray;
+         W.Local_set 6;
+         (* the elements copy into the first scratch *)
+         W.I32_const 0;
+         W.Local_set 18;
+         run_copy
+           ~guard:[ W.Local_get 18; W.Local_get 9; W.I32_ge ]
+           ~body:(store_to 3 18 2 18 @ incr 18);
+         W.Local_get 3;
+         W.Local_set 4;
+         W.Local_get 6;
+         W.Local_set 5;
+         W.I32_const 1;
+         W.Local_set 10;
+         W.Block
+           ( W.Void,
+             [
+               W.Loop
+                 ( W.Void,
+                   [
+                     W.Local_get 10;
+                     W.Local_get 9;
+                     W.I32_ge;
+                     W.Br_if 1;
+                     W.I32_const 0;
+                     W.Local_set 11;
+                     W.Block
+                       ( W.Void,
+                         [
+                           W.Loop
+                             ( W.Void,
+                               [
+                                 W.Local_get 11;
+                                 W.Local_get 9;
+                                 W.I32_ge;
+                                 W.Br_if 1;
+                                 (* mid = min(i + width, n) *)
+                                 W.Local_get 11;
+                                 W.Local_get 10;
+                                 W.I32_add;
+                                 W.Local_set 12;
+                                 W.If_else
+                                   ( W.Result W.I32,
+                                     [
+                                       W.Local_get 12; W.Local_get 9; W.I32_lt_s;
+                                     ],
+                                     [ W.Local_get 12 ],
+                                     [ W.Local_get 9 ] );
+                                 W.Local_set 12;
+                                 (* end = min(i + 2*width, n) *)
+                                 W.Local_get 11;
+                                 W.Local_get 10;
+                                 W.I32_add;
+                                 W.Local_get 10;
+                                 W.I32_add;
+                                 W.Local_set 13;
+                                 W.If_else
+                                   ( W.Result W.I32,
+                                     [
+                                       W.Local_get 13; W.Local_get 9; W.I32_lt_s;
+                                     ],
+                                     [ W.Local_get 13 ],
+                                     [ W.Local_get 9 ] );
+                                 W.Local_set 13;
+                                 W.Local_get 11;
+                                 W.Local_set 14;
+                                 W.Local_get 12;
+                                 W.Local_set 15;
+                                 W.Local_get 11;
+                                 W.Local_set 16;
+                               ]
+                               @ merge_pass
+                               @ [
+                                   W.Local_get 11;
+                                   W.Local_get 10;
+                                   W.I32_add;
+                                   W.Local_get 10;
+                                   W.I32_add;
+                                   W.Local_set 11;
+                                   W.Br 0;
+                                 ] );
+                         ] );
+                     (* the passes alternate: from <-> to *)
+                     W.Local_get 4;
+                     W.Local_set 8;
+                     W.Local_get 5;
+                     W.Local_set 4;
+                     W.Local_get 8;
+                     W.Local_set 5;
+                     W.Local_get 10;
+                     W.I32_const 1;
+                     W.I32_shl;
+                     W.Local_set 10;
+                     W.Br 0;
+                   ] );
+             ] );
+         (* the sorted words land in `from` (the first scratch when no
+           pass ran); walk them into out *)
+         W.I32_const 0;
+         W.Local_set 18;
+         run_copy
+           ~guard:[ W.Local_get 18; W.Local_get 9; W.I32_ge ]
+           ~body:(store_to 7 18 4 18 @ incr 18);
+         W.Local_get 7;
+       ]);
   }
 
 let rt_strcat () : W.func_type =
@@ -7351,6 +7844,69 @@ let rt_str_lower () : W.func_type =
                             W.Local_get 4;
                             W.I32_const 32;
                             W.I32_add;
+                            W.Local_set 4;
+                          ],
+                          [] );
+                      W.Local_get 2;
+                      W.Local_get 3;
+                      W.Local_get 4;
+                      W.Array_set t_bytes;
+                      W.Local_get 3;
+                      W.I32_const 1;
+                      W.I32_add;
+                      W.Local_set 3;
+                      W.Br 0;
+                    ] );
+              ] );
+          W.Local_get 2;
+          W.Struct_new t_vstring;
+        ];
+  }
+
+let rt_str_upper () : W.func_type =
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "s" ];
+    flocals = [ (1, W.RefNull t_bytes); (1, W.RefNull t_bytes); (2, W.I32) ];
+    fbody =
+      bytes_of 0
+      @ [
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Array_len t_bytes;
+          W.Array_new_default t_bytes;
+          W.Local_set 2;
+          W.I32_const 0;
+          W.Local_set 3;
+          W.Block
+            ( W.Void,
+              [
+                W.Loop
+                  ( W.Void,
+                    [
+                      W.Local_get 3;
+                      W.Local_get 1;
+                      W.Array_len t_bytes;
+                      W.I32_ge;
+                      W.Br_if 1;
+                      W.Local_get 1;
+                      W.Local_get 3;
+                      W.Array_get_u t_bytes;
+                      W.Local_set 4;
+                      W.Local_get 4;
+                      W.I32_const 97;
+                      W.I32_ge;
+                      W.Local_get 4;
+                      W.I32_const 122;
+                      W.I32_gt;
+                      W.I32_eqz;
+                      W.I32_and;
+                      W.If
+                        ( W.Void,
+                          [
+                            W.Local_get 4;
+                            W.I32_const 32;
+                            W.I32_sub;
                             W.Local_set 4;
                           ],
                           [] );
@@ -8763,13 +9319,13 @@ let rt_float_str (env : env) : W.func_type =
     fparams = [ "v" ];
     flocals = [ (4, W.I64); (7, W.I32); (3, W.F64) ];
     fbody =
-      (* NaN: v != v *)
+      (* NaN: v != v — the interpreter's own spelling *)
       [
         lg 0;
         lg 0;
         W.F64_eq;
         W.I32_eqz;
-        W.If (W.Void, string_bytes_instrs "NaN" @ [ W.Return ], []);
+        W.If (W.Void, string_bytes_instrs "nan" @ [ W.Return ], []);
       ]
       @ [
           lg 0;
@@ -8790,6 +9346,21 @@ let rt_float_str (env : env) : W.func_type =
           W.I64_shr_u;
           W.I32_wrap_i64;
           ls neg;
+        ]
+      @ [
+          (* infinity: |v| at the max finite double — the exponent walk
+             below would chase the 0x7FF biased exponent forever *)
+          lg ax;
+          f64 1.7976931348623157e308;
+          W.F64_ge;
+          W.If
+            ( W.Void,
+              [
+                lg neg;
+                W.If (W.Void, string_bytes_instrs "-inf" @ [ W.Return ], []);
+              ]
+              @ string_bytes_instrs "inf" @ [ W.Return ],
+              [] );
         ]
       @ [
           (* the integral door: floor(v) == v and |v| < 1e16 renders as
@@ -11468,6 +12039,10 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
   let t_void_anyref = type_idx env (W.FuncT ([], [ W.Anyref ])) in
   let t_void_i32 = type_idx env (W.FuncT ([], [ W.I32 ])) in
   let t_i32_void = type_idx env (W.FuncT ([ W.I32 ], [])) in
+  let t_cmp =
+    type_idx env (W.FuncT ([ W.Anyref; W.Anyref; W.I32 ], [ W.I32 ]))
+  in
+  let t_sort = type_idx env (W.FuncT ([ W.Anyref; W.I32 ], [ W.Anyref ])) in
   let init_func =
     rt_init string_pool
       ~pool_base:(1 + (2 * List.length env.consts) + List.length env.gvars)
@@ -11579,6 +12154,13 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
            rt_wasi_listdir_scan env;
          ]
        else [])
+    @ [
+        (* the Array sort's pair, after the mode's own tail per the
+           rt map: the compare the merge calls, then the merge *)
+        rt_emo_cmp ~t_sig:t_cmp ();
+        rt_array_sort ~t_sig:t_sort ();
+        rt_str_upper ();
+      ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in
   (* main rides the map; the List ops follow it before the program's

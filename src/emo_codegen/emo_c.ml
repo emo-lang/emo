@@ -1322,6 +1322,29 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           finish_claim
             (Printf.sprintf "emo_array_append(%s, %s)" (as_dyn env self_)
                (as_dyn env v))
+      | "sort", []
+        when match self_.Emo_ir.ety with
+             | Emo_check.ArrayType elem -> (
+                 match elem with
+                 | Emo_check.Int64 | Emo_check.Float64 | Emo_check.String
+                 | Emo_check.Byte | Emo_check.Char | Emo_check.Bool ->
+                     true
+                 | _ -> false)
+             | _ -> false ->
+          (* the element type picks the compare mode the runtime
+             dispatches on; the checker has already refused the rest *)
+          let mode =
+            match self_.Emo_ir.ety with
+            | Emo_check.ArrayType Emo_check.Float64 -> 1
+            | Emo_check.ArrayType Emo_check.String -> 2
+            | Emo_check.ArrayType Emo_check.Byte -> 3
+            | Emo_check.ArrayType Emo_check.Char -> 4
+            | Emo_check.ArrayType Emo_check.Bool -> 5
+            | _ -> 0
+          in
+          finish_claim
+            (Printf.sprintf "emo_array_sort(%s, INT64_C(%d))" (as_dyn env self_)
+               mode)
       (* The map's methods: the receiver's MapType keys the arm, and the
          runtime dispatches by kind — an Unknown receiver's `get` stays
          the Bytes accessor. *)
@@ -1530,6 +1553,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                 wrap_owned result_ty (Printf.sprintf "emo_vbool(%s)" v)
               else v
           | "lower", [] -> Printf.sprintf "emo_cell_lower(%s)" recv
+          | "upper", [] -> Printf.sprintf "emo_cell_upper(%s)" recv
           | "trim", [] -> Printf.sprintf "emo_cell_trim(%s)" recv
           | "to_int64", [] ->
               box_int env result_ty
@@ -2004,9 +2028,12 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     | Emo_check.Bool, And -> plain "&&"
     | Emo_check.Bool, Or -> plain "||"
     | Emo_check.Bool, _ -> refuse "this Boolean operation"
-    (* String: concatenation and content equality. *)
+    (* String: concatenation, content equality, and the byte order the
+       operators share with `sort`. *)
     | Emo_check.String, Eq -> Printf.sprintf "emo_str_eq(%s, %s)" a b
     | Emo_check.String, Ne -> Printf.sprintf "(!emo_str_eq(%s, %s))" a b
+    | Emo_check.String, (Lt | Le | Gt | Ge) ->
+        Printf.sprintf "(emo_str_cmp(%s, %s) %s 0)" a b (compare_text op)
     | Emo_check.String, _ -> refuse "this String operation"
     (* Char *)
     | Emo_check.Char, (Eq | Ne) -> plain (compare_text op)
