@@ -3246,13 +3246,66 @@ def comp_blit_alpha_masked(base Int64, w Int64, h Int64, x Int64, y Int64,
   if r1 > dy1 {
     r1 = dy1
   }
+  // The span split (feat/modern-desktop): the shape's whole cover is
+  // provable without the distance wherever the pixel sits half a pixel
+  // inside a straight edge — every middle-span pixel's coverage is 255
+  // (the top band's row constant `sd = (y - py) * 256 - 128`, the
+  // middle band's `max(sx, sy) - rr` both ≤ -128), and comp_over at
+  // coverage 255 answers `src & 0xFFFFFF` — so the straight spans store
+  // the word masked, the four corner zones keep the shape's verdict,
+  // pixel by pixel. The addresses are the originals' (the same pixels
+  // in the same order, the digest's sum included).
+  var scr = koff + screen_base
   var r = r0
   while r < r1 {
     var roff = r - y
     var c = x0 - x
-    while c < x1 - x {
-      sum = sum + comp_corner_pixel_alpha(base, w, h, x, y, rad, c, roff)
-      c = c + 1
+    var cend = x1 - x
+    if rad * 2 > w || rad * 2 > h || rad == 0 {
+      while c < cend {
+        sum = sum + comp_corner_pixel_alpha(base, w, h, x, y, rad, c, roff)
+        c = c + 1
+      }
+    } else {
+      if roff < rad || roff >= h - rad {
+        while c < rad && c < cend {
+          sum = sum + comp_corner_pixel_alpha(base, w, h, x, y, rad, c, roff)
+          c = c + 1
+        }
+        var ms = w - rad
+        if ms > cend {
+          ms = cend
+        }
+        var src = base + (roff * w + c) * 4
+        var at = scr + (r * mw + x + c) * 4
+        while c < ms {
+          var nv = peek32(src) & 0xFFFFFF
+          poke32(at, nv)
+          sum = sum + nv
+          src = src + 4
+          at = at + 4
+          c = c + 1
+        }
+        c = w - rad
+        if c < x0 - x {
+          c = x0 - x
+        }
+        while c < cend {
+          sum = sum + comp_corner_pixel_alpha(base, w, h, x, y, rad, c, roff)
+          c = c + 1
+        }
+      } else {
+        var src = base + (roff * w + c) * 4
+        var at = scr + (r * mw + x + c) * 4
+        while c < cend {
+          var nv = peek32(src) & 0xFFFFFF
+          poke32(at, nv)
+          sum = sum + nv
+          src = src + 4
+          at = at + 4
+          c = c + 1
+        }
+      }
     }
     r = r + 1
   }
@@ -3412,6 +3465,18 @@ def comp_blit_masked(base Int64, w Int64, h Int64, x Int64, y Int64,
     r1 = dy1
   }
   var stride = mw / 2
+  // The word-space geometry, hoisted (feat/modern-desktop): the
+  // source's word stride and the box's word columns computed once per
+  // call, the two row bases walked per word — the straight spans' copy
+  // loop is the load, the store, the sum's word and the two pointers'
+  // steps, nothing recomputed, no thunk called. The addresses are the
+  // originals' (the same words in the same order, the digest's sum
+  // included).
+  var w2 = w / 2
+  var xw = x / 2
+  var i0 = (x0 - x) / 2
+  var iend = (x1 - x) / 2
+  var dst0 = koff + screen_base + (xw + i0) * 8
   var r = r0
   while r < r1 {
     var roff = r - y
@@ -3444,11 +3509,15 @@ def comp_blit_masked(base Int64, w Int64, h Int64, x Int64, y Int64,
         }
         cs = cs + ((cs - rad) & 1)
         var half = (ms - cs) / 2
+        var src = base + (roff * w2 + cs / 2) * 8
+        var dst = koff + screen_base + (r * stride + (x + cs) / 2) * 8
         var i = 0
         while i < half {
-          var v = peek64(base + (roff * (w / 2) + cs / 2 + i) * 8)
-          poke64(koff + screen_base + (r * stride + (x + cs) / 2 + i) * 8, v)
+          var v = peek64(src)
+          poke64(dst, v)
           sum = sum + v
+          src = src + 8
+          dst = dst + 8
           i = i + 1
         }
         var tail = cs + half * 2
@@ -3468,12 +3537,15 @@ def comp_blit_masked(base Int64, w Int64, h Int64, x Int64, y Int64,
           c = c + 1
         }
       } else {
-        var i = (x0 - x) / 2
-        var iend = (x1 - x) / 2
+        var src = base + (roff * w2 + i0) * 8
+        var dst = dst0 + r * stride * 8
+        var i = i0
         while i < iend {
-          var v = peek64(base + (roff * (w / 2) + i) * 8)
-          poke64(koff + screen_base + (r * stride + x / 2 + i) * 8, v)
+          var v = peek64(src)
+          poke64(dst, v)
           sum = sum + v
+          src = src + 8
+          dst = dst + 8
           i = i + 1
         }
       }
