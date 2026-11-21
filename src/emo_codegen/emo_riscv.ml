@@ -176,6 +176,10 @@ type frame = {
          push between two drains, the maximum the emission-order walk
          finds; zero means no pool area at all *)
   fname : string; (* this function's own IR name — the self-tail's test *)
+  mutable sregs : (string * int) list;
+      (* the loop's hot raw Int64 locals in the callee-saved s6..s11
+         seats (feat/modern-desktop): name -> seat index, the prologue
+         saves and re-seats, the reads and the stores go direct *)
   body_start : string; (* the label past the prologue: the rebind's home *)
 }
 
@@ -305,6 +309,31 @@ let tag_instance = 14
 let tag_atomic = 16
 let bool_false = 1 (* immediate: kind 0 in bits 3:1, payload bit 4 = 0 *)
 let bool_true = 17 (* kind 0 in bits 3:1, payload bit 4 *)
+
+(* The loop's hot seats (feat/modern-desktop): the callee-saved
+   s6..s11, proven idle outside the scheduler's and the trap's own
+   frames (both save the whole set), carry a native body's hottest raw
+   Int64 locals — the walk's counters and the blits' pointers read and
+   written without the stack round-trip. *)
+let sreg_count = 6
+
+(* the bisection's temporary skips (feat/modern-desktop): labels whose
+   frames stay seat-free while the round hunts the exec-path fault *)
+let seat_skip_prefixes = [ "emo_sv39__" ]
+let sreg_name (i : int) : string = "s" ^ string_of_int (6 + i)
+
+(* A mapped local's seat register (feat/modern-desktop): the name the
+   payload rides when the expression is the raw local itself — the
+   folds read and store the seat straight, no spill. *)
+let mapped_seat env (e : Emo_ir.expr) : string option =
+  match e.Emo_ir.desc with
+  | Var n -> (
+      match env.cur with
+      | Some f when List.mem_assoc n f.raw ->
+          Option.map sreg_name (List.assoc_opt n f.sregs)
+      | _ -> None)
+  | _ -> None
+
 let char_imm (c : char) : int = (Char.code c lsl 4) lor 0b0011
 
 (* Bytes: kind 3 in bits 3:1, the eight bits in bits 11:4 — the lane
@@ -801,6 +830,90 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
         | _ -> 0))
     0 stmts
 
+(* The loop's hot reads (feat/modern-desktop): the names a body reads
+   inside its while and for bodies, counted per name — the top six raw
+   Int64 locals ride the callee-saved s6..s11 seats for the frame, the
+   walk's counters and the blits' pointers. The traversal undercounts
+   rather than miscounts: the reads it misses simply keep their slot. *)
+let loop_hot_vars (body : Emo_ir.stmt list) : (string * int) list =
+  let counts = ref [] in
+  let bump n =
+    match List.assoc_opt n !counts with
+    | Some k -> counts := (n, k + 1) :: List.remove_assoc n !counts
+    | None -> counts := (n, 1) :: !counts
+  in
+  let rec ex depth (e : Emo_ir.expr) =
+    match e.Emo_ir.desc with
+    | Var n -> if depth > 0 then bump n
+    | Binary (_, l, r) | Index (l, r) ->
+        ex depth l;
+        ex depth r
+    | Unary (_, x) | Box_new x | Atomic_new x | List_new x -> ex depth x
+    | Cond { c; t; e } ->
+        ex depth c;
+        ex depth t;
+        ex depth e
+    | Call { args; _ }
+    | Do_spawn { args; _ }
+    | Builtin { args; _ }
+    | Runtime_impl { args; _ } ->
+        List.iter (ex depth) args
+    | Call_value { f; args } | Spawn_value { f; args } ->
+        ex depth f;
+        List.iter (ex depth) args
+    | Method { self_; args; _ } ->
+        ex depth self_;
+        List.iter (ex depth) args
+    | Tuple es | Array_lit es | Interpolate es -> List.iter (ex depth) es
+    | Field_read { obj; _ } -> ex depth obj
+    | Make_exception { message; data } -> (
+        ex depth message;
+        match data with Some x -> ex depth x | None -> ())
+    | _ -> ()
+  in
+  let rec st depth (s : Emo_ir.stmt) =
+    match s with
+    | Effect e -> ex depth e
+    | Let { init; _ } -> ex depth init
+    | Assign_var { value; _ } -> ex depth value
+    | Set_global_var { value; _ } -> ex depth value
+    | Set_field { self_; value; _ } ->
+        ex depth self_;
+        ex depth value
+    | If { cond; then_; else_ } ->
+        ex depth cond;
+        List.iter (st depth) then_;
+        List.iter (st depth) else_
+    | Return_stmt e -> ex depth e
+    | While { cond; body; _ } ->
+        ex (depth + 1) cond;
+        List.iter (st (depth + 1)) body
+    | For { init; cond; post; body; _ } ->
+        st depth init;
+        ex (depth + 1) cond;
+        List.iter (st (depth + 1)) body;
+        st (depth + 1) post
+    | Send { target; message } ->
+        ex depth target;
+        ex depth message
+    | Receive { branches } ->
+        List.iter
+          (fun (b : Emo_ir.branch) ->
+            (match b.Emo_ir.guard with Some g -> ex depth g | None -> ());
+            List.iter (st depth) b.Emo_ir.body)
+          branches
+    | Case { scrutinee; branches } ->
+        ex depth scrutinee;
+        List.iter
+          (fun (b : Emo_ir.branch) ->
+            (match b.Emo_ir.guard with Some g -> ex depth g | None -> ());
+            List.iter (st depth) b.Emo_ir.body)
+          branches
+    | _ -> ()
+  in
+  List.iter (st 0) body;
+  !counts
+
 (* Register every binding of the body, in bind order: Let bindings and
    the case patterns' bindings (branches are exclusive but each keeps
    its own slot). *)
@@ -1131,7 +1244,12 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
           if List.mem_assoc name f.raw then
             match List.assoc name f.raw with
             | Emo_check.Float64 -> put env "    fld fa0, %d(sp)\n" slot
-            | _ -> put env "    ld a0, %d(sp)\n" slot
+            | _ -> (
+                (* the loop's hot seat (feat/modern-desktop): the payload
+                   rides its callee-saved register *)
+                match List.assoc_opt name f.sregs with
+                | Some i -> put env "    mv a0, %s\n" (sreg_name i)
+                | None -> put env "    ld a0, %d(sp)\n" slot)
           else
             match e.Emo_ir.ety with
             | Emo_check.Int64 ->
@@ -1503,17 +1621,20 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         box_if_numeric env addr.Emo_ir.ety;
         call_runtime env "emo_peek8"
       end
-  | Builtin { name = "peek64"; args = [ addr ] } ->
-      emit_expr env (d + 1) addr;
-      if env.native then
-        (* the volatile word load, inline: raw address in, raw payload
-           out — an MMIO read allocates nothing *)
-        put env "    ld a0, 0(a0)\n"
-      else begin
-        box_if_numeric env addr.Emo_ir.ety;
-        call_runtime env "emo_peek64";
-        unbox_if_numeric env e.Emo_ir.ety
-      end
+  | Builtin { name = "peek64"; args = [ addr ] } -> (
+      (* the volatile word load, inline: raw address in, raw payload
+         out — an MMIO read allocates nothing. The address in a loop's
+         hot seat reads straight off the seat (feat/modern-desktop). *)
+      match (env.native, mapped_seat env addr) with
+      | true, Some r -> put env "    ld a0, 0(%s)\n" r
+      | true, None ->
+          emit_expr env (d + 1) addr;
+          put env "    ld a0, 0(a0)\n"
+      | false, _ ->
+          emit_expr env (d + 1) addr;
+          box_if_numeric env addr.Emo_ir.ety;
+          call_runtime env "emo_peek64";
+          unbox_if_numeric env e.Emo_ir.ety)
   | Builtin { name = "poke8"; args = [ addr; value ] } ->
       let addr_slot = temp_offset env d in
       emit_expr env (d + 1) addr;
@@ -1537,15 +1658,30 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
       end
   | Builtin { name = "poke64"; args = [ addr; value ] } ->
       let addr_slot = temp_offset env d in
-      emit_expr env (d + 1) addr;
-      if env.native then begin
-        (* the volatile word store, inline: raw address, raw payload *)
-        put env "    sd a0, %d(sp)\n" addr_slot;
-        emit_expr env (d + 1) value;
-        put env "    ld t0, %d(sp)\n" addr_slot;
-        put env "    sd a0, 0(t0)\n"
-      end
+      if env.native then
+        (* the volatile word store, inline: raw address, raw payload —
+           the seats store straight (feat/modern-desktop) *)
+        match (mapped_seat env addr, mapped_seat env value) with
+        | Some ra, Some rv -> put env "    sd %s, 0(%s)\n" rv ra
+        | ra_seat, rv_seat -> (
+            (match ra_seat with
+            | Some r -> ()
+            | None ->
+                emit_expr env (d + 1) addr;
+                put env "    sd a0, %d(sp)\n" addr_slot);
+            (match rv_seat with
+            | Some r -> put env "    mv a0, %s\n" r
+            | None -> emit_expr env (d + 1) value);
+            match ra_seat with
+            | Some r -> put env "    sd a0, 0(%s)\n" r
+            | None ->
+                put env "    ld t0, %d(sp)\n" addr_slot;
+                put env "    sd a0, 0(t0)\n")
       else begin
+        (* the boxed road keeps the address's own emission — the seat
+           road above is the only one that reads it off a register
+           (feat/modern-desktop) *)
+        emit_expr env (d + 1) addr;
         box_if_numeric env addr.Emo_ir.ety;
         put env "    sd a0, %d(sp)\n" addr_slot;
         emit_expr env (d + 1) value;
@@ -2186,7 +2322,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
     | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
         | Emo_ast.Bit_or | Emo_ast.Bit_xor | Emo_ast.Shl | Emo_ast.Shr ),
         Emo_check.Int64 ) ->
-        emit_int_pair env d l r;
+        let lr, rr = int_operands env d l r in
         let mnemonic =
           match op with
           | Emo_ast.Add -> "add"
@@ -2199,8 +2335,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
           | Emo_ast.Shr -> "sra"
           | _ -> assert false
         in
-        put env "    %s t0, t0, t1\n" mnemonic;
-        put env "    mv a0, t0\n";
+        put env "    %s a0, %s, %s\n" mnemonic lr rr;
         if boxed then box_result env "emo_box_i64"
     | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
         | Emo_ast.Bit_or | Emo_ast.Bit_xor ),
@@ -2244,15 +2379,15 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
            instead of trapping, and the language raises. INT64_MIN / -1
            needs no check — the hardware's wrap matches the c runtime's
            saturation. *)
-        emit_int_pair env d l r;
-        put env "    bnez t1, 1f\n";
+        let lr, rr = int_operands env d l r in
+        put env "    bnez %s, 1f\n" rr;
         put env "    la a0, msg_divzero\n";
         put env "    la a1, msg_divzero_end\n";
         put env "    call emo_fail\n";
         put env "1:\n";
-        put env "    %s t0, t0, t1\n"
-          (if op = Emo_ast.Div then "div" else "rem");
-        put env "    mv a0, t0\n";
+        put env "    %s a0, %s, %s\n"
+          (if op = Emo_ast.Div then "div" else "rem")
+          lr rr;
         if boxed then box_result env "emo_box_i64"
     | (Emo_ast.Div | Emo_ast.Mod), Emo_check.Byte ->
         (* unsigned, and the divisor is checked first — the Int64 arm's
@@ -2289,8 +2424,8 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         put env "    ld a0, %d(sp)\n" spill;
         box_result env "emo_string_concat"
     | (Emo_ast.Eq | Emo_ast.Ne), Emo_check.Int64 ->
-        emit_int_pair env d l r;
-        put env "    sub t0, t0, t1\n";
+        let lr, rr = int_operands env d l r in
+        put env "    sub t0, %s, %s\n" lr rr;
         if op = Emo_ast.Eq then put env "    seqz t0, t0\n"
         else put env "    snez t0, t0\n";
         bool_of_t0 ()
@@ -2326,15 +2461,15 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         call_runtime env "emo_eq_deep";
         if op = Emo_ast.Ne then put env "    xori a0, a0, 16\n"
     | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Int64 ->
-        emit_int_pair env d l r;
+        let lr, rr = int_operands env d l r in
         (match op with
-        | Emo_ast.Lt -> put env "    slt t0, t0, t1\n"
-        | Emo_ast.Gt -> put env "    slt t0, t1, t0\n"
+        | Emo_ast.Lt -> put env "    slt t0, %s, %s\n" lr rr
+        | Emo_ast.Gt -> put env "    slt t0, %s, %s\n" rr lr
         | Emo_ast.Le ->
-            put env "    slt t0, t1, t0\n";
+            put env "    slt t0, %s, %s\n" rr lr;
             put env "    xori t0, t0, 1\n"
         | Emo_ast.Ge ->
-            put env "    slt t0, t0, t1\n";
+            put env "    slt t0, %s, %s\n" lr rr;
             put env "    xori t0, t0, 1\n"
         | _ -> assert false);
         bool_of_t0 ()
@@ -2375,29 +2510,44 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         refuse "`/` and `%` (they arrive with runtime exceptions)"
     | _ -> refuse "this operator on this type"
 
-(* Unbox both operands of an Int64 binary: the left payload spills to
-   this depth's slot while the right evaluates one deeper. Leaves the
-   payloads in t0 (left) and t1 (right). A native body's operands are
-   raw already — the pair is plain moves. *)
-and emit_int_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
-  let spill = temp_offset env d in
-  emit_expr env (d + 1) l;
-  if env.native then put env "    sd a0, %d(sp)\n" spill
-  else begin
-    put env "    andi a0, a0, -32\n";
-    put env "    ld t0, 8(a0)\n";
-    put env "    sd t0, %d(sp)\n" spill
-  end;
-  emit_expr env (d + 1) r;
-  if env.native then begin
-    put env "    mv t1, a0\n";
-    put env "    ld t0, %d(sp)\n" spill
-  end
-  else begin
-    put env "    andi a0, a0, -32\n";
-    put env "    ld t1, 8(a0)\n";
-    put env "    ld t0, %d(sp)\n" spill
-  end
+(* The int pair's operands (feat/modern-desktop): a mapped local's
+   payload lives in its callee-saved seat and survives the other side's
+   evaluation — the operation reads it straight, no spill, and when
+   both sides sit in seats the operands cost nothing. Anything else
+   takes the spill road. Answers (left, right) as the registers the
+   operation composes on. *)
+and int_operands env d (l : Emo_ir.expr) (r : Emo_ir.expr) : string * string =
+  let seat e = mapped_seat env e in
+  match (seat l, seat r) with
+  | Some ls, Some rs -> (ls, rs)
+  | Some ls, None ->
+      emit_expr env (d + 1) r;
+      put env "    mv t1, a0\n";
+      (ls, "t1")
+  | None, Some rs ->
+      emit_expr env (d + 1) l;
+      put env "    mv t0, a0\n";
+      ("t0", rs)
+  | None, None ->
+      emit_expr env (d + 1) l;
+      let spill = temp_offset env d in
+      if env.native then put env "    sd a0, %d(sp)\n" spill
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld t0, 8(a0)\n";
+        put env "    sd t0, %d(sp)\n" spill
+      end;
+      emit_expr env (d + 1) r;
+      if env.native then begin
+        put env "    mv t1, a0\n";
+        put env "    ld t0, %d(sp)\n" spill
+      end
+      else begin
+        put env "    andi a0, a0, -32\n";
+        put env "    ld t1, 8(a0)\n";
+        put env "    ld t0, %d(sp)\n" spill
+      end;
+      ("t0", "t1")
 
 (* The Byte twin: immediates both, so decoding is a shift. Leaves the
    payloads in t0 (left) and t1 (right). *)
@@ -3179,6 +3329,19 @@ and emit_tail env (e : Emo_ir.expr) : bool =
   let frame () =
     match env.cur with Some f -> f | None -> invalid_arg "riscv: no frame"
   in
+  (* The seats ride home on every exit the ret label doesn't cover
+     (feat/modern-desktop): a tail call jumps straight at the callee,
+     so the caller's callee-saved set must land before this frame
+     dies — the convention is the exiting frame's to keep, the same
+     restore the ret label's epilogue does. *)
+  let seats_home () =
+    let f = frame () in
+    List.iter
+      (fun (_, i) ->
+        put env "    ld %s, %d(sp)\n" (sreg_name i)
+          (f.size - (8 * sreg_count) + (8 * i)))
+      f.sregs
+  in
   let mine () = (frame ()).fconv.cresult in
   (* a const thunk's return lands on its memo store, and a tail call
      answers the thunk's caller directly, the store never reached: a
@@ -3221,9 +3384,23 @@ and emit_tail env (e : Emo_ir.expr) : bool =
                     put env "    ld a0, %d(sp)\n" spill;
                     emit_barrier env slot;
                     put env "    sd a0, %d(sp)\n" slot
-                | P_int64 ->
+                | P_int64 -> (
                     put env "    ld a0, %d(sp)\n" spill;
-                    put env "    sd a0, %d(sp)\n" slot
+                    put env "    sd a0, %d(sp)\n" slot;
+                    (* the param's seat takes the next pass too
+                       (feat/modern-desktop): a loop-hot param rides
+                       s6..s11, and the rebind's slot write alone would
+                       leave the seat stale through the body's reads *)
+                    match
+                      List.find_opt
+                        (fun (n, idx) ->
+                          idx = i && List.mem_assoc n (frame ()).sregs)
+                        (frame ()).slots
+                    with
+                    | Some (n, _) ->
+                        put env "    mv %s, a0\n"
+                          (sreg_name (List.assoc n (frame ()).sregs))
+                    | None -> ())
                 | P_float64 ->
                     put env "    fld fa0, %d(sp)\n" spill;
                     put env "    fsd fa0, %d(sp)\n" slot)
@@ -3251,6 +3428,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
             pool_drain env f;
             if env.native then emit_typed_regs_native env 0 conv.cparams
             else emit_typed_regs env 0 conv.cparams;
+            seats_home ();
             put env "    ld ra, 0(sp)\n";
             sp_frame_adjust env ~module_buf:false ~up:true f.size;
             put env "    tail %s\n" (func_label func);
@@ -3278,6 +3456,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
           for i = 0 to n - 1 do
             put env "    ld a%d, %d(sp)\n" i (temp_offset env i)
           done;
+          seats_home ();
           put env "    ld ra, 0(sp)\n";
           sp_frame_adjust env ~module_buf:false ~up:true f.size;
           put env "    tail %s\n" (func_label func);
@@ -3311,6 +3490,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
       put env "    ld t0, %d(sp)\n" fslot;
       put env "    andi t0, t0, -32\n";
       put env "    ld t2, 8(t0)\n";
+      seats_home ();
       put env "    ld ra, 0(sp)\n";
       sp_frame_adjust env ~module_buf:false ~up:true ff.size;
       put env "    jr t2\n";
@@ -3450,15 +3630,15 @@ and emit_raw_cond env (cond : Emo_ir.expr) (l_false : string) : bool =
     in
     (match (op, l.Emo_ir.ety) with
     | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Int64 -> (
-        emit_int_pair env 0 l r;
+        let lr, rr = int_operands env 0 l r in
         match op with
-        | Emo_ast.Lt -> put env "    slt t0, t0, t1\n"
-        | Emo_ast.Gt -> put env "    slt t0, t1, t0\n"
+        | Emo_ast.Lt -> put env "    slt t0, %s, %s\n" lr rr
+        | Emo_ast.Gt -> put env "    slt t0, %s, %s\n" rr lr
         | Emo_ast.Le ->
-            put env "    slt t0, t1, t0\n";
+            put env "    slt t0, %s, %s\n" rr lr;
             put env "    xori t0, t0, 1\n"
         | Emo_ast.Ge ->
-            put env "    slt t0, t0, t1\n";
+            put env "    slt t0, %s, %s\n" lr rr;
             put env "    xori t0, t0, 1\n"
         | _ -> assert false)
     | (Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge), Emo_check.Byte -> (
@@ -3485,8 +3665,8 @@ and emit_raw_cond env (cond : Emo_ir.expr) (l_false : string) : bool =
             put env "    xori t0, t0, 1\n"
         | _ -> assert false)
     | (Emo_ast.Eq | Emo_ast.Ne), Emo_check.Int64 ->
-        emit_int_pair env 0 l r;
-        put env "    sub t0, t0, t1\n";
+        let lr, rr = int_operands env 0 l r in
+        put env "    sub t0, %s, %s\n" lr rr;
         if op = Emo_ast.Eq then put env "    seqz t0, t0\n"
         else put env "    snez t0, t0\n"
     | (Emo_ast.Eq | Emo_ast.Ne), _ ->
@@ -3532,9 +3712,12 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
           | Emo_check.Float64 ->
               f.raw <- (name, Emo_check.Float64) :: List.remove_assoc name f.raw;
               put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
-          | Emo_check.Int64 ->
+          | Emo_check.Int64 -> (
               f.raw <- (name, Emo_check.Int64) :: List.remove_assoc name f.raw;
-              put env "    sd a0, %d(sp)\n" (slot_offset env name)
+              (* the loop's hot seat (feat/modern-desktop) *)
+              match List.assoc_opt name f.sregs with
+              | Some i -> put env "    mv %s, a0\n" (sreg_name i)
+              | None -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
           | _ ->
               f.raw <- List.remove_assoc name f.raw;
               put env "    sd a0, %d(sp)\n" (slot_offset env name))
@@ -3563,14 +3746,17 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
                   put env "    andi t0, a0, -32\n";
                   put env "    fld fa0, 8(t0)\n");
               put env "    fsd fa0, %d(sp)\n" (slot_offset env name)
-          | Some Emo_check.Int64 ->
+          | Some Emo_check.Int64 -> (
               (match value.Emo_ir.ety with
               | Emo_check.Int64 -> () (* the raw payload already in a0 *)
               | _ ->
                   (* a tagged producer: the cell's payload into a0 *)
                   put env "    andi a0, a0, -32\n";
                   put env "    ld a0, 8(a0)\n");
-              put env "    sd a0, %d(sp)\n" (slot_offset env name)
+              (* the loop's hot seat (feat/modern-desktop) *)
+              match List.assoc_opt name f.sregs with
+              | Some i -> put env "    mv %s, a0\n" (sreg_name i)
+              | None -> put env "    sd a0, %d(sp)\n" (slot_offset env name))
           | _ ->
               (* a tagged slot: a raw numeric producer boxes at the
                  store, and the slot takes the new claim before the old
@@ -3981,6 +4167,7 @@ let emit_const_function env (f : Emo_ir.func) : unit =
       raw = [];
       pool = 0;
       fname = f.Emo_ir.fname;
+      sregs = [];
       body_start = fresh_label env "body";
     }
   in
@@ -4099,6 +4286,7 @@ let emit_function env ~(label : string) ~(fname : string)
       raw = [];
       pool = 0;
       fname;
+      sregs = [];
       body_start = fresh_label env "body";
     }
   in
@@ -4126,6 +4314,92 @@ let emit_function env ~(label : string) ~(fname : string)
   collect_stmts f body;
   f.temps <- stmts_depth body + 2;
   pool_scan env f body;
+  (* The loop's hot reads ride s6..s11 (feat/modern-desktop): the raw
+     Int64 locals the body reads inside its loops, the top six by count.
+     A name qualifies only when every binding that can hold it is Int64
+     — the slot's convention never moves (T7.1) — and the raw list's
+     membership gates every read and store at emission time. *)
+  if
+    native && (not env.region)
+    && not
+         (List.exists
+            (fun p ->
+              String.length label >= String.length p
+              && String.sub label 0 (String.length p) = p)
+            seat_skip_prefixes)
+  then begin
+    let lets = ref [] in
+    let rec tys (s : Emo_ir.stmt) =
+      match s with
+      | Let { name; init; _ } -> lets := (name, init.Emo_ir.ety) :: !lets
+      | If { then_; else_; _ } ->
+          List.iter tys then_;
+          List.iter tys else_
+      | While { body; _ } -> List.iter tys body
+      | For { init; body; post; _ } ->
+          tys init;
+          List.iter tys body;
+          tys post
+      | Receive { branches } ->
+          List.iter
+            (fun (b : Emo_ir.branch) -> List.iter tys b.Emo_ir.body)
+            branches
+      | Case { branches; _ } ->
+          List.iter
+            (fun (b : Emo_ir.branch) -> List.iter tys b.Emo_ir.body)
+            branches
+      | _ -> ()
+    in
+    List.iter tys body;
+    let pattern_bound = ref [] in
+    let rec binds (s : Emo_ir.stmt) =
+      match s with
+      | Receive { branches } ->
+          List.iter
+            (fun (b : Emo_ir.branch) ->
+              List.iter
+                (fun n -> pattern_bound := n :: !pattern_bound)
+                (pattern_bindings b.Emo_ir.pattern);
+              List.iter binds b.Emo_ir.body)
+            branches
+      | Case { branches; _ } ->
+          List.iter
+            (fun (b : Emo_ir.branch) ->
+              List.iter
+                (fun n -> pattern_bound := n :: !pattern_bound)
+                (pattern_bindings b.Emo_ir.pattern);
+              List.iter binds b.Emo_ir.body)
+            branches
+      | If { then_; else_; _ } ->
+          List.iter binds then_;
+          List.iter binds else_
+      | While { body; _ } -> List.iter binds body
+      | For { init; body; post; _ } ->
+          binds init;
+          List.iter binds body;
+          binds post
+      | _ -> ()
+    in
+    List.iter binds body;
+    let allint n =
+      (match List.assoc_opt n params with
+        | Some t -> t = Emo_check.Int64
+        | None -> true)
+      && (not (List.mem n captures))
+      && (not (List.mem n !pattern_bound))
+      && List.for_all (fun (m, t) -> m <> n || t = Emo_check.Int64) !lets
+    in
+    let candidates =
+      List.filter (fun (n, _) -> allint n) (loop_hot_vars body)
+    in
+    let sorted = List.sort (fun a b -> compare (snd b) (snd a)) candidates in
+    let rec pick k taken = function
+      | (n, _) :: rest when k < sreg_count ->
+          pick (k + 1) ((n, k) :: taken) rest
+      | _ -> List.rev taken
+    in
+    f.sregs <- pick 0 [] sorted
+  end;
   (* the globals' inits pool their births one after another with no
      boundary between them — one walk carries the accumulation *)
   if pglobals <> [] then begin
@@ -4136,6 +4410,7 @@ let emit_function env ~(label : string) ~(fname : string)
   f.size <-
     (8
     + (8 * (f.named + f.temps))
+    + (if f.sregs <> [] then 8 * sreg_count else 0)
     + (if f.pool > 0 then 8 + (8 * f.pool) else 0)
     + 15)
     / 16 * 16;
@@ -4151,6 +4426,13 @@ let emit_function env ~(label : string) ~(fname : string)
   gput env "%s:\n" label;
   sp_frame_adjust env ~module_buf:true ~up:false f.size;
   gput env "    sd ra, 0(sp)\n";
+  (* the loop's hot seats saved: the frame's top block holds them for
+     the epilogue's restore (feat/modern-desktop) *)
+  List.iter
+    (fun (_, i) ->
+      gput env "    sd %s, %d(sp)\n" (sreg_name i)
+        (f.size - (8 * sreg_count) + (8 * i)))
+    f.sregs;
   (* every raw param to its own slot first — the boxing calls clobber
      the argument registers, so nothing may still ride in one *)
   List.iteri
@@ -4189,6 +4471,12 @@ let emit_function env ~(label : string) ~(fname : string)
             gput env "    sd a0, %d(sp)\n" off
         | P_word -> ())
       conv.cparams;
+  (* the loop's hot seats take their starts from the slots — the Let
+     bound ones re-seat at their binding (feat/modern-desktop) *)
+  List.iter
+    (fun (n, i) ->
+      gput env "    ld %s, %d(sp)\n" (sreg_name i) (slot_offset env n))
+    f.sregs;
   (* the pool word starts at zero before anything pools: the globals'
      inits run ahead of the body, and the frame is dirty stack memory *)
   (* the module vars' cells take their initializers before the body:
@@ -4254,6 +4542,12 @@ let emit_function env ~(label : string) ~(fname : string)
       word_params;
   pool_drain env f;
   put env "    mv a0, a5\n";
+  (* the loop's hot seats home (feat/modern-desktop) *)
+  List.iter
+    (fun (_, i) ->
+      put env "    ld %s, %d(sp)\n" (sreg_name i)
+        (f.size - (8 * sreg_count) + (8 * i)))
+    f.sregs;
   if not native then emit_unbox_result env conv.cresult;
   put env "    ld ra, 0(sp)\n";
   sp_frame_adjust env ~module_buf:false ~up:true f.size;
@@ -4288,6 +4582,7 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
       raw = [];
       pool = 0;
       fname = ctor;
+      sregs = [];
       body_start = fresh_label env "body";
     }
   in
