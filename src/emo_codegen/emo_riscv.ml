@@ -316,10 +316,6 @@ let bool_true = 17 (* kind 0 in bits 3:1, payload bit 4 *)
    Int64 locals — the walk's counters and the blits' pointers read and
    written without the stack round-trip. *)
 let sreg_count = 6
-
-(* the bisection's temporary skips (feat/modern-desktop): labels whose
-   frames stay seat-free while the round hunts the exec-path fault *)
-let seat_skip_prefixes = [ "emo_sv39__" ]
 let sreg_name (i : int) : string = "s" ^ string_of_int (6 + i)
 
 (* A mapped local's seat register (feat/modern-desktop): the name the
@@ -4393,15 +4389,7 @@ let emit_function env ~(label : string) ~(fname : string)
      A name qualifies only when every binding that can hold it is Int64
      — the slot's convention never moves (T7.1) — and the raw list's
      membership gates every read and store at emission time. *)
-  if
-    native && (not env.region)
-    && not
-         (List.exists
-            (fun p ->
-              String.length label >= String.length p
-              && String.sub label 0 (String.length p) = p)
-            seat_skip_prefixes)
-  then begin
+  if native && not env.region then begin
     let lets = ref [] in
     let rec tys (s : Emo_ir.stmt) =
       match s with
