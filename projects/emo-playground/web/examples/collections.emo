@@ -8,6 +8,7 @@ println(xs.length().to_string())
 const scores = Map.new(("ada", 36), ("grace", 45))
 scores.set("linus", 28)
 println("ada -> ${scores.get("ada")}")
+println("linus -> ${scores.get("linus")}")
 
 // the builder is the one place an array grows without a known length
 const names = ArrayBuilder.new()
