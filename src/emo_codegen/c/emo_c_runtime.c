@@ -3916,7 +3916,7 @@ emo_value emo_os_sleep_ms(int64_t ms) {
 int64_t emo_net_set_timeout(int64_t fd, double seconds) {
   /* The sockets are all non-blocking, so the socket option this used
      to set (SO_RCVTIMEO) never fired once — the deadline lives in the
-     parking, and the reads carry it. */
+     parking, and both reads and writes carry it. */
   struct emo_net_meta *m = emo_net_meta_of(fd);
   if (m == NULL)
     emo_net_meta_register(fd, seconds, NULL);
@@ -4588,12 +4588,15 @@ static int emo_net_read_once(int64_t fd, void *buf, size_t n, char *detail,
   }
 }
 
-/* One write of the fd, TLS-aware when the fence carries it. The TLS
-   branch parks on WANT_READ/WANT_WRITE; the raw branch stays today's
-   plain send — would-block surfaces as the caller's error, exactly as
-   before. Returns bytes written, or -1 with [detail] filled. */
+/* One write of the fd, TLS-aware when the fence carries it. Would-block
+   parks toward [deadline_ms] (0 waits indefinitely) and retries, the
+   same discipline read_once keeps; the deadline past with still nothing
+   writable answers -2, the caller's timeout signal — the refusal text is
+   the wrapper's, which knows the operation's own name. Returns bytes
+   written, or -1 with [detail] filled. */
 static int emo_net_write_once(int64_t fd, const void *buf, size_t n,
-                              char *detail, size_t detailn) {
+                              char *detail, size_t detailn,
+                              int64_t deadline_ms) {
 #ifdef EMO_HAS_TLS
   SSL *ssl = emo_tls_lookup(fd);
   if (ssl != NULL) {
@@ -4603,11 +4606,13 @@ static int emo_net_write_once(int64_t fd, const void *buf, size_t n,
       if (r > 0) return r;
       int err = SSL_get_error(ssl, r);
       if (err == SSL_ERROR_WANT_READ) {
-        emo_net_wait_readable(fd);
+        if (deadline_ms > 0 && emo_net_monotonic_ms() >= deadline_ms) return -2;
+        emo_net_wait_readable_until(fd, deadline_ms);
         continue;
       }
       if (err == SSL_ERROR_WANT_WRITE) {
-        emo_net_wait_writable(fd);
+        if (deadline_ms > 0 && emo_net_monotonic_ms() >= deadline_ms) return -2;
+        emo_net_wait_writable_until(fd, deadline_ms);
         continue;
       }
       emo_tls_drain(detail, detailn);
@@ -4615,9 +4620,17 @@ static int emo_net_write_once(int64_t fd, const void *buf, size_t n,
     }
   }
 #endif
-  ssize_t sent = send((int)fd, buf, n, 0);
-  if (sent < 0) snprintf(detail, detailn, "%s", strerror(errno));
-  return (int)sent;
+  for (;;) {
+    ssize_t sent = send((int)fd, buf, n, 0);
+    if (sent >= 0) return (int)sent;
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (deadline_ms > 0 && emo_net_monotonic_ms() >= deadline_ms) return -2;
+      emo_net_wait_writable_until(fd, deadline_ms);
+      continue;
+    }
+    snprintf(detail, detailn, "%s", strerror(errno));
+    return -1;
+  }
 }
 
 /* One byte at a time is slow but exact; the arena absorbs the growth. */
@@ -4773,6 +4786,8 @@ emo_value emo_net_read_all(int64_t fd) {
 }
 
 emo_value emo_net_write(int64_t fd, emo_str data) {
+  int64_t started_ms = emo_net_monotonic_ms();
+  int64_t deadline_ms = emo_net_deadline_ms(fd, started_ms);
   int64_t sent_total = 0;
   while (sent_total < data.len) {
     char detail[256];
@@ -4780,7 +4795,10 @@ emo_value emo_net_write(int64_t fd, emo_str data) {
     int sent =
         emo_net_write_once(fd, data.bytes + sent_total,
                            (size_t)(data.len - sent_total), detail,
-                           sizeof detail);
+                           sizeof detail, deadline_ms);
+    if (sent == -2) { /* the deadline past, still nothing writable */
+      return emo_net_timeout_error("writing to", fd);
+    }
     if (sent < 0) {
       char what[512];
       snprintf(what, sizeof what, "cannot write on %s: %s",

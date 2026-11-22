@@ -2152,6 +2152,102 @@ println("not reached")
         check_run "c" (run_cmd (Filename.quote bin)) "1\n99\n");
   ]
 
+(* The c runtime's write path parks on would-block and retries, the
+   reading side's discipline: a client writing a payload larger than the
+   socket buffers must not fail with EAGAIN while the server fiber
+   drains it. The server answers only after it has the whole payload, so
+   the printed length proves every byte crossed. *)
+let c_net_tests =
+  [
+    tc "a large write parks on would-block and completes" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "c-net-backpressure"
+            {|def serve(l TcpListener) Void {
+  case l.accept() {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn) then {
+      case conn.read_exactly(8388608) {
+        (R.error, why) then { println("read failed: ${why}") }
+        (R.ok, data) then {
+          println(data.length())
+          conn.write("ok\n")
+        }
+      }
+      conn.close()
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
+do serve(listener)
+case net_connect("127.0.0.1", listener.port(), 5.0) {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn) then {
+    var big = "x"
+    for var i = 0; i < 23; i = i + 1 {
+      big = big + big
+    }
+    case conn.write(big) {
+      (R.error, why) then { println("write failed: ${why}") }
+      (R.ok, _) then {
+        case conn.read_line() {
+          (R.error, why) then { println("read back failed: ${why}") }
+          (R.ok, line) then { println(line) }
+        }
+        println("written")
+      }
+    }
+    conn.close()
+  }
+}
+|}
+        in
+        let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry bin);
+        check_run "c net backpressure" (run_cmd (Filename.quote bin))
+          "8388608\nok\nwritten\n");
+    tc "a write deadline answers the timeout refusal" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "c-net-write-timeout"
+            {|def serve(l TcpListener) Void {
+  case l.accept() {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn) then {
+      time_sleep_ms(2000)
+      conn.close()
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen("127.0.0.1", 0)
+do serve(listener)
+case net_connect("127.0.0.1", listener.port(), 5.0) {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn) then {
+    conn.set_timeout(0.1)
+    var big = "x"
+    for var i = 0; i < 23; i = i + 1 {
+      big = big + big
+    }
+    case conn.write(big) {
+      (R.error, why) then { println("write failed: ${why}") }
+      (R.ok, _) then { println("written") }
+    }
+    conn.close()
+  }
+}
+|}
+        in
+        let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry bin);
+        let out, _, _ = run_cmd (Filename.quote bin) in
+        Alcotest.(check bool)
+          "timed out writing" true
+          (contains out "timed out writing to"));
+  ]
+
 let c_examples_tests =
   List.map
     (fun name ->
@@ -7406,6 +7502,7 @@ let () =
       ("c_integer", c_integer_tests);
       ("c_scalar", c_scalar_tests);
       ("c_dynamic", c_dynamic_tests);
+      ("c_net", c_net_tests);
       ("c_foreign", c_foreign_tests);
       ("term", term_tests);
       ("c_callback", c_callback_tests);
