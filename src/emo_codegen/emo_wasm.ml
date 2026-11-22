@@ -3262,10 +3262,13 @@ and stmt env (s : Emo_ir.stmt) ~(tail : bool) : W.instr list =
       let code = expr_block env x in
       match x.Emo_ir.desc with
       | Emo_ir.Builtin { name = "println"; _ } -> code
-      (* `fence()` is the exact no-op; `store` answers nothing — neither
-         leaves a word for the statement to drop *)
+      (* `fence()` is the exact no-op — nothing to drop. The one-arg
+         atomic `store` lowers to the runtime call that answers nothing
+         (the `"store", [v]` builtin arm); a same-named method with more
+         arguments (the Surface's whole-word write) dispatches like any
+         call and its answer still needs the drop. *)
       | Emo_ir.Builtin { name = "fence"; _ } -> code
-      | Emo_ir.Method { name = "store"; _ } -> code
+      | Emo_ir.Method { name = "store"; args = [ _ ]; _ } -> code
       | _ -> code @ [ W.Drop ])
   | Emo_ir.Let { mutable_ = _; name; init } ->
       (* Every value, a closure struct included, fits anyref; a dynamic
