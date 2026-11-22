@@ -210,10 +210,12 @@ let expression_tests =
           "operator `+` expects two numbers or two strings, got String and \
            Int64"
           diagnostic.Diagnostic.message);
-    tc "comparisons work on numbers" (fun () ->
+    tc "comparisons order numbers and strings" (fun () ->
         check_value "less" (Emo_eval.Bool true) "1 < 2";
         check_value "promoted" (Emo_eval.Bool true) "1.5 >= 1";
-        let diagnostic = eval_err "\"a\" < \"b\"" in
+        check_value "strings" (Emo_eval.Bool true) "\"a\" < \"b\"";
+        check_value "prefix first" (Emo_eval.Bool true) "\"ab\" > \"a\"";
+        let diagnostic = eval_err "\"a\" < 1" in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic));
     tc "logic accepts Bools only" (fun () ->
         check_value "and" (Emo_eval.Bool false) "true && false";
