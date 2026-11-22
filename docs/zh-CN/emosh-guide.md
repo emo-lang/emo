@@ -25,15 +25,25 @@ shell 声明 `ocaml` 与 `c` 两个 target——`emo run main.emo` 在解释器�
 一行走 lex → parse → expand → execute,顺序固定;畸形行永远不会杀掉 shell(语言里没有 catch,shell 里也没有 raise):reason 打到 stderr,状态变 2。
 
 ```
-line     := and_or ( ";" and_or )* ";"?
-and_or   := pipeline ( "&&" | "||" pipeline )*
+line     := item ( ";" item )* ";"?        (行尾的 `;` 无害)
+and_or   := item ( "&&" | "||" item )*
+item     := pipeline | compound | declaration
 pipeline := command ( "|" command )*
 command  := ( word | redirection )*
 redirection := "<" | ">" | ">>" word | "N<" | "N>" | "N>>" word
              | "N>&M" | "N<&M" | ">&M" | "<&M"
+compound := "if" list "{" list "}" [ "else" ( if | "{" list "}" ) ]
+          | "while" list "{" list "}"
+          | "for" "var" name "=" expr ";" expr ";" expr "{" list "}"
+          | "def" name "(" ")" "{" list "}"
+declaration := ("const" | "var") name "=" word
 ```
 
-管道之后的 `&` 把整个条目送进后台——`a | b &` 是一个作业,见下文。
+条目之后的 `&` 把它送进后台——`a | b &` 是一个作业,`while … } &`
+也是,见下文。控制流说 Emo 的话:大括号块,没有 `then`/`fi`/`do`/
+`done` 终结关键字。关键字(`if`、`while`、`for`、`def`、`const`、
+`var`)只在命令可以出现的位置、且是裸的未引用词时才被认出;`{` 与
+`}` 作为独立词是保留的——字面大括号请加引号。
 
 ## 词与引号
 
@@ -130,6 +140,55 @@ $ echo status=$?
 
 信号死亡按 `128 + 信号` 计,即内核自己的编码、由 `os.wait_signal` 解码的那个。`exit` 接可选状态(无参取最后一个),经内核低字节折叠——`exit 300` 剩 44,`exit -1` 剩 255——非数字参数拒绝并置状态 2。脚本的退出状态是最后一条命令的;交互态输入结束同样带着最后状态离场。
 
+## 控制流与声明
+
+流程形态是 Emo 自己的——大括号块、数值 `for`、声明关键字——在
+Emo 放语句的地方运行 shell 命令列表:
+
+```console
+$ var who = "shell"
+$ const greeting = "hello"
+$ echo $greeting $who
+hello shell
+```
+
+- `const NAME = WORD` 绑定一个变量;重声明已冻结的名字——用
+  `const`、`var` 或 `unset`——会拒绝(`NAME: is a constant`)。
+  `var NAME = WORD` 同样绑定;再 `var` 覆盖值。值是一个词——短语请
+  加引号——且该词会扩展(`$x` 生长;glob 不动:声明的值不做 glob)。
+  `$NAME` 先读声明的绑定再读环境,`unset` 两者都除。
+- `if LIST { LIST } else { LIST }`——条件是命令列表,以其最后命令
+  的退出状态选分支(0 走 body)。`else` 可链 `else if … { … }`,
+  解析期压平为嵌套。无 `else` 且条件为假时答 0。
+- `while LIST { LIST }` 在条件最后一条命令成功时运行 body;零轮
+  答 0。
+- `for var I = EXPR; I < EXPR; I = I + EXPR { LIST }`——数值 for,
+  Emo 自己的形:头的三个表达式是裸变量名上的整数算术(`$#` 也可
+  计入),循环变量是每轮赋值的声明绑定、循环后恢复原值,步进按头
+  写的 `I = I + EXPR` 赋值。
+
+`break` 与 `continue` 离开或步进循环;`return [n]` 离开函数——
+各自在不属于它的地方拒绝(`break: only in a loop`、
+`return: only in a function`)。
+
+```console
+$ def greet() {
+  echo greet:$1
+}
+$ greet world
+greet:world
+$ for var i = 1; i <= 3; i = i + 1 {
+  echo tick $i
+}
+tick 1
+tick 2
+tick 3
+```
+
+块可以在一行打开、数行之后闭合——shell 以 `>` 要下一行,直到大
+括号配平,与行尾反斜杠续行同一机制。body 里定义的声明与函数都是
+会话自己的(没有局部变量),`for` 的变量在循环离开后恢复原值。
+
 ## 后台任务
 
 管道之后的 `&` 让它后台运行:`sleep 5 &` 拉起作业就继续走——拉起是否成功就是该条目的状态,拉起本身就是分隔符(`a & b` 随即运行 `b`)。作业取最小空位号,`$!` 应答它的 pid。
@@ -217,8 +276,10 @@ cooked 模式下,Ctrl-C 之后要等下一行完成才会再见到提示符;行�
 
 契约,写明免得猜:
 
-- 无控制流——没有 `if`、`while`、`for`,没有函数;
-- 位置参数到头就到头:只有 `$1` … `$9`、`${N}`、`$#` 与 `$@`——无 `shift`,无 `$*`;
+- 没有 `case`、`until`、`select`、`[[`,for 头之外没有算术括号;
+- 复合命令不进管道(`if … } | cat` 拒绝),也没有词表迭代
+  (`for x in words`——for 只有数值形);函数调用不带重定向;
+- 位置参数到头就到头:只有 `$1` … `$9`、`${N}`、`$#` 与 `$@`——无 `shift`,无 `$*`;声明的值是一个词(算术表达式只在 for 头);
 - 后台任务有了,但终端不谈判:`fg` 只是等,Ctrl-C 够不到它带回来的作业(终端交接调用——`tcsetpgrp`——是等着落地的 os 半边);这里没有任何东西会停作业,`bg` 恒答 `already in background`;后台作业的 stdin 仍是 shell 的;
 - 无行编辑器——终端自己的 cooked 模式读入;无历史,无补全;
 - 扩展后无 IFS 字段切分;

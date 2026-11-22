@@ -117,8 +117,9 @@ def positional(n Int64, args Array[String], name String) String {
 
 // One whole word, expanded: the parts joined, `$` forms resolved, the
 // leading tilde traded for $HOME when the word opens with a bare,
-// unquoted run.
-def word(parts Array[Part], status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64) String {
+// unquoted run. [vars] carries the declared bindings (name=value) —
+// their names answer before the environment does.
+def word(parts Array[Part], status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64, vars Array[String]) String {
   var joined = ""
   var first = true
   for var i = 0; i < parts.length(); i = i + 1 {
@@ -130,7 +131,7 @@ def word(parts Array[Part], status Int64, name String, args Array[String], shell
       if first && !part.quoted && text.starts_with("~") {
         text = expand_tilde(text)
       }
-      joined = joined + dollars(text, status, name, args, shell_pid, last_bg)
+      joined = joined + dollars(text, status, name, args, shell_pid, last_bg, vars)
     }
     first = false
   }
@@ -151,9 +152,9 @@ def expand_tilde(text String) String {
 }
 
 // Every `$` form in one expandable run: `?`, `0`, the positionals,
-// `$` and `!` (the shell's pid, the last background job's), `${…}`,
-// `$name` — anything else keeps its dollar.
-def dollars(text String, status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64) String {
+// `$` and `!` (the shell's pid, the last background job's), `#`, the
+// `@` fan-out, `${…}`, `$name` — anything else keeps its dollar.
+def dollars(text String, status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64, vars Array[String]) String {
   var out = ""
   var i = 0
   while i < text.length() {
@@ -203,7 +204,7 @@ def dollars(text String, status Int64, name String, args Array[String], shell_pi
                         out = out + "$"
                         i = i + 1
                       } else {
-                        out = out + braced(rest.substring(0, rel), status, name, args, shell_pid, last_bg)
+                        out = out + braced(rest.substring(0, rel), status, name, args, shell_pid, last_bg, vars)
                         i = i + 2 + rel + 1
                       }
                     } else {
@@ -212,7 +213,7 @@ def dollars(text String, status Int64, name String, args Array[String], shell_pi
                         while j < text.length() && is_name_rest(text.substring(j, 1)) {
                           j = j + 1
                         }
-                        out = out + value_of(text.substring(i + 1, j - i - 1))
+                        out = out + value_of(text.substring(i + 1, j - i - 1), vars)
                         i = j
                       } else {
                         out = out + "$"
@@ -236,22 +237,22 @@ def dollars(text String, status Int64, name String, args Array[String], shell_pi
 // the value or word when unset or empty. Anything else the rules
 // cannot name — `${1x}`, `${a-b}`, `${}` — comes back as the literal
 // text it went in as.
-def braced(body String, status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64) String {
+def braced(body String, status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64, vars Array[String]) String {
   if is_digits(body) {
     return positional(digits_value(body), args, name)
   }
   if is_name(body) {
-    return value_of(body)
+    return value_of(body, vars)
   }
   const sep = body.index_of(":-")
   if sep > 0 {
     const left = body.substring(0, sep)
     if is_name(left) {
-      const value = value_of(left)
+      const value = value_of(left, vars)
       if value != "" {
         return value
       }
-      return dollars(body.substring(sep + 2, body.length() - sep - 2), status, name, args, shell_pid, last_bg)
+      return dollars(body.substring(sep + 2, body.length() - sep - 2), status, name, args, shell_pid, last_bg, vars)
     }
   }
   // the literal form, assembled from pieces — a `$` before a `{` in
@@ -260,8 +261,16 @@ def braced(body String, status Int64, name String, args Array[String], shell_pid
   return "$" + "{" + body + "}"
 }
 
-// One variable's value; unset answers the empty string.
-def value_of(name String) String {
+// One variable's value: a declared binding answers first, the
+// environment next, unset the empty string.
+def value_of(name String, vars Array[String]) String {
+  for var k = 0; k < vars.length(); k = k + 1 {
+    const binding = vars[k]
+    const eq = binding.index_of("=")
+    if binding.substring(0, eq) == name {
+      return binding.substring(eq + 1, binding.length() - eq - 1)
+    }
+  }
   case os.getenv(name) {
     (R.ok, value) then { return value }
     (R.error, _)  then { return "" }

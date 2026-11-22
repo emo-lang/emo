@@ -1,28 +1,39 @@
 // The parser: the lexer's tokens become the structures the executor
-// runs — the classic grammar, nothing borrowed:
+// runs. The grammar, Emo 同款 — brace blocks, no terminator keywords:
 //
-//   line     := and_or ( ";" and_or )* ";"?        (a trailing `;` is fine)
-//   and_or   := pipeline ( "&&" | "||" pipeline )*
+//   line     := item ( ";" item )* ";"?        (a trailing `;` is fine)
+//   and_or   := item ( "&&" | "||" item )*
+//   item     := pipeline | compound | declaration
 //   pipeline := command ( "|" command )*
 //   command  := ( word | redirection )*
 //   redirection := "<" | ">" | ">>" word | "N<" | "N>" | "N>>" word
 //                | "N>&M" | "N<&M" | ">&M" | "<&M"
+//   compound := "if" list "{" list "}" [ "else" ( if | "{" list "}" ) ]
+//             | "while" list "{" list "}"
+//             | "for" "var" name "=" expr ";" expr ";" expr "{" list "}"
+//             | "def" name "(" ")" "{" list "}"
+//   declaration := ("const" | "var") name "=" word
 //
-// A `&` after a pipeline marks the whole item background — `a | b &`
-// is one job, its status the spawn's.
+// A `&` after an item marks it background — `a | b &` is one job,
+// `while … } &` another. An `&` that is not `&&` is its own operator.
 //
-// Every connector rides the item it terminates: an item is one
-// pipeline plus the `&&` / `||` / `;` that follows it, the executor's
-// walk using those to decide whether the next item runs at all.
+// The keywords are recognized where a command may start, and only on
+// a word that is one bare, unquoted part — `'if'` is an argument like
+// any other. `{` and `}` are reserved as standalone words (a literal
+// brace quotes). A line that ends with a block still open answers
+// incomplete — the driver reads the next line and re-parses the way
+// the classic shells ask for `>` — distinct from a syntax error,
+// which refuses.
 //
-// Strictness is the shape: a line may not open with an operator, a
-// pipeline stage may not be empty (`| cat` and `cat |` both refuse —
-// there is no continuation line to ask for), a redirection must name
-// its file. One honest looseness: a command of redirections alone is
-// a command — `> log` truncates the file, the way the classic shells
-// do it. A malformed line answers `(R.error, reason)` — the shell has
-// no catch to survive, so the session decides what dies and what
-// carries on.
+// The answer every parser helper speaks: the payload, the index just
+// past it, and the status — "" complete, "incomplete" when the line
+// ran out inside a block (the payload a sentinel), or, with R.error,
+// the reason the line refused. Strictness is the shape: a line may
+// not open with an operator, a pipeline stage may not be empty, a
+// redirection must name its file, `else` wants a block or an `if`, a
+// declaration wants the spaces that make it read like Emo. One honest
+// looseness: a command of redirections alone is a command — `> log`
+// truncates the file.
 
 // One stage of a pipeline: its words (each still the unexpanded
 // parts — expansion happens at execution, so `$?` answers the status
@@ -36,8 +47,8 @@ class Cmd {
 
 // One redirection: the operator, the descriptor it lands on (`<`
 // rides 0, `>` and `>>` ride 1, the `2>` family rides 2), the file it
-// names — or, for `2>&1`, `dup` naming the descriptor it follows and
-// no file at all.
+// names — or, for the dup forms, `dup` naming the descriptor it
+// follows and no file at all.
 class Redir {
   def init(op String, fd Int64, dup Int64, word Array[expand.Part]) {
     self.op = op
@@ -47,71 +58,272 @@ class Redir {
   }
 }
 
-// One pipeline plus the connector that follows it — `;`, `&&`, `||`,
-// or `""` at the end of the line — and whether `&` sent the whole
-// item to the background.
+// One compound command: `if`, `while`, `for`, or `def` — the kind
+// names which, and each field carries what its kind reads (the rest
+// stay empty): the condition items and the two branches, the loop
+// variable with its three header expression slices, the function's
+// name and body.
+class Compound {
+  def init(kind String, cond Array[Item], body Array[Item], else_body Array[Item], var_name String, init_tok Array[lex.Tok], cond_tok Array[lex.Tok], step_tok Array[lex.Tok], fname String) {
+    self.kind = kind
+    self.cond = cond
+    self.body = body
+    self.else_body = else_body
+    self.var_name = var_name
+    self.init_tok = init_tok
+    self.cond_tok = cond_tok
+    self.step_tok = step_tok
+    self.fname = fname
+  }
+}
+
+// One declaration: `const` or `var`, the name, and the one word it
+// binds (the expansion of that word is the binding's value).
+class Decl {
+  def init(constant Bool, name String, value Array[expand.Part]) {
+    self.constant = constant
+    self.name = name
+    self.value = value
+  }
+}
+
+// One item of a line: a pipeline, a compound, or a declaration —
+// exactly one of the three, the other two arrays empty — plus the
+// connector that follows it and whether `&` sent it to the
+// background.
 class Item {
-  def init(pipeline Array[Cmd], conn String, bg Bool) {
+  def init(pipeline Array[Cmd], compounds Array[Compound], decls Array[Decl], conn String, bg Bool) {
     self.pipeline = pipeline
+    self.compounds = compounds
+    self.decls = decls
     self.conn = conn
     self.bg = bg
   }
 }
 
-// The whole line's items, or the reason the line is malformed.
-def parse(tokens Array[lex.Tok]) (R, Array[Item]) {
-  const items = ArrayBuilder.new()
-  if tokens.length() == 0 {
-    return (R.ok, items.to_array())
+// The all-empty item: what an incomplete parse answers while the
+// driver goes looking for the next line — a real item always carries
+// a command, a compound, or a declaration, so the emptiness is the
+// sentinel.
+def empty_item() Item {
+  return Item.new(pipeline: [], compounds: [], decls: [], conn: "", bg: false)
+}
+
+// The empty compound, the same sentinel for the compound walkers.
+def empty_compound(kind String) Compound {
+  return Compound.new(kind: kind, cond: [], body: [], else_body: [], var_name: "", init_tok: [], cond_tok: [], step_tok: [], fname: "")
+}
+
+// The typed empty item list an error return answers with.
+def no_items() Array[Item] {
+  return []
+}
+
+// The empty declaration sentinel, parse_decl's error answer.
+def empty_decl() Decl {
+  return Decl.new(constant: false, name: "", value: [])
+}
+
+// Whether the token is the reserved word: one bare, unquoted part
+// whose text is exactly the word — `'if'` and `"while"` are
+// arguments, never keywords.
+def is_word(tok lex.Tok, word String) Bool {
+  if tok.kind != "word" {
+    return false
   }
-  // a line may not open with a connector — but a redirection alone
-  // opens fine (`> log` truncates, the classic looseness)
+  const parts = tok.parts
+  if parts.length() != 1 {
+    return false
+  }
+  const part = parts[0]
+  return !part.lit && !part.quoted && part.text == word
+}
+
+// The reserved word a token names where a command may start, or ""
+// when it names none.
+def reserved_word(tok lex.Tok) String {
+  if is_word(tok, "if") {
+    return "if"
+  }
+  if is_word(tok, "while") {
+    return "while"
+  }
+  if is_word(tok, "for") {
+    return "for"
+  }
+  if is_word(tok, "def") {
+    return "def"
+  }
+  if is_word(tok, "const") {
+    return "const"
+  }
+  if is_word(tok, "var") {
+    return "var"
+  }
+  return ""
+}
+
+// A word token's bare unquoted text — the refusal for anything else.
+def word_text_of(tokens Array[lex.Tok], i Int64) (R, String) {
+  if i >= tokens.length() {
+    return (R.error, "the line ended")
+  }
+  const tok = tokens[i]
+  if tok.kind != "word" {
+    return (R.error, "not a word")
+  }
+  const parts = tok.parts
+  if parts.length() != 1 || parts[0].lit || parts[0].quoted {
+    return (R.error, "not a bare word")
+  }
+  return (R.ok, parts[0].text)
+}
+
+// The whole line's items, and the status: "" ready to run,
+// "incomplete" — a block still open, the driver reads the next line —
+// or, with R.error, the reason the line refused.
+def parse(tokens Array[lex.Tok]) (R, Array[Item], String) {
+  if tokens.length() == 0 {
+    return (R.ok, [], "")
+  }
   const first = tokens[0].kind
   if first == lex.op_pipe() || first == lex.op_semi() || first == lex.op_andand() || first == lex.op_oror() || first == lex.op_amp() {
-    return (R.error, "emosh: syntax error: a line does not start with " + first)
+    return (R.error, no_items(), "a line does not start with " + first)
   }
-  var i = 0
+  if is_word(tokens[0], "}") {
+    return (R.error, no_items(), "unexpected }")
+  }
+  case parse_item_list(tokens, 0, "") {
+    (R.error, _, _, why) then { return (R.error, no_items(), why) }
+    (R.ok, items, _, status) then {
+      return (R.ok, items, status)
+    }
+  }
+}
+
+// One item — pipeline, compound, or declaration — with the index just
+// past it and the status.
+def parse_item(tokens Array[lex.Tok], i Int64) (R, Item, Int64, String) {
+  const kw = reserved_word(tokens[i])
+  if kw == "if" || kw == "while" || kw == "for" || kw == "def" {
+    case parse_compound(kw, tokens, i) {
+      (R.error, _, _, why) then { return (R.error, empty_item(), -1, why) }
+      (R.ok, c, next, status) then {
+        if status == "incomplete" {
+          return (R.ok, empty_item(), next, status)
+        }
+        const compounds = ArrayBuilder.new()
+        compounds.push(c)
+        return (R.ok, Item.new(pipeline: [], compounds: compounds.to_array(), decls: [], conn: "", bg: false), next, "")
+      }
+    }
+  }
+  if kw == "const" || kw == "var" {
+    case parse_decl(kw, tokens, i) {
+      (R.error, _, _, why) then { return (R.error, empty_item(), -1, why) }
+      (R.ok, d, next, status) then {
+        const decls = ArrayBuilder.new()
+        decls.push(d)
+        return (R.ok, Item.new(pipeline: [], compounds: [], decls: decls.to_array(), conn: "", bg: false), next, status)
+      }
+    }
+  }
+  case parse_pipeline(tokens, i) {
+    (R.error, why) then { return (R.error, empty_item(), -1, why) }
+    (R.ok, got) then {
+      return (R.ok, Item.new(pipeline: got[0], compounds: [], decls: [], conn: "", bg: false), got[1], "")
+    }
+  }
+}
+
+// Items with their connectors, until the closer word arrives (left
+// unconsumed, the caller's to eat) or the tokens run out (incomplete
+// for a closer that exists, the natural end for the top level's ""). A
+// background item and a closed compound act as their own separators —
+// what follows them starts a new item; a plain pipeline's word after
+// word refuses.
+def parse_item_list(tokens Array[lex.Tok], i Int64, closer String) (R, Array[Item], Int64, String) {
+  const items = ArrayBuilder.new()
+  var j = i
   var going = true
   while going {
-    case parse_pipeline(tokens, i) {
-      (R.error, why) then { return (R.error, why) }
-      (R.ok, stage) then {
-        var conn = ""
-        var bg = false
-        var next = stage[1]
-        if next < tokens.length() && tokens[next].kind == lex.op_amp() {
-          bg = true
-          next = next + 1
-        }
-        if next < tokens.length() {
-          const kind = tokens[next].kind
-          if kind == lex.op_semi() {
-            conn = ";"
-            next = next + 1
-          } else {
-            if kind == lex.op_andand() || kind == lex.op_oror() {
-              conn = kind
-              next = next + 1
-            } else {
-              if !bg {
-                return (R.error, "emosh: syntax error: unexpected " + kind)
+    if j >= tokens.length() {
+      // a closer that never arrived: the block is still open, the
+      // caller reads the next line; the top level's "" just ends
+      if closer != "" {
+        return (R.ok, items.to_array(), -1, "incomplete")
+      }
+      going = false
+    } else {
+      if closer != "" && is_word(tokens[j], closer) {
+        going = false
+      } else {
+        if tokens[j].kind == lex.op_semi() {
+          // an empty statement — `;;` and the separator a joined
+          // line rides in on — is silence, the classic looseness
+          j = j + 1
+        } else {
+        case parse_item(tokens, j) {
+          (R.error, _, _, why) then {
+            return (R.error, no_items(), -1, why)
+          }
+          (R.ok, item, next, status) then {
+            if next < 0 {
+              // the items so far ride out with the incomplete mark —
+              // the driver re-parses the whole line after the next one
+              return (R.ok, items.to_array(), -1, status)
+            }
+            var j2 = next
+            var bg = false
+            if j2 < tokens.length() && tokens[j2].kind == lex.op_amp() {
+              bg = true
+              j2 = j2 + 1
+            }
+            var conn = ""
+            var sane = true
+            if j2 < tokens.length() {
+              const kind = tokens[j2].kind
+              if kind == lex.op_semi() {
+                conn = ";"
+                j2 = j2 + 1
+              } else {
+                if kind == lex.op_andand() || kind == lex.op_oror() {
+                  conn = kind
+                  j2 = j2 + 1
+                } else {
+                  if (closer != "" && is_word(tokens[j2], closer)) || is_word(tokens[j2], "{") || is_word(tokens[j2], "}") {
+                    // the block's own brace ends this item quietly —
+                    // the loop top's closer check takes over
+                    conn = ""
+                  } else {
+                    if !bg && item.compounds.length() == 0 && item.decls.length() == 0 {
+                      sane = false
+                    } else {
+                      // the spawn of a background item and the close
+                      // of a compound act as the separator themselves
+                      conn = ";"
+                    }
+                  }
+                }
               }
-              // a `&` and then more line: the spawn was the separator,
-              // the next item follows the way `;` would carry it
-              conn = ";"
+              if !sane {
+                return (R.error, no_items(), -1, "unexpected " + tokens[j2].kind)
+              }
+              items.push(Item.new(pipeline: item.pipeline, compounds: item.compounds, decls: item.decls, conn: conn, bg: bg))
+              j = j2
+            } else {
+              // a background item's spawn at the very end: still one
+              // item, the line complete
+              items.push(Item.new(pipeline: item.pipeline, compounds: item.compounds, decls: item.decls, conn: "", bg: bg))
+              j = j2
             }
           }
         }
-        items.push(Item.new(pipeline: stage[0], conn: conn, bg: bg))
-        if next >= tokens.length() {
-          going = false
-        } else {
-          i = next
         }
       }
     }
   }
-  return (R.ok, items.to_array())
+  return (R.ok, items.to_array(), j, "")
 }
 
 // One pipeline: its stages and the index just past it, or the reason
@@ -150,8 +362,15 @@ def parse_command(tokens Array[lex.Tok], start Int64) (R, (Cmd, Int64)) {
   while in_command && i < tokens.length() {
     const tok = tokens[i]
     if tok.kind == "word" {
-      words.push(tok.parts)
-      i = i + 1
+      if is_word(tok, "{") || is_word(tok, "}") {
+        // reserved: a standalone brace opens or closes a block — it
+        // ends the command here, never joins its words (a literal
+        // brace quotes)
+        in_command = false
+      } else {
+        words.push(tok.parts)
+        i = i + 1
+      }
     } else {
       case redir_of(tok.kind) {
         (R.error, _) then { in_command = false }
@@ -162,7 +381,7 @@ def parse_command(tokens Array[lex.Tok], start Int64) (R, (Cmd, Int64)) {
             i = i + 1
           } else {
             if i + 1 >= tokens.length() || tokens[i + 1].kind != "word" {
-              return (R.error, "emosh: syntax error: " + tok.kind + " needs a file name")
+              return (R.error, "" + tok.kind + " needs a file name")
             }
             redirs.push(Redir.new(op: shape[1], fd: shape[0], dup: 0 - 1, word: tokens[i + 1].parts))
             i = i + 2
@@ -173,9 +392,9 @@ def parse_command(tokens Array[lex.Tok], start Int64) (R, (Cmd, Int64)) {
   }
   if words.length() == 0 && redirs.length() == 0 {
     if i >= tokens.length() {
-      return (R.error, "emosh: syntax error: unexpected end of line")
+      return (R.error, "unexpected end of line")
     }
-    return (R.error, "emosh: syntax error: expected a command before " + tokens[i].kind)
+    return (R.error, "expected a command before " + tokens[i].kind)
   }
   return (R.ok, (Cmd.new(words: words.to_array(), redirs: redirs.to_array()), i))
 }
@@ -255,4 +474,221 @@ def redir_of(kind String) (R, (Int64, String, Int64)) {
     }
   }
   return (R.error, "no redirection")
+}
+
+// The compounds: `if`, `while`, and `for` share the shape of a head
+// list followed by a brace body (the `else` chaining off the if), the
+// `for` header carrying its three expression slices, and `def` the
+// name, the required parentheses, and the body.
+def parse_compound(kind String, tokens Array[lex.Tok], i Int64) (R, Compound, Int64, String) {
+  if kind == "for" {
+    return parse_for(tokens, i)
+  }
+  if kind == "def" {
+    return parse_def(tokens, i)
+  }
+  case parse_item_list(tokens, i + 1, "{") {
+    (R.error, _, _, why) then { return (R.error, empty_compound(kind), -1, why) }
+    (R.ok, cond, brace, status) then {
+      if status == "incomplete" {
+        return (R.ok, empty_compound(kind), brace, status)
+      }
+      if cond.length() == 0 {
+        return (R.error, empty_compound(kind), -1, "" + kind + " wants a condition")
+      }
+      case parse_body(tokens, brace) {
+        (R.error, _, _, why) then { return (R.error, empty_compound(kind), -1, why) }
+        (R.ok, body, body_after, status) then {
+          if status == "incomplete" {
+            return (R.ok, empty_compound(kind), body_after, status)
+          }
+          var after = body_after
+          var else_body = []
+          if kind == "if" && after < tokens.length() && is_word(tokens[after], "else") {
+            if after + 1 < tokens.length() && is_word(tokens[after + 1], "if") {
+              case parse_compound("if", tokens, after + 1) {
+                (R.error, _, _, why) then { return (R.error, empty_compound(kind), -1, why) }
+                (R.ok, nested, nested_after, status) then {
+                  if status == "incomplete" {
+                    return (R.ok, empty_compound(kind), nested_after, status)
+                  }
+                  const wrapper = ArrayBuilder.new()
+                  wrapper.push(Item.new(pipeline: [], compounds: [nested], decls: [], conn: "", bg: false))
+                  else_body = wrapper.to_array()
+                  after = nested_after
+                }
+              }
+            } else {
+              if after + 1 < tokens.length() && is_word(tokens[after + 1], "{") {
+                case parse_body(tokens, after + 1) {
+                  (R.error, _, _, why) then { return (R.error, empty_compound(kind), -1, why) }
+                  (R.ok, else_parsed, else_after, status) then {
+                    if status == "incomplete" {
+                      return (R.ok, empty_compound(kind), else_after, status)
+                    }
+                    else_body = else_parsed
+                    after = else_after
+                  }
+                }
+              } else {
+                return (R.error, empty_compound(kind), -1, "else wants { or if")
+              }
+            }
+          }
+          return (R.ok, Compound.new(kind: kind, cond: cond, body: body, else_body: else_body, var_name: "", init_tok: [], cond_tok: [], step_tok: [], fname: ""), after, "")
+        }
+      }
+    }
+  }
+}
+
+// The for's header: `var` NAME = init ; cond ; step — the three
+// expressions kept as the token slices the evaluator reads, then the
+// brace body.
+def parse_for(tokens Array[lex.Tok], i Int64) (R, Compound, Int64, String) {
+  const j = i + 1
+  if j >= tokens.length() || !is_word(tokens[j], "var") {
+    return (R.error, empty_compound("for"), -1, "for wants `for var name = expr; expr; expr {`")
+  }
+  case word_text_of(tokens, j + 1) {
+    (R.error, why) then { return (R.error, empty_compound("for"), -1, why) }
+    (R.ok, name) then {
+      if !expand.is_name(name) {
+        return (R.error, empty_compound("for"), -1, "for wants a variable name")
+      }
+      if j + 2 >= tokens.length() || !is_word(tokens[j + 2], "=") {
+        return (R.error, empty_compound("for"), -1, "the for header wants =")
+      }
+      case header_slice(tokens, j + 3, ";") {
+        (R.error, _, _, why) then { return (R.error, empty_compound("for"), -1, why) }
+        (R.ok, init_tok, init_next, init_status) then {
+          if init_status == "incomplete" {
+            return (R.ok, empty_compound("for"), init_next, init_status)
+          }
+          case header_slice(tokens, init_next + 1, ";") {
+            (R.error, _, _, why) then { return (R.error, empty_compound("for"), -1, why) }
+            (R.ok, cond_tok, cond_next, cond_status) then {
+              if cond_status == "incomplete" {
+                return (R.ok, empty_compound("for"), cond_next, cond_status)
+              }
+              case header_slice(tokens, cond_next + 1, "{") {
+                (R.error, _, _, why) then { return (R.error, empty_compound("for"), -1, why) }
+                (R.ok, step_tok, step_next, step_status) then {
+                  if step_status == "incomplete" {
+                    return (R.ok, empty_compound("for"), step_next, step_status)
+                  }
+                  if init_tok.length() == 0 || cond_tok.length() == 0 || step_tok.length() == 0 {
+                    return (R.error, empty_compound("for"), -1, "the for header wants three expressions")
+                  }
+                  case parse_body(tokens, step_next) {
+                    (R.error, _, _, why) then { return (R.error, empty_compound("for"), -1, why) }
+                    (R.ok, body, body_after, body_status) then {
+                      if body_status == "incomplete" {
+                        return (R.ok, empty_compound("for"), body_after, body_status)
+                      }
+                      return (R.ok, Compound.new(kind: "for", cond: [], body: body, else_body: [], var_name: name, init_tok: init_tok, cond_tok: cond_tok, step_tok: step_tok, fname: ""), body_after, "")
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// A def's head: the name — written `greet()` with the parentheses
+// attached or `greet ()` apart — then the brace body.
+def parse_def(tokens Array[lex.Tok], i Int64) (R, Compound, Int64, String) {
+  case word_text_of(tokens, i + 1) {
+    (R.error, why) then { return (R.error, empty_compound("def"), -1, why) }
+    (R.ok, text) then {
+      var name = text
+      var body_i = i + 2
+      if !expand.is_name(text) {
+        const len = text.length()
+        if len > 2 && text.substring(len - 2, 2) == "()" && expand.is_name(text.substring(0, len - 2)) {
+          name = text.substring(0, len - 2)
+        } else {
+          return (R.error, empty_compound("def"), -1, "def wants a name")
+        }
+      } else {
+        // a bare name: the `()` must follow as its own word
+        if i + 2 >= tokens.length() || !is_word(tokens[i + 2], "()") {
+          return (R.error, empty_compound("def"), -1, "def " + name + " wants ()")
+        }
+        body_i = i + 3
+      }
+      case parse_body(tokens, body_i) {
+        (R.error, _, _, why) then { return (R.error, empty_compound("def"), -1, why) }
+        (R.ok, body, after, status) then {
+          if status == "incomplete" {
+            return (R.ok, empty_compound("def"), after, status)
+          }
+          return (R.ok, Compound.new(kind: "def", cond: [], body: body, else_body: [], var_name: "", init_tok: [], cond_tok: [], step_tok: [], fname: name), after, "")
+        }
+      }
+    }
+  }
+}
+
+// A declaration: const or var, a valid name, then = and the one word
+// the binding takes.
+def parse_decl(kw String, tokens Array[lex.Tok], i Int64) (R, Decl, Int64, String) {
+  case word_text_of(tokens, i + 1) {
+    (R.error, why) then { return (R.error, empty_decl(), -1, why) }
+    (R.ok, name) then {
+      if !expand.is_name(name) {
+        return (R.error, empty_decl(), -1, "" + kw + " wants a valid name")
+      }
+      if i + 2 >= tokens.length() || !is_word(tokens[i + 2], "=") {
+        return (R.error, empty_decl(), -1, "the declaration wants spaces around =")
+      }
+      if i + 3 >= tokens.length() || tokens[i + 3].kind != "word" {
+        return (R.error, empty_decl(), -1, "" + kw + " wants a value")
+      }
+      return (R.ok, Decl.new(constant: kw == "const", name: name, value: tokens[i + 3].parts), i + 4, "")
+    }
+  }
+}
+
+// A braced body: the `{` consumed, the items parsed, the `}`
+// consumed.
+def parse_body(tokens Array[lex.Tok], i Int64) (R, Array[Item], Int64, String) {
+  if i >= tokens.length() || !is_word(tokens[i], "{") {
+    return (R.ok, [], -1, "incomplete")
+  }
+  case parse_item_list(tokens, i + 1, "}") {
+    (R.error, _, _, why) then { return (R.error, no_items(), -1, why) }
+    (R.ok, items, close, status) then {
+      if status == "incomplete" {
+        return (R.ok, items, close, status)
+      }
+      return (R.ok, items, close + 1, "")
+    }
+  }
+}
+
+// The tokens from i up to — not including — the stop word or kind,
+// and the index of the stop itself. Reaching the end without one
+// answers incomplete.
+def header_slice(tokens Array[lex.Tok], i Int64, stop String) (R, Array[lex.Tok], Int64, String) {
+  const out = ArrayBuilder.new()
+  var j = i
+  var going = true
+  while going {
+    if j >= tokens.length() {
+      return (R.ok, out.to_array(), j, "incomplete")
+    } else {
+      if is_word(tokens[j], stop) || tokens[j].kind == stop {
+        going = false
+      } else {
+        out.push(tokens[j])
+        j = j + 1
+      }
+    }
+  }
+  return (R.ok, out.to_array(), j, "")
 }

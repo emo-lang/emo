@@ -18,7 +18,7 @@ def is_builtin(name String) Bool {
   return name == "cd" || name == "pwd" || name == "echo" || name == "exit"
     || name == "export" || name == "unset" || name == "true" || name == "false"
     || name == "jobs" || name == "fg" || name == "bg" || name == "wait"
-    || name == "kill"
+    || name == "kill" || name == "break" || name == "continue" || name == "return"
 }
 
 // One builtin, its words already expanded; the answer is the exit
@@ -58,6 +58,15 @@ def run(sh shell.Shell, words Array[String]) Int64 {
   }
   if name == "kill" {
     return kill(sh, words)
+  }
+  if name == "break" {
+    return loop_signal(sh, 1, words)
+  }
+  if name == "continue" {
+    return loop_signal(sh, 2, words)
+  }
+  if name == "return" {
+    return return_from(sh, words)
   }
   if name == "true" {
     return 0
@@ -165,8 +174,9 @@ def export(sh shell.Shell, words Array[String]) Int64 {
   return status
 }
 
-// unset: each argument removed from the environment; an unset name
-// that was never set is silence, a name that is not a name refuses.
+// unset: each argument removed from the environment — and from the
+// declared bindings, a const refusing. An unset name that was never
+// set is silence, a name that is not a name refuses.
 def unset(sh shell.Shell, words Array[String]) Int64 {
   var status = 0
   for var i = 1; i < words.length(); i = i + 1 {
@@ -174,12 +184,18 @@ def unset(sh shell.Shell, words Array[String]) Int64 {
       sh.err("emosh: unset: " + words[i] + ": not a valid name")
       status = 1
     } else {
-      case os.unsetenv(words[i]) {
-        (R.error, why) then {
-          sh.err("emosh: unset: " + why)
-          status = 1
+      if sh.var_is_const(words[i]) {
+        sh.err("emosh: unset: " + words[i] + ": is a constant")
+        status = 1
+      } else {
+        sh.var_drop(words[i])
+        case os.unsetenv(words[i]) {
+          (R.error, why) then {
+            sh.err("emosh: unset: " + why)
+            status = 1
+          }
+          (R.ok, _) then {}
         }
-        (R.ok, _) then {}
       }
     }
   }
@@ -355,6 +371,40 @@ def job_spec(text String) Int64 {
     return text.to_int64()
   }
   return 0 - 1
+}
+
+// break and continue: the walker's signal set, the loop consuming it
+// on sight. An argument would be a nesting depth — one level is the
+// whole story here, so the extras refuse.
+def loop_signal(sh shell.Shell, which Int64, words Array[String]) Int64 {
+  if words.length() > 1 {
+    sh.err("emosh: too many arguments")
+    return 1
+  }
+  sh.set_signal(which)
+  return 0
+}
+
+// return: the status it names becomes the body's last, the function
+// walker's signal consuming it on the way out. No argument means the
+// status already standing.
+def return_from(sh shell.Shell, words Array[String]) Int64 {
+  if words.length() > 2 {
+    sh.err("emosh: return: too many arguments")
+    return 1
+  }
+  var code = sh.status()
+  if words.length() == 2 {
+    if !numeric(words[1]) {
+      sh.err("emosh: return: " + words[1] + ": numeric argument required")
+      code = 2
+    } else {
+      code = fold(words[1].to_int64())
+    }
+  }
+  sh.set_status(code)
+  sh.set_signal(3)
+  return code
 }
 
 // The ASCII identifier set, the same rule the expansion's `$name`

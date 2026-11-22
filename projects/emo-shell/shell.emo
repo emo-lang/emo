@@ -104,6 +104,41 @@ def decode_status(raw Int64) Int64 {
   return os.wait_exit_code(raw)
 }
 
+// One declared binding: the name, its value, and whether `const`
+// froze it against redeclaration and unset.
+class Var {
+  def init(name String, value String, constant Bool) {
+    self.name = name
+    self.value = value
+    self.constant = constant
+  }
+}
+
+// One `def`'d function: the name and the body as it was parsed —
+// calls run the body in place, the session's own state in hand. The
+// parse side's own Func naming stays there; this is the table's entry.
+class FuncEntry {
+  def init(name String, body Array[parse.Item]) {
+    self.name = name
+    self.body = body
+  }
+}
+
+// The empty tables the session opens with — the def return type
+// annotating the literal, the const-annotation grammar not taking
+// bracketed types.
+def empty_vars() Array[Var] {
+  return []
+}
+
+def empty_funcs() Array[FuncEntry] {
+  return []
+}
+
+def empty_args_stack() Array[Array[String]] {
+  return []
+}
+
 class Shell {
   def init(interactive Bool, name String, read_fd Int64, args Array[String], one_shot Bool, command String) {
     self.interactive = interactive
@@ -114,6 +149,10 @@ class Shell {
     self.pid = os.getpid()
     self.last_bg = Box.new(0)
     self.jobs = Box.new(ArrayBuilder.new())
+    self.vars = Box.new(empty_vars())
+    self.funcs = Box.new(empty_funcs())
+    self.args_stack = Box.new(empty_args_stack())
+    self.signal = Box.new(0)
     self.last_status = Box.new(0)
     self.running = Box.new(true)
     self.reader = Box.new(bufio.reader(bufio.fd_reader(read_fd)))
@@ -253,6 +292,186 @@ class Shell {
     }
     self.jobs.replace(ArrayBuilder.new())
     return 0
+  }
+
+  // ---- the declared bindings ----
+
+  // One binding set: an existing name takes the new value (the const
+  // flag unchanged — the caller refuses consts before coming here), a
+  // new name appends.
+  def var_set(name String, value String) Void {
+    const taken = self.vars.read()
+    const fresh = ArrayBuilder.new()
+    var replaced = false
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        fresh.push(Var.new(name: name, value: value, constant: taken[k].constant))
+        replaced = true
+      } else {
+        fresh.push(taken[k])
+      }
+    }
+    if !replaced {
+      fresh.push(Var.new(name: name, value: value, constant: false))
+    }
+    self.vars.replace(fresh.to_array())
+  }
+
+  // A const declared: the table grows the binding with the flag set.
+  def var_declare_const(name String, value String) Void {
+    const taken = self.vars.read()
+    const fresh = ArrayBuilder.new()
+    var replaced = false
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        fresh.push(Var.new(name: name, value: value, constant: true))
+        replaced = true
+      } else {
+        fresh.push(taken[k])
+      }
+    }
+    if !replaced {
+      fresh.push(Var.new(name: name, value: value, constant: true))
+    }
+    self.vars.replace(fresh.to_array())
+  }
+
+  // One binding's value, or the refusal.
+  def var_lookup(name String) (R, String) {
+    const taken = self.vars.read()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        return (R.ok, taken[k].value)
+      }
+    }
+    return (R.error, "unset")
+  }
+
+  // Whether the binding is a const.
+  def var_is_const(name String) Bool {
+    const taken = self.vars.read()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        return taken[k].constant
+      }
+    }
+    return false
+  }
+
+  // Whether the binding exists at all.
+  def var_bound(name String) Bool {
+    const taken = self.vars.read()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        return true
+      }
+    }
+    return false
+  }
+
+  // The binding leaves the table.
+  def var_drop(name String) Void {
+    const taken = self.vars.read()
+    const kept = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name != name {
+        kept.push(taken[k])
+      }
+    }
+    self.vars.replace(kept.to_array())
+  }
+
+  // The flat name=value list the expander reads ($x consults the
+  // declarations before the environment).
+  def vars_list() Array[String] {
+    const taken = self.vars.read()
+    const flat = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      flat.push(taken[k].name + "=" + taken[k].value)
+    }
+    return flat.to_array()
+  }
+
+  // ---- the functions ----
+
+  // One `def` bound: an existing name takes the new body, a new name
+  // appends — redefinition is ordinary.
+  def func_define(name String, body Array[parse.Item]) Void {
+    const taken = self.funcs.read()
+    const fresh = ArrayBuilder.new()
+    var replaced = false
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        fresh.push(FuncEntry.new(name: name, body: body))
+        replaced = true
+      } else {
+        fresh.push(taken[k])
+      }
+    }
+    if !replaced {
+      fresh.push(FuncEntry.new(name: name, body: body))
+    }
+    self.funcs.replace(fresh.to_array())
+  }
+
+  // One function by name, or the refusal.
+  def func_find(name String) (R, FuncEntry) {
+    const taken = self.funcs.read()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        return (R.ok, taken[k])
+      }
+    }
+    return (R.error, "no such function")
+  }
+
+  // ---- the positionals ($1.., $#, $@) ----
+
+  // A call pushes its arguments; the body runs against them; the
+  // return pops back to what the caller had.
+  def args_push(args Array[String]) Void {
+    const stack = self.args_stack.read()
+    const fresh = ArrayBuilder.new()
+    for var k = 0; k < stack.length(); k = k + 1 {
+      fresh.push(stack[k])
+    }
+    fresh.push(args)
+    self.args_stack.replace(fresh.to_array())
+  }
+
+  def args_pop() Void {
+    const stack = self.args_stack.read()
+    const kept = ArrayBuilder.new()
+    for var k = 0; k < stack.length() - 1; k = k + 1 {
+      kept.push(stack[k])
+    }
+    self.args_stack.replace(kept.to_array())
+  }
+
+  // What $1.. answers right now: the innermost call's arguments, or
+  // the session's own when no call is in flight.
+  def current_args() Array[String] {
+    const stack = self.args_stack.read()
+    if stack.length() > 0 {
+      return stack[stack.length() - 1]
+    }
+    return self.args
+  }
+
+  // ---- the walker signals ----
+
+  // 0 none, 1 break, 2 continue, 3 return — set by the builtins,
+  // consumed by the loop and function walkers, cleared on the way out.
+  def set_signal(n Int64) Void {
+    self.signal.replace(n)
+  }
+
+  def read_signal() Int64 {
+    return self.signal.read()
+  }
+
+  def clear_signal() Void {
+    self.signal.replace(0)
   }
 
   // One more line of input; the empty string means end of input,

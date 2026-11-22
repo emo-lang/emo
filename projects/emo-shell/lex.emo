@@ -201,7 +201,7 @@ def tokenize(line String) (R, Array[Tok]) {
             if i + 1 < line.length() {
               two = line.substring(i, 2)
             }
-            if two == "&&" || two == "||" || two == ">>" {
+            if two == "&&" || two == "||" || two == ">>" || two == "<=" || two == ">=" {
               out.push(Tok.new(kind: two, parts: []))
               i = i + 2
             } else {
@@ -267,9 +267,26 @@ def tokenize(line String) (R, Array[Tok]) {
                 in_word = true
                 i = i + 2
               } else {
-                cur = cur + ch
-                in_word = true
-                i = i + 1
+                if (ch == "=" || ch == "!") && i + 1 < line.length()
+                  && line.substring(i + 1, 1) == "=" {
+                  // `==` and `!=`: the comparisons the for header
+                  // reads — reserved words, quoting keeps a literal
+                  if in_word {
+                    if cur != "" {
+                      parts.push(expand.Part.new(text: cur, lit: false, quoted: false))
+                      cur = ""
+                    }
+                    out.push(Tok.new(kind: "word", parts: parts.to_array()))
+                    parts = ArrayBuilder.new()
+                    in_word = false
+                  }
+                  out.push(Tok.new(kind: ch + "=", parts: []))
+                  i = i + 2
+                } else {
+                  cur = cur + ch
+                  in_word = true
+                  i = i + 1
+                }
               }
             }
           }

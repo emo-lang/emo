@@ -1,0 +1,70 @@
+const greeting = "hello"
+var who = "shell"
+echo $greeting $who
+var who = "emosh"
+echo $who
+def greet() {
+  echo greet:$1
+}
+greet world
+greet again
+if echo cond-ok {
+  echo then-taken
+}
+if false {
+  echo never-else
+} else {
+  echo else-taken
+}
+if false {
+  echo no
+} else {
+  if true {
+    echo nested-else-if
+  } else {
+    echo nested-else
+  }
+}
+echo gate=$gate
+for var i = 0; i < 3; i = i + 1 {
+  echo tick $i
+}
+for var n = 3; n > 0; n = n - 1 {
+  echo down $n
+}
+for var z = 0; z < 0; z = z + 1 {
+  echo never
+}
+echo skipped=$?
+for var b = 0; b < 5; b = b + 1 {
+  if true {
+    echo inner $b
+    break
+  }
+}
+echo broken=$?
+while false {
+  echo never
+}
+echo while-zero=$?
+var countdown = 2
+while echo counting {
+  break
+}
+echo counted=$countdown
+const frozen = 1
+const frozen = 2
+echo frozen-refused=$?
+unset frozen
+echo unset-refused=$?
+unset greeting
+echo unset-ok=$?
+echo greeting=[$greeting]
+def returning() {
+  return 3
+  echo never
+}
+returning
+echo returned=$?
+return 4
+echo never-after

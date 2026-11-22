@@ -1,0 +1,31 @@
+hello shell
+emosh
+greet:world
+greet:again
+cond-ok
+then-taken
+else-taken
+nested-else-if
+gate=
+tick 0
+tick 1
+tick 2
+down 3
+down 2
+down 1
+skipped=0
+inner 0
+broken=0
+while-zero=0
+counting
+counted=2
+emosh: frozen: is a constant
+frozen-refused=1
+emosh: unset: frozen: is a constant
+unset-refused=1
+emosh: unset: greeting: is a constant
+unset-ok=1
+greeting=[hello]
+returned=3
+emosh: return: only in a function
+never-after

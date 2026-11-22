@@ -73,6 +73,7 @@
 | M52 — GC 堆的 riscv64 宿主 | 91 | 金属加入堆的宿主环:镜像在自己的 `.bss` 里给收集器授予一个区域(一 MiB arena、绑定表、根表、slide 暂存),二十四扇门落成随程序编译的运行时助手,`Ref` 以 kind 12、金属的 Map 以 kind 13 加入 tagged 值模型(运行时引用计数之下的 identity kind,归零的释放从根表摘链),hash 孪生以来本宿主背负的 raise 缺口就此关上(`Raise` 降为 `emo_raise`,异常值按 `c` 宿主的方式渲染),模块级 `var` 也就位(静态内存里的格、序言初始化),`gc` 包自己的几何骑进镜像;demo 的 24 行金测在解释器、`c` 宿主与金属上逐字节一致——三 boot 稳定,经 EmoOS 内核与直跑皆然——调试轮的六面墙记录在 `CHECK.md`(序言的双重入池、Map 只落一半的 +8 平移、slide 的裸数组对、前向表的分裂键形状、只拷 `next` 的 rehash、不圆整的 arena 游标),金测腿骑 `@emo_os` 的 `gc_metal` 组(`CHECK.md`、`docs/gc-heap.md`、`plan/step-91-riscv64-gc-host.md`)。 |
 | M53 — shell 的日用表面 | 92 | `emosh` 长出日用 shell 离不开的表面,全部骑在已有的 `os`+`bufio` 面上:脚本文件与 `-c` 打开调用方式(`emosh script.esh args`、`emosh -c 'line' name args`,打不开的脚本 127,坏选项 2),位置参数落地(`$1`…`$9`、`${N}`),`${var:-default}` 加入花括号形态,叫不出名字的形态保持字面——整个形态,不只是美元符——且 `${` 扫描改为从形态自身起找(`a}b${SETV}c` 原是潜伏的负数 substring);stderr 重定向落地(`2>`、`2>>`、`2>&1`,数字词规则保住 `hi2>` 还是参数,dup 的顺序即语义);glob 落地(只 glob 用户裸写的 `*` 与 `?`——引号如今作为标记被记住,顺带修掉被引 `~` 够到 `$HOME` 的 v0 bug),按路径段行走、段首无 `.` 时隐藏名保持隐藏、答案排序、无匹配拒绝命令;单命令的词只展开一次不再两次;四套新 fixture 加入,harness 在双 target 上钉死调用方式(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-92-emosh-everyday.md`)。 |
 | M54 — shell 的后台任务 | 93 | `os` 在 0.1.0 上原位长出 waitpid 的轮询半(`waitpid_nohang`——已退子进程 `(R.ok, (pid, raw))`、有子但未退 `(R.ok, (0, 0))`、ECHILD errno reason 在解释器与 c 运行时逐字节一致、wasm 进程半 raise 点名能力),`emosh` 把它花掉:管道后的 `&` 让整条目作为一个作业运行(拉起即分隔符,`a & b` 随即跑 `b`),父进程用 `setpgid` 把每个成员钉进同一新进程组,终端的 Ctrl-C 永远够不到后台作业,而前台命令保持经典死法;作业表带最小空位号规则,`$!` 是其代表 pid,`$$` 是 shell 自己的;通知行 `[1] done sleep 5` 在每个交互提示符前轮询;内建 `jobs`(`[1] 4821 running sleep 5`)、`fg %n`(诚实的等——无终端交接,Ctrl-C 够不到它带回来的)、`bg %n`(无物会停——`already in background`,bash 自己的答词)、`wait [%n]`(未知 127)、`kill [-N] [%n|pid]...`(`%n` 以负 pid 打整组);`os_demo` 三种走法走轮询,`bg` fixture 骑 `sleep`/`kill`/`awk`,后台子进程输出永不交织(`CHECK.md`、`docs/stdlib/os.md`、`docs/emosh-guide.md`、`plan/step-93-emosh-jobs.md`)。 |
+| M55 — shell 的控制流 | 94 | `emosh` 在自己的语法里说 Emo 的话——大括号块,没有 `then`/`fi`/`do`/`done`——并长出运行它的三层机制:解析器新增复合命令(`if`/`else` 链解析期压平为嵌套、`while`、数值 `for`(头三个表达式以 token 切片留给运行时求值器)、`def name() { }`(紧贴括号与分写两形并存)与声明(`const`/`var name = word`),块未闭合时回答 incomplete——驱动读下一行、`> ` 提示、两行拼接处骑一个 `;` 作换行分隔符——同时 `{`/`}` 作为独立词保留,终结命令与列表;执行器走查它们(`run_compound`,for 头求值器比较级最低、裸变量、`$#`、整数字面量、除零拒绝、步进是 `name = expr` 赋值),声明绑定先于环境被 `$name` 读到(常量拒绝重声明与 unset,for 变量无论循环怎么离开都恢复原绑定),`def` 入函数表、裸名字调用、调用参数变 `$1..` 且返回后恢复,`break`/`continue`/`return` 骑会话信号由循环与调用走查消费、顶层拒绝(`break: only in a loop`);复合命令可带 `&`(fork 子进程走查,整行即作业文本),ctrl fixture 逐形双腿逐字节(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-94-emosh-control-flow.md`)。 |
 
 ## 设计闸门
 
@@ -2613,3 +2614,38 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       节与诚实边界(无终端交接、无停止作业、stdin 仍是 shell 的),
       本节 + zh 镜像,`plan/step-93-emosh-jobs.md`,CHECK.md 的
       记录。
+
+## M55 — shell 的控制流
+
+### Step 94 — emosh 的 Emo 同款控制流:大括号复合命令、声明与走查器
+
+**状态:** complete。(`plan/step-94-emosh-control-flow.md` 是本步的
+记录。)
+
+- [x] **T94.1** —— 语法:`if LIST { LIST } else { LIST }`、
+      `while LIST { LIST }`、
+      `for var I = EXPR; I < EXPR; I = I + EXPR { LIST }` 与
+      `def name() { LIST }`(紧贴的 `greet()` 与分写的 `greet ()`
+      两形并存),外加 `const NAME = WORD` / `var NAME = WORD`——
+      关键字只在命令位置、裸未引用词上认出,`{`/`}` 作为独立词保留
+      并终结命令,`else` 链 `if` 解析期压平为嵌套,行尾块未闭合时
+      回答 incomplete 给驱动。
+- [x] **T94.2** —— 驱动:incomplete 读下一行(交互态 `> ` 提示),
+      两行拼接处骑一个 `;` 作换行分隔符,空语句按经典宽松跳过;块
+      中途 EOF 以经典的 unexpected end of input 拒绝。
+- [x] **T94.3** —— 走查:`run_compound` 走 if/while/for/def,for 头
+      由递归下降的整数表达式求值器求值(裸变量、`$#`、`+ - * / %`、
+      六种比较、括号、除零拒绝、步进是 `name = expr` 赋值),
+      break/continue/return 骑会话信号由循环与调用消费,且信号
+      压过连接符——`return 3` 停住它的列表。
+- [x] **T94.4** —— 表:声明的绑定先于环境被 `$name` 读到(const
+      拒绝重声明与 unset,for 变量快照-恢复),函数表裸名字调用、
+      调用参数变 `$1..` 返回后恢复、函数调用不带重定向、函数就地
+      运行 body(状态改动归会话)。
+- [x] **T94.5** —— 验收:`fixtures/ctrl.esh` 走遍声明、if/else 与
+      嵌套 else-if、双向数值 for、零轮循环、break、带命令条件的
+      while、const 拒绝族、函数返回与顶层 return 的拒绝——双腿
+      逐字节,与十套旧 fixture 并列;harness pin `-c` 开块 EOF 拒;
+      guide EN+zh 长出控制流节与诚实的边界新形(复合不进管道、无
+      case/until、无词表 for、无局部、声明值一词),本节 + zh 镜像,
+      `plan/step-94-emosh-control-flow.md`,CHECK.md 的记录。

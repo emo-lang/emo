@@ -2820,7 +2820,9 @@ let emosh_golden_tests =
               (tag ^ " dash exit") 5
               (match status with Unix.WEXITED n -> n | _ -> -1);
             run_args (tag ^ " positionals") bin
-              "-c 'echo count:$#; echo $@' nm a b" "count:2\na b\n" 0)
+              "-c 'echo count:$#; echo $@' nm a b" "count:2\na b\n" 0;
+            run_args (tag ^ " c-open-block") bin "-c 'if true {'"
+              "emosh: syntax error: unexpected end of input\n" 2)
           [ ("ocaml", ocaml_bin); ("c", c_bin) ]);
   ]
 

@@ -53,16 +53,26 @@ language, and no raise in the shell): the reason prints to stderr and
 the status becomes 2.
 
 ```
-line     := and_or ( ";" and_or )* ";"?
-and_or   := pipeline ( "&&" | "||" pipeline )*
+line     := item ( ";" item )* ";"?        (a trailing `;` is fine)
+and_or   := item ( "&&" | "||" item )*
+item     := pipeline | compound | declaration
 pipeline := command ( "|" command )*
 command  := ( word | redirection )*
 redirection := "<" | ">" | ">>" word | "N<" | "N>" | "N>>" word
              | "N>&M" | "N<&M" | ">&M" | "<&M"
+compound := "if" list "{" list "}" [ "else" ( if | "{" list "}" ) ]
+          | "while" list "{" list "}"
+          | "for" "var" name "=" expr ";" expr ";" expr "{" list "}"
+          | "def" name "(" ")" "{" list "}"
+declaration := ("const" | "var") name "=" word
 ```
 
-A `&` after a pipeline sends the whole item to the background —
-`a | b &` is one job, the section below.
+A `&` after an item sends it to the background — `a | b &` is one
+job, `while … } &` too, the section below. The control flow speaks
+Emo: brace blocks, no `then`/`fi`/`do`/`done` terminators. The
+keywords (`if`, `while`, `for`, `def`, `const`, `var`) are recognized
+where a command may start and only on a bare, unquoted word; `{` and
+`}` are reserved as standalone words — a literal brace quotes.
 
 ## Words and quoting
 
@@ -219,6 +229,62 @@ non-numeric argument with status 2. A script's exit status is the
 last command's; end of input in an interactive session leaves with
 the last status too.
 
+## Control flow and declarations
+
+The flow shapes are Emo's own — brace blocks, the numeric `for`, the
+declaration keywords — running shell command lists where Emo runs its
+statements:
+
+```console
+$ var who = "shell"
+$ const greeting = "hello"
+$ echo $greeting $who
+hello shell
+```
+
+- `const NAME = WORD` binds a variable; redeclaring a frozen name —
+  by `const`, `var`, or `unset` — refuses (`NAME: is a constant`).
+  `var NAME = WORD` binds too; a later `var` replaces the value. The
+  value is one word — quote it for a phrase — and the word expands
+  (`$x` grows; globs stay put: a declaration's value does not glob).
+  `$NAME` reads a declared binding before the environment, and
+  `unset` removes both.
+- `if LIST { LIST } else { LIST }` — the condition is a command list,
+  its exit status choosing the branch (0 takes the body). `else` may
+  chain `else if … { … }`, flattened into nesting. No `else` and a
+  false condition answers 0.
+- `while LIST { LIST }` runs the body while the condition's last
+  command succeeds; zero runs answer 0.
+- `for var I = EXPR; I < EXPR; I = I + EXPR { LIST }` — the numeric
+  for, Emo's own shape: the header's three expressions are integer
+  arithmetic over bare variable names (`$#` counts in too), the loop
+  variable a declared binding set each round and restored after, the
+  step an assignment `I = I + EXPR` the way the header says.
+
+`break` and `continue` leave or step a loop; `return [n]` leaves a
+function — each refusing where it does not belong (`break: only in a
+loop`, `return: only in a function`).
+
+```console
+$ def greet() {
+  echo greet:$1
+}
+$ greet world
+greet:world
+$ for var i = 1; i <= 3; i = i + 1 {
+  echo tick $i
+}
+tick 1
+tick 2
+tick 3
+```
+
+A block may open on one line and close lines later — the shell asks
+for the next line with `>` until the braces balance, exactly the way
+a trailing backslash works. Declarations and functions defined inside
+a body are the session's own (there are no locals), and a `for`'s
+variable is restored after the loop, whatever it was before.
+
 ## Background jobs
 
 A `&` after a pipeline runs it in the background: `sleep 5 &` spawns
@@ -332,9 +398,14 @@ the next milestone's work, not this one's.
 
 The contract, stated so you never have to guess:
 
-- no control flow — no `if`, `while`, `for`, no functions;
+- no `case`, no `until`, no `select`, no `[[`, no arithmetic
+  parentheses outside the for header;
+- no compound commands in pipelines (`if … } | cat` refuses) and no
+  word-list iteration (`for x in words` — the for is the numeric
+  form); a function call takes no redirections;
 - the positionals end where they end: `$1` … `$9`, `${N}`, `$#` and
-  `$@` only — no `shift`, no `$*`;
+  `$@` only — no `shift`, no `$*`; a declaration's value is one word
+  (arithmetic expressions live in the for header);
 - background jobs exist but the terminal does not negotiate: `fg`
   waits, and a Ctrl-C cannot reach a job it brought back (the
   terminal-handoff call — `tcsetpgrp` — is the os half waiting to
