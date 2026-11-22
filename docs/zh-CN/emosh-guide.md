@@ -2,18 +2,22 @@
 
 `emosh` 是用 Emo 写的通用命令解释器,住在 `projects/emo-shell`——是一个程序,不是一个包。它读入行,切成词与算符,扩展环境变量,运行经 `dup2` 接线的逐段 fork 管道:经典 shell 的形状,从提示符到 exec 用同一门语言写成,骑在标准库自己的 `os` 表面上(`fork`、`execvp`、`waitpid`、`pipe`、`dup2`、环境变量、信号)加上做行读取的 `bufio`。
 
-本指南覆盖 v0 表面。写明的都是 shell 做的;没写的 shell 都不做——文末的边界清单就是诚实的列表。
+本指南覆盖各里程碑已落地的表面。写明的都是 shell 做的;没写的 shell 都不做——文末的边界清单就是诚实的列表。
 
 ## 构建与运行
 
 ```console
 $ cd projects/emo-shell
 $ emo build main.emo --target c -o emosh
-$ ./emosh                (交互态)
-$ ./emosh < script.esh   (脚本从 stdin 喂入)
+$ ./emosh                    (终端上交互态)
+$ ./emosh < script.esh       (脚本从 stdin 喂入)
+$ ./emosh script.esh args    (脚本文件;args 是 $1、$2、…)
+$ ./emosh -c "echo hi $1"    (单行,其状态即 shell 的状态)
 ```
 
-模式由 fd 0 是什么决定:终端拿到 `emosh> ` 提示符,其余一律是逐行读取、无提示符的脚本。shell 声明 `ocaml` 与 `c` 两个 target——`emo run main.emo` 在解释器下运行,`fixtures/` 里的金测把两个 target 的输出逐字节钉死。
+不带参数时,模式由 fd 0 是什么决定:终端拿到 `emosh> ` 提示符,其余一律是逐行读取、无提示符的脚本。带脚本文件时,行来自文件,会话永不交互,文件后的参数成为位置参数。`-c` 跑这一行——连接符照常——并以其状态离场;行后跟一个可选词则充作 `$0`,其余是 `$1`、`$2`、…(`emosh -c 'echo $0 $1' shell hello`)。`-c` 缺命令串以状态 2 拒绝,未知选项以状态 2 拒绝,打不开的脚本文件报 os reason 并以 127 离场。
+
+shell 声明 `ocaml` 与 `c` 两个 target——`emo run main.emo` 在解释器下运行,`fixtures/` 里的金测把两个 target 的输出逐字节钉死。
 
 ## 一行的生命周期
 
@@ -24,14 +28,14 @@ line     := and_or ( ";" and_or )* ";"?
 and_or   := pipeline ( "&&" | "||" pipeline )*
 pipeline := command ( "|" command )*
 command  := ( word | redirection )*
-redirection := "<" | ">" | ">>" word
+redirection := "<" | ">" | ">>" word | "2>" | "2>>" word | "2>&1"
 ```
 
 ## 词与引号
 
-一个词是行被切开后的那些部件,引号在词法期解决,不留记忆:
+一个词是行被切开后的那些部件;引号在词法期解决,并作为一个标记记住——因为后面有两条规则在乎字符从哪来:被引的 `~` 还是波浪号,被引的 `*` 还是星号:
 
-- 裸文本可扩展——`$var`、`$?`、词首 `~` 在这里生长;
+- 裸文本可扩展——`$var`、`$?`、词首 `~`、glob 字符在这里生长;
 - `'单引号'` 是字面,逐字节——什么都不扩展,转义不生效,内部不可能出现 `'`;
 - `"双引号"` 可扩展——`$var` 生长,`\$` `\"` `` \` `` `\\` 转义自身;其余反斜杠原样保留;
 - 引号外的反斜杠把下一字节转成字面;
@@ -53,15 +57,36 @@ $NAME-literal
 ## 扩展
 
 - `$var` / `${var}` —— 变量的值;未设置为空。
+- `${var:-word}` —— 已设且非空时取值,否则取 `word`(word 也会扩展;不支持嵌套花括号——第一个 `}` 就终结了形态)。
 - `$?` —— 上一条命令的退出状态。
-- `$0` —— shell 启动时的名字。
-- 未引号词首的 `~` —— `$HOME`;未设置时波浪号原样保留(`~user` 不是这里的形态)。
+- `$0` —— shell 启动时的名字:裸跑是程序名,脚本模式是脚本路径,`-c` 模式是行后给的那个词(给了才算)。
+- `$1` … `$9` 与 `${N}` —— 位置参数:脚本文件的参数或 `-c` 的参数,越界为空。
+- 裸写、未加引号的词首 `~` —— `$HOME`;未设置时波浪号原样保留(`~user` 不是这里的形态,被引的波浪号 stays 波浪号)。
 
-**扩展之后没有词切分。** 一个扩展后的词永远是一个参数——装着空格的变量原样整体传递,换来的诚实代价是完全没有字段切分。也没有 glob。
+规则叫不出名字的 `$` 形态保持字面——整个形态,而不只是那个美元符:`${1x}` 就按文本 `${1x}` 运行。同样的诚实也适用于词里在形态之前就带了个 `}` 的情况:`a}b${SETV}c` 里的 `${SETV}` 照样扩展。
+
+**扩展之后没有词切分。** 一个扩展后的词永远是一个参数——装着空格的变量原样整体传递,换来的诚实代价是完全没有字段切分。扩展的结果也永不 glob——哪什么才 glob,见下一节。
+
+## glob
+
+裸写、不在任何引号里的 `*`(任意一串字符)与 `?`(恰好一个字符)把一个词变成它匹配的那些名字,排序输出:
+
+```console
+$ cd projects/emo-shell/fixtures && echo *.esh
+defaults.esh errors.esh flow.esh globs.esh pipes.esh redirs2.esh redirs.esh words.esh
+```
+
+规则写明,免得意外:
+
+- 被引的文本永不 glob——`echo "*.emo"` 打印 `*.emo`,扩展产生了 `*` 也保持字面;glob 读的是每个字符从哪来;
+- 模式按路径段行走:`src/*.emo` 列 `src` 留匹配;列不动的目录静默出局;末段对文件与目录一视同仁;
+- 段首的 `.` 才匹配隐藏名;没有它隐藏名保持隐藏,`.` 与 `..` 永不出现;
+- **无匹配拒绝该命令**——`emosh: no matches: *.zzz`,状态 1——因为拿着模式当字面参数跑下去,只会把这一手遮过去;
+- 重定向目标只有一个名字,不 glob。
 
 ## 重定向与管道
 
-`<` 把命令的 stdin 接到文件,`>` 把 stdout 写进文件(创建或截断),`>>` 追加——每个文件都在命令即将运行前打开,在 fork 子进程里。纯重定向的命令也是命令:`> log` 截断 `log`。
+`<` 把命令的 stdin 接到文件,`>` 把 stdout 写进文件(创建或截断),`>>` 追加,`2>` 与 `2>>` 把 stderr 照同样规矩对准文件——每个文件都在命令即将运行前打开,在 fork 子进程里。`2` 后面跟了 `>` 时,只有整个裸词恰是这个数字才算 stderr 重定向:`echo hi 2> log` 收走错误,`echo hi2> log` 把 `hi2` 传给 `echo` 并重定向 stdout,经典的读法。`2>&1` 让 stderr 跟随 stdout 已去的地方,顺序即语义:`cmd > f 2>&1` 双双进 `f`,`cmd 2>&1 > f` 的 stderr 留在 stdout 原来的地方。纯重定向的命令也是命令:`> log` 截断 `log`,`2> log` 照样清空。
 
 管道逐段 fork 子进程,经管道接线:`a | b` 让 `a` 的 stdout 骑在管道上、`b` 的 stdin 骑在管道上。管道的退出状态取最后一段。管道里遇到的内建与其他一切一样,在 fork 子进程里运行。
 
@@ -75,6 +100,9 @@ $ echo second >> f.txt
 $ cat < f.txt
 first
 second
+$ nosuch-cmd 2> err.txt
+$ cat err.txt
+emosh: nosuch-cmd: command not found
 ```
 
 ## 连接符与状态
@@ -134,6 +162,12 @@ $ echo dangling |
 emosh: syntax error: unexpected end of line    (状态 2)
 $ echo stray &
 emosh: syntax error: & is not supported yet    (状态 2)
+$ echo *.nope
+emosh: no matches: *.nope                      (状态 1)
+$ ./emosh -z
+emosh: unknown option: -z                      (状态 2)
+$ ./emosh ./no-such-script.esh
+emosh: os: open ./no-such-script.esh: No such file or directory   (状态 127)
 ```
 
 交互态遇到任何一个都继续;脚本也一样继续——只在你说停的地方(`&&`、`exit`)或输入结束处停。
@@ -146,14 +180,16 @@ cooked 模式下,Ctrl-C 之后要等下一行完成才会再见到提示符;行�
 
 ## 诚实的边界
 
-v0 契约,写明免得猜:
+契约,写明免得猜:
 
 - 无控制流——没有 `if`、`while`、`for`,没有函数;
-- 无 glob、无 `~user`、无 `${var:-default}` 形态、无 `$1` 位置参数;
+- 位置参数到头就到头:只有 `$1` … `$9` 与 `${N}`——无 `shift`,无 `$#`,无 `$@`;
 - 无后台任务——`&` 按名拒绝;
 - 无行编辑器——终端自己的 cooked 模式读入;无历史,无补全;
 - 扩展后无 IFS 字段切分;
-- 无子 shell 括号、无 here-doc、无 trap、无别名。
+- 无 `~user`,无嵌套 `${…}` 形态,无不带冒号的 `${var-word}`;
+- 无子 shell 括号、无 here-doc、无 trap、无别名;
+- `2>&` 里不是 `2>&1` 的一律拒绝;没有 `<&`、`>&`,`2>` 家族之外的 fd 号也没有。
 
 这些底下的 os 表面(进程组、`WNOHANG`、stat 家族)就是里程碑点名时活要去的地方。
 

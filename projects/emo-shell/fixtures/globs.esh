@@ -1,0 +1,22 @@
+mkdir emosh-glob.tmp
+cd emosh-glob.tmp
+touch zz_a.emo zz_b.emo zz_c.txt note.emo .hid
+mkdir zzsub
+touch zzsub/deep.emo
+echo *.emo
+echo zz_?.emo
+echo zz_*
+echo *
+echo .h*
+echo "zz_*"
+echo *.zzz
+echo status=$?
+echo ../emosh-glob.tmp/zz_?.emo
+cd ..
+echo emosh-glob.tmp/zz_?.emo
+echo emosh-glob.tmp/zzsub/*
+echo emosh-glob.tmp/*/deep.emo
+echo emosh-no-such-dir.tmp/*
+echo status=$?
+rm -rf emosh-glob.tmp
+echo cleaned=[$?]

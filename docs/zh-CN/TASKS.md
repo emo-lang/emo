@@ -71,6 +71,7 @@
 | M50 — GC 自举 | 89 | 解释器运行承载的机器对象模型,与 Emo 写的收集器:十六个裸名门——定长 `struct` 块、带计数的 `array` 块、有根的 `ref`,以及行走所需(`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`)——只由解释器运行准入(以 target `interpreter` 检查;所有 build target 按名拒绝,E4032),词靠奇偶自描述(偶数为移位标量,奇数为引用,`0` 为 null),每块的槽 0 是收集器的头词;`gc` 包用纯 Emo 实现 mark-sweep——打标访问器、工作栈排空、标记位切环——应答收回的词数;弱注册的根表让宿主收集器当活性 oracle,根立起变异者纪律(要被收集尊重的句柄放进 `ref`);金测:`examples/gc_demo` 的九行只在解释器运行上(有根的链与被穿透标记的 array 活过四千个无根节点的清除;环在根松手的瞬间死去——引用计数永远收不回的形状)、`gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测(`CHECK.md`、`docs/gc-heap.md`)。 |
 | M51 — GC 阶梯 | 90 | 堆长出自己的分配器与翅膀:step 90 落地 arena——`heap_new` 造它,裸 `heap_load`/`heap_store` 通道搬词,`heap_carve`/`heap_release` 绑定与解绑区间——`gc` 包的自由表(两张 Map 上的首适配、切分、邻合并)成为唯一分配器,`struct_new`/`array_new`/`heap_free` 随门退休;句柄携带 offset+代数,陈旧句柄无需墓碑即响亮死去;头词打包 magic/kind/代数/标记/尺寸;demo 的第二代落进 sweep 自己的词里,arena 从不增长(`CHECK.md`)。 |
 | M52 — GC 堆的 riscv64 宿主 | 91 | 金属加入堆的宿主环:镜像在自己的 `.bss` 里给收集器授予一个区域(一 MiB arena、绑定表、根表、slide 暂存),二十四扇门落成随程序编译的运行时助手,`Ref` 以 kind 12、金属的 Map 以 kind 13 加入 tagged 值模型(运行时引用计数之下的 identity kind,归零的释放从根表摘链),hash 孪生以来本宿主背负的 raise 缺口就此关上(`Raise` 降为 `emo_raise`,异常值按 `c` 宿主的方式渲染),模块级 `var` 也就位(静态内存里的格、序言初始化),`gc` 包自己的几何骑进镜像;demo 的 24 行金测在解释器、`c` 宿主与金属上逐字节一致——三 boot 稳定,经 EmoOS 内核与直跑皆然——调试轮的六面墙记录在 `CHECK.md`(序言的双重入池、Map 只落一半的 +8 平移、slide 的裸数组对、前向表的分裂键形状、只拷 `next` 的 rehash、不圆整的 arena 游标),金测腿骑 `@emo_os` 的 `gc_metal` 组(`CHECK.md`、`docs/gc-heap.md`、`plan/step-91-riscv64-gc-host.md`)。 |
+| M53 — shell 的日用表面 | 92 | `emosh` 长出日用 shell 离不开的表面,全部骑在已有的 `os`+`bufio` 面上:脚本文件与 `-c` 打开调用方式(`emosh script.esh args`、`emosh -c 'line' name args`,打不开的脚本 127,坏选项 2),位置参数落地(`$1`…`$9`、`${N}`),`${var:-default}` 加入花括号形态,叫不出名字的形态保持字面——整个形态,不只是美元符——且 `${` 扫描改为从形态自身起找(`a}b${SETV}c` 原是潜伏的负数 substring);stderr 重定向落地(`2>`、`2>>`、`2>&1`,数字词规则保住 `hi2>` 还是参数,dup 的顺序即语义);glob 落地(只 glob 用户裸写的 `*` 与 `?`——引号如今作为标记被记住,顺带修掉被引 `~` 够到 `$HOME` 的 v0 bug),按路径段行走、段首无 `.` 时隐藏名保持隐藏、答案排序、无匹配拒绝命令;单命令的词只展开一次不再两次;四套新 fixture 加入,harness 在双 target 上钉死调用方式(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-92-emosh-everyday.md`)。 |
 
 ## 设计闸门
 
@@ -2532,3 +2533,40 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       `docs/gc-heap.md` + zh(矩阵第三行、金属节),`docs/stdlib/
       gc.md` + zh(三宿主),stdlib 索引行,本节 + zh 镜像,
       `plan/step-91-riscv64-gc-host.md`,CHECK.md 的记录。
+
+## M53 — shell 的日用表面
+
+### Step 92 — emosh 以脚本与 `-c` 开场、对准 stderr、glob 裸写的模式、应答日用的 `${…}`
+
+**状态:** complete。(`plan/step-92-emosh-everyday.md` 是本步的
+记录。)
+
+- [x] **T92.1** —— 调用方式:`emosh script.esh args` 的会话行来自
+      文件(会话永不交互,参数即位置参数,打不开的文件报 os reason
+      并以 127 离场),`emosh -c 'line' name args` 跑这一行——连接符
+      照常——并以其状态离场(行后的词充作 `$0`),未知选项以 2 拒绝;
+      shell 经其会话打开的描述符读入,stdin 仍是命令们自己的。
+- [x] **T92.2** —— 扩展:`$1`…`$9` 与 `${N}` 应答位置参数(越界为
+      空),`${var:-word}` 应答值、未设或空时应答 word(word 也扩展;
+      无嵌套花括号),规则叫不出名字的 `$` 形态按整个形态的字面回
+      来(`${1x}` 按 `${1x}` 运行),且 `${` 扫描从形态自己的位置找
+      `}`——`a}b${SETV}c` 正常扩展,不再死在负数 substring 上。
+- [x] **T92.3** —— stderr 重定向:`2>` 与 `2>>` 照 stdout 对的规矩
+      把文件开到 fd 2,`2>&1` 无文件而 dup(顺序即语义:`> f 2>&1`
+      双双进 `f`),`>` 前的 `2` 只有整个裸词恰是这个数字才算数
+      (`echo hi2> f` 把 `hi2` 传给 `echo`),`2>&` 里不是 `2>&1` 的
+      按名拒绝;单命令的词现在只展开一次,展开后的 argv 传给子进程。
+- [x] **T92.4** —— glob:在一切引号之外裸写的 `*` 与 `?` 把词变成
+      排序后的匹配——引号现在作为标记骑在部件上(修掉在案的 v0
+      bug:被引的 `~` 曾够到 `$HOME`),扩展结果永不 glob,模式按
+      路径段行走、死分支静默出局、末段对文件一视同仁,段首的 `.`
+      才解开隐藏名,无匹配拒绝命令(`emosh: no matches: …`,状态 1)
+      而不是拿着模式当字面参数跑下去。
+- [x] **T92.5** —— 验收:`fixtures/globs.esh`、`fixtures/defaults.esh`、
+      `fixtures/redirs2.esh` 加入六套旧例(各自在双 target 上钉死
+      合并输出与退出码;`words.esh` 增补被引波浪号与空位置参数钉),
+      harness 在双 target 上逐字节钉死带名与位置参数的 `-c`、各
+      拒绝、脚本文件的运行与打不开的孪生,`docs/emosh-guide.md` +
+      zh 长出调用方式、glob 一节、花括号形态与诚实的边界新形状,
+      本节 + zh 镜像,`plan/step-92-emosh-everyday.md`,CHECK.md 的
+      记录。

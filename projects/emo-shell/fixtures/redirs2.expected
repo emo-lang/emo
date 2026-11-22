@@ -1,0 +1,11 @@
+emosh: nosuch-emosh: command not found
+emosh: nosuch-emosh: command not found
+emosh: nosuch-emosh: command not found
+emosh: nosuch-emosh: command not found
+status=127
+emosh: nosuch-emosh: command not found
+emosh: syntax error: only 2>&1 is supported
+refused=2
+emosh: os: open /nonexistent-emosh-dir/f: No such file or directory
+open=1
+still-here

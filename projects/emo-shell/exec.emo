@@ -8,6 +8,12 @@ require "os"
 // carries on too, dying only when the line walk says so, because a
 // script that stops at its first typo hides the rest of the damage.
 //
+// The session itself opens three ways: bare, reading fd 0 with a
+// prompt when it is a terminal; with a script file, whose lines run
+// and whose arguments become the positionals; and `-c LINE`, the one
+// line run and its status the shell's. A script that cannot open
+// leaves with 127, a broken invocation with 2.
+//
 // The walk itself is the classic one: run the pipeline, then let the
 // connector that follows decide whether the next item runs at all —
 // `;` always, `&&` on success, `||` on failure, with a skipped item's
@@ -16,33 +22,94 @@ require "os"
 // A pipeline of one command stays in this process when it can (a
 // builtin without redirections); everything else forks — one child
 // per stage, stages wired through pipes with dup2, redirections
-// opened onto the child's descriptors, the child resetting the
-// interactive dispositions before its exec (an ignored disposition
-// survives the exec; a default one lets Ctrl-C kill the command the
-// way it should). The pipeline's status is its last stage's, a
-// signal death counting as 128 + signal, the classic encoding.
+// opened onto the child's descriptors (`2>&1` aiming a descriptor at
+// another's), the child resetting the interactive dispositions before
+// its exec (an ignored disposition survives the exec; a default one
+// lets Ctrl-C kill the command the way it should). The words expand
+// once — in the parent for the single command, in each stage's child
+// for a pipeline — and a word the user typed a pattern into answers
+// the directory names it matched, or refuses the command when it
+// matched none. The pipeline's status is its last stage's, a signal
+// death counting as 128 + signal, the classic encoding.
 
 // The session's opening moves: sig_pipe ignored in every mode (a
 // write into a dead pipe must not kill the shell), sig_int and
 // sig_quit ignored in an interactive one (Ctrl-C discards the line,
-// the shell survives), and the mode itself decided by what fd 0 is.
+// the shell survives), and the mode itself decided by the command
+// line — a script file, `-c`, or fd 0's tty.
 def start() shell.Shell {
   os.signal_ignore(os.sig_pipe)
-  const interactive = os.isatty(0)
-  if interactive {
-    os.signal_ignore(os.sig_int)
-    os.signal_ignore(os.sig_quit)
-  }
   const argv = os.argv()
   var name = "emosh"
   if argv.length() > 0 {
     name = argv[0]
   }
-  return shell.Shell.new(interactive: interactive, name: name)
+  var interactive = os.isatty(0)
+  var read_fd = 0
+  var args = ArrayBuilder.new().to_array()
+  var one_shot = false
+  var command = ""
+  if argv.length() > 1 {
+    const first = argv[1]
+    if first == "-c" {
+      if argv.length() < 3 {
+        os.write(2, "emosh: -c: missing command\n")
+        os._exit(2)
+      }
+      interactive = false
+      one_shot = true
+      command = argv[2]
+      // an optional name after the command line stands as $0; the
+      // rest are the positionals
+      if argv.length() > 3 {
+        name = argv[3]
+      }
+      const given = ArrayBuilder.new()
+      for var k = 4; k < argv.length(); k = k + 1 {
+        given.push(argv[k])
+      }
+      args = given.to_array()
+    } else {
+      if first.substring(0, 1) == "-" {
+        os.write(2, "emosh: unknown option: " + first + "\n")
+        os._exit(2)
+      }
+      // a script file: its lines are the session's input, its
+      // arguments the positionals
+      interactive = false
+      case os.open_read(first) {
+        (R.error, why) then {
+          os.write(2, "emosh: " + why + "\n")
+          os._exit(127)
+        }
+        (R.ok, fd) then {
+          read_fd = fd
+        }
+      }
+      name = first
+      const given = ArrayBuilder.new()
+      for var k = 2; k < argv.length(); k = k + 1 {
+        given.push(argv[k])
+      }
+      args = given.to_array()
+    }
+  }
+  if interactive {
+    os.signal_ignore(os.sig_int)
+    os.signal_ignore(os.sig_quit)
+  }
+  return shell.Shell.new(interactive: interactive, name: name, read_fd: read_fd, args: args, one_shot: one_shot, command: command)
 }
 
 def main_entry() Int64 {
   const sh = start()
+  if sh.one_shot {
+    // -c: the line came on the command line; run it and leave with
+    // its status
+    run_line(sh, sh.command)
+    sh.stop()
+    return sh.status()
+  }
   var reading = true
   while reading {
     if sh.interactive {
@@ -195,44 +262,80 @@ def in_child(sh shell.Shell, cmd parse.Cmd, i Int64, n Int64, read_fds Array[Int
   os._exit(status)
 }
 
+// The words of one command, expanded once: the `$` forms and the
+// tilde through the expander, then the glob for a word the user
+// typed a pattern into — one word may answer many names, and a
+// pattern that matched none refuses the command.
+def expand_words(sh shell.Shell, words Array[Array[expand.Part]]) (R, Array[String]) {
+  const out = ArrayBuilder.new()
+  for var k = 0; k < words.length(); k = k + 1 {
+    const text = expand.word(words[k], sh.status(), sh.name, sh.args)
+    if glob.patterned(words[k]) {
+      const found = glob.matches(text)
+      if found.length() == 0 {
+        return (R.error, "emosh: no matches: " + text)
+      }
+      for var m = 0; m < found.length(); m = m + 1 {
+        out.push(found[m])
+      }
+    } else {
+      out.push(text)
+    }
+  }
+  return (R.ok, out.to_array())
+}
+
 // A single command: a builtin with no redirections stays in this
-// process; everything else is the one-child pipeline.
+// process; everything else is the one-child pipeline, the expanded
+// words handed down so they expand once.
 def run_simple(sh shell.Shell, cmd parse.Cmd) Int64 {
-  var words = ArrayBuilder.new()
-  for var k = 0; k < cmd.words.length(); k = k + 1 {
-    words.push(expand.word(cmd.words[k], sh.status(), sh.name))
-  }
-  const argv = words.to_array()
-  if argv.length() > 0 && builtin.is_builtin(argv[0]) && cmd.redirs.length() == 0 {
-    return builtin.run(sh, argv)
-  }
-  case os.fork() {
-    (R.error, reason) then {
-      sh.err("emosh: " + reason)
+  case expand_words(sh, cmd.words) {
+    (R.error, why) then {
+      sh.err(why)
       return 1
     }
-    (R.ok, pid) then {
-      if pid == 0 {
-        child_reset_signals()
-        const status = apply_redirs(sh, cmd.redirs)
-        if status != 0 {
-          os._exit(status)
-        }
-        os._exit(child_run(sh, cmd))
+    (R.ok, argv) then {
+      if argv.length() > 0 && builtin.is_builtin(argv[0]) && cmd.redirs.length() == 0 {
+        return builtin.run(sh, argv)
       }
-      return wait_one(pid)
+      case os.fork() {
+        (R.error, reason) then {
+          sh.err("emosh: " + reason)
+          return 1
+        }
+        (R.ok, pid) then {
+          if pid == 0 {
+            child_reset_signals()
+            const status = apply_redirs(sh, cmd.redirs)
+            if status != 0 {
+              os._exit(status)
+            }
+            os._exit(child_run_argv(sh, argv))
+          }
+          return wait_one(pid)
+        }
+      }
     }
   }
 }
 
-// The child's body: expand, then a builtin's status or an execvp —
-// which never returns on success.
+// A pipeline stage's child: its own words expand here — the status
+// the stage follows is the one its fork inherited — then the run.
 def child_run(sh shell.Shell, cmd parse.Cmd) Int64 {
-  var words = ArrayBuilder.new()
-  for var k = 0; k < cmd.words.length(); k = k + 1 {
-    words.push(expand.word(cmd.words[k], sh.status(), sh.name))
+  case expand_words(sh, cmd.words) {
+    (R.error, why) then {
+      sh.err(why)
+      return 1
+    }
+    (R.ok, argv) then {
+      return child_run_argv(sh, argv)
+    }
   }
-  const argv = words.to_array()
+}
+
+// The child's body once the words are final: a builtin's status, or
+// an execvp — which never returns on success.
+def child_run_argv(sh shell.Shell, argv Array[String]) Int64 {
   if argv.length() == 0 {
     // a command of redirections alone: the files were opened already,
     // there is nothing to run
@@ -247,48 +350,60 @@ def child_run(sh shell.Shell, cmd parse.Cmd) Int64 {
 }
 
 // The child's redirections: each opened and dup2'd onto its
-// descriptor in order; a file that does not open reports the reason
-// and fails the command with 1.
+// descriptor in order — `2>&1` aiming one at another's with no file
+// at all — a file that does not open reporting the reason and
+// failing the command with 1.
 def apply_redirs(sh shell.Shell, redirs Array[parse.Redir]) Int64 {
   var status = 0
   var i = 0
   while status == 0 && i < redirs.length() {
     const redir = redirs[i]
-    // a redirection's file name never carries an unexpanded $? the
-    // user did not mean; expand it like a word
-    const path = expand.word(redir.word, sh.status(), sh.name)
-    if redir.op == lex.op_lt() {
-      case os.open_read(path) {
+    if redir.dup >= 0 {
+      case os.dup2(redir.dup, redir.fd) {
         (R.error, why) then {
           sh.err("emosh: " + why)
           status = 1
         }
-        (R.ok, fd) then {
-          os.dup2(fd, 0)
-          os.close(fd)
-        }
+        (R.ok, _) then { }
       }
     } else {
-      if redir.op == lex.op_gt() {
-        case os.open_write(path) {
+      // a redirection's file name never carries an unexpanded $? the
+      // user did not mean; expand it like a word — and a target is
+      // one name, it does not glob
+      const path = expand.word(redir.word, sh.status(), sh.name, sh.args)
+      if redir.op == lex.op_lt() {
+        case os.open_read(path) {
           (R.error, why) then {
             sh.err("emosh: " + why)
             status = 1
           }
           (R.ok, fd) then {
-            os.dup2(fd, 1)
+            os.dup2(fd, redir.fd)
             os.close(fd)
           }
         }
       } else {
-        case os.open_append(path) {
-          (R.error, why) then {
-            sh.err("emosh: " + why)
-            status = 1
+        if redir.op == lex.op_gt() {
+          case os.open_write(path) {
+            (R.error, why) then {
+              sh.err("emosh: " + why)
+              status = 1
+            }
+            (R.ok, fd) then {
+              os.dup2(fd, redir.fd)
+              os.close(fd)
+            }
           }
-          (R.ok, fd) then {
-            os.dup2(fd, 1)
-            os.close(fd)
+        } else {
+          case os.open_append(path) {
+            (R.error, why) then {
+              sh.err("emosh: " + why)
+              status = 1
+            }
+            (R.ok, fd) then {
+              os.dup2(fd, redir.fd)
+              os.close(fd)
+            }
           }
         }
       }

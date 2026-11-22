@@ -1,0 +1,15 @@
+note.emo zz_a.emo zz_b.emo
+zz_a.emo zz_b.emo
+zz_a.emo zz_b.emo zz_c.txt
+note.emo zz_a.emo zz_b.emo zz_c.txt zzsub
+.hid
+zz_*
+emosh: no matches: *.zzz
+status=1
+../emosh-glob.tmp/zz_a.emo ../emosh-glob.tmp/zz_b.emo
+emosh-glob.tmp/zz_a.emo emosh-glob.tmp/zz_b.emo
+emosh-glob.tmp/zzsub/deep.emo
+emosh-glob.tmp/zzsub/deep.emo
+emosh: no matches: emosh-no-such-dir.tmp/*
+status=1
+cleaned=[0]

@@ -1,0 +1,15 @@
+nosuch-emosh 2> emosh-err.tmp
+cat emosh-err.tmp
+nosuch-emosh 2>> emosh-err.tmp
+cat emosh-err.tmp
+rm emosh-err.tmp
+nosuch-emosh 2>&1
+echo status=$?
+nosuch-emosh > emosh-both.tmp 2>&1
+cat emosh-both.tmp
+rm emosh-both.tmp
+echo probe 2>&11
+echo refused=$?
+true 2> /nonexistent-emosh-dir/f
+echo open=$?
+echo still-here

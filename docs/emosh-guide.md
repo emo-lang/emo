@@ -9,21 +9,33 @@ standard library's own `os` surface (`fork`, `execvp`, `waitpid`,
 `pipe`, `dup2`, the environment, the signals) plus `bufio` for the
 line reader.
 
-This guide covers the v0 surface. Everything it states is what the
-shell does; everything it does not state, the shell does not do — the
-limits section at the bottom is the honest list.
+This guide covers the surface the milestones have landed. Everything
+it states is what the shell does; everything it does not state, the
+shell does not do — the limits section at the bottom is the honest
+list.
 
 ## Building and running
 
 ```console
 $ cd projects/emo-shell
 $ emo build main.emo --target c -o emosh
-$ ./emosh                (interactive)
-$ ./emosh < script.esh   (a script on stdin)
+$ ./emosh                    (interactive on a terminal)
+$ ./emosh < script.esh       (a script on stdin)
+$ ./emosh script.esh args    (a script file; args are $1, $2, …)
+$ ./emosh -c "echo hi $1"    (one line, its status the shell's)
 ```
 
-The mode is decided by what fd 0 is: a terminal gets the `emosh> `
-prompt, anything else is a script read line by line with no prompt.
+Bare, the mode is decided by what fd 0 is: a terminal gets the
+`emosh> ` prompt, anything else is a script read line by line with no
+prompt. With a script file the lines come from the file, the session
+is never interactive, and the file's arguments become the positional
+parameters. `-c` runs the one line — connectors and all — and leaves
+with its status; an optional word after the line stands as `$0` and
+the rest are `$1`, `$2`, … (`emosh -c 'echo $0 $1' shell hello`).
+`-c` without a command refuses with status 2, an unknown option
+refuses with status 2, and a script file that cannot open reports the
+os reason and leaves with 127.
+
 The shell declares the `ocaml` and `c` targets — `emo run main.emo`
 runs it under the interpreter, and the fixtures in `fixtures/` pin
 the two targets' outputs byte for byte.
@@ -40,15 +52,18 @@ line     := and_or ( ";" and_or )* ";"?
 and_or   := pipeline ( "&&" | "||" pipeline )*
 pipeline := command ( "|" command )*
 command  := ( word | redirection )*
-redirection := "<" | ">" | ">>" word
+redirection := "<" | ">" | ">>" word | "2>" | "2>>" word | "2>&1"
 ```
 
 ## Words and quoting
 
-A word is the pieces a line was cut into, and quoting is resolved at
-lex time, not remembered:
+A word is the pieces a line was cut into; quoting is resolved at lex
+time and remembered as a flag, because two rules later care where a
+character came from — a quoted `~` stays a tilde and a quoted `*`
+stays a star:
 
-- bare text is expandable — `$var`, `$?`, and a leading `~` grow here;
+- bare text is expandable — `$var`, `$?`, a leading `~`, and the glob
+  characters grow here;
 - `'single quotes'` are literal, byte for byte — nothing expands,
   no escape works, a `'` cannot appear inside;
 - `"double quotes"` are expandable — `$var` grows, and `\$` `\"`
@@ -72,22 +87,68 @@ $NAME-literal
 ## Expansion
 
 - `$var` / `${var}` — the variable's value; unset answers empty.
+- `${var:-word}` — the value when set and not empty, `word` otherwise
+  (the word expands too; nested braces do not — the first `}` ends
+  the form).
 - `$?` — the last command's exit status.
-- `$0` — the name the shell was started with.
-- `~` at the start of an unquoted word — `$HOME`; unset leaves the
-  tilde as it is (`~user` is not a form here).
+- `$0` — the name the shell was started with: the program's name
+  bare, the script's path with a script file, the word after the line
+  with `-c` when one is given.
+- `$1` … `$9` and `${N}` — the positional parameters: a script file's
+  arguments or `-c`'s, empty past the last one.
+- `~` at the start of a bare, unquoted word — `$HOME`; unset leaves
+  the tilde as it is (`~user` is not a form here, and a quoted tilde
+  stays a tilde).
+
+A `$` form the rules cannot name stays literal — the whole form, not
+just the dollar: `${1x}` runs as the text `${1x}`. The same honesty
+applies when a `}` the word carried earlier sits before the form:
+`${SETV}` in `a}b${SETV}c` still expands.
 
 **There is no word splitting after expansion.** One expanded word is
 one argument, always — a variable holding spaces passes them intact,
 and the guide's honest trade for that is no field splitting at all.
-There is no globbing either.
+Expansion results never glob either — the section below tells what
+does.
+
+## The glob
+
+A `*` (any run of characters) or `?` (exactly one) typed **bare, out
+of every quote**, turns a word into the names it matches, sorted:
+
+```console
+$ cd projects/emo-shell/fixtures && echo *.esh
+defaults.esh errors.esh flow.esh globs.esh pipes.esh redirs2.esh redirs.esh words.esh
+```
+
+The rules, stated so nothing surprises:
+
+- quoted text never globs — `echo "*.emo"` prints `*.emo`, and an
+  expansion that produced a `*` stays literal; the glob reads where
+  every character came from;
+- the pattern walks path segments: `src/*.emo` lists `src` and keeps
+  the matches; a directory that fails to list drops out silently, and
+  the last segment matches files as readily as directories;
+- a segment's leading `.` matches the hidden names; without it they
+  stay hidden, and `.` and `..` never appear;
+- **no match refuses the command** — `emosh: no matches: *.zzz` with
+  status 1 — because running it with the pattern as a literal
+  argument would hide the miss;
+- a redirection's target is one name and does not glob.
 
 ## Redirections and pipelines
 
 `<` reads a command's stdin from a file, `>` writes its stdout to a
-file (create or truncate), `>>` appends — each opening the file just
-before the command runs, in the fork child. A command of redirections
-alone is a command: `> log` truncates `log`.
+file (create or truncate), `>>` appends, `2>` and `2>>` aim stderr at
+a file the same way — each opening the file just before the command
+runs, in the fork child. A `2` that a `>` follows redirects stderr
+only when the whole bare word is the digit: `echo hi 2> log` captures
+the errors, `echo hi2> log` passes `hi2` to `echo` and redirects
+stdout, the classic reading. `2>&1` makes stderr follow wherever
+stdout is already aimed, and the order is the meaning:
+`cmd > f 2>&1` lands both in `f`, `cmd 2>&1 > f` leaves stderr where
+stdout was. A command of redirections alone is a command: `> log`
+truncates `log`, `2> log` empties it just the same.
 
 A pipeline forks one child per stage, wired through pipes: `a | b`
 runs `a` with its stdout on the pipe and `b` with its stdin on the
@@ -104,6 +165,9 @@ $ echo second >> f.txt
 $ cat < f.txt
 first
 second
+$ nosuch-cmd 2> err.txt
+$ cat err.txt
+emosh: nosuch-cmd: command not found
 ```
 
 ## Connectors and status
@@ -175,6 +239,12 @@ $ echo dangling |
 emosh: syntax error: unexpected end of line    (status 2)
 $ echo stray &
 emosh: syntax error: & is not supported yet    (status 2)
+$ echo *.nope
+emosh: no matches: *.nope                      (status 1)
+$ ./emosh -z
+emosh: unknown option: -z                      (status 2)
+$ ./emosh ./no-such-script.esh
+emosh: os: open ./no-such-script.esh: No such file or directory   (status 127)
 ```
 
 An interactive session carries on after any of these; a script
@@ -196,16 +266,20 @@ the next milestone's work, not this one's.
 
 ## The honest limits
 
-The v0 contract, stated so you never have to guess:
+The contract, stated so you never have to guess:
 
 - no control flow — no `if`, `while`, `for`, no functions;
-- no globbing, no `~user`, no `${var:-default}` forms, no `$1`
-  positional parameters;
+- the positionals end where they end: `$1` … `$9` and `${N}` only —
+  no `shift`, no `$#`, no `$@`;
 - no background jobs — `&` refuses by name;
 - no line editor — the terminal's own cooked mode reads; no history,
   no completion;
 - no IFS field splitting after expansion;
-- no subshell parentheses, no here-docs, no traps, no aliases.
+- no `~user`, no nested `${…}` forms, no `${var-word}` without the
+  colon;
+- no subshell parentheses, no here-docs, no traps, no aliases;
+- a `2>&` that is not `2>&1` refuses; there is no `<&`, no `>&`,
+  no fd numbers beyond the `2>` family.
 
 The os surface under each of these (process groups, `WNOHANG`, the
 stat family) is where the work goes when a milestone names them.

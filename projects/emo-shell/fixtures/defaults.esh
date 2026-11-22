@@ -1,0 +1,13 @@
+export SETV=hello
+export EMPTYV=
+echo ${SETV:-fallback}
+echo ${UNSET_ZZ:-fallback}
+echo ${EMPTYV:-was-empty}
+echo ${UNSET_ZZ:-$SETV-world}
+echo braced-empty=[${UNSET_ZZ:-}]
+echo ${1x} stays
+echo ${SETV
+echo a}b${SETV}c
+echo pos=[$1]
+echo digits=${10}
+echo ${SETV-x-colon}

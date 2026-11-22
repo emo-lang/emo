@@ -79,6 +79,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M50 — The GC bootstrap | 89 | The machine object model the interpreter run hosts, and the collector in Emo over it: sixteen bare-name doors — the fixed `struct` block, the counted `array` block, the rooted `ref`, and the walk's doors (`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`) — admitted only by the interpreter run (checked as target `interpreter`; every build target refuses by name, E4032), words self-describing by parity (even a shifted scalar, odd a reference, `0` null), slot 0 of every block the collector's header; the `gc` package implements mark-sweep in pure Emo — tagged accessors, the worklist drain, cycles cut by the mark bit — answering the words reclaimed; the weak root registry makes the host collector the liveness oracle and roots the mutator discipline (a handle a collection must respect lives in a `ref`); the goldens: `examples/gc_demo`'s nine lines on the interpreter alone (a rooted chain and a traced array survive the kill of four thousand unrooted nodes; the cycle dies the moment its root drops — the shape reference counting can never reclaim), `gc_heap_tests`, and the `gc_refusal` negative goldens on every refusing target (`CHECK.md`, `docs/gc-heap.md`). |
 | M51 — The GC ladder | 90 | The heap grows its own allocator and its wings: step 90 lands the arena — `heap_new` makes it, the raw `heap_load`/`heap_store` lane moves words, `heap_carve`/`heap_release` bind and unbind ranges — and the `gc` package's free list (first fit over two maps, split and neighbor-merge) becomes the only allocator, `struct_new`/`array_new`/`heap_free` retiring with the doors' blessing; handles carry offset + generation so a stale handle dies loudly without tombstones; the header word packs magic/kind/generation/mark/size; the demo's second generation lands inside the sweep's own words, the arena never growing (`CHECK.md`). |
 | M52 — The GC heap's riscv64 host | 91 | The metal joins the heap's hosts: the image grants the collector a region in its `.bss` (the mebibyte arena, the binding table, the root table, the slide's stage), the twenty-four doors land as runtime helpers compiled beside the program, `Ref` joins the tagged value model as kind 12 and the metal's `Map` as kind 13 (identity kinds under the runtime's reference counting, a zero release unlinking the root table), the raise gap this host carried since the hash twin closes (`Raise` lowers to `emo_raise`, the exception value rendering the `c` host's way), and module-level `var`s lower (cells in static memory, the prologue initializing) so the `gc` package's own geometry rides the image; the demo's 24 gold lines answer byte-for-byte on the interpreter, the `c` host and the metal — three boots stable, through the EmoOS kernel and direct — with the debug round's six walls named in `CHECK.md` (the prologue's double pool, the Map's half-taken +8 shift, the slide's raw pairs, the forwarding map's split key shapes, the rehash that copied only `next`, the unrounded arena cursor) and the gold leg riding `@emo_os`'s `gc_metal` group (`CHECK.md`, `docs/gc-heap.md`, `plan/step-91-riscv64-gc-host.md`). |
+| M53 — The shell's everyday surface | 92 | `emosh` grows the surface a daily shell cannot live without, all on the `os`+`bufio` face it already rides: a script file and `-c` open the invocation (`emosh script.esh args`, `emosh -c 'line' name args`, the script-unopenable 127, the broken option 2), the positional parameters land (`$1`…`$9`, `${N}`), `${var:-default}` joins the braced forms with the unnamed form staying literal — the whole form, not just the dollar — and the `${` scan now searches from the form instead of the word's start (`a}b${SETV}c` was a latent negative substring); the stderr redirections land (`2>`, `2>>`, `2>&1`, the digit-word rule keeping `hi2>` an argument, the dup's order the meaning); the glob lands (`*` and `?` the user typed bare only — quoting is remembered as a flag now, which also stops a quoted `~` from reaching `$HOME`, a found-and-fixed v0 bug), walking path segments, hiding dot names from a segment without the leading `.`, sorting the answers, refusing the command when nothing matches; the single command's words expand once instead of twice; four fixtures join and the harness pins the invocation modes on both targets (`CHECK.md`, `docs/emosh-guide.md`, `plan/step-92-emosh-everyday.md`). |
 
 ## Design gates
 
@@ -5311,3 +5312,52 @@ record, `docs/gc-heap.md` the design note.)
       section), `docs/stdlib/gc.md` + zh (three hosts), the stdlib
       index rows, this section + zh mirror,
       `plan/step-91-riscv64-gc-host.md`, CHECK.md's record.
+
+## M53 — The shell's everyday surface
+
+### Step 92 — emosh opens with scripts and `-c`, aims stderr, globs the bare patterns, and answers the everyday `${…}`
+
+**Status:** complete. (`plan/step-92-emosh-everyday.md` is the step's
+record.)
+
+- [x] **T92.1** — The invocation: `emosh script.esh args` reads the
+      session's lines from the file (the session never interactive,
+      the arguments the positionals, an unopenable file reporting the
+      os reason and leaving 127), `emosh -c 'line' name args` runs the
+      one line — connectors and all — and leaves with its status (the
+      word after the line stands as `$0`), and an unknown option
+      refuses with 2; the shell reads through whatever descriptor its
+      session opens, stdin still the commands' own.
+- [x] **T92.2** — The expansion: `$1`…`$9` and `${N}` answer the
+      positionals (empty past the last), `${var:-word}` answers the
+      value or the word when unset or empty (the word expanding; no
+      nested braces), a `$` form the rules cannot name comes back as
+      the literal whole form (`${1x}` runs as `${1x}`), and the `${`
+      scan finds its `}` from the form's own position — `a}b${SETV}c`
+      expanding instead of dying on a negative substring.
+- [x] **T92.3** — The stderr redirections: `2>` and `2>>` open files
+      onto fd 2 the way the stdout pair does, `2>&1` dups without a
+      file (the order the meaning: `> f 2>&1` lands both in `f`), a
+      `2` before `>` counts only when the whole bare word is the
+      digit (`echo hi2> f` passes `hi2` to `echo`), and `2>&` that is
+      not `2>&1` refuses by name; the single command's words now
+      expand once, the expanded argv handed to the child.
+- [x] **T92.4** — The glob: `*` and `?` typed bare outside every
+      quote turn a word into its sorted matches — quoting rides the
+      parts as a flag now (the found-and-fixed v0 bug: a quoted `~`
+      reached `$HOME`), expansion results never glob, the pattern
+      walks path segments with dead branches dropping silently and
+      the last segment matching files, a segment's leading `.` is
+      what unhides the hidden names, and no match refuses the command
+      (`emosh: no matches: …`, status 1) instead of passing the
+      pattern as a literal argument.
+- [x] **T92.5** — The acceptance: `fixtures/globs.esh`,
+      `fixtures/defaults.esh`, `fixtures/redirs2.esh` join the six
+      (each pinning merged output and exit on both targets;
+      `words.esh` grows the quoted-tilde and empty-positional pins),
+      the harness pins `-c` with name and positionals, the refusals,
+      a script file's run and its unopenable twin on both targets
+      byte for byte, `docs/emosh-guide.md` + zh grow the invocation,
+      the glob's section, the braced forms and the honest limits'
+      new shape, this section + zh mirror,
+      `plan/step-92-emosh-everyday.md`, CHECK.md's record.

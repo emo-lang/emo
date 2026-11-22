@@ -13,22 +13,29 @@ require "bufio"
 // the parent's words and the children's bytes interleave in the order
 // they were written, deterministically, on both targets.
 //
-// The line reader is bufio over fd 0. In an interactive session the
-// terminal's own line discipline does the editing — cooked mode, the
-// way a shell without a line editor reads — and the session's opening
-// moves (in exec) ignore sig_int and sig_quit so a Ctrl-C discards
-// the current line instead of killing the shell; a fork child
-// restores the default disposition before its exec. A session whose
-// stdin is not a tty is a script: no prompt, and the shell dies by
-// its own errors.
+// The line reader is bufio over the session's input descriptor — fd
+// 0 for the standard session, a script file's descriptor when emosh
+// was started with one. In an interactive session the terminal's own
+// line discipline does the editing — cooked mode, the way a shell
+// without a line editor reads — and the session's opening moves (in
+// exec) ignore sig_int and sig_quit so a Ctrl-C discards the current
+// line instead of killing the shell; a fork child restores the
+// default disposition before its exec. A session whose input is not
+// a tty is a script: no prompt, and the shell dies by its own
+// errors. A `-c` session carries its line on the shell itself and
+// never opens a reader at all; the positional parameters ride with
+// it.
 
 class Shell {
-  def init(interactive Bool, name String) {
+  def init(interactive Bool, name String, read_fd Int64, args Array[String], one_shot Bool, command String) {
     self.interactive = interactive
     self.name = name
+    self.args = args
+    self.one_shot = one_shot
+    self.command = command
     self.last_status = Box.new(0)
     self.running = Box.new(true)
-    self.reader = Box.new(bufio.reader(bufio.fd_reader(0)))
+    self.reader = Box.new(bufio.reader(bufio.fd_reader(read_fd)))
   }
 
   // ---- the three writers ----

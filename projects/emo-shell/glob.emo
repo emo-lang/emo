@@ -1,0 +1,226 @@
+require "os"
+
+// The glob: the `*` and `?` a word carried bare become the directory
+// names the word runs with. The rules are the strict ones:
+//
+//   - only characters the user typed bare, outside every quote, can
+//     glob — a quoted `*` is a `*`, and an expansion that produced one
+//     stays literal (`patterned` reads the lexer's parts, so it knows
+//     where every character came from);
+//   - the pattern walks path segments: `src/*.emo` lists through the
+//     `src` directory, each globbed segment riding `os.list_dir`, a
+//     directory that fails to list dropping out silently (a dead
+//     branch is a miss, not an error);
+//   - a segment's leading `.` matches the hidden names, a segment
+//     without one never does; the names `.` and `..` never appear —
+//     `os.list_dir` already leaves them out;
+//   - the matches come back sorted, so a session answers the same
+//     bytes on every run and both targets;
+//   - an empty answer is no match — the caller refuses the command,
+//     because running it with the pattern as a literal argument would
+//     hide the miss.
+//
+// A word that does not have the glob's shape — no `*` or `?`, an
+// empty segment (`a//b`), a trailing `/` — comes back as itself, one
+// match: the literal word.
+
+// Whether the word typed a pattern at all: some part that is neither
+// literal nor quoted carries a `*` or a `?`.
+def patterned(parts Array[expand.Part]) Bool {
+  for var i = 0; i < parts.length(); i = i + 1 {
+    const part = parts[i]
+    if !part.lit && !part.quoted {
+      if part.text.index_of("*") >= 0 || part.text.index_of("?") >= 0 {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+// One expanded word's matches, sorted; the empty array is no match.
+def matches(pattern String) Array[String] {
+  const segs = split_segments(pattern)
+  if !glob_shaped(pattern, segs) {
+    const one = ArrayBuilder.new()
+    one.push(pattern)
+    return one.to_array()
+  }
+  var current = first_level(segs)
+  var start = 1
+  if segs[0] != "" {
+    start = 0
+  }
+  var globbed = false
+  for var s = start; s < segs.length(); s = s + 1 {
+    current = walk_level(current, segs[s], globbed, s == segs.length() - 1)
+    if has_glob(segs[s]) {
+      globbed = true
+    }
+  }
+  return current.sort()
+}
+
+// A pattern's first level: the root when the pattern opens with a
+// slash and opens absolute, the working directory's names otherwise.
+def first_level(segs Array[String]) Array[String] {
+  const out = ArrayBuilder.new()
+  if segs[0] == "" {
+    out.push("/")
+  } else {
+    out.push("")
+  }
+  return out.to_array()
+}
+
+// Whether a segment carries the glob's characters.
+def has_glob(seg String) Bool {
+  return seg.index_of("*") >= 0 || seg.index_of("?") >= 0
+}
+
+// One pattern segment against the level's directories: a globbed
+// segment lists each directory and keeps the names that match, a
+// literal one rides along — and once a segment has globbed, a
+// literal name must exist for the walk to keep it: as a directory
+// while segments remain, as anything once it is the last. A name
+// that does not exist drops out silently: a dead branch is a miss,
+// not an error.
+def walk_level(dirs Array[String], seg String, globbed_before Bool, is_last Bool) Array[String] {
+  const next = ArrayBuilder.new()
+  for var c = 0; c < dirs.length(); c = c + 1 {
+    const dir = dirs[c]
+    if has_glob(seg) {
+      case os.list_dir(list_target(dir)) {
+        (R.error, _) then { }
+        (R.ok, names) then {
+          for var k = 0; k < names.length(); k = k + 1 {
+            const name = names[k]
+            if match_segment_hidden(seg, name) {
+              next.push(join(dir, name))
+            }
+          }
+        }
+      }
+    } else {
+      if globbed_before {
+        if is_last {
+          case os.open_read(list_target(join(dir, seg))) {
+            (R.error, _) then { }
+            (R.ok, fd) then {
+              os.close(fd)
+              next.push(join(dir, seg))
+            }
+          }
+        } else {
+          case os.list_dir(list_target(join(dir, seg))) {
+            (R.error, _) then { }
+            (R.ok, _) then { next.push(join(dir, seg)) }
+          }
+        }
+      } else {
+        next.push(join(dir, seg))
+      }
+    }
+  }
+  return next.to_array()
+}
+
+// The glob's shape: it names a pattern somewhere, and every segment
+// is whole — an empty middle segment or a trailing `/` is not a
+// pattern this glob guesses at, it is a literal word.
+def glob_shaped(pattern String, segs Array[String]) Bool {
+  if pattern.index_of("*") < 0 && pattern.index_of("?") < 0 {
+    return false
+  }
+  var start = 0
+  if segs[0] == "" {
+    start = 1
+  }
+  for var i = start; i < segs.length(); i = i + 1 {
+    if segs[i] == "" {
+      return false
+    }
+  }
+  return true
+}
+
+// The path split at every slash; an absolute path opens with an
+// empty first segment.
+def split_segments(pattern String) Array[String] {
+  const out = ArrayBuilder.new()
+  var cur = ""
+  for var i = 0; i < pattern.length(); i = i + 1 {
+    const ch = pattern.substring(i, 1)
+    if ch == "/" {
+      out.push(cur)
+      cur = ""
+    } else {
+      cur = cur + ch
+    }
+  }
+  out.push(cur)
+  return out.to_array()
+}
+
+// One segment against one name: `?` takes exactly one character, `*`
+// any run of them, everything else itself — the iterative walk with
+// the star remembered for the backtrack.
+def match_segment(seg String, name String) Bool {
+  var p = 0
+  var n = 0
+  var star = 0 - 1
+  var tried = 0 - 1
+  while n < name.length() {
+    if p < seg.length() && (seg.substring(p, 1) == "?" || seg.substring(p, 1) == name.substring(n, 1)) {
+      p = p + 1
+      n = n + 1
+    } else {
+      if p < seg.length() && seg.substring(p, 1) == "*" {
+        star = p
+        p = p + 1
+        tried = n
+      } else {
+        if star >= 0 {
+          p = star + 1
+          tried = tried + 1
+          n = tried
+        } else {
+          return false
+        }
+      }
+    }
+  }
+  while p < seg.length() && seg.substring(p, 1) == "*" {
+    p = p + 1
+  }
+  return p == seg.length()
+}
+
+// A segment's leading `.` matches the hidden names; without one they
+// stay hidden.
+def match_segment_hidden(seg String, name String) Bool {
+  if name.substring(0, 1) == "." && seg.substring(0, 1) != "." {
+    return false
+  }
+  return match_segment(seg, name)
+}
+
+// Two names joined as a path, no doubled slash and no leading one.
+def join(dir String, name String) String {
+  if dir == "" {
+    return name
+  }
+  if dir == "/" {
+    return "/" + name
+  }
+  return dir + "/" + name
+}
+
+// The directory a listing looks into: the working directory rides as
+// "." so the answers keep their relative shape.
+def list_target(dir String) String {
+  if dir == "" {
+    return "."
+  }
+  return dir
+}

@@ -9,3 +9,7 @@ double hello expands
 status=0
 status=1
 escape-$EMOSH_TEST-literal
+~ stays
+~zz-no-user stays
+pos=[]
+braced=[]

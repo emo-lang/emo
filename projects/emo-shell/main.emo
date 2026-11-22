@@ -7,8 +7,10 @@ require "os"
 // second time.
 //
 //   emo build main.emo --target c -o emosh
-//   ./emosh            (interactive)
-//   ./emosh < script   (a script on stdin)
+//   ./emosh               (interactive on a tty)
+//   ./emosh < script      (a script on stdin)
+//   ./emosh script args   (a script file, args the positionals)
+//   ./emosh -c "line"     (one line, its status the shell's)
 
 def main() {
   os._exit(exec.main_entry())

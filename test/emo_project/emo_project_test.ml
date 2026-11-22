@@ -2706,8 +2706,9 @@ let cc_works =
    fixture touches being its own to create and remove. *)
 let emosh_golden_tests =
   [
-    tc "the emosh fixtures run byte-identically on the ocaml and c targets"
-      (fun () ->
+    tc
+      "the emosh fixtures and invocations run byte-identically on the ocaml \
+       and c targets" (fun () ->
         if not (Lazy.force cc_works) then Alcotest.skip ();
         use_workspace_registry () |> ignore;
         let dir = from_original_cwd "../../projects/emo-shell" in
@@ -2763,7 +2764,49 @@ let emosh_golden_tests =
                   want_exit
                   (match status with Unix.WEXITED n -> n | _ -> -1))
               [ ("ocaml", ocaml_bin); ("c", c_bin) ])
-          names);
+          names;
+        (* The invocation modes on both targets byte for byte: -c with
+           a name and positionals, the refusals, a script file whose
+           arguments are the positionals, and a script that cannot
+           open — the status each run answers with is the pinned one. *)
+        let run_args tag bin args want_out want_exit =
+          let out, _, status =
+            Emo_test_support.run_cmd
+              (Printf.sprintf "exec 2>&1; %s %s" (Filename.quote bin) args)
+          in
+          Alcotest.(check string) (tag ^ " output") want_out out;
+          Alcotest.(check int)
+            (tag ^ " exit") want_exit
+            (match status with Unix.WEXITED n -> n | _ -> -1)
+        in
+        let missing_script = Filename.concat scratch "emosh-no-such.esh" in
+        List.iter
+          (fun (tag, bin) ->
+            run_args (tag ^ " c-mode") bin
+              "-c 'echo $0 $1 $2' shname alpha beta" "shname alpha beta\n" 0;
+            run_args (tag ^ " c-status") bin "-c 'false'" "" 1;
+            run_args (tag ^ " c-missing") bin "-c"
+              "emosh: -c: missing command\n" 2;
+            run_args (tag ^ " c-option") bin "-z" "emosh: unknown option: -z\n"
+              2;
+            let script = Filename.concat scratch "invocation.esh" in
+            let oc = open_out script in
+            output_string oc
+              "echo script:$0 arg:$1\n\
+               false && echo skipped || echo fell:$?\n\
+               exit 7\n\
+               echo never\n";
+            close_out oc;
+            run_args (tag ^ " script") bin
+              (Filename.quote script ^ " pos1")
+              ("script:" ^ script ^ " arg:pos1\nfell:1\n")
+              7;
+            run_args (tag ^ " script-missing") bin
+              (Filename.quote missing_script)
+              ("emosh: os: open " ^ missing_script
+             ^ ": No such file or directory\n")
+              127)
+          [ ("ocaml", ocaml_bin); ("c", c_bin) ]);
   ]
 
 let stdlib_require_tests =

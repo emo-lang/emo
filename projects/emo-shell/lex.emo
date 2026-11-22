@@ -2,22 +2,25 @@
 // the parser reads:
 //
 //   word     — the pieces the line was cut into; quoting is resolved
-//              here, not remembered: a single-quoted run and every
-//              escaped byte arrive as literal parts, a bare run and a
-//              double-quoted run arrive as expandable parts (the
-//              double quotes themselves are gone) — and a bare run
-//              accumulates as one part, so the `$` and the name after
-//              it reach the expander together;
-//   operator — `|`, `<`, `>`, `>>`, `;`, `&&`, `||`, each its own
-//              token kind.
+//              here, and remembered as a flag: a single-quoted run and
+//              every escaped byte arrive as literal parts, a bare run
+//              and a double-quoted run arrive as expandable parts (the
+//              double quotes themselves are gone, the double-quoted
+//              ones marked `quoted`) — and a bare run accumulates as
+//              one part, so the `$` and the name after it reach the
+//              expander together;
+//   operator — `|`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`, `;`, `&&`,
+//              `||`, each its own token kind.
 //
 // A `#` at the start of a word is a comment: the rest of the line is
-// dropped. A `&` that is not `&&` is refused — background jobs are
-// not in this shell yet, and a strict refusal beats a silent misread.
-// An unterminated quote is refused with the quote in the message.
-// Like the classic shells, an empty quoted string still makes a word
-// (`touch ''` must touch), so a word token can carry a single empty
-// literal part.
+// dropped. A `2` that a `>` follows — the whole bare word being the
+// digit — is the stderr redirection, the way the classic shells read
+// it; a `2>&` that is not `2>&1` is refused by name. A `&` that is
+// not `&&` is refused — background jobs are not in this shell yet,
+// and a strict refusal beats a silent misread. An unterminated quote
+// is refused with the quote in the message. Like the classic shells,
+// an empty quoted string still makes a word (`touch ''` must touch),
+// so a word token can carry a single empty literal part.
 //
 // The answers ride the standard library's error split — the shell has
 // no catch to survive, so a malformed line is the value
@@ -37,6 +40,9 @@ def op_pipe() String { return "|" }
 def op_lt() String { return "<" }
 def op_gt() String { return ">" }
 def op_gtgt() String { return ">>" }
+def op_2gt() String { return "2>" }
+def op_2gtgt() String { return "2>>" }
+def op_2gt1() String { return "2>&1" }
 def op_semi() String { return ";" }
 def op_andand() String { return "&&" }
 def op_oror() String { return "||" }
@@ -55,7 +61,7 @@ def tokenize(line String) (R, Array[Tok]) {
     if ch == " " || ch == "\t" {
       if in_word {
         if cur != "" {
-          parts.push(expand.Part.new(text: cur, lit: false))
+          parts.push(expand.Part.new(text: cur, lit: false, quoted: false))
           cur = ""
         }
         out.push(Tok.new(kind: "word", parts: parts.to_array()))
@@ -70,28 +76,54 @@ def tokenize(line String) (R, Array[Tok]) {
         i = line.length()
       } else {
         if ch == "&" || ch == "|" || ch == "<" || ch == ">" || ch == ";" {
-          if in_word {
-            if cur != "" {
-              parts.push(expand.Part.new(text: cur, lit: false))
-              cur = ""
-            }
-            out.push(Tok.new(kind: "word", parts: parts.to_array()))
-            parts = ArrayBuilder.new()
+          if ch == ">" && in_word && cur == "2" && parts.length() == 0 {
+            // the whole bare word is the digit: a descriptor number,
+            // not an argument — the stderr redirections. A `2>&`
+            // that is not `2>&1` refuses by name.
             in_word = false
-          }
-          var two = ""
-          if i + 1 < line.length() {
-            two = line.substring(i, 2)
-          }
-          if two == "&&" || two == "||" || two == ">>" {
-            out.push(Tok.new(kind: two, parts: []))
-            i = i + 2
-          } else {
-            if ch == "&" {
-              return (R.error, "emosh: syntax error: & is not supported yet")
+            cur = ""
+            if i + 1 < line.length() && line.substring(i + 1, 1) == ">" {
+              out.push(Tok.new(kind: lex.op_2gtgt(), parts: []))
+              i = i + 2
+            } else {
+              if i + 1 < line.length() && line.substring(i + 1, 1) == "&" {
+                const ok_after = " \t|<>;&#"
+                if i + 2 < line.length() && line.substring(i + 2, 1) == "1"
+                  && (i + 3 >= line.length() || ok_after.index_of(line.substring(i + 3, 1)) >= 0) {
+                  out.push(Tok.new(kind: lex.op_2gt1(), parts: []))
+                  i = i + 3
+                } else {
+                  return (R.error, "emosh: syntax error: only 2>&1 is supported")
+                }
+              } else {
+                out.push(Tok.new(kind: lex.op_2gt(), parts: []))
+                i = i + 1
+              }
             }
-            out.push(Tok.new(kind: ch, parts: []))
-            i = i + 1
+          } else {
+            if in_word {
+              if cur != "" {
+                parts.push(expand.Part.new(text: cur, lit: false, quoted: false))
+                cur = ""
+              }
+              out.push(Tok.new(kind: "word", parts: parts.to_array()))
+              parts = ArrayBuilder.new()
+              in_word = false
+            }
+            var two = ""
+            if i + 1 < line.length() {
+              two = line.substring(i, 2)
+            }
+            if two == "&&" || two == "||" || two == ">>" {
+              out.push(Tok.new(kind: two, parts: []))
+              i = i + 2
+            } else {
+              if ch == "&" {
+                return (R.error, "emosh: syntax error: & is not supported yet")
+              }
+              out.push(Tok.new(kind: ch, parts: []))
+              i = i + 1
+            }
           }
         } else {
           if ch == "'" {
@@ -101,11 +133,11 @@ def tokenize(line String) (R, Array[Tok]) {
               return (R.error, "emosh: syntax error: unterminated '")
             }
             if cur != "" {
-              parts.push(expand.Part.new(text: cur, lit: false))
+              parts.push(expand.Part.new(text: cur, lit: false, quoted: false))
               cur = ""
             }
             // the whole run, byte for byte, nothing expandable
-            parts.push(expand.Part.new(text: rest.substring(0, rel), lit: true))
+            parts.push(expand.Part.new(text: rest.substring(0, rel), lit: true, quoted: false))
             in_word = true
             i = i + 1 + rel + 1
           } else {
@@ -114,10 +146,10 @@ def tokenize(line String) (R, Array[Tok]) {
                 (R.error, why) then { return (R.error, why) }
                 (R.ok, quoted) then {
                   if cur != "" {
-                    parts.push(expand.Part.new(text: cur, lit: false))
+                    parts.push(expand.Part.new(text: cur, lit: false, quoted: false))
                     cur = ""
                   }
-                  parts.push(expand.Part.new(text: quoted.text, lit: false))
+                  parts.push(expand.Part.new(text: quoted.text, lit: false, quoted: true))
                   in_word = true
                   i = quoted.next
                 }
@@ -131,10 +163,10 @@ def tokenize(line String) (R, Array[Tok]) {
                   return (R.error, "emosh: syntax error: trailing \\")
                 }
                 if cur != "" {
-                  parts.push(expand.Part.new(text: cur, lit: false))
+                  parts.push(expand.Part.new(text: cur, lit: false, quoted: false))
                   cur = ""
                 }
-                parts.push(expand.Part.new(text: line.substring(i + 1, 1), lit: true))
+                parts.push(expand.Part.new(text: line.substring(i + 1, 1), lit: true, quoted: false))
                 in_word = true
                 i = i + 2
               } else {
@@ -150,7 +182,7 @@ def tokenize(line String) (R, Array[Tok]) {
   }
   if in_word {
     if cur != "" {
-      parts.push(expand.Part.new(text: cur, lit: false))
+      parts.push(expand.Part.new(text: cur, lit: false, quoted: false))
     }
     out.push(Tok.new(kind: "word", parts: parts.to_array()))
   }
