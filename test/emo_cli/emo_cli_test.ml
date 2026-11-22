@@ -2400,6 +2400,184 @@ case net_tls_connect("localhost", listener.port(), 5.0) {
              (Printf.sprintf "env SSL_CERT_FILE=%s %s" (Filename.quote ca)
                 (Filename.quote bin)))
           "echo: loopback\ndone\n");
+    (* The TLS gate's reachability walk must follow class and interface
+       method bodies: a TLS call one method deep used to leave the flag
+       false, so the binary linked without TLS and answered "not
+       supported on this target" at run time. *)
+    tc "a TLS call behind an interface method still links TLS on c"
+      (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let cclibs =
+          match Lazy.force tls_cclibs with
+          | Some libs -> libs
+          | None -> Alcotest.skip ()
+        in
+        let dir = Filename.concat scratch "c-tls-method-walk" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file
+          (Filename.concat dir "package.emo")
+          {|
+package {
+  name = "emo/scratch_c_tls_method"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "net" = "0.1.0"
+  }
+}
+|};
+        let fixture = "../../test/emo_sched/fixtures/" in
+        let entry = Filename.concat dir "main.emo" in
+        write_file entry
+          (Printf.sprintf
+             {|require "net"
+
+interface Dialer {
+  def dial(port Int64) (R, TcpConn)
+}
+
+class TlsDialer {
+  def init() {
+  }
+
+  def dial(port Int64) (R, TcpConn) {
+    return net.tls_connect("localhost", port, 5.0)
+  }
+}
+
+def echo_lines(conn TcpConn) Void {
+  case conn.read_line() {
+    (R.error, why) then {
+      println("server read failed: ${why}")
+      conn.close()
+    }
+    (R.ok, line)   then {
+      conn.write("echo: " + line + "\n")
+      echo_lines(conn)
+    }
+  }
+}
+
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then { echo_lines(conn) }
+  }
+}
+
+def use(d Dialer, port Int64) (R, TcpConn) {
+  return d.dial(port)
+}
+
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+do serve(listener)
+case use(TlsDialer.new(), listener.port()) {
+  (R.error, why) then { println("connect failed: ${why}") }
+  (R.ok, conn)   then {
+    conn.write("method\n")
+    case conn.read_line() {
+      (R.error, why) then { println("read failed: ${why}") }
+      (R.ok, line)   then { println(line) }
+    }
+    conn.close()
+    println("done")
+  }
+}
+|}
+             fixture fixture);
+        let bin = Filename.concat dir "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"c" ~cclibs entry bin);
+        let ca = fixture ^ "tls-ca.pem" in
+        check_run "c method walk"
+          (run_cmd
+             (Printf.sprintf "env SSL_CERT_FILE=%s %s" (Filename.quote ca)
+                (Filename.quote bin)))
+          "echo: method\ndone\n");
+    (* Constructor calls name the emitter's `<Class>__new` wrapper; the
+       walk must arrive at the IR's `<Class>__init` body behind it. *)
+    tc "a TLS call inside a class init still links TLS on c" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let cclibs =
+          match Lazy.force tls_cclibs with
+          | Some libs -> libs
+          | None -> Alcotest.skip ()
+        in
+        let dir = Filename.concat scratch "c-tls-ctor-walk" in
+        if not (Sys.file_exists dir) then Unix.mkdir dir 0o755;
+        write_file
+          (Filename.concat dir "package.emo")
+          {|
+package {
+  name = "emo/scratch_c_tls_ctor"
+  version = "0.1.0"
+  targets = ["ocaml", "c"]
+
+  deps {
+    "net" = "0.1.0"
+  }
+}
+|};
+        let fixture = "../../test/emo_sched/fixtures/" in
+        let entry = Filename.concat dir "main.emo" in
+        write_file entry
+          (Printf.sprintf
+             {|require "net"
+
+def echo_lines(conn TcpConn) Void {
+  case conn.read_line() {
+    (R.error, why) then {
+      println("server read failed: ${why}")
+      conn.close()
+    }
+    (R.ok, line)   then {
+      conn.write("echo: " + line + "\n")
+      echo_lines(conn)
+    }
+  }
+}
+
+def serve(listener TcpListener) Void {
+  case listener.accept() {
+    (R.error, why) then { println("accept failed: ${why}") }
+    (R.ok, conn)   then { echo_lines(conn) }
+  }
+}
+
+class Dialer {
+  def init(port Int64) {
+    case net.tls_connect("localhost", port, 5.0) {
+      (R.error, why) then { println("connect failed: ${why}") }
+      (R.ok, conn)   then {
+        conn.write("ctor\n")
+        case conn.read_line() {
+          (R.error, why) then { println("read failed: ${why}") }
+          (R.ok, line)   then { println(line) }
+        }
+        conn.close()
+        println("done")
+      }
+    }
+  }
+}
+
+const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+do serve(listener)
+Dialer.new(listener.port())
+|}
+             fixture fixture);
+        let bin = Filename.concat dir "main-c-bin" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"c" ~cclibs entry bin);
+        let ca = fixture ^ "tls-ca.pem" in
+        check_run "c ctor walk"
+          (run_cmd
+             (Printf.sprintf "env SSL_CERT_FILE=%s %s" (Filename.quote ca)
+                (Filename.quote bin)))
+          "echo: ctor\ndone\n");
     tc "the verify-fail pin and the insecure roundtrip hold on c" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let cclibs =

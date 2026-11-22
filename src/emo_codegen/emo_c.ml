@@ -3694,6 +3694,29 @@ let emit (program : Emo_ir.program) : string * string * bool =
           @ c.Emo_ir.cmethods)
         program.pclasses
     in
+    (* Class bodies live in [pclasses], not [pfuncs]: without them here a
+       [mark_method] hit — or a constructor call — would find no function
+       to enqueue, and the walk would silently stop at the class boundary
+       (the TLS gate missed a TLS call one method deep, so the binary
+       answered "not supported on this target" at run time). *)
+    List.iter
+      (fun (m : Emo_ir.func) ->
+        if not (Hashtbl.mem funcs_tbl m.Emo_ir.fname) then
+          Hashtbl.replace funcs_tbl m.Emo_ir.fname m)
+      all_methods;
+    (* A constructor call names the emitter's synthesized `<Class>__new`
+       wrapper, which inlines the IR's `<Class>__init` body; the walk has
+       to arrive at that body through the call name or an init that
+       touches TLS stays invisible. *)
+    List.iter
+      (fun (c : Emo_ir.class_) ->
+        match c.Emo_ir.cinit with
+        | Some init ->
+            let name = c.Emo_ir.cname ^ "__new" in
+            if not (Hashtbl.mem funcs_tbl name) then
+              Hashtbl.replace funcs_tbl name init
+        | None -> ())
+      program.pclasses;
     let reached = Hashtbl.create 32 in
     let flag = ref false in
     let queue = Queue.create () in
