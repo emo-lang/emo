@@ -126,8 +126,8 @@ class EFloat {
 }
 
 class EChar {
-  c: string;
-  constructor(c: string) {
+  c: number; // a Unicode scalar value
+  constructor(c: number) {
     this.c = c;
   }
 }
@@ -709,7 +709,7 @@ function toStr(v: any): string {
   if (typeof v === "boolean") return v ? "true" : "false";
   if (v === null || v === undefined) return "nil";
   if (isFloat(v)) return floatStr(v.v);
-  if (isChar(v)) return v.c;
+  if (isChar(v)) return String.fromCodePoint(v.c);
   if (v instanceof EBox) return toStr(v.v);
   if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
@@ -788,7 +788,7 @@ function toStrP(v: any): string | Promise<string> {
   if (typeof v === "boolean") return v ? "true" : "false";
   if (v === null || v === undefined) return "nil";
   if (isFloat(v)) return floatStr(v.v);
-  if (isChar(v)) return v.c;
+  if (isChar(v)) return String.fromCodePoint(v.c);
   if (v instanceof EBox) return toStrP(v.v);
   if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
@@ -1266,18 +1266,19 @@ function printf(fmt: any, data: any): void {
       }
       out += pfPad(sign, body, minus, s.zero, width);
     } else if (s.conv === "c") {
-      let byte: number;
-      if (v instanceof EChar) byte = v.c.charCodeAt(0);
-      else if (typeof v === "number" && Number.isInteger(v)) byte = v & 0xff;
-      else if (typeof v === "bigint") byte = Number(v & 0xffn);
+      let ch: string;
+      if (v instanceof EChar) ch = String.fromCodePoint(v.c);
+      else if (typeof v === "number" && Number.isInteger(v))
+        ch = String.fromCharCode(v & 0xff);
+      else if (typeof v === "bigint") ch = String.fromCharCode(Number(v & 0xffn));
       else
         throw new Error(
           "printf: `%c` expects a Char, Byte, or Int64, got " + tag(v)
         );
-      const ch = String.fromCharCode(byte);
-      if (width > ch.length) {
-        if (minus) out += ch + " ".repeat(width - 1);
-        else out += " ".repeat(width - 1) + ch;
+      const chlen = utf8Length(ch);
+      if (width > chlen) {
+        if (minus) out += ch + " ".repeat(width - chlen);
+        else out += " ".repeat(width - chlen) + ch;
       } else out += ch;
     } else if (s.conv === "s") {
       if (typeof v !== "string")
@@ -1377,7 +1378,7 @@ const E_NO_MATCH = Symbol("emo: no branch matched");
 const E: any = {
   noMatch: E_NO_MATCH,
   float: (v: number) => new EFloat(v),
-  char: (c: string) => new EChar(c),
+  char: (c: number) => new EChar(c),
   tuple: (...items: any[]) => new ETuple(items),
   array: (items: any[]) => new EArray(items),
   box: (v: any) => new EBox(v),
@@ -1827,6 +1828,11 @@ const E: any = {
     }
     if (typeof recv === "string") {
       if (name === "length") return BigInt(utf8Length(recv));
+      if (name === "chars")
+        // `Array.from` iterates code points, surrogate pairs included.
+        return new EArray(
+          Array.from(recv, (ch) => new EChar(ch.codePointAt(0) as number))
+        );
       if (name === "to_string") return recv;
       if (name === "is") return isType(recv, args[0] as string);
       if (name === "substring")

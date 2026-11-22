@@ -73,7 +73,7 @@ let describe_kind (k : Tok.kind) =
   | Int64 n -> Printf.sprintf "integer `%Ld`" n
   | Byte n -> Printf.sprintf "byte `%d`" n
   | Float f -> Printf.sprintf "float `%g`" f
-  | Char c -> Printf.sprintf "character %C" c
+  | Char c -> Printf.sprintf "character `%s`" (Emo_support.Utf8.encode c)
   | String_chunk _ | String_end | Interp_open | Interp_close -> "a string"
   | True -> "`true`"
   | False -> "`false`"

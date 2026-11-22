@@ -43,7 +43,7 @@ type value =
   | Float of float
   | Bool of bool
   | Void
-  | Char of char
+  | Char of int (* a Unicode scalar value — one code point *)
   | String of string
   | Bytes of Bytes.t
   | Tuple of value list
@@ -227,6 +227,22 @@ let split_on_string sep s =
   in
   go 0 []
 
+(* One Char per Unicode scalar value, in order. Malformed UTF-8 is the
+   named failure — nothing is repaired into U+FFFD. *)
+let string_chars span (s : string) : value =
+  let out = ref [] in
+  let i = ref 0 in
+  while !i < String.length s do
+    match Emo_support.Utf8.decode_at s !i with
+    | Some (cp, width) ->
+        out := Char cp :: !out;
+        i := !i + width
+    | None ->
+        error span "E3007"
+          (Printf.sprintf "the String is not valid UTF-8 at byte %d" !i)
+  done;
+  Array (Array.of_list (List.rev !out))
+
 (* Decimal only, optional minus, no separators or exponents: `1_000`,
    `0x10`, and `+5` are not integers here. *)
 let parse_decimal s =
@@ -282,7 +298,7 @@ let rec equal_value a b =
   | Float x, Float y -> x = y
   | Bool x, Bool y -> Bool.equal x y
   | Void, Void -> true
-  | Char x, Char y -> Char.equal x y
+  | Char x, Char y -> Int.equal x y
   | String x, String y -> String.equal x y
   | Bytes x, Bytes y -> Bytes.equal x y
   | Tuple xs, Tuple ys ->
@@ -375,7 +391,7 @@ and emo_scalar_compare (a : value) (b : value) : int =
       else 0
   | String x, String y -> String.compare x y
   | Byte x, Byte y -> Int.compare x y
-  | Char x, Char y -> Int.compare (Char.code x) (Char.code y)
+  | Char x, Char y -> Int.compare x y
   | Bool x, Bool y -> Int.compare (if x then 1 else 0) (if y then 1 else 0)
   | _ -> 0
 
@@ -874,7 +890,7 @@ let rec to_string v =
       else Printf.sprintf "%g" f
   | Bool b -> string_of_bool b
   | Void -> "void"
-  | Char c -> String.make 1 c
+  | Char c -> Emo_support.Utf8.encode c
   | String s -> s
   | Tuple vs -> "(" ^ String.concat ", " (List.map to_string vs) ^ ")"
   | Array vs ->
@@ -3097,6 +3113,9 @@ and call_method_value env span base mname args =
   | String s, "length" ->
       none_expected "length";
       Int64 (Int64.of_int (String.length s))
+  | String s, "chars" ->
+      none_expected "chars";
+      string_chars span s
   | String s, "substring" -> (
       match eval_args () with
       | [ Int64 start; Int64 len ]
@@ -3468,9 +3487,9 @@ and printf_pull span items idx conv =
   match (conv, v) with
   | ('*' | 'd' | 'i' | 'u' | 'o' | 'x' | 'X'), Int64 n -> `I64 n
   | ('*' | 'd' | 'i' | 'u' | 'o' | 'x' | 'X'), Byte n -> `I n
-  | 'c', Char c -> `C c
-  | 'c', Byte n -> `C (Char.chr (n land 255))
-  | 'c', Int64 n -> `C (Char.chr (Int64.to_int n land 255))
+  | 'c', Char c -> `C (Emo_support.Utf8.encode c)
+  | 'c', Byte n -> `C (String.make 1 (Char.chr (n land 255)))
+  | 'c', Int64 n -> `C (String.make 1 (Char.chr (Int64.to_int n land 255)))
   | 's', String str -> `S str
   | ('f' | 'F' | 'e' | 'E' | 'g' | 'G'), Float f -> `F f
   | _, v ->
@@ -3717,7 +3736,7 @@ and printf_render span (fmt : string) (items : value array) : string =
                 match s.conv with 'd' | 'i' -> "d" | c -> String.make 1 c
               in
               pad (via_snprintf "%d" flags width prec letter n) width !minus
-          | `C c -> pad (String.make 1 c) width !minus
+          | `C c -> pad c width !minus
           | `S str ->
               let body =
                 match prec with

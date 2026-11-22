@@ -120,7 +120,7 @@ let () =
   p (Emo_eval.Float 0.1);
   p (Emo_eval.Bool true);
   p (Emo_eval.Void);
-  p (Emo_eval.Char 'x');
+  p (Emo_eval.Char 120);
   p (Emo_eval.String "hi");
   p (Emo_eval.Tuple [ Emo_eval.Int64 1L; Emo_eval.String "a" ]);
   p (Emo_eval.Array [| Emo_eval.Int64 1L; Emo_eval.Int64 2L |]);

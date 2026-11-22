@@ -62,7 +62,7 @@ module Token = struct
     | Int64 of int64
     | Byte of int
     | Float of float
-    | Char of char
+    | Char of int
     | String_chunk of string
     | String_end
     | Interp_open
@@ -647,7 +647,7 @@ let lex ~file ~source =
                     | Some ec ->
                         bump ();
                         bump ();
-                        ec
+                        Char.code ec
                     | None ->
                         error "E1004" quoted_span "invalid escape sequence"
                           ~hint:
@@ -657,14 +657,22 @@ let lex ~file ~source =
                     error "E1005"
                       (span_from qline qcol qoff)
                       "unterminated character literal"
-              else (
-                if cur () = '\n' then
-                  error "E1005"
-                    (span_from qline qcol qoff)
-                    "unterminated character literal";
-                let ch = cur () in
-                bump ();
-                ch)
+              else if cur () = '\n' then
+                error "E1005"
+                  (span_from qline qcol qoff)
+                  "unterminated character literal"
+              else
+                match Emo_support.Utf8.decode_at source !offset with
+                | Some (cp, width) ->
+                    for _ = 1 to width do
+                      bump ()
+                    done;
+                    cp
+                | None ->
+                    error "E1005"
+                      (span_from qline qcol qoff)
+                      "invalid UTF-8 in character literal"
+                      ~hint:"a character literal holds one Unicode scalar value"
             in
             if eof () || cur () <> '\'' then
               error "E1005"

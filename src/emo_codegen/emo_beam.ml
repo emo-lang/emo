@@ -147,6 +147,7 @@ let unguarded_builtin_arms =
     ("lower", 0);
     ("upper", 0);
     ("split", 1);
+    ("chars", 0);
     ("append", 1);
     ("sort", 0);
     ("read", 0);
@@ -274,7 +275,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Const (L_byte n) -> put env (string_of_int n)
   | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
-  | Const (L_char c) -> put env (one_byte_lit (Char.code c))
+  | Const (L_char c) -> put env (char_lit c)
   | Const (L_string s) -> put env (binary_lit s)
   | Type_ref a -> put env ("'" ^ a ^ "'")
   | Emo_ir.Global_var g ->
@@ -1014,6 +1015,9 @@ and builtin_method_call env self_ name args =
       | "split", [ sep ] ->
           put env "apply 'emo_str_split'/2 ";
           args_list env [ self_; sep ]
+      | "chars", [] ->
+          put env "apply 'emo_str_chars'/1 ";
+          args_list env [ self_ ]
       | "read", [] ->
           put env "call 'erlang':'get'(";
           expr env self_;
@@ -1170,9 +1174,8 @@ and builtin env name args =
 
 and binary_lit_newline = "#<10>(8,1,'integer',['unsigned'|['big']])"
 
-(* A Char value is a one-byte binary. *)
-and one_byte_lit (code : int) : string =
-  Printf.sprintf "#{#<%d>(8,1,'integer',['unsigned'|['big']])}#" code
+(* A Char value is its UTF-8 bytes as a binary — one code point. *)
+and char_lit (cp : int) : string = binary_lit (Emo_support.Utf8.encode cp)
 
 (* an expression's code as a string, without disturbing the buffer *)
 and expr_block env (x : Emo_ir.expr) : string =
@@ -2168,7 +2171,7 @@ and emit_pattern env (p : Emo_ast.pattern) : unit =
   | Emo_ast.Pattern_literal (L_byte n) -> put env (string_of_int n)
   | Emo_ast.Pattern_literal (L_bool b) ->
       put env (if b then "'true'" else "'false'")
-  | Emo_ast.Pattern_literal (L_char c) -> put env (one_byte_lit (Char.code c))
+  | Emo_ast.Pattern_literal (L_char c) -> put env (char_lit c)
   | Emo_ast.Pattern_literal (L_string str) -> put env (binary_lit str)
   | Emo_ast.Pattern_literal (L_float f) -> put env (float_lit f)
   | Emo_ast.Enum_member (t, m) ->
@@ -2207,7 +2210,7 @@ and guard_expr env (x : Emo_ir.expr) : unit =
   | Const (L_int n) -> put env (Int64.to_string n)
   | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
-  | Const (L_char c) -> put env (one_byte_lit (Char.code c))
+  | Const (L_char c) -> put env (char_lit c)
   | Const (L_string s) -> put env (binary_lit s)
   | Binary (op, l, r) ->
       let raw =
@@ -3365,6 +3368,42 @@ let rt_source =
 	  <_other> when 'true' ->
 	      apply 'emo_array_lit'/1
 		(call 'binary':'split'(_s, _other, ['global']))
+	end
+
+%% chars: one Char (its UTF-8 binary) per code point, in order. Erlang's
+%%   unicode module validates strictly, so malformed input is the named
+%%   failure — nothing is repaired into U+FFFD.
+'emo_str_chars'/1 =
+    fun (_s) ->
+	case call 'unicode':'characters_to_list'(_s) of
+	  <_cps> when call 'erlang':'is_list'(_cps) ->
+	      apply 'emo_array_lit'/1 (apply 'emo_char_bins'/1 (_cps))
+	  <{'error', _good, _rest}> when 'true' ->
+	      apply 'emo_bad_utf8'/1 (_good)
+	  <{'incomplete', _good, _rest}> when 'true' ->
+	      apply 'emo_bad_utf8'/1 (_good)
+	  <_bad> when 'true' -> apply 'emo_bad_utf8'/1 ([])
+	end
+
+%% The strict-decoding failure, with the byte offset of the first
+%%   malformed sequence — the interpreter's own message.
+'emo_bad_utf8'/1 =
+    fun (_good) ->
+	call 'erlang':'error'
+	  ({'emo_bad_utf8',
+	    call 'erlang':'iolist_to_binary'([
+	      "the String is not valid UTF-8 at byte ",
+	      call 'erlang':'integer_to_binary'(
+		call 'erlang':'byte_size'(
+		  call 'unicode':'characters_to_binary'(_good)))])})
+
+'emo_char_bins'/1 =
+    fun (_cps) ->
+	case _cps of
+	  <[]> when 'true' -> []
+	  <[_cp | _rest]> when 'true' ->
+	      [ call 'unicode':'characters_to_binary'([_cp])
+	      | apply 'emo_char_bins'/1 (_rest) ]
 	end
 
 'emo_str_index_of'/2 =

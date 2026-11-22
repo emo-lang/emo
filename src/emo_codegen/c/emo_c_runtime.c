@@ -465,6 +465,84 @@ emo_value emo_cell_trim(emo_value s) {
   return emo_autorelease(emo_box_str((emo_str){hi - lo, src.bytes + lo}));
 }
 
+/* One scalar at [i] of [len] bytes: the code point and its width, or 0
+   on malformed input. Strict — overlong forms, surrogates, and values
+   past U+10FFFF all refuse. */
+static int64_t emo_utf8_get(const char *p, int64_t len, int64_t i,
+                            int32_t *cp) {
+  if (i >= len) return 0;
+  unsigned char b0 = (unsigned char)p[i];
+  if (b0 < 0x80) {
+    *cp = b0;
+    return 1;
+  }
+  if (b0 >= 0xC2 && b0 <= 0xDF) {
+    if (i + 1 >= len) return 0;
+    unsigned char b1 = (unsigned char)p[i + 1];
+    if ((b1 & 0xC0) != 0x80) return 0;
+    *cp = ((int32_t)(b0 & 0x1F) << 6) | (int32_t)(b1 & 0x3F);
+    return 2;
+  }
+  if (b0 >= 0xE0 && b0 <= 0xEF) {
+    if (i + 2 >= len) return 0;
+    unsigned char b1 = (unsigned char)p[i + 1];
+    unsigned char b2 = (unsigned char)p[i + 2];
+    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return 0;
+    int32_t v = ((int32_t)(b0 & 0x0F) << 12) |
+                ((int32_t)(b1 & 0x3F) << 6) | (int32_t)(b2 & 0x3F);
+    if (v < 0x800 || (v >= 0xD800 && v <= 0xDFFF)) return 0;
+    *cp = v;
+    return 3;
+  }
+  if (b0 >= 0xF0 && b0 <= 0xF4) {
+    if (i + 3 >= len) return 0;
+    unsigned char b1 = (unsigned char)p[i + 1];
+    unsigned char b2 = (unsigned char)p[i + 2];
+    unsigned char b3 = (unsigned char)p[i + 3];
+    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80)
+      return 0;
+    int32_t v = ((int32_t)(b0 & 0x07) << 18) |
+                ((int32_t)(b1 & 0x3F) << 12) |
+                ((int32_t)(b2 & 0x3F) << 6) | (int32_t)(b3 & 0x3F);
+    if (v < 0x10000 || v > 0x10FFFF) return 0;
+    *cp = v;
+    return 4;
+  }
+  return 0;
+}
+
+/* One Char per Unicode scalar value, in order — the String method
+   `chars`. Malformed UTF-8 is the named failure. */
+emo_value emo_cell_chars(emo_value s) {
+  emo_str str = emo_str_of(s);
+  int64_t count = 0, i = 0;
+  int32_t cp = 0;
+  int64_t w;
+  while (i < str.len) {
+    w = emo_utf8_get(str.bytes, str.len, i, &cp);
+    if (w == 0) {
+      char msg[96];
+      snprintf(msg, sizeof msg,
+               "the String is not valid UTF-8 at byte %lld", (long long)i);
+      emo_fatal(msg);
+    }
+    count++;
+    i += w;
+  }
+  emo_value *elems = malloc((size_t)(count > 0 ? count : 1) * sizeof(emo_value));
+  if (elems == NULL) abort();
+  i = 0;
+  int64_t k = 0;
+  while (i < str.len) {
+    w = emo_utf8_get(str.bytes, str.len, i, &cp);
+    elems[k++] = emo_vchar(cp);
+    i += w;
+  }
+  emo_value out = emo_array_new(count, elems);
+  free(elems);
+  return emo_autorelease(out);
+}
+
 emo_value emo_cell_split(emo_value s, emo_value sep) {
   emo_str str = emo_str_of(s);
   emo_str mark = emo_str_of(sep);
@@ -1930,18 +2008,21 @@ void emo_printf(emo_str fmt, emo_value args) {
       }
       case 'c': {
         emo_value v = emo_printf_next(args, &next, nargs);
-        unsigned char byte;
+        char chbuf[4];
+        int chlen;
         if ((v & 7) == 0b011) {
-          byte = (unsigned char)(emo_char_of(v) & 0xFF);
+          /* a Char is one code point: all of its UTF-8 bytes */
+          chlen = emo_utf8_put(chbuf, emo_char_of(v));
         } else if (emo_cell_kind(v) == EMO_INT64) {
-          byte = (unsigned char)(emo_unbox_i64(v) & 0xFF);
+          chbuf[0] = (char)(unsigned char)(emo_unbox_i64(v) & 0xFF);
+          chlen = 1;
         } else {
           emo_printf_wrong(conv, v);
-          byte = 0;
+          chlen = 0;
         }
-        if (width > 1 && !minus) emo_printf_addspaces(&b, width - 1);
-        emo_printf_addc(&b, (char)byte);
-        if (width > 1 && minus) emo_printf_addspaces(&b, width - 1);
+        if (width > chlen && !minus) emo_printf_addspaces(&b, width - chlen);
+        for (int k = 0; k < chlen; k++) emo_printf_addc(&b, chbuf[k]);
+        if (width > chlen && minus) emo_printf_addspaces(&b, width - chlen);
         break;
       }
       case 's': {
@@ -5687,6 +5768,11 @@ static emo_value emo_bm_split(emo_value recv, const emo_value *args) {
   return emo_str_split(emo_str_of(recv), emo_str_of(args[0]));
 }
 
+static emo_value emo_bm_chars(emo_value recv, const emo_value *args) {
+  (void)args;
+  return emo_cell_chars(recv);
+}
+
 static emo_value emo_bm_read_line(emo_value recv, const emo_value *args) {
   (void)args;
   return emo_net_read_line(emo_unbox_i64(recv));
@@ -5957,6 +6043,7 @@ static const emo_builtin_method emo_builtin_methods[] = {
     {"trim", 0, emo_bm_trim},
     {"to_int64", 0, emo_bm_to_int64},
     {"split", 1, emo_bm_split},
+    {"chars", 0, emo_bm_chars},
     {"read_line", 0, emo_bm_read_line},
     {"read_exactly", 1, emo_bm_read_exactly},
     {"read_all", 0, emo_bm_read_all},

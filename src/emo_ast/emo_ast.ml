@@ -7,7 +7,7 @@ and expr_desc =
   | Int64 of int64
   | Byte of int
   | Float of float
-  | Char of char
+  | Char of int (* a Unicode scalar value *)
   | Bool of bool
   | String of string (* plain, interpolation-free *)
   | Interpolated of string_part list
@@ -118,7 +118,7 @@ and literal =
   | L_int of int64
   | L_byte of int
   | L_float of float
-  | L_char of char
+  | L_char of int (* a Unicode scalar value — Go's rune, not a byte *)
   | L_string of string
   | L_bool of bool
 

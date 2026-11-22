@@ -78,7 +78,7 @@ let int_of_unix_fd (fd : Unix.file_descr) : int = (Obj.magic fd : int)
     | Float of float
     | Bool of bool
     | Void
-    | Char of char
+    | Char of int (* a Unicode scalar value — one code point *)
     | String of string
     | Bytes of Bytes.t
     | Tuple of value list
@@ -509,6 +509,78 @@ let int_of_unix_fd (fd : Unix.file_descr) : int = (Obj.magic fd : int)
 
   (* ---- Values ---- *)
 
+  (* A Char is one Unicode scalar value. Strict decoding: malformed
+     UTF-8 is the named failure, never repaired into U+FFFD. *)
+  let utf8_is_scalar cp =
+    cp >= 0 && cp <= 0x10FFFF && not (cp >= 0xD800 && cp <= 0xDFFF)
+
+  let utf8_decode_at (s : string) (i : int) : (int * int) option =
+    let n = String.length s in
+    if i < 0 || i >= n then None
+    else
+      let b0 = Char.code s.[i] in
+      let cont k = i + k < n && Char.code s.[i + k] land 0xC0 = 0x80 in
+      if b0 < 0x80 then Some (b0, 1)
+      else if b0 >= 0xC2 && b0 <= 0xDF then
+        if not (cont 1) then None
+        else
+          Some
+            (((b0 land 0x1F) lsl 6) lor (Char.code s.[i + 1] land 0x3F), 2)
+      else if b0 >= 0xE0 && b0 <= 0xEF then
+        if not (cont 1 && cont 2) then None
+        else
+          let cp =
+            ((b0 land 0x0F) lsl 12)
+            lor ((Char.code s.[i + 1] land 0x3F) lsl 6)
+            lor (Char.code s.[i + 2] land 0x3F)
+          in
+          if cp < 0x800 || not (utf8_is_scalar cp) then None else Some (cp, 3)
+      else if b0 >= 0xF0 && b0 <= 0xF4 then
+        if not (cont 1 && cont 2 && cont 3) then None
+        else
+          let cp =
+            ((b0 land 0x07) lsl 18)
+            lor ((Char.code s.[i + 1] land 0x3F) lsl 12)
+            lor ((Char.code s.[i + 2] land 0x3F) lsl 6)
+            lor (Char.code s.[i + 3] land 0x3F)
+          in
+          if cp < 0x10000 || cp > 0x10FFFF then None else Some (cp, 4)
+      else None
+
+  let utf8_encode (cp : int) : string =
+    let b = Buffer.create 4 in
+    if cp < 0x80 then Buffer.add_char b (Char.chr cp)
+    else if cp < 0x800 then begin
+      Buffer.add_char b (Char.chr (0xC0 lor (cp lsr 6)));
+      Buffer.add_char b (Char.chr (0x80 lor (cp land 0x3F)))
+    end
+    else if cp < 0x10000 then begin
+      Buffer.add_char b (Char.chr (0xE0 lor (cp lsr 12)));
+      Buffer.add_char b (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
+      Buffer.add_char b (Char.chr (0x80 lor (cp land 0x3F)))
+    end
+    else begin
+      Buffer.add_char b (Char.chr (0xF0 lor (cp lsr 18)));
+      Buffer.add_char b (Char.chr (0x80 lor ((cp lsr 12) land 0x3F)));
+      Buffer.add_char b (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
+      Buffer.add_char b (Char.chr (0x80 lor (cp land 0x3F)))
+    end;
+    Buffer.contents b
+
+  let string_chars (s : string) : value =
+    let out = ref [] in
+    let i = ref 0 in
+    while !i < String.length s do
+      match utf8_decode_at s !i with
+      | Some (cp, width) ->
+          out := Char cp :: !out;
+          i := !i + width
+      | None ->
+          failwith
+            (Printf.sprintf "the String is not valid UTF-8 at byte %d" !i)
+    done;
+    Array (Array.of_list (List.rev !out))
+
   let type_name = function
     | Int64 _ -> "Int64"
     | Byte _ -> "Byte"
@@ -575,7 +647,7 @@ let int_of_unix_fd (fd : Unix.file_descr) : int = (Obj.magic fd : int)
     | Float x, Float y -> x = y
     | Bool x, Bool y -> Bool.equal x y
     | Void, Void -> true
-    | Char x, Char y -> Char.equal x y
+    | Char x, Char y -> Int.equal x y
     | String x, String y -> String.equal x y
     | Bytes x, Bytes y -> Bytes.equal x y
     | Tuple xs, Tuple ys ->
@@ -667,7 +739,7 @@ let int_of_unix_fd (fd : Unix.file_descr) : int = (Obj.magic fd : int)
         else Printf.sprintf "%g" f
     | Bool b -> string_of_bool b
     | Void -> "void"
-    | Char c -> String.make 1 c
+    | Char c -> utf8_encode c
     | String s -> s
     | Tuple vs -> "(" ^ String.concat ", " (List.map to_string vs) ^ ")"
     | Array vs ->
@@ -1089,9 +1161,9 @@ let int_of_unix_fd (fd : Unix.file_descr) : int = (Obj.magic fd : int)
     match (conv, v) with
     | ('*' | 'd' | 'i' | 'u' | 'o' | 'x' | 'X'), Int64 n -> `I64 n
     | ('*' | 'd' | 'i' | 'u' | 'o' | 'x' | 'X'), Byte n -> `I n
-    | 'c', Char c -> `C c
-    | 'c', Byte n -> `C (Char.chr (n land 255))
-    | 'c', Int64 n -> `C (Char.chr (Int64.to_int n land 255))
+    | 'c', Char c -> `C (utf8_encode c)
+    | 'c', Byte n -> `C (String.make 1 (Char.chr (n land 255)))
+    | 'c', Int64 n -> `C (String.make 1 (Char.chr (Int64.to_int n land 255)))
     | 's', String str -> `S str
     | ('f' | 'F' | 'e' | 'E' | 'g' | 'G'), Float f -> `F f
     | _, v ->
@@ -1320,7 +1392,7 @@ let pf_hash_float conv minus plus space width prec f =
                   | c -> String.make 1 c
                 in
                 pad (via_snprintf "%d" flags width prec letter n) width !minus
-            | `C c -> pad (String.make 1 c) width !minus
+            | `C c -> pad c width !minus
             | `S str ->
                 let body =
                   match prec with
@@ -2213,8 +2285,7 @@ module Emo_runtime = struct
         else 0
     | Emo_eval.String x, Emo_eval.String y -> String.compare x y
     | Emo_eval.Byte x, Emo_eval.Byte y -> Int.compare x y
-    | Emo_eval.Char x, Emo_eval.Char y ->
-        Int.compare (Char.code x) (Char.code y)
+    | Emo_eval.Char x, Emo_eval.Char y -> Int.compare x y
     | Emo_eval.Bool x, Emo_eval.Bool y ->
         Int.compare (if x then 1 else 0) (if y then 1 else 0)
     | _ -> 0
@@ -2751,6 +2822,9 @@ module Emo_runtime = struct
     | Emo_eval.String s, "length" ->
         none_expected ();
         Emo_eval.Int64 (Int64.of_int (String.length s))
+    | Emo_eval.String s, "chars" ->
+        none_expected ();
+        Emo_eval.string_chars s
     | Emo_eval.String s, "substring" -> (
         match args with
         | [ Emo_eval.Int64 start; Emo_eval.Int64 len ]

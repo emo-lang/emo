@@ -559,6 +559,9 @@ let method_call self name args =
   | Emo_eval.String s, "length" ->
       none_expected ();
       Emo_eval.Int64 (Int64.of_int (String.length s))
+  | Emo_eval.String s, "chars" ->
+      none_expected ();
+      Emo_eval.string_chars Emo_support.Span.zero s
   | Emo_eval.String s, "substring" -> (
       match args with
       | [ Emo_eval.Int64 start; Emo_eval.Int64 len ]

@@ -29,6 +29,67 @@ module Span = struct
     else { a with stop = max a.stop b.stop }
 end
 
+(* Unicode scalar values: a Char is one code point (Go's rune), not a
+   byte. Decoding is strict — overlong forms, surrogates, and values past
+   U+10FFFF are malformed, never repaired. *)
+module Utf8 = struct
+  let is_scalar cp =
+    cp >= 0 && cp <= 0x10FFFF && not (cp >= 0xD800 && cp <= 0xDFFF)
+
+  (* One scalar at byte [i]: (code point, width). None is malformed or a
+     truncated tail. *)
+  let decode_at (s : string) (i : int) : (int * int) option =
+    let n = String.length s in
+    if i < 0 || i >= n then None
+    else
+      let b0 = Char.code s.[i] in
+      let cont k = i + k < n && Char.code s.[i + k] land 0xC0 = 0x80 in
+      if b0 < 0x80 then Some (b0, 1)
+      else if b0 >= 0xC2 && b0 <= 0xDF then
+        if not (cont 1) then None
+        else Some (((b0 land 0x1F) lsl 6) lor (Char.code s.[i + 1] land 0x3F), 2)
+      else if b0 >= 0xE0 && b0 <= 0xEF then
+        if not (cont 1 && cont 2) then None
+        else
+          let cp =
+            ((b0 land 0x0F) lsl 12)
+            lor ((Char.code s.[i + 1] land 0x3F) lsl 6)
+            lor (Char.code s.[i + 2] land 0x3F)
+          in
+          if cp < 0x800 || not (is_scalar cp) then None else Some (cp, 3)
+      else if b0 >= 0xF0 && b0 <= 0xF4 then
+        if not (cont 1 && cont 2 && cont 3) then None
+        else
+          let cp =
+            ((b0 land 0x07) lsl 18)
+            lor ((Char.code s.[i + 1] land 0x3F) lsl 12)
+            lor ((Char.code s.[i + 2] land 0x3F) lsl 6)
+            lor (Char.code s.[i + 3] land 0x3F)
+          in
+          if cp < 0x10000 || cp > 0x10FFFF then None else Some (cp, 4)
+      else None
+
+  let encode (cp : int) : string =
+    let b = Buffer.create 4 in
+    if cp < 0x80 then Buffer.add_char b (Char.chr cp)
+    else if cp < 0x800 then begin
+      Buffer.add_char b (Char.chr (0xC0 lor (cp lsr 6)));
+      Buffer.add_char b (Char.chr (0x80 lor (cp land 0x3F)))
+    end
+    else if cp < 0x10000 then begin
+      Buffer.add_char b (Char.chr (0xE0 lor (cp lsr 12)));
+      Buffer.add_char b (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
+      Buffer.add_char b (Char.chr (0x80 lor (cp land 0x3F)))
+    end
+    else begin
+      Buffer.add_char b (Char.chr (0xF0 lor (cp lsr 18)));
+      Buffer.add_char b (Char.chr (0x80 lor ((cp lsr 12) land 0x3F)));
+      Buffer.add_char b (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
+      Buffer.add_char b (Char.chr (0x80 lor (cp land 0x3F)))
+    end;
+    Buffer.contents b
+end
+
 module Diagnostic = struct
   type t = {
     severity : Severity.t;

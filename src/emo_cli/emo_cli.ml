@@ -3449,7 +3449,7 @@ let rec dump_expr (e : Emo_ast.expr) : string =
   | Emo_ast.Float f ->
       if Float.is_integer f && Float.abs f < 1e16 then Printf.sprintf "%.1f" f
       else string_of_float f
-  | Emo_ast.Char c -> Printf.sprintf "%C" c
+  | Emo_ast.Char c -> Printf.sprintf "'%s'" (Emo_support.Utf8.encode c)
   | Emo_ast.Bool b -> if b then "true" else "false"
   | Emo_ast.String s -> Printf.sprintf "%S" s
   | Emo_ast.Interpolated parts ->

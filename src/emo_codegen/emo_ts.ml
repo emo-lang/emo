@@ -156,7 +156,7 @@ let rec pattern_test s (p : Emo_ast.pattern) : string =
   | Ast.Pattern_literal (L_string str) -> Printf.sprintf "(%s === %S)" s str
   | Ast.Pattern_literal (L_bool b) -> Printf.sprintf "(%s === %b)" s b
   | Ast.Pattern_literal (L_char c) ->
-      Printf.sprintf "(%s instanceof EChar && %s.c === %C)" s s c
+      Printf.sprintf "(%s instanceof EChar && %s.c === %d)" s s c
   | Ast.Enum_member (t, m) ->
       Printf.sprintf
         "(%s instanceof EEnum && %s.type === %S && %s.member === %S)" s s t s m
@@ -264,7 +264,7 @@ let rec expr env (e : Emo_ir.expr) : string =
       Printf.sprintf "E.float(%s)" (shortest 1)
   | Const (L_string s) -> js_string s
   | Const (L_bool b) -> if b then "true" else "false"
-  | Const (L_char c) -> Printf.sprintf "E.char(%C)" c
+  | Const (L_char c) -> Printf.sprintf "E.char(%d)" c
   | Type_ref name -> Printf.sprintf "%S" name
   | Var name ->
       if List.mem name env.refs then Printf.sprintf "%s.v" (ts_local name)

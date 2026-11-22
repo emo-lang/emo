@@ -3583,6 +3583,7 @@ and check_method_call ctx env span recv mname args : t =
                  (List.length arg_values));
             UdpSocket)
     | String, "length" -> builtin0 Int64
+    | String, "chars" -> builtin0 (ArrayType Char)
     | String, "substring" -> (
         match arg_values with
         | [ (None, Int64); (None, Int64) ] -> String

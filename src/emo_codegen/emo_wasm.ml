@@ -526,6 +526,7 @@ let rt name =
   | "emo_cmp" -> if !wasi_mode then b + 121 else b + 105
   | "array_sort" -> if !wasi_mode then b + 122 else b + 106
   | "str_upper" -> if !wasi_mode then b + 123 else b + 107
+  | "str_chars" -> if !wasi_mode then b + 124 else b + 108
   | _ -> failwith ("wasm: bad runtime function: " ^ name)
 
 (* imports, then the runtime funcs above (the numeric core, the
@@ -543,7 +544,7 @@ let rt name =
    sort, the open-at and one-string-at wrappers, the environment scan,
    the argv array, the entropy fill, the directory-entry scan — and the
    Array sort's compare and merge pair after those in both modes. *)
-let runtime_count () = !import_base + if !wasi_mode then 124 else 108
+let runtime_count () = !import_base + if !wasi_mode then 125 else 109
 
 (* ---- Lowering state ---- *)
 
@@ -625,6 +626,7 @@ let unguarded_builtin_arms =
     ("lower", 0);
     ("upper", 0);
     ("split", 1);
+    ("chars", 0);
     ("append", 1);
     ("read", 0);
     ("replace", 1);
@@ -963,7 +965,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.I32_const (if b then 1 else 0));
       e env (W.Struct_new t_vbool)
   | Const (L_char c) ->
-      e env (W.I32_const (Char.code c));
+      e env (W.I32_const c);
       e env (W.Struct_new t_vchar)
   | Const (L_string s) -> string_const env s
   | Type_ref name -> string_const env name
@@ -2759,6 +2761,9 @@ and builtin_method_call env self_ name args =
       expr env self_;
       expr env sep;
       e env (W.Call (rt "str_split"))
+  | "chars", [] ->
+      expr env self_;
+      e env (W.Call (rt "str_chars"))
   | "append", [ v ] ->
       expr env self_;
       expr env v;
@@ -3657,7 +3662,7 @@ and pattern_test env (s : W.instr list) (p : Emo_ast.pattern) : W.instr list =
             @ [
                 W.Ref_cast t_vchar;
                 W.Struct_get (t_vchar, 0);
-                W.I32_const (Char.code c);
+                W.I32_const c;
                 W.I32_eq;
               ],
             [ W.I32_const 0 ] );
@@ -4179,12 +4184,86 @@ let rt_bool_str () : W.func_type =
   }
 
 (* char_str(c i32) -> (ref null $bytes): one byte. *)
+(* char_str(v) -> bytes: one code point's UTF-8 bytes, 1..4 long. *)
 let rt_char_str () : W.func_type =
+  let out = 2 in
+  let byte idx value =
+    [ W.Local_get out; W.I32_const idx ] @ value @ [ W.Array_set t_bytes ]
+  in
+  let high shift mask base =
+    [ W.Local_get 0; W.I32_const shift; W.I32_shr_u ]
+    @ (if mask >= 0 then [ W.I32_const mask; W.I32_and ] else [])
+    @ [ W.I32_const base; W.I32_or ]
+  in
+  let low base =
+    [ W.Local_get 0; W.I32_const 0x3F; W.I32_and; W.I32_const base; W.I32_or ]
+  in
+  let n_code =
+    [
+      W.If_else
+        ( W.Result W.I32,
+          [ W.Local_get 0; W.I32_const 0x80; W.I32_lt_s ],
+          [ W.I32_const 1 ],
+          [
+            W.If_else
+              ( W.Result W.I32,
+                [ W.Local_get 0; W.I32_const 0x800; W.I32_lt_s ],
+                [ W.I32_const 2 ],
+                [
+                  W.If_else
+                    ( W.Result W.I32,
+                      [ W.Local_get 0; W.I32_const 0x10000; W.I32_lt_s ],
+                      [ W.I32_const 3 ],
+                      [ W.I32_const 4 ] );
+                ] );
+          ] );
+    ]
+  in
+  let write =
+    [
+      W.Local_get 0;
+      W.I32_const 0x80;
+      W.I32_lt_s;
+      W.If
+        ( W.Void,
+          byte 0 [ W.Local_get 0 ],
+          [
+            W.Local_get 0;
+            W.I32_const 0x800;
+            W.I32_lt_s;
+            W.If
+              ( W.Void,
+                byte 0 (high 6 (-1) 0xC0) @ byte 1 (low 0x80),
+                [
+                  W.Local_get 0;
+                  W.I32_const 0x10000;
+                  W.I32_lt_s;
+                  W.If
+                    ( W.Void,
+                      byte 0 (high 12 (-1) 0xE0)
+                      @ byte 1 (high 6 0x3F 0x80)
+                      @ byte 2 (low 0x80),
+                      byte 0 (high 18 (-1) 0xF0)
+                      @ byte 1 (high 12 0x3F 0x80)
+                      @ byte 2 (high 6 0x3F 0x80)
+                      @ byte 3 (low 0x80) );
+                ] );
+          ] );
+    ]
+  in
   {
     W.ftype_idx = t_char_str;
     fparams = [ "v" ];
-    flocals = [];
-    fbody = [ W.Local_get 0; W.Array_new_fixed (t_bytes, 1) ];
+    flocals = [ (1, W.I32); (1, W.RefNull t_bytes) ];
+    fbody =
+      n_code
+      @ [
+          W.Local_set 1;
+          W.Local_get 1;
+          W.Array_new_default t_bytes;
+          W.Local_set out;
+        ]
+      @ write @ [ W.Local_get out ];
   }
 
 (* ---- The --wasi stream cycles ----
@@ -7054,6 +7133,290 @@ let rt_str_substring () : W.func_type =
             @ [ W.Local_get 7; W.Struct_new t_vstring; W.Return ] );
         W.Unreachable;
       ];
+  }
+
+(* str_chars(s) -> an Array of Char cells, one per UTF-8 scalar value,
+   in order. Strict: malformed input aborts with the named message.
+   Two passes — count, then fill. Locals: 1 bytes, 2 len, 3 i, 4 count,
+   5 cp, 6 width, 7 out, 8-11 the byte scratch, 12 the output index. *)
+let rt_str_chars () : W.func_type =
+  let l_bytes = 1 and l_len = 2 and l_i = 3 and l_count = 4 in
+  let l_cp = 5 and l_w = 6 and l_out = 7 in
+  let l_b0 = 8 and l_b1 = 9 and l_b2 = 10 and l_b3 = 11 and l_o = 12 in
+  let fail =
+    List.map
+      (fun c -> W.I32_const c)
+      [
+        116;
+        104;
+        101;
+        32;
+        83;
+        116;
+        114;
+        105;
+        110;
+        103;
+        32;
+        105;
+        115;
+        32;
+        110;
+        111;
+        116;
+        32;
+        118;
+        97;
+        108;
+        105;
+        100;
+        32;
+        85;
+        84;
+        70;
+        45;
+        56;
+        32;
+        97;
+        116;
+        32;
+        98;
+        121;
+        116;
+        101;
+        32;
+      ]
+    @ [
+        W.Array_new_fixed (t_bytes, 38);
+        W.Local_get l_i;
+        W.I64_extend_i32_u;
+        W.Call (rt "int_str");
+        W.Call (rt "strcat");
+        W.Struct_new t_vstring;
+        W.Call (rt "throw");
+        W.Unreachable;
+      ]
+  in
+  let load idx_local k target =
+    [
+      W.Local_get l_bytes;
+      W.Local_get idx_local;
+      W.I32_const k;
+      W.I32_add;
+      W.Array_get_u t_bytes;
+      W.Local_set target;
+    ]
+  in
+  let need idx_local k =
+    [
+      W.Local_get idx_local;
+      W.I32_const k;
+      W.I32_add;
+      W.Local_get l_len;
+      W.I32_ge;
+      W.If (W.Void, fail, []);
+    ]
+  in
+  let cont b =
+    [
+      W.Local_get b;
+      W.I32_const 0xC0;
+      W.I32_and;
+      W.I32_const 0x80;
+      W.I32_ne;
+      W.If (W.Void, fail, []);
+    ]
+  in
+  let field local shift mask =
+    [ W.Local_get local ]
+    @ (if mask >= 0 then [ W.I32_const mask; W.I32_and ] else [])
+    @ if shift > 0 then [ W.I32_const shift; W.I32_shl ] else []
+  in
+  let decode idx_local =
+    let one =
+      [ W.Local_get l_b0; W.Local_set l_cp; W.I32_const 1; W.Local_set l_w ]
+    in
+    let two =
+      need idx_local 1 @ load idx_local 1 l_b1 @ cont l_b1
+      @ (field l_b0 6 0x1F @ field l_b1 0 0x3F @ [ W.I32_or; W.Local_set l_cp ])
+      @ [ W.I32_const 2; W.Local_set l_w ]
+    in
+    let three =
+      need idx_local 2 @ load idx_local 1 l_b1 @ cont l_b1
+      @ load idx_local 2 l_b2 @ cont l_b2
+      @ (field l_b0 12 0x0F @ field l_b1 6 0x3F @ field l_b2 0 0x3F
+        @ [ W.I32_or; W.I32_or; W.Local_set l_cp ])
+      @ [
+          W.Local_get l_cp;
+          W.I32_const 0x800;
+          W.I32_lt_s;
+          W.If (W.Void, fail, []);
+        ]
+      @ [
+          W.Local_get l_cp;
+          W.I32_const 0xD800;
+          W.I32_ge;
+          W.Local_get l_cp;
+          W.I32_const 0xE000;
+          W.I32_lt_s;
+          W.I32_and;
+          W.If (W.Void, fail, []);
+        ]
+      @ [ W.I32_const 3; W.Local_set l_w ]
+    in
+    let four =
+      need idx_local 3 @ load idx_local 1 l_b1 @ cont l_b1
+      @ load idx_local 2 l_b2 @ cont l_b2 @ load idx_local 3 l_b3 @ cont l_b3
+      @ (field l_b0 18 0x07 @ field l_b1 12 0x3F @ field l_b2 6 0x3F
+       @ field l_b3 0 0x3F
+        @ [ W.I32_or; W.I32_or; W.I32_or; W.Local_set l_cp ])
+      @ [
+          W.Local_get l_cp;
+          W.I32_const 0x10000;
+          W.I32_lt_s;
+          W.If (W.Void, fail, []);
+        ]
+      @ [
+          W.Local_get l_cp;
+          W.I32_const 0x10FFFF;
+          W.I32_gt;
+          W.If (W.Void, fail, []);
+        ]
+      @ [ W.I32_const 4; W.Local_set l_w ]
+    in
+    [
+      W.Local_get l_bytes;
+      W.Local_get idx_local;
+      W.Array_get_u t_bytes;
+      W.Local_set l_b0;
+    ]
+    @ [
+        W.Local_get l_b0;
+        W.I32_const 0x80;
+        W.I32_lt_s;
+        W.If
+          ( W.Void,
+            one,
+            [
+              W.Local_get l_b0;
+              W.I32_const 0xC2;
+              W.I32_lt_s;
+              W.If
+                ( W.Void,
+                  fail,
+                  [
+                    W.Local_get l_b0;
+                    W.I32_const 0xE0;
+                    W.I32_lt_s;
+                    W.If
+                      ( W.Void,
+                        two,
+                        [
+                          W.Local_get l_b0;
+                          W.I32_const 0xF0;
+                          W.I32_lt_s;
+                          W.If
+                            ( W.Void,
+                              three,
+                              [
+                                W.Local_get l_b0;
+                                W.I32_const 0xF5;
+                                W.I32_lt_s;
+                                W.If (W.Void, four, fail);
+                              ] );
+                        ] );
+                  ] );
+            ] );
+      ]
+  in
+  let pass1 =
+    [
+      W.Block
+        ( W.Void,
+          [
+            W.Loop
+              ( W.Void,
+                [ W.Local_get l_i; W.Local_get l_len; W.I32_ge; W.Br_if 1 ]
+                @ decode l_i
+                @ [
+                    W.Local_get l_count;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set l_count;
+                    W.Local_get l_i;
+                    W.Local_get l_w;
+                    W.I32_add;
+                    W.Local_set l_i;
+                    W.Br 0;
+                  ] );
+          ] );
+    ]
+  in
+  let pass2 =
+    [
+      W.Block
+        ( W.Void,
+          [
+            W.Loop
+              ( W.Void,
+                [ W.Local_get l_i; W.Local_get l_len; W.I32_ge; W.Br_if 1 ]
+                @ decode l_i
+                @ [
+                    W.Local_get l_out;
+                    W.Local_get l_o;
+                    W.Local_get l_cp;
+                    W.Struct_new t_vchar;
+                    W.Array_set t_anyarray;
+                    W.Local_get l_o;
+                    W.I32_const 1;
+                    W.I32_add;
+                    W.Local_set l_o;
+                    W.Local_get l_i;
+                    W.Local_get l_w;
+                    W.I32_add;
+                    W.Local_set l_i;
+                    W.Br 0;
+                  ] );
+          ] );
+    ]
+  in
+  {
+    W.ftype_idx = t_sig1;
+    fparams = [ "s" ];
+    flocals =
+      [
+        (1, W.RefNull t_bytes);
+        (5, W.I32);
+        (* len, i, count, cp, w *)
+        (1, W.RefNull t_anyarray);
+        (4, W.I32);
+        (* the byte scratch *)
+        (1, W.I32);
+        (* the output index *)
+      ];
+    fbody =
+      bytes_of 0
+      @ [
+          W.Local_set l_bytes;
+          W.Local_get l_bytes;
+          W.Array_len t_bytes;
+          W.Local_set l_len;
+          W.I32_const 0;
+          W.Local_set l_i;
+          W.I32_const 0;
+          W.Local_set l_count;
+        ]
+      @ pass1
+      @ [
+          W.Local_get l_count;
+          W.Array_new_default t_anyarray;
+          W.Local_set l_out;
+          W.I32_const 0;
+          W.Local_set l_i;
+          W.I32_const 0;
+          W.Local_set l_o;
+        ]
+      @ pass2 @ [ W.Local_get l_out ];
   }
 
 (* slice(src, start, len) -> bytes: the internal helper str_split's
@@ -12163,6 +12526,7 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
         rt_emo_cmp ~t_sig:t_cmp ();
         rt_array_sort ~t_sig:t_sort ();
         rt_str_upper ();
+        rt_str_chars ();
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

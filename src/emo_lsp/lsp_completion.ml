@@ -239,6 +239,7 @@ let builtin_type_members : (string * (string * string) list) list =
     ( "String",
       [
         m "length" "def length() Int64";
+        m "chars" "def chars() Array[Char]";
         m "substring" "def substring(start Int64, length Int64) String";
         m "split" "def split(sep String) Array[String]";
         m "trim" "def trim() String";

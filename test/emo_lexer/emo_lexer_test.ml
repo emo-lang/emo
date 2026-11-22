@@ -9,7 +9,7 @@ let pp_kind fmt (k : Token.kind) =
     | Token.Int64 n -> Printf.sprintf "Int64 %Ld" n
     | Token.Byte n -> Printf.sprintf "Byte %d" n
     | Token.Float f -> Printf.sprintf "Float %g" f
-    | Token.Char c -> Printf.sprintf "Char %C" c
+    | Token.Char c -> Printf.sprintf "Char %d" c
     | Token.String_chunk s -> Printf.sprintf "String_chunk %S" s
     | Token.String_end -> "String_end"
     | Token.Interp_open -> "Interp_open"
@@ -393,8 +393,18 @@ let literal_tests =
     tc "character literals carry their value" (fun () ->
         Alcotest.(check (list kind))
           "kinds"
-          [ Char 'a'; Char '\n'; Char '\''; Eof ]
+          [ Char 97; Char 10; Char 39; Eof ]
           (kinds (lex_all "'a' '\\n' '\\''")));
+    tc "character literals take one Unicode scalar value" (fun () ->
+        Alcotest.(check (list kind))
+          "kinds"
+          [ Char 0x4E16; Char 0x1F600; Eof ]
+          (kinds (lex_all "'世' '😀'")));
+    tc "character literals reject malformed UTF-8" (fun () ->
+        let diagnostic = lex_err "'\x80'" in
+        Alcotest.(check string)
+          "code" "E1005"
+          (match diagnostic.Diagnostic.code with Some c -> c | None -> ""));
     tc "character literals must hold exactly one character" (fun () ->
         let diagnostic = lex_err "'ab'" in
         Alcotest.(check string)

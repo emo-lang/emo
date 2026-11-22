@@ -330,7 +330,8 @@ let mapped_seat env (e : Emo_ir.expr) : string option =
       | _ -> None)
   | _ -> None
 
-let char_imm (c : char) : int = (Char.code c lsl 4) lor 0b0011
+(* A Char is a code point: the 21 bits ride above the kind bits. *)
+let char_imm (cp : int) : int = (cp lsl 4) lor 0b0011
 
 (* Bytes: kind 3 in bits 3:1, the eight bits in bits 11:4 — the lane
    `peek8` reads and `poke8` writes (docs/raw-memory.md). *)
@@ -6184,6 +6185,86 @@ emo_alloc_string:
     addi sp, sp, 16
     ret
 
+# emo_char_to_string: a0 = a code point; a0 = a one-code-point String.
+# The UTF-8 encoding, 1 to 4 bytes, at the block's byte area.
+    .globl emo_char_to_string
+emo_char_to_string:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    mv s0, a0
+    li t0, 0x80
+    blt s0, t0, .Lcts_one
+    li t0, 0x800
+    blt s0, t0, .Lcts_two
+    li t0, 0x10000
+    blt s0, t0, .Lcts_three
+    li a0, 4
+    call emo_alloc_string
+    mv s1, a0
+    andi t0, a0, -32
+    addi t0, t0, 16
+    srli t1, s0, 18
+    ori t1, t1, 0xF0
+    sb t1, 0(t0)
+    srli t1, s0, 12
+    andi t1, t1, 0x3F
+    ori t1, t1, 0x80
+    sb t1, 1(t0)
+    srli t1, s0, 6
+    andi t1, t1, 0x3F
+    ori t1, t1, 0x80
+    sb t1, 2(t0)
+    andi t1, s0, 0x3F
+    ori t1, t1, 0x80
+    sb t1, 3(t0)
+    mv a0, s1
+    j .Lcts_done
+.Lcts_three:
+    li a0, 3
+    call emo_alloc_string
+    mv s1, a0
+    andi t0, a0, -32
+    addi t0, t0, 16
+    srli t1, s0, 12
+    ori t1, t1, 0xE0
+    sb t1, 0(t0)
+    srli t1, s0, 6
+    andi t1, t1, 0x3F
+    ori t1, t1, 0x80
+    sb t1, 1(t0)
+    andi t1, s0, 0x3F
+    ori t1, t1, 0x80
+    sb t1, 2(t0)
+    mv a0, s1
+    j .Lcts_done
+.Lcts_two:
+    li a0, 2
+    call emo_alloc_string
+    mv s1, a0
+    andi t0, a0, -32
+    addi t0, t0, 16
+    srli t1, s0, 6
+    ori t1, t1, 0xC0
+    sb t1, 0(t0)
+    andi t1, s0, 0x3F
+    ori t1, t1, 0x80
+    sb t1, 1(t0)
+    mv a0, s1
+    j .Lcts_done
+.Lcts_one:
+    li a0, 1
+    call emo_alloc_string
+    andi t0, a0, -32
+    sb s0, 16(t0)
+.Lcts_done:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    addi sp, sp, 32
+    ret
+
 # emo_blit: a0 = raw destination cursor, a1 = String; a0 = past the copy.
     .globl emo_blit
 emo_blit:
@@ -8272,14 +8353,8 @@ emo_to_string:
     call emo_string_lit
     j .Lts_done
 .Lts_char:
-    srli t0, a0, 4
-    andi t0, t0, 255
-    sd t0, 8(sp)
-    li a0, 1
-    call emo_alloc_string
-    ld t0, 8(sp)
-    andi t1, a0, -32
-    sb t0, 16(t1)
+    srli a0, a0, 4
+    call emo_char_to_string
     j .Lts_done
 .Lts_done:
     ld ra, 0(sp)

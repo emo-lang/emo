@@ -862,7 +862,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
       else Printf.sprintf "INT64_C(%Ld)" n
   | Const (Ast.L_bool b) -> if b then "true" else "false"
   | Const (Ast.L_float f) -> c_float f
-  | Const (Ast.L_char c) -> Printf.sprintf "INT32_C(%d)" (Char.code c)
+  | Const (Ast.L_char c) -> Printf.sprintf "INT32_C(%d)" c
   | Const (Ast.L_byte n) -> Printf.sprintf "UINT8_C(%d)" n
   (* a String literal is a cell whose claim pools with the statement;
      the bytes copy out of the static compound literal *)
@@ -1563,6 +1563,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
                 (Printf.sprintf "emo_str_length(emo_str_of(%s))" recv)
           | "split", [ sep ] ->
               Printf.sprintf "emo_cell_split(%s, %s)" recv (as_dyn env sep)
+          | "chars", [] -> Printf.sprintf "emo_cell_chars(%s)" recv
           | _ -> refuse (Printf.sprintf "the String method `%s`" name))
       | _, _
         when match self_.Emo_ir.ety with

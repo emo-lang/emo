@@ -73,7 +73,7 @@ let equality_tests =
           (Emo_eval.equal_value (Emo_eval.Int64 1L) (Emo_eval.Float 1.0));
         Alcotest.(check bool)
           "string vs char" false
-          (Emo_eval.equal_value (Emo_eval.String "a") (Emo_eval.Char 'a')));
+          (Emo_eval.equal_value (Emo_eval.String "a") (Emo_eval.Char 97)));
     tc "enum members match by type and member name" (fun () ->
         Alcotest.check value "same"
           (Emo_eval.EnumMember ("Color", "red"))
@@ -217,6 +217,25 @@ let expression_tests =
         check_value "prefix first" (Emo_eval.Bool true) "\"ab\" > \"a\"";
         let diagnostic = eval_err "\"a\" < 1" in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic));
+    tc "characters are Unicode code points" (fun () ->
+        check_value "ascii" (Emo_eval.Char 97) "'a'";
+        check_value "cjk" (Emo_eval.Char 0x4E16) "'世'";
+        check_value "supplementary" (Emo_eval.Char 0x1F600) "'😀'";
+        check_value "length stays bytes" (Emo_eval.Int64 9L) "\"a世😀b\".length()";
+        check_value "chars counts code points" (Emo_eval.Int64 4L)
+          "\"a世😀b\".chars().length()";
+        check_value "chars element" (Emo_eval.Char 0x1F600)
+          "\"a世😀b\".chars()[2]";
+        Alcotest.(check string)
+          "renders utf-8" "世"
+          (Emo_eval.to_string (Emo_eval.Char 0x4E16));
+        let diagnostic =
+          eval_err "Bytes.new(1).set(0, 255).to_string().chars()"
+        in
+        Alcotest.(check string) "code" "E3007" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "the String is not valid UTF-8 at byte 0"
+          diagnostic.Diagnostic.message);
     tc "logic accepts Bools only" (fun () ->
         check_value "and" (Emo_eval.Bool false) "true && false";
         check_value "or" (Emo_eval.Bool true) "false || true";
@@ -277,7 +296,7 @@ let io_tests =
         check_str "whole float" "1.0" (Emo_eval.Float 1.0);
         check_str "fractional float" "2.5" (Emo_eval.Float 2.5);
         check_str "bool" "true" (Emo_eval.Bool true);
-        check_str "char" "a" (Emo_eval.Char 'a');
+        check_str "char" "a" (Emo_eval.Char 97);
         check_str "string" "hi" (Emo_eval.String "hi");
         check_str "tuple" "(1, a)"
           (Emo_eval.Tuple [ Emo_eval.Int64 1L; Emo_eval.String "a" ]);

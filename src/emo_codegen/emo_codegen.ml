@@ -359,7 +359,7 @@ and emit_pattern (p : Emo_ast.pattern) : string =
   | Ast.Pattern_literal (L_float f) -> Printf.sprintf "Emo_eval.Float %g" f
   | Ast.Pattern_literal (L_string s) -> Printf.sprintf "Emo_eval.String %S" s
   | Ast.Pattern_literal (L_bool b) -> Printf.sprintf "Emo_eval.Bool %b" b
-  | Ast.Pattern_literal (L_char c) -> Printf.sprintf "Emo_eval.Char %C" c
+  | Ast.Pattern_literal (L_char c) -> Printf.sprintf "Emo_eval.Char %d" c
   | Ast.Enum_member (t, m) -> Printf.sprintf "Emo_eval.EnumMember (%S, %S)" t m
   | Ast.Tuple_pattern ps ->
       let inner = List.map emit_pattern ps in
@@ -488,8 +488,8 @@ and emit_expr env (e : Emo_ir.expr) : string =
         if b then "true" else "false"
       else Printf.sprintf "Emo_eval.Bool %b" b
   | Emo_ir.Const (L_char c) ->
-      if env.native && e.Emo_ir.ety = Emo_check.Char then Printf.sprintf "%C" c
-      else Printf.sprintf "Emo_eval.Char %C" c
+      if env.native && e.Emo_ir.ety = Emo_check.Char then Printf.sprintf "%d" c
+      else Printf.sprintf "Emo_eval.Char %d" c
   | Emo_ir.Const (L_string s) ->
       if env.native && e.Emo_ir.ety = Emo_check.String then
         Printf.sprintf "%S" s
@@ -734,7 +734,7 @@ and emit_native_expr env (e : Emo_ir.expr) : string =
   | Emo_ir.Const (L_int n) -> i64_lit n
   | Emo_ir.Const (L_float f) -> float_lit f
   | Emo_ir.Const (L_bool b) -> if b then "true" else "false"
-  | Emo_ir.Const (L_char c) -> Printf.sprintf "%C" c
+  | Emo_ir.Const (L_char c) -> Printf.sprintf "%d" c
   | Emo_ir.Const (L_string s) -> Printf.sprintf "%S" s
   | Emo_ir.Var name ->
       let n = local name in
@@ -1233,7 +1233,7 @@ and ocaml_type (t : Emo_check.t) : string =
   | Emo_check.Int64 -> "int64"
   | Emo_check.Float64 -> "float"
   | Emo_check.Bool -> "bool"
-  | Emo_check.Char -> "char"
+  | Emo_check.Char -> "int"
   | Emo_check.String -> "string"
   | _ -> "Emo_eval.value"
 

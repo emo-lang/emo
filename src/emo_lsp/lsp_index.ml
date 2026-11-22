@@ -95,7 +95,7 @@ let rec expr_to_text (e : Ast.expr) : string =
   | Ast.Byte n -> string_of_int n
   | Ast.Float f -> string_of_float f
   | Ast.Bool b -> string_of_bool b
-  | Ast.Char c -> Printf.sprintf "'%c'" c
+  | Ast.Char c -> Printf.sprintf "'%s'" (Emo_support.Utf8.encode c)
   | Ast.String _ -> "\"...\""
   | Ast.Interpolated _ -> "\"...\""
   | Ast.Member (r, f) -> expr_to_text r ^ "." ^ f

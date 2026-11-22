@@ -14,7 +14,7 @@ let lit = function
   | Emo_ast.L_byte n -> Printf.sprintf "byte %d" n
   | Emo_ast.L_float f -> Printf.sprintf "float %g" f
   | Emo_ast.L_bool b -> Printf.sprintf "bool %b" b
-  | Emo_ast.L_char c -> Printf.sprintf "char %C" c
+  | Emo_ast.L_char c -> Printf.sprintf "char %s" (Emo_support.Utf8.encode c)
   | Emo_ast.L_string s -> Printf.sprintf "string %S" s
 
 let unop = function Emo_ast.Not -> "not" | Neg -> "neg" | Bit_not -> "bit_not"

@@ -40,7 +40,7 @@ let rec pp_expr fmt (e : Emo_ast.expr) =
   | Int64 n -> Format.fprintf fmt "%Ld" n
   | Byte n -> Format.fprintf fmt "%dB" n
   | Float f -> Format.fprintf fmt "%g" f
-  | Char c -> Format.fprintf fmt "%C" c
+  | Char c -> Format.fprintf fmt "'%s'" (Emo_support.Utf8.encode c)
   | Bool b -> Format.fprintf fmt "%b" b
   | String s -> Format.fprintf fmt "%S" s
   | Interpolated parts ->
@@ -160,7 +160,7 @@ and pp_literal fmt = function
   | Emo_ast.L_int n -> Format.fprintf fmt "%Ld" n
   | Emo_ast.L_byte n -> Format.fprintf fmt "%dB" n
   | Emo_ast.L_float f -> Format.fprintf fmt "%g" f
-  | Emo_ast.L_char c -> Format.fprintf fmt "%C" c
+  | Emo_ast.L_char c -> Format.fprintf fmt "'%s'" (Emo_support.Utf8.encode c)
   | Emo_ast.L_string s -> Format.fprintf fmt "%S" s
   | Emo_ast.L_bool b -> Format.fprintf fmt "%b" b
 

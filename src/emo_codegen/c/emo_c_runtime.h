@@ -394,6 +394,7 @@ emo_value emo_cell_lower(emo_value s);
 emo_value emo_cell_upper(emo_value s);
 emo_value emo_cell_trim(emo_value s);
 emo_value emo_cell_split(emo_value s, emo_value sep); /* an Array of cells */
+emo_value emo_cell_chars(emo_value s); /* one Char per scalar, an Array */
 
 /* ---- The systems layer (T23.7) ---- */
 
