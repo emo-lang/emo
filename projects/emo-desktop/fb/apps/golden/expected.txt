@@ -8,13 +8,31 @@ sel files.emo
 frame 128423328
 open files.emo
 frame 128423328
-frame 1344734404
+frame 3453852352
 put a
-frame 2208389565
-newline
-frame 1201365252
+frame 2444514002
 put b
-frame 3902471612
+frame 2143741361
+left
+frame 923600666
+put a
+frame 2639039240
+backspace
+frame 923600666
+del
+frame 2444514002
+right
+frame 2444514002
+newline
+frame 2857580936
+put b
+frame 3129143431
+up
+frame 850653066
+down
+frame 3129143431
+save
+frame 3129143431
 desktop counter exit 0
 desktop files exit 0
 desktop editor exit 0

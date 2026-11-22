@@ -126,9 +126,16 @@ def main() {
   ui_fb.paint(ui_apps.editor.view(reg0, ui_apps.editor.initial()), ch, fs)
   we.present()
   we.rise(fx, fy)
+  // the seat's key table (A33.1): the letters the editor types, the
+  // newline, the save, and the editing keys the kernel moves and cuts
+  // with — the order the view's registration fixes at tags 0 through 9
   ui.run(ui_apps.editor.view, ui_apps.editor.update,
     ui_apps.editor.initial_with(editor_saver()),
-    ui_fb.backend(ch, ui_fb_winbuf.keys([97, 98, 10, 115], we, fs, fx, fy, mw, mh), fs))
+    ui_fb.backend(ch,
+      ui_fb_winbuf.keys([97, 98, 10, 115, ui_fb_winbuf.key_left,
+        ui_fb_winbuf.key_right, ui_fb_winbuf.key_up, ui_fb_winbuf.key_down,
+        ui_fb_winbuf.key_backspace, ui_fb_winbuf.key_del],
+        we, fs, fx, fy, mw, mh), fs))
   we.sink(fx, fy)
   case syscall.win_close(ge) {
     (R.error, _) then { ui_fb_winbuf.mark() }

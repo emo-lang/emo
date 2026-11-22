@@ -1,21 +1,22 @@
 require "emo/ui"
 
-// The third of the desktop's apps (emo-desktop A10.3): the editor, a
-// corpus package of its own — the same discipline the counter and the
-// browser carry, portable defs and nothing platform-naming. The buffer
-// is the model's two rows of text, `put_a` and `put_b` type into the
-// row the cursor is on, `newline` moves the cursor down and stops at
-// the buffer's end, and the status names the cursor's row. `update`
-// says each transition, and the tags register in the view's own order
-// — put_a, put_b, newline, tags 0, 1 and 2 on every run.
+// The third of the desktop's apps (emo-desktop A10.3), grown into the
+// keyboard's own editing kernel (A33.1): the cursor the model carries
+// is now a pen in the row it stands on, and the keys the seat speaks
+// move it, cut with it, and type at it. `put_a` and `put_b` insert at
+// the pen (the end-of-line typing they were), `left` and `right` walk
+// it, `up` and `down` carry it to the neighbouring row with the pen
+// held inside the row it lands on, `backspace` and `del` cut the
+// character the pen sits beside, and `newline` still moves it down.
+// The buffer stays the model's two rows — the terminal's real buffer
+// is this round's later item — so the kernel is the editing, not the
+// size.
 //
 // The app dual-runs where hosted: the hosted families through
-// `apps/golden/`, the metal in a pass of its own (the `a`/`b` keys and
-// the newline byte the pass maps onto the tags, `q` the loop's end).
-// The tree is the panel, one text per row and the status — four nodes,
-// the buffer the golden session leaves shortest — and the session
-// three events, the pass's 128 KiB arena green (A8.3's per-event
-// count).
+// `apps/golden/`, the metal in a pass of its own (the seat's bytes map
+// onto the tags the view's registration order fixes, `q` the loop's
+// end). The tree is the panel, one text per row and the status — the
+// status now names the pen (`row r col c`), the cursor the frame shows.
 //
 // The save (emo-desktop M25, D14): the corpus stays portable — the
 // volume is the metal's — so the act leaves through a provider the
@@ -24,7 +25,7 @@ require "emo/ui"
 // gate's write and notify verbs. `update` says `save` and hands the
 // buffer over; what saving means is the provider's.
 
-enum Msg { put_a, put_b, newline, save }
+enum Msg { put_a, put_b, newline, save, left, right, up, down, backspace, del }
 
 // Where the editor's words go on save. `rows` is the buffer as it
 // stands: the two rows the model holds.
@@ -43,9 +44,10 @@ def quiet() Quiet {
 }
 
 class Model {
-  def init(rows Array[String], row Int64, saver Saver) {
+  def init(rows Array[String], row Int64, col Int64, saver Saver) {
     self.rows = rows
     self.row = row
+    self.col = col
     self.saver = saver
   }
 
@@ -60,6 +62,10 @@ class Model {
   def row() Int64 {
     return self.row
   }
+
+  def col() Int64 {
+    return self.col
+  }
 }
 
 def initial() Model {
@@ -69,21 +75,79 @@ def initial() Model {
 // The same start with the act's provider in hand — the metal editor's
 // door (the hosted golden takes `initial`).
 def initial_with(saver Saver) Model {
-  return Model.new(rows: ["", ""], row: 0, saver: saver)
+  return Model.new(rows: ["", ""], row: 0, col: 0, saver: saver)
 }
 
-// The buffer with `s` typed into the row the cursor is on: a new rows
-// array, the cursor's row grown, the other carried — the model's value
-// discipline, the before never touched. A literal of the buffer's own
-// two-row shape — the buffer is fixed data, and a literal is the
-// clearer spelling for it (Q1's verdict: builders for dynamic lists,
-// literals for fixed ones).
-def typed(m Model, s String) Model {
-  if m.row() == 0 {
-    return Model.new(rows: [m.rows()[0] + s, m.rows()[1]], row: 0,
-      saver: m.saver())
+// ---- the kernel's string steps ----
+
+// `r` with `s` inserted at column `c`, the head carried, `s`, the tail
+// carried. `c` is held to the row's own extent, so a pen past the end
+// lands at the end, never past it.
+def insert_at(r String, c Int64, s String) String {
+  const len = r.length()
+  var cc = c
+  if cc < 0 {
+    cc = 0
   }
-  return Model.new(rows: [m.rows()[0], m.rows()[1] + s], row: 1,
+  if cc > len {
+    cc = len
+  }
+  return r.substring(0, cc) + s + r.substring(cc, len - cc)
+}
+
+// `r` with the character at column `p` out, the two halves carried.
+def delete_at(r String, p Int64) String {
+  const len = r.length()
+  var pp = p
+  if pp < 0 {
+    pp = 0
+  }
+  if pp > len {
+    pp = len
+  }
+  return r.substring(0, pp) + r.substring(pp + 1, len - pp - 1)
+}
+
+// `col` held inside `row`'s extent: the clamp a row change or a step
+// asks of the pen.
+def hold(row String, col Int64) Int64 {
+  const len = row.length()
+  if col < 0 {
+    return 0
+  }
+  if col > len {
+    return len
+  }
+  return col
+}
+
+// The buffer with `s` typed into the cursor's row at the pen: a new
+// rows array, the cursor's row grown at the pen, the other row carried,
+// the pen advanced by what was typed.
+def typed(m Model, s String) Model {
+  const row = m.row()
+  const nr = insert_at(m.rows()[row], m.col(), s)
+  var rows = m.rows()
+  if row == 0 {
+    rows = [nr, m.rows()[1]]
+  } else {
+    rows = [m.rows()[0], nr]
+  }
+  return Model.new(rows: rows, row: row, col: m.col() + s.length(),
+    saver: m.saver())
+}
+
+// The cursor's row changed to `row`, held to the buffer's own rows,
+// the pen carried and held inside the row it lands on.
+def moved(m Model, row Int64) Model {
+  var r = row
+  if r < 0 {
+    r = 0
+  }
+  if r >= m.rows().length() {
+    r = m.rows().length() - 1
+  }
+  return Model.new(rows: m.rows(), row: r, col: hold(m.rows()[r], m.col()),
     saver: m.saver())
 }
 
@@ -101,25 +165,83 @@ def update(msg Msg, m Model) Model {
     m.saver().save(m.rows())
     return m
   }
-  println("newline")
-  var r = m.row() + 1
-  if r >= m.rows().length() {
-    r = m.rows().length() - 1
+  if msg == Msg.newline {
+    println("newline")
+    return moved(m, m.row() + 1)
   }
-  return Model.new(rows: m.rows(), row: r, saver: m.saver())
+  if msg == Msg.left {
+    println("left")
+    return Model.new(rows: m.rows(), row: m.row(),
+      col: hold(m.rows()[m.row()], m.col() - 1), saver: m.saver())
+  }
+  if msg == Msg.right {
+    println("right")
+    return Model.new(rows: m.rows(), row: m.row(),
+      col: hold(m.rows()[m.row()], m.col() + 1), saver: m.saver())
+  }
+  if msg == Msg.up {
+    println("up")
+    return moved(m, m.row() - 1)
+  }
+  if msg == Msg.down {
+    println("down")
+    return moved(m, m.row() + 1)
+  }
+  if msg == Msg.backspace {
+    println("backspace")
+    const row = m.row()
+    const col = m.col()
+    if col > 0 {
+      const nr = delete_at(m.rows()[row], col - 1)
+      var rows = m.rows()
+      if row == 0 {
+        rows = [nr, m.rows()[1]]
+      } else {
+        rows = [m.rows()[0], nr]
+      }
+      return Model.new(rows: rows, row: row, col: col - 1,
+        saver: m.saver())
+    }
+    return m
+  }
+  if msg == Msg.del {
+    println("del")
+    const row = m.row()
+    const col = m.col()
+    if col < m.rows()[row].length() {
+      const nr = delete_at(m.rows()[row], col)
+      var rows = m.rows()
+      if row == 0 {
+        rows = [nr, m.rows()[1]]
+      } else {
+        rows = [m.rows()[0], nr]
+      }
+      return Model.new(rows: rows, row: row, col: col, saver: m.saver())
+    }
+    return m
+  }
+  return m
 }
 
 def view(reg ui.Registry, m Model) ui.Node {
   // The tags are taken in statements of their own: `on` is a side
   // effect, and this registration order is what fixes put_a, put_b,
-  // newline and save at tags 0, 1, 2 and 3 on every run.
+  // newline, save, left, right, up, down, backspace and del at tags 0
+  // through 9 on every run — the order the seat's key table and the
+  // golden's script both ride.
   const put_a = reg.on(Msg.put_a)
   const put_b = reg.on(Msg.put_b)
   const newline = reg.on(Msg.newline)
   const save = reg.on(Msg.save)
+  const left = reg.on(Msg.left)
+  const right = reg.on(Msg.right)
+  const up = reg.on(Msg.up)
+  const down = reg.on(Msg.down)
+  const backspace = reg.on(Msg.backspace)
+  const del = reg.on(Msg.del)
   return ui.column([
     ui.text(m.rows()[0], ui.style()),
     ui.text(m.rows()[1], ui.style()),
-    ui.text("row ${m.row()}", ui.style())
+    ui.text("row ${m.row()} col ${m.col()}", ui.style())
   ], ui.style().with_padding(12.0).with_gap(8.0))
 }

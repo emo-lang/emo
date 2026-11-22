@@ -14,7 +14,10 @@ require "emo/ui_fb_win"
 // session the metal's passes run byte for byte. The launcher's order
 // is the execs': the counter's tile first (its session whole), the
 // browser's tile second, the editor's the REPL's own `exec` command —
-// mount, keys, mount, keys, mount, keys. Every frame's digest prints
+// mount, keys, mount, keys, mount, keys. The editor's session (A33.1)
+// runs the editing kernel whole — type at the pen, walk it, cut with
+// it, and move the rows — the tags 0 through 9 the view's registration
+// fixes. Every frame's digest prints
 // as the backend presents it, beside the state transitions `update`
 // says, and the exits close the block in the quits' own order — the
 // deaths ride the stream to their parent now (`desktop <name> exit
@@ -116,7 +119,8 @@ def main() {
   const e = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
   const che = ui_fb_win.chrome(e, f, "editor")
   ui.run(ui_apps.editor.view, ui_apps.editor.update,
-    ui_apps.editor.initial(), ui_fb.backend(che, ui_fb.script([0, 2, 1]), f))
+    ui_apps.editor.initial(), ui_fb.backend(che,
+      ui_fb.script([0, 1, 4, 0, 8, 9, 5, 2, 1, 6, 7, 3]), f))
   println("desktop counter exit 0")
   println("desktop files exit 0")
   println("desktop editor exit 0")

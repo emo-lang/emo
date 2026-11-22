@@ -2822,3 +2822,66 @@ decisions the item opens on:
   M32 rows (both languages), the noctalia ladder's motion step
   retired, CHECK.md's entries, and the TASKS' boxes — **M32
   complete**.
+
+## M33 — the text and input tier (opened 2026-11-22)
+
+The modernization round (docs/modern-desktop.md) opens on the text and
+input tier — the round's largest gap and the one its highest-value item
+(the terminal's window) leans on: a keyboard the editor already has.
+The item's shape is the round's own rhythm — the kernel's def and the
+one-shot golden: the corpus's editing kernel, the seat's bytes that
+reach it, the app's key table that carries them, and the golden's
+session that runs the kernel whole and pins the bytes.
+
+- [x] **A33.1** — The keyboard's editing kernel: the cursor the model
+  carries becomes a pen in the row it stands on — `put_a` and `put_b`
+  insert at the pen (the end-of-line typing they were), `left` and
+  `right` walk it held to the row's own extent, `up` and `down` carry
+  it to the neighbouring row with the pen held inside that row's end,
+  `backspace` cuts the character to the pen's left and `del` the one to
+  its right, and `newline` still moves it down. The six editing tags
+  ride the view's registration order, appended after `save` — put_a,
+  put_b, newline and save at 0 through 3 as they stood, left, right,
+  up, down, backspace and del at 4 through 9 — so the tags the
+  Wayland's seat already maps by name keep their numbers, the change
+  backward-compatible by construction, and the metal's key table is
+  where the new ones land. The seat's bytes grow the editing keys on
+  their own control bytes — the set 2 scancodes for backspace, the four
+  arrows and the forward delete onto 8, 1 through 4 and 127, control
+  bytes the letters' ASCII never takes — and the golden's session runs
+  the kernel whole: type, walk the pen, cut, move the rows, and save.
+  **complete 2026-11-22** — the kernel is `apps/editor.emo`: the Model
+  carries `col` beside the `row`, the Msg gains the six editing tags
+  after `save`, and the string steps — `insert_at` (the head, the
+  typed, the tail), `delete_at` (the two halves carried) and `hold`
+  (the clamp a row change or a step asks of the pen) — are the kernel's
+  own; the buffer stays the model's two rows (the terminal's real
+  buffer is this round's later item, so the kernel is the editing, not
+  the size) and the status names the pen now, `row r col c`. The
+  seat's half is `ui_fb_winbuf`'s `key_byte` grown with the six
+  scancodes onto their named bytes (`key_left` through `key_del`), and
+  the metal editor's key table carries them at tags 4 through 9. The
+  golden's session is the one-shot — `script([0, 1, 4, 0, 8, 9, 5, 2,
+  1, 6, 7, 3])`, a, b, left, a typed in the middle, backspace, del,
+  right held at the end, newline, b on the second row, up, down, save
+  — and the digest's honesty shows in the pins: the backspace's frame
+  is the left's own, the del's the first put's, the down's and the
+  save's the second row's, the states the kernel walks back to.
+  Verified: the apps' golden byte-identical on the interpreter, ocaml,
+  c, typescript, wasm and beam — the one-shot the round's rhythm asks
+  for. **Found on the way, and named by the gate, separate from this
+  step:** the gate's other legs ran red on two pre-existing issues,
+  both on goldens whose dependencies do not reach this change's
+  packages (`emo/ui_apps`, `emo/ui_fb_winbuf`) and neither the compiler
+  this step leaves untouched — the beam legs the M25 frame-beam
+  family's hang, the `timeout 120`'s own red, and the dock's and the
+  notification center's wasm legs a deterministic codegen the host
+  refuses, its `WebAssembly.compile` answering "function #235 …
+  expected 0 elements on the stack for fallthru, found 1" on the module
+  the build writes, reproduced in isolation off the staged registry —
+  so both stand found-not-fixed, the beam's the ledger's known one and
+  the wasm's a new one the round's gate will need its own step to
+  retire. The Wayland's editor answers the editing keys by name once
+  its slot's table carries them — left, right, up, down, backspace and
+  delete at 4 through 9 — the follow-up this step leaves open, the
+  one-shot golden the fb's own.
