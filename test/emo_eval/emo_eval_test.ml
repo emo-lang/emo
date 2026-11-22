@@ -576,7 +576,7 @@ println(check(1))|}));
         Alcotest.(check string)
           "message" "`raise` carries an `Exception` instance, got String"
           diagnostic.Diagnostic.message);
-    tc "a destructured binding binds, and a mismatch dies the case death"
+    tc "a destructured binding binds, and a mismatch names the value"
       (fun () ->
         Alcotest.(check string)
           "the ok tuple binds" "7\n"
@@ -588,7 +588,24 @@ println(body)|}
         in
         Alcotest.(check string) "code" "E3006" (code_of diagnostic);
         Alcotest.(check string)
-          "message" "no `case` branch matched this Tuple value"
+          "message" "the value does not match this binding pattern"
+          diagnostic.Diagnostic.message;
+        Alcotest.(check (option string))
+          "hint" (Some "the value is (R.error, \"why\")")
+          diagnostic.Diagnostic.hint);
+    tc "a destructured binding names the call that answered" (fun () ->
+        let diagnostic =
+          program_err
+            {|def read(path String) (R, String) {
+  return (R.error, "no such file")
+}
+const (R.ok, body) = read("/tmp/x")
+println(body)|}
+        in
+        Alcotest.(check string) "code" "E3006" (code_of diagnostic);
+        Alcotest.(check string)
+          "message"
+          "`read` returned a value that does not match this binding pattern"
           diagnostic.Diagnostic.message);
     tc "raise inside a def escapes the function" (fun () ->
         let diagnostic =

@@ -3,15 +3,15 @@
 // One process owns the counter and answers every message with a reply
 // to its sender. Recursion is the receive loop's shape, and the tail
 // call is guaranteed.
-def counter(total Int64) Int64 {
+def counter(total Int64) Void {
   receive {
     ("add", n, from) then {
       from <- ("count", total + n)
-      return counter(total + n)
+      counter(total + n)
     }
     ("get", from) then {
       from <- ("count", total)
-      return counter(total)
+      counter(total)
     }
   }
 }

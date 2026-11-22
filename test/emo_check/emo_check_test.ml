@@ -176,6 +176,23 @@ println(first + "!")|}
         if List.length diagnostics > 0 then
           Alcotest.fail ("codes: " ^ codes_dump diagnostics);
         Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "indexing a function asks for the call" (fun () ->
+        let diagnostics =
+          check
+            {|def f() Array[String] {
+  return ["a"]
+}
+println(f[0])|}
+        in
+        if not (has_code diagnostics "E4004") then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check bool)
+          "message" true
+          (List.exists
+             (fun d ->
+               contains_substring d.Diagnostic.message
+                 "`f` is a function; call it as `f()` before indexing")
+             diagnostics));
   ]
 
 let signature_tests =
