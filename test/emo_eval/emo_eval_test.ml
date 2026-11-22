@@ -576,8 +576,7 @@ println(check(1))|}));
         Alcotest.(check string)
           "message" "`raise` carries an `Exception` instance, got String"
           diagnostic.Diagnostic.message);
-    tc "a destructured binding binds, and a mismatch names the value"
-      (fun () ->
+    tc "a destructured binding binds, and a mismatch names the value" (fun () ->
         Alcotest.(check string)
           "the ok tuple binds" "7\n"
           (run_program {|const (R.ok, body) = (R.ok, 7)

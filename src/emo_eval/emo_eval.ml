@@ -966,7 +966,8 @@ let rec brief_value (v : value) : string =
   | Array vs -> container "Array" (fun s -> "[" ^ s ^ "]") (Array.to_list vs)
   | List l -> container "List" (fun s -> "List[" ^ s ^ "]") (list_values l)
   | Builder b ->
-      container "ArrayBuilder" (fun s -> "ArrayBuilder[" ^ s ^ "]")
+      container "ArrayBuilder"
+        (fun s -> "ArrayBuilder[" ^ s ^ "]")
         (Array.to_list (Array.sub b.bitems 0 b.bsize))
   | String s ->
       if String.length s <= 40 then Printf.sprintf "%S" s

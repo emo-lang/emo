@@ -2205,7 +2205,8 @@ case net_connect("127.0.0.1", listener.port(), 5.0) {
         in
         let bin = Filename.concat (Filename.dirname entry) "main-c-bin" in
         Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry bin);
-        check_run "c net backpressure" (run_cmd (Filename.quote bin))
+        check_run "c net backpressure"
+          (run_cmd (Filename.quote bin))
           "8388608\nok\nwritten\n");
     tc "a write deadline answers the timeout refusal" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
@@ -2404,8 +2405,7 @@ case net_tls_connect("localhost", listener.port(), 5.0) {
        method bodies: a TLS call one method deep used to leave the flag
        false, so the binary linked without TLS and answered "not
        supported on this target" at run time. *)
-    tc "a TLS call behind an interface method still links TLS on c"
-      (fun () ->
+    tc "a TLS call behind an interface method still links TLS on c" (fun () ->
         if not (Lazy.force cc_available) then Alcotest.skip ();
         let cclibs =
           match Lazy.force tls_cclibs with

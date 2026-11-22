@@ -131,8 +131,12 @@ println(v.to_string())|}
     tc "operator mismatches on known operands are errors" (fun () ->
         let diagnostics = check {|const bad = 1 + "a"|} in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
-    tc "comparison needs numbers" (fun () ->
-        let diagnostics = check {|const bad = "a" < "b"|} in
+    tc "comparison orders strings and refuses a string against a number"
+      (fun () ->
+        Alcotest.(check int)
+          "strings" 0
+          (List.length (check {|const ok = "a" < "b"|}));
+        let diagnostics = check {|const bad = "a" < 1|} in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
     tc "logic needs Bools" (fun () ->
         let diagnostics = check {|const bad = 1 && true|} in
@@ -178,8 +182,7 @@ println(first + "!")|}
         Alcotest.(check int) "count" 0 (List.length diagnostics));
     tc "indexing a function asks for the call" (fun () ->
         let diagnostics =
-          check
-            {|def f() Array[String] {
+          check {|def f() Array[String] {
   return ["a"]
 }
 println(f[0])|}
