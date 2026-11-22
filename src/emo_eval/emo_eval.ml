@@ -952,6 +952,29 @@ and debug_value v =
   | Map _ as v -> to_string v
   | v -> to_string v
 
+(* A bounded rendering for diagnostics: a String past 40 bytes is cut,
+   and a container past four elements collapses to its size, so a
+   mismatch report never dumps a whole Array. *)
+let rec brief_value (v : value) : string =
+  let container what wrap xs =
+    if List.length xs > 4 then
+      Printf.sprintf "a %d-element %s" (List.length xs) what
+    else wrap (String.concat ", " (List.map brief_value xs))
+  in
+  match v with
+  | Tuple vs -> container "Tuple" (fun s -> "(" ^ s ^ ")") vs
+  | Array vs -> container "Array" (fun s -> "[" ^ s ^ "]") (Array.to_list vs)
+  | List l -> container "List" (fun s -> "List[" ^ s ^ "]") (list_values l)
+  | Builder b ->
+      container "ArrayBuilder" (fun s -> "ArrayBuilder[" ^ s ^ "]")
+        (Array.to_list (Array.sub b.bitems 0 b.bsize))
+  | String s ->
+      if String.length s <= 40 then Printf.sprintf "%S" s
+      else Printf.sprintf "%S..." (String.sub s 0 40)
+  | EnumMember (t, m) -> t ^ "." ^ m
+  | Int64 _ | Byte _ | Float _ | Bool _ | Void | Char _ -> debug_value v
+  | other -> type_name other
+
 (* ---- Map: the mutable, insertion-ordered hash table ----
 
    Keys are validated at every insertion (see [map_key_ok]), so the
@@ -1548,6 +1571,32 @@ let rec match_pattern frame span pattern value =
       | Tuple vs when List.length vs = List.length ps ->
           List.for_all2 (fun p v -> match_pattern frame span p v) ps vs
       | _ -> false)
+
+(* A destructured binding is a one-arm match, not a `case` on the source:
+   when it misses, the diagnostic names the initializer's call and shows
+   the value that did not fit, so `const (R.ok, x) = file.read(path)`
+   reads as what it is — the call answered the error tuple. *)
+let binding_mismatch_message (init : Ast.expr) : string =
+  let rec callee_path (e : Ast.expr) : string option =
+    match e.Ast.desc with
+    | Ast.Ident n -> Some n
+    | Ast.Member (inner, n) ->
+        Option.map (fun p -> p ^ "." ^ n) (callee_path inner)
+    | _ -> None
+  in
+  match init.Ast.desc with
+  | Ast.Call (callee, _) -> (
+      match callee_path callee with
+      | Some name ->
+          Printf.sprintf
+            "`%s` returned a value that does not match this binding pattern"
+            name
+      | None ->
+          "the call returned a value that does not match this binding pattern")
+  | _ -> "the value does not match this binding pattern"
+
+let binding_mismatch_hint (v : value) : string =
+  Printf.sprintf "the value is %s" (brief_value v)
 
 (* ---- Concurrency core ----
    Processes own mailboxes; the evaluator performs the process operations
@@ -5466,9 +5515,8 @@ and compile_stmt d scope ~tail s : scode =
             count_step ();
             let v = cinit env in
             if not (match_pattern env span pattern v) then
-              error span "E3006"
-                (Printf.sprintf "no `case` branch matched this %s value"
-                   (type_name v)))
+              error span ~hint:(binding_mismatch_hint v) "E3006"
+                (binding_mismatch_message init))
   | Ast.Assign { target; value } -> (
       let cvalue = compile_expr d scope value in
       match target.Ast.desc with
@@ -5921,13 +5969,13 @@ and eval_stmt ?(tail = false) env s =
           define env name ~mutable_ (eval_expr env init)
       | _ ->
           (* A destructured binding binds like a one-arm case whose match
-             lands in this scope; a value matching nothing dies the
-             case-no-match death. *)
+             lands in this scope; a value matching nothing is reported as
+             the binding it is, naming the initializer's call and the
+             value that missed. *)
           let v = eval_expr env init in
           if not (match_pattern env span pattern v) then
-            error span "E3006"
-              (Printf.sprintf "no `case` branch matched this %s value"
-                 (type_name v)))
+            error span ~hint:(binding_mismatch_hint v) "E3006"
+              (binding_mismatch_message init))
   | Ast.Assign { target; value } -> (
       let v = eval_expr env value in
       match target.Ast.desc with
