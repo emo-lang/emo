@@ -465,7 +465,9 @@ def child_run(sh shell.Shell, cmd parse.Cmd) Int64 {
 }
 
 // The child's body once the words are final: a builtin's status, or
-// an execvp — which never returns on success.
+// an execvp — which never returns on success, and answers the errno
+// reason on failure, the permission denial no longer dressed up as a
+// missing command.
 def child_run_argv(sh shell.Shell, argv Array[String]) Int64 {
   if argv.length() == 0 {
     // a command of redirections alone: the files were opened already,
@@ -475,9 +477,13 @@ def child_run_argv(sh shell.Shell, argv Array[String]) Int64 {
   if builtin.is_builtin(argv[0]) {
     return builtin.run(sh, argv)
   }
-  os.execvp(argv[0], argv)
-  sh.err("emosh: " + argv[0] + ": command not found")
-  return 127
+  case os.execvp(argv[0], argv) {
+    (R.error, why) then {
+      sh.err("emosh: " + argv[0] + ": " + why)
+      return 127
+    }
+    (R.ok, _) then { return 0 }
+  }
 }
 
 // The child's redirections: each opened and dup2'd onto its

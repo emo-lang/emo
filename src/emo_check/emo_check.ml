@@ -1638,7 +1638,8 @@ let empty_env =
           {
             vtype =
               FuncType
-                ([ ("file", String); ("argv", ArrayType String) ], Unknown);
+                ( [ ("file", String); ("argv", ArrayType String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
             span = Emo_support.Span.zero;

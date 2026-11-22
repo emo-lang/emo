@@ -1870,14 +1870,24 @@ let pf_hash_float conv minus plus space width prec f =
              (List.length vs))
     | "os_execvp", [ String file; Array items ] ->
         (* Success never returns — the process is replaced, the file
-           found through PATH. Failure is a data-driven value: the call
-           returns Void, and the fork child follows it with `_exit`. *)
+           found through PATH. Failure is a data-driven value: the
+           errno reason, spelled without the file name so the text is
+           byte-identical with the c runtime's emo_os_fail (Unix_error
+           would carry the name as its argument) — the fork child's
+           cue to `_exit`. *)
         (try
            let argv =
              Array.of_list (List.map to_string (Array.to_list items))
            in
-           Unix.execvp file argv
-         with Unix.Unix_error _ -> Void)
+           (Unix.execvp file argv : unit);
+           Int64 0L
+         with Unix.Unix_error (e, _, _) ->
+           Tuple
+             [
+               EnumMember ("R", "error");
+               String
+                 (Printf.sprintf "os: execvp: %s" (Unix.error_message e));
+             ])
     | "os_execvp", vs ->
         error "E3007"
           (Printf.sprintf

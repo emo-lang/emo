@@ -591,7 +591,7 @@ emo_value emo_os_rename(emo_str old_path, emo_str new_path);
 emo_value emo_os_getcwd(void); /* the working directory as a cell */
 emo_value emo_os_chdir(emo_str path);
 emo_value emo_os_dup2(int64_t old_fd, int64_t new_fd);
-int64_t emo_os_execvp(emo_str file, emo_value argv);
+emo_value emo_os_execvp(emo_str file, emo_value argv);
 bool emo_os_isatty(int64_t fd);
 void emo_args_set(int argc, char **argv);
 emo_value emo_os_argv(void); /* the process's argument vector as a cell */

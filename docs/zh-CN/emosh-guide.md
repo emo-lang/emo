@@ -110,7 +110,7 @@ first
 second
 $ nosuch-cmd 2> err.txt
 $ cat err.txt
-emosh: nosuch-cmd: command not found
+emosh: nosuch-cmd: os: execvp: No such file or directory
 ```
 
 ## 连接符与状态
@@ -188,7 +188,9 @@ $ echo status=$?
 
 ```console
 $ no-such-command
-emosh: no-such-command: command not found      (状态 127)
+emosh: no-such-command: os: execvp: No such file or directory   (状态 127)
+$ ./nonexec-script
+emosh: ./nonexec-script: os: execvp: Permission denied   (状态 127)
 $ echo x > /no/such/dir/f
 emosh: os: open /no/such/dir/f: No such file or directory   (状态 1)
 $ echo dangling |

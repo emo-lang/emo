@@ -5576,7 +5576,7 @@ emo_value emo_os_dup2(int64_t old_fd, int64_t new_fd) {
   return emo_os_ok(emo_box_i64(0));
 }
 
-int64_t emo_os_execvp(emo_str file, emo_value argv) {
+emo_value emo_os_execvp(emo_str file, emo_value argv) {
   char *f = emo_cstr_owned(file);
   int64_t count = emo_length(argv);
   char **argv_c = malloc(sizeof(char *) * (size_t)(count + 1));
@@ -5586,12 +5586,13 @@ int64_t emo_os_execvp(emo_str file, emo_value argv) {
   }
   argv_c[count] = NULL;
   execvp(f, argv_c);
-  /* Failure is a data-driven value: the call returns (the value is
-     discarded) — the fork child's cue to `_exit`. */
+  /* Failure is the data-driven value: the errno reason names itself,
+     byte-identical with the interpreter's os_result — the fork
+     child's cue to `_exit`. Success never reaches this. */
   for (int64_t i = 0; i < count; i++) free(argv_c[i]);
   free(argv_c);
   free(f);
-  return 0;
+  return emo_os_fail("execvp", "");
 }
 
 bool emo_os_isatty(int64_t fd) { return isatty((int)fd) == 1; }

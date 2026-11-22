@@ -32,8 +32,10 @@ reason a String stating exactly which system call failed and why —
 `os: open_write notes.txt: Permission denied` — no error codes, no
 nil. The calls that never fail (`getpid`, `getppid`, `getcwd`,
 `isatty`, `argv`, the `wait_*` status decoders) are plain functions,
-and so is `waitpid`'s raw status word; `execv` and `execvp` return on
-failure instead of raising, the fork child's cue to `_exit`.
+and so is `waitpid`'s raw status word; `execv` returns on failure
+instead of raising, the fork child's cue to `_exit`, and `execvp`
+answers its failure as the value `(R.error, reason)` — the same
+errno reason the other calls carry.
 
 ## Processes
 
@@ -84,7 +86,11 @@ unwinding — the fork child's way out, so a child cannot run its
 parent's cleanup a second time. `execvp(file, argv)` is the same
 replacement with a lookup: `file` is searched through the `PATH`
 environment variable the way the shell's own lookup is (a name with a
-slash in it is used as-is), and the failure contract is the execv one.
+slash in it is used as-is). On success it never returns; on failure
+it answers `(R.error, "os: execvp: …")` — `No such file or directory`
+for a name the `PATH` does not carry, `Permission denied` for one it
+cannot run — the same text on both targets, the fork child's cue to
+`_exit`.
 
 `kill(pid, sig)` sends `sig` to `pid` — a process id, or its negative
 for the whole process group with that id, the discipline a supervisor

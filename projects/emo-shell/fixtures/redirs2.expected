@@ -1,9 +1,9 @@
-emosh: nosuch-emosh: command not found
-emosh: nosuch-emosh: command not found
-emosh: nosuch-emosh: command not found
-emosh: nosuch-emosh: command not found
+emosh: nosuch-emosh: os: execvp: No such file or directory
+emosh: nosuch-emosh: os: execvp: No such file or directory
+emosh: nosuch-emosh: os: execvp: No such file or directory
+emosh: nosuch-emosh: os: execvp: No such file or directory
 status=127
-emosh: nosuch-emosh: command not found
+emosh: nosuch-emosh: os: execvp: No such file or directory
 emosh: os: dup2: Bad file descriptor
 dup11=1
 emosh: syntax error: bad descriptor redirection

@@ -24,8 +24,9 @@ require "os"
 为何失败——`os: open_write notes.txt: Permission denied`——没有
 错误码,没有 nil。不会失败的调用(`getpid`、`getppid`、`getcwd`、
 `isatty`、`argv`、`wait_*` 状态解码器)就是普通函数,`waitpid` 的
-原始状态字同理;`execv` 与 `execvp` 失败时返回而不是抛出——那是
-fork 子进程接 `_exit` 的暗号。
+原始状态字同理;`execv` 失败时返回而不是抛出——那是 fork 子进程接
+`_exit` 的暗号;`execvp` 把失败作为值回答 `(R.error, reason)`
+——与其他调用同一类 errno reason。
 
 ## 进程
 
@@ -70,8 +71,11 @@ if os.wait_exited(w[1]) {
 逻辑再跑一遍。`_exit(status)` 立即结束调用进程,不做任何展开——
 这是 fork 子进程的出口,保证子进程不会把父进程的清理逻辑再跑一遍。
 `execvp(file, argv)` 是同一种替换,只是多一步查找:`file` 沿 `PATH`
-环境变量搜索(与 shell 自己的查找一致;带斜杠的名字原样使用),
-失败约定与 execv 相同。
+环境变量搜索(与 shell 自己的查找一致;带斜杠的名字原样使用)。
+成功时它绝不返回;失败时它回答 `(R.error, "os: execvp: …")`——
+`PATH` 里没有的名字是 `No such file or directory`,不能运行的是
+`Permission denied`——两个目标同一文本,fork 子进程接 `_exit` 的
+暗号。
 
 `kill(pid, sig)` 把 `sig` 发给 `pid`——进程 id,或其负数,代表以它
 为 id 的整个进程组,这是监护者赖以生存的纪律:一次调用结束一个组。

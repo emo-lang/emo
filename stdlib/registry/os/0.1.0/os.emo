@@ -135,11 +135,14 @@ def execv(path String, argv Array[String]) Void {
 // environment variable the way the shell's own lookup is (a file name
 // with a slash in it is used as-is). argv[0] is conventionally the
 // program name again; the list must end where the arguments end. On
-// success this call never returns — the process is gone — and on
-// failure it returns, the fork child's cue to `_exit` (a raise here
-// would run the parent's cleanup a second time).
-def execvp(file String, argv Array[String]) Void {
-  os_execvp(file, argv)
+// success this call never returns — the process is gone. On failure
+// it answers the errno reason, the same text on every target
+// (`os: execvp: No such file or directory` for a name the PATH does
+// not carry, `os: execvp: Permission denied` for one it cannot run) —
+// the fork child's cue to `_exit` (a raise here would run the
+// parent's cleanup a second time).
+def execvp(file String, argv Array[String]) (R, Int64) {
+  return os_execvp(file, argv)
 }
 
 // Copies old_fd onto new_fd, closing new_fd first if it was open — the

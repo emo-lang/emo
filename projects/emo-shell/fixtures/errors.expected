@@ -1,4 +1,4 @@
-emosh: no-such-command-emosh: command not found
+emosh: no-such-command-emosh: os: execvp: No such file or directory
 missing=127
 emosh: syntax error: unexpected end of line
 syntax=2
