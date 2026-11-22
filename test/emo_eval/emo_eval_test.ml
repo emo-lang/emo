@@ -1338,6 +1338,42 @@ let loop_tests =
              {|for var i = 0; i < 100; i = i + 50 {
   println("i = ${i}")
 }|}));
+    tc "foreach walks the array element by element" (fun () ->
+        Alcotest.(check string)
+          "output" "1\n2\n3\n"
+          (run_program
+             {|const xs = [1, 2, 3]
+:foreach x in xs {
+  println(x)
+}|}));
+    tc "foreach continue and break behave as in a for" (fun () ->
+        Alcotest.(check string)
+          "output" "1\n3\n"
+          (run_program
+             {|:foreach x in [1, 2, 3, 4] {
+  if x == 2 {
+    continue
+  }
+  println(x)
+  if x == 3 {
+    break
+  }
+}|}));
+    tc "foreach nests and discards with `_`" (fun () ->
+        Alcotest.(check string)
+          "output" "11\n12\nskip\nskip\n"
+          (run_program
+             {|:foreach a in [1, 2] {
+  :foreach b in [10] {
+    println(a + b)
+  }
+}
+:foreach _ in [1, 2] {
+  println("skip")
+}|}));
+    tc "foreach binds the element read-only" (fun () ->
+        let diagnostic = program_err {|:foreach x in [1] { x = 2 }|} in
+        Alcotest.(check string) "code" "E4007" (code_of diagnostic));
     tc "a while counts through its body" (fun () ->
         Alcotest.(check string)
           "output" "n = 0\nn = 1\nn = 2\n"

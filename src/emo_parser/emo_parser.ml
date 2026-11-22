@@ -141,6 +141,93 @@ let merge_span a b = Emo_support.Span.merge a b
 let node span desc = { Ast.span; desc }
 let stmt span desc = { Ast.stmt_span = span; stmt_desc = desc }
 
+(* The names a sugar's expansion must not reuse: every identifier the
+   user's own iterable and body mention or bind, so a generated name can
+   never shadow one the reader wrote. *)
+let rec expr_idents acc (e : Ast.expr) : string list =
+  match e.Ast.desc with
+  | Ast.Int64 _ | Ast.Byte _ | Ast.Float _ | Ast.Char _ | Ast.Bool _
+  | Ast.String _ | Ast.Type_ident _ | Ast.Self ->
+      acc
+  | Ast.Ident n -> n :: acc
+  | Ast.Interpolated parts ->
+      List.fold_left
+        (fun acc part ->
+          match part with
+          | Ast.Part_expr e -> expr_idents acc e
+          | Ast.Literal_text _ -> acc)
+        acc parts
+  | Ast.Member (base, _) -> expr_idents acc base
+  | Ast.Index (base, index) -> expr_idents (expr_idents acc base) index
+  | Ast.Call (callee, args) ->
+      List.fold_left
+        (fun acc (arg : Ast.arg) -> expr_idents acc arg.Ast.arg_value)
+        (expr_idents acc callee) args
+  | Ast.Arrow_block (params, body) ->
+      let acc =
+        List.fold_left
+          (fun acc (p : Ast.param) -> p.Ast.param_name :: acc)
+          acc params
+      in
+      List.fold_left stmt_idents acc body
+  | Ast.Tuple es | Ast.Array_literal es -> List.fold_left expr_idents acc es
+  | Ast.Map_literal entries ->
+      List.fold_left
+        (fun acc (k, v) -> expr_idents (expr_idents acc k) v)
+        acc entries
+  | Ast.Unary (_, x) | Ast.Do x -> expr_idents acc x
+  | Ast.Binary (_, l, r) -> expr_idents (expr_idents acc l) r
+  | Ast.If_expr { cond; then_expr; else_expr } ->
+      expr_idents (expr_idents (expr_idents acc cond) then_expr) else_expr
+  | Ast.Quote q ->
+      List.fold_left (fun acc (_, hole) -> expr_idents acc hole) acc q.Ast.holes
+
+and stmt_idents acc (s : Ast.stmt) : string list =
+  match s.Ast.stmt_desc with
+  | Ast.Expr_stmt e -> expr_idents acc e
+  | Ast.Binding { pattern; init; _ } ->
+      expr_idents (pattern_idents acc pattern) init
+  | Ast.Assign { target; value } -> expr_idents (expr_idents acc target) value
+  | Ast.Return None -> acc
+  | Ast.Return (Some e) | Ast.Raise e -> expr_idents acc e
+  | Ast.If { cond; then_body; else_body } -> (
+      let acc = expr_idents acc cond in
+      let acc = List.fold_left stmt_idents acc then_body in
+      match else_body with
+      | Some body -> List.fold_left stmt_idents acc body
+      | None -> acc)
+  | Ast.While { cond; body } ->
+      List.fold_left stmt_idents (expr_idents acc cond) body
+  | Ast.For { init; cond; post; body } ->
+      List.fold_left stmt_idents
+        (expr_idents (stmt_idents (stmt_idents acc init) post) cond)
+        body
+  | Ast.Break | Ast.Continue -> acc
+  | Ast.Case { scrutinee; branches } ->
+      List.fold_left branch_idents (expr_idents acc scrutinee) branches
+  | Ast.Receive branches -> List.fold_left branch_idents acc branches
+  | Ast.Send { target; message } -> expr_idents (expr_idents acc target) message
+
+and branch_idents acc (b : Ast.branch) : string list =
+  let acc = pattern_idents acc b.Ast.pattern in
+  let acc =
+    match b.Ast.guard with Some g -> expr_idents acc g | None -> acc
+  in
+  List.fold_left stmt_idents acc b.Ast.body
+
+and pattern_idents acc (p : Ast.pattern) : string list =
+  match p.Ast.pattern_desc with
+  | Ast.Pattern_binding n -> n :: acc
+  | Ast.Pattern_literal _ | Ast.Enum_member _ | Ast.Wildcard -> acc
+  | Ast.Tuple_pattern ps -> List.fold_left pattern_idents acc ps
+
+let foreach_fresh used base =
+  let rec go k =
+    let n = if k = 0 then base else Printf.sprintf "%s_%d" base k in
+    if List.mem n used then go (k + 1) else n
+  in
+  go 0
+
 let comparison_binop = function
   | Tok.Eq -> Some Ast.Eq
   | Tok.Ne -> Some Ast.Ne
@@ -815,7 +902,7 @@ and parse_stmt st =
       let e = parse_expr st in
       end_statement st;
       stmt start_span (Ast.Raise e)
-  | Tok.Op Tok.Colon -> parse_chain st
+  | Tok.Op Tok.Colon -> parse_sugar st
   | _ ->
       let e = parse_expr st in
       let stmt_desc =
@@ -837,6 +924,28 @@ and parse_stmt st =
       in
       stmt start_span stmt_desc
 
+(* The sugar table: `:name` with the name an ordinary identifier (the
+   colon pairs with it, nothing is reserved). `chain` rewrites to nested
+   cases, `foreach` to a `for` over indices. *)
+and parse_sugar st =
+  let colon_tok = advance st in
+  let name_tok = advance st in
+  let name =
+    match name_tok.Tok.kind with
+    | Tok.Lower_ident n -> n
+    | t ->
+        error "E2037" name_tok.Tok.span
+          (Printf.sprintf "expected a sugar name after `:`, found %s"
+             (describe_kind t))
+  in
+  match name with
+  | "chain" -> parse_chain st
+  | "foreach" -> parse_foreach st colon_tok
+  | _ ->
+      error "E2037" colon_tok.Tok.span
+        (Printf.sprintf "unknown sugar form `:%s`" name)
+        ~hint:"the sugar namespace holds `:chain` and `:foreach`"
+
 (* `:chain` — the success-chain sugar, a pure rewrite into nested cases.
    Each step line states the shape the next value must have (a bare line
    expects `(R.ok, _)`); the first value that misses falls to the `else`
@@ -845,21 +954,6 @@ and parse_stmt st =
    and an unknown name is a compile error. `then` is the branch-body
    keyword `case` and `receive` branches share. *)
 and parse_chain st =
-  let colon_tok = advance st in
-  let name =
-    match kind st with
-    | Tok.Lower_ident n ->
-        advance st |> ignore;
-        n
-    | t ->
-        error "E2037" (span st)
-          (Printf.sprintf "expected a sugar name after `:`, found %s"
-             (describe_kind t))
-  in
-  if name <> "chain" then
-    error "E2037" colon_tok.Tok.span
-      (Printf.sprintf "unknown sugar form `:%s`" name)
-      ~hint:"the sugar namespace holds `:chain` — steps that must succeed";
   if at_op st Tok.LBrace && newline_before st then
     error "E2001" (span st) "the chain's steps must open on the `:chain` line";
   expect_op st Tok.LBrace "`{`" |> ignore;
@@ -948,6 +1042,126 @@ and parse_chain st =
         ]
   in
   match build lines then_body with [ outer ] -> outer | _ -> assert false
+
+(* `:foreach` — the element loop: `:foreach x in xs { ... }` rewrites to a
+   `for` over indices, the iterable bound once ahead of it so the
+   expression never re-runs and the body reads a fresh `const` binding
+   per element. `foreach` and `in` are ordinary identifiers. The hidden
+   names are generated past every identifier the iterable and body
+   already mention, so they cannot shadow a name the reader wrote. *)
+and parse_foreach st colon_tok =
+  let element = binding_pattern st in
+  let element_name =
+    match element.Ast.pattern_desc with
+    | Ast.Pattern_binding n -> Some n
+    | Ast.Wildcard -> None
+    | _ ->
+        error "E2037" element.Ast.pattern_span "the foreach binds one name"
+          ~hint:"write `:foreach item in xs { ... }`"
+  in
+  (match kind st with
+  | Tok.Lower_ident "in" -> advance st |> ignore
+  | t ->
+      error "E2037" (span st)
+        (Printf.sprintf "expected `in` after the loop variable, found %s"
+           (describe_kind t))
+        ~hint:"write `:foreach item in xs { ... }`");
+  st.suppress_block_sugar <- true;
+  let iterable = parse_expr st in
+  st.suppress_block_sugar <- false;
+  if at_op st Tok.LBrace && newline_before st then
+    error "E2001" (span st) "the foreach body must open on the iterable's line";
+  let body, _close_span = parse_block st in
+  let tag = match element_name with Some n -> n | None -> "elem" in
+  let used = List.fold_left stmt_idents (expr_idents [] iterable) body in
+  let xs_name = foreach_fresh used (Printf.sprintf "_foreach_%s_xs" tag) in
+  let i_name =
+    foreach_fresh (xs_name :: used) (Printf.sprintf "_foreach_%s_i" tag)
+  in
+  (* Every generated expression needs its own span: the checker keys the
+     type table by (file, start, stop), so two synthetic nodes sharing one
+     would overwrite each other's type — the comparison picking up the
+     increment's Int64 was exactly that collision. The offsets sit in a
+     reserved high range, disjoint from every real node and from another
+     `:foreach`'s (the shift leaves room for one statement's nodes). *)
+  let synth = ref 0 in
+  let fresh_span () =
+    incr synth;
+    let start = 0x4000_0000 + (colon_tok.Tok.span.stop lsl 8) + !synth in
+    Emo_support.Span.make ~file:colon_tok.Tok.span.file
+      ~line:colon_tok.Tok.span.line ~col:colon_tok.Tok.span.col ~start
+      ~stop:start
+  in
+  let expr desc = node (fresh_span ()) desc in
+  let stmt desc = stmt (fresh_span ()) desc in
+  let ident name = expr (Ast.Ident name) in
+  let int64_lit n = expr (Ast.Int64 n) in
+  let i_ident = ident i_name in
+  let xs_ident = ident xs_name in
+  let length_call =
+    expr (Ast.Call (expr (Ast.Member (xs_ident, "length")), []))
+  in
+  let element_binding =
+    match element_name with
+    | Some _ ->
+        [
+          stmt
+            (Ast.Binding
+               {
+                 mutable_ = false;
+                 pattern = element;
+                 init = expr (Ast.Index (xs_ident, i_ident));
+               });
+        ]
+    | None -> []
+  in
+  let loop =
+    stmt
+      (Ast.For
+         {
+           init =
+             stmt
+               (Ast.Binding
+                  {
+                    mutable_ = true;
+                    pattern =
+                      {
+                        Ast.pattern_span = fresh_span ();
+                        pattern_desc = Ast.Pattern_binding i_name;
+                      };
+                    init = int64_lit 0L;
+                  });
+           cond = expr (Ast.Binary (Ast.Lt, i_ident, length_call));
+           post =
+             stmt
+               (Ast.Assign
+                  {
+                    target = i_ident;
+                    value = expr (Ast.Binary (Ast.Add, i_ident, int64_lit 1L));
+                  });
+           body = element_binding @ body;
+         })
+  in
+  let xs_binding =
+    stmt
+      (Ast.Binding
+         {
+           mutable_ = false;
+           pattern =
+             {
+               Ast.pattern_span = fresh_span ();
+               pattern_desc = Ast.Pattern_binding xs_name;
+             };
+           init = iterable;
+         })
+  in
+  stmt
+    (Ast.If
+       {
+         cond = expr (Ast.Bool true);
+         then_body = [ xs_binding; loop ];
+         else_body = None;
+       })
 
 (* The step lines: a line carrying a depth-0 `from` (never as the line's
    first token) parses as `pattern from expr`; anything else is a bare
