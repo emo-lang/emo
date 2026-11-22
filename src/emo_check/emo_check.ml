@@ -2792,6 +2792,20 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
       | MapType _ ->
           report ctx span "E4004" "a Map does not support indexing; use `get`";
           Unknown
+      | FuncType (params, _) ->
+          report ctx span "E4004"
+            (match (dotted_path base, params) with
+            | Some path, [] ->
+                let name = String.concat "." path in
+                Printf.sprintf
+                  "`%s` is a function; call it as `%s()` before indexing" name
+                  name
+            | Some path, _ ->
+                Printf.sprintf
+                  "`%s` is a function; call it before indexing its result"
+                  (String.concat "." path)
+            | None, _ -> "a function does not support indexing; call it first");
+          Unknown
       | other ->
           report ctx span "E4004"
             (Printf.sprintf "%s does not support indexing" (to_string other));
