@@ -213,7 +213,9 @@ class Shell {
 
   // One poll over every job, the finished ones announced and dropped:
   // `[1] done sleep 5`, the status riding after `done` when it is not
-  // zero. The interactive loop calls this before each prompt.
+  // zero — the rows ride stderr with the prompt they accompany, so a
+  // redirected stdout stays clean. The interactive loop calls this
+  // before each prompt.
   def notify() Void {
     const taken = self.jobs.read().to_array()
     const kept = ArrayBuilder.new()
@@ -225,7 +227,7 @@ class Shell {
         if status != 0 {
           row = row + " " + status.to_string()
         }
-        self.line(row + " " + j.text)
+        self.err(row + " " + j.text)
       } else {
         kept.push(j)
       }

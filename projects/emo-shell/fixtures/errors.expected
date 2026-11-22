@@ -2,7 +2,7 @@ emosh: no-such-command-emosh: command not found
 missing=127
 emosh: syntax error: unexpected end of line
 syntax=2
-emosh: syntax error: only 2>&1 is supported
+emosh: syntax error: bad descriptor redirection
 dup=2
 back=0
 emosh: syntax error: unterminated '

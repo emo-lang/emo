@@ -21,20 +21,23 @@ $ cd projects/emo-shell
 $ emo build main.emo --target c -o emosh
 $ ./emosh                    (interactive on a terminal)
 $ ./emosh < script.esh       (a script on stdin)
+$ ./emosh - < script.esh     (the explicit dash: the same, by name)
 $ ./emosh script.esh args    (a script file; args are $1, $2, …)
 $ ./emosh -c "echo hi $1"    (one line, its status the shell's)
 ```
 
-Bare, the mode is decided by what fd 0 is: a terminal gets the
-`emosh> ` prompt, anything else is a script read line by line with no
-prompt. With a script file the lines come from the file, the session
-is never interactive, and the file's arguments become the positional
-parameters. `-c` runs the one line — connectors and all — and leaves
-with its status; an optional word after the line stands as `$0` and
-the rest are `$1`, `$2`, … (`emosh -c 'echo $0 $1' shell hello`).
-`-c` without a command refuses with status 2, an unknown option
-refuses with status 2, and a script file that cannot open reports the
-os reason and leaves with 127.
+Bare, the mode is decided by what fd 0 and fd 2 are: both on a
+terminal gets the `emosh> ` prompt — which rides **stderr**, so a
+redirected stdout stays clean no matter what the session is. Anything
+else is a script read line by line with no prompt. With a script file
+the lines come from the file, the session is never interactive, and
+the file's arguments become the positional parameters; `-` says the
+same thing about stdin by name. `-c` runs the one line — connectors
+and all — and leaves with its status; an optional word after the line
+stands as `$0` and the rest are `$1`, `$2`, …
+(`emosh -c 'echo $0 $1' shell hello`). `-c` without a command refuses
+with status 2, an unknown option refuses with status 2, and a script
+file that cannot open reports the os reason and leaves with 127.
 
 The shell declares the `ocaml` and `c` targets — `emo run main.emo`
 runs it under the interpreter (the words after the file ride in as
@@ -54,7 +57,8 @@ line     := and_or ( ";" and_or )* ";"?
 and_or   := pipeline ( "&&" | "||" pipeline )*
 pipeline := command ( "|" command )*
 command  := ( word | redirection )*
-redirection := "<" | ">" | ">>" word | "2>" | "2>>" word | "2>&1"
+redirection := "<" | ">" | ">>" word | "N<" | "N>" | "N>>" word
+             | "N>&M" | "N<&M" | ">&M" | "<&M"
 ```
 
 A `&` after a pipeline sends the whole item to the background —
@@ -73,7 +77,11 @@ stays a star:
   no escape works, a `'` cannot appear inside;
 - `"double quotes"` are expandable — `$var` grows, and `\$` `\"`
   `` \` `` `\\` escape themselves; any other backslash stays;
-- a backslash outside quotes escapes the next byte into a literal;
+- a backslash outside quotes escapes the next byte into a literal —
+  and a **bare trailing backslash continues the line**, `> `
+  prompting for the next one interactively (a double quote left open
+  by a trailing backslash reaches the next line the same way; an
+  unterminated single quote still refuses);
 - `#` at the start of a word comments to the end of the line;
 - an empty quoted string still makes a word (`touch ''` touches).
 
@@ -101,6 +109,11 @@ $NAME-literal
   with `-c` when one is given.
 - `$1` … `$9` and `${N}` — the positional parameters: a script file's
   arguments or `-c`'s, empty past the last one.
+- `$#` — how many positionals there are.
+- `$@` — the positionals as words of their own, vanishing when there
+  are none — but only when the form owns the whole word (`"$@"` or
+  bare `$@`); mixed into other text (`x$@`) it stays literal, the
+  strictness rule keeping one expanded word one argument.
 - `$$` — the shell's own process id.
 - `$!` — the last background job's pid; the empty string until there
   is one.
@@ -147,21 +160,24 @@ The rules, stated so nothing surprises:
 ## Redirections and pipelines
 
 `<` reads a command's stdin from a file, `>` writes its stdout to a
-file (create or truncate), `>>` appends, `2>` and `2>>` aim stderr at
-a file the same way — each opening the file just before the command
-runs, in the fork child. A `2` that a `>` follows redirects stderr
-only when the whole bare word is the digit: `echo hi 2> log` captures
-the errors, `echo hi2> log` passes `hi2` to `echo` and redirects
-stdout, the classic reading. `2>&1` makes stderr follow wherever
-stdout is already aimed, and the order is the meaning:
-`cmd > f 2>&1` lands both in `f`, `cmd 2>&1 > f` leaves stderr where
-stdout was. A command of redirections alone is a command: `> log`
-truncates `log`, `2> log` empties it just the same.
+file (create or truncate), `>>` appends — and every descriptor has
+the same rights: `N<` / `N>` / `N>>` aim descriptor `N` at a file
+(`2>` their everyday face), `N>&M` / `N<&M` aim descriptor `N` where
+`M` already points, `>&M` and `<&M` saying stdout and stdin without
+the number (`>&2` the classic "out to stderr"). Each opens just
+before the command runs, in the fork child. A digit counts as a
+descriptor only when the whole bare word is the digit:
+`echo hi 2> log` captures the errors, `echo hi2> log` passes `hi2`
+to `echo` and redirects stdout, the classic reading. The order is
+the meaning: `cmd > f 2>&1` lands both in `f`, `cmd 2>&1 > f` leaves
+stderr where stdout was. A command of redirections alone is a
+command: `> log` truncates `log`, `2> log` empties it just the same.
 
 A pipeline forks one child per stage, wired through pipes: `a | b`
 runs `a` with its stdout on the pipe and `b` with its stdin on the
 pipe. The pipeline's exit status is the last stage's. A builtin found
-in a pipeline runs in a fork child like everything else.
+in a pipeline runs in a fork child like everything else — `exit`
+inside one ends that child, not the session, the classic reading.
 
 ```console
 $ printf 'b\na\nc\n' | sort
@@ -283,8 +299,8 @@ $ echo x > /no/such/dir/f
 emosh: os: open /no/such/dir/f: No such file or directory   (status 1)
 $ echo dangling |
 emosh: syntax error: unexpected end of line    (status 2)
-$ echo stray 2>&11
-emosh: syntax error: only 2>&1 is supported    (status 2)
+$ echo stray 2>&x
+emosh: syntax error: bad descriptor redirection    (status 2)
 $ echo *.nope
 emosh: no matches: *.nope                      (status 1)
 $ ./emosh -z
@@ -315,8 +331,8 @@ the next milestone's work, not this one's.
 The contract, stated so you never have to guess:
 
 - no control flow — no `if`, `while`, `for`, no functions;
-- the positionals end where they end: `$1` … `$9` and `${N}` only —
-  no `shift`, no `$#`, no `$@`;
+- the positionals end where they end: `$1` … `$9`, `${N}`, `$#` and
+  `$@` only — no `shift`, no `$*`;
 - background jobs exist but the terminal does not negotiate: `fg`
   waits, and a Ctrl-C cannot reach a job it brought back (the
   terminal-handoff call — `tcsetpgrp` — is the os half waiting to
@@ -329,8 +345,8 @@ The contract, stated so you never have to guess:
 - no `~user`, no nested `${…}` forms, no `${var-word}` without the
   colon;
 - no subshell parentheses, no here-docs, no traps, no aliases;
-- a `2>&` that is not `2>&1` refuses; there is no `<&`, no `>&`,
-  no fd numbers beyond the `2>` family.
+- the dup forms aim a descriptor where another points — they do not
+  close (`N>&-` refuses), and `<>` (read-write) is not a form.
 
 The os surface under each of these (process groups, `WNOHANG`, the
 stat family) is where the work goes when a milestone names them.

@@ -16,3 +16,8 @@ echo "~" stays
 echo ~zz-no-user stays
 echo pos=[$1]
 echo braced=[${2}]
+echo count=[$#]
+echo a $@ b
+echo mixed=[$@]
+echo cont-\
+works

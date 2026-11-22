@@ -2805,7 +2805,22 @@ let emosh_golden_tests =
               (Filename.quote missing_script)
               ("emosh: os: open " ^ missing_script
              ^ ": No such file or directory\n")
-              127)
+              127;
+            let stdin_file = Filename.concat scratch "dash.stdin" in
+            let oc = open_out stdin_file in
+            output_string oc "echo dash=$?\nexit 5\n";
+            close_out oc;
+            let out, _, status =
+              Emo_test_support.run_cmd
+                (Printf.sprintf "exec 2>&1; %s - < %s" (Filename.quote bin)
+                   (Filename.quote stdin_file))
+            in
+            Alcotest.(check string) (tag ^ " dash output") "dash=0\n" out;
+            Alcotest.(check int)
+              (tag ^ " dash exit") 5
+              (match status with Unix.WEXITED n -> n | _ -> -1);
+            run_args (tag ^ " positionals") bin
+              "-c 'echo count:$#; echo $@' nm a b" "count:2\na b\n" 0)
           [ ("ocaml", ocaml_bin); ("c", c_bin) ]);
   ]
 

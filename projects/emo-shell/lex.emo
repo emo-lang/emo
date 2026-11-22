@@ -9,18 +9,22 @@
 //              ones marked `quoted`) — and a bare run accumulates as
 //              one part, so the `$` and the name after it reach the
 //              expander together;
-//   operator — `|`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`, `;`, `&&`,
-//              `||`, `&`, each its own token kind.
+//   operator — `|`, `<`, `>`, `>>`, `;`, `&&`, `||`, `&`, each its
+//              own token kind — and the descriptor redirections ride
+//              as their own kinds too: `N<` / `N>` / `N>>` / `N>&M` /
+//              `N<&M` for a bare digit word `N`, and `>&M` / `<&M`
+//              bare (`2>` their everyday face, `2>&1` inside them).
 //
 // A `#` at the start of a word is a comment: the rest of the line is
-// dropped. A `2` that a `>` follows — the whole bare word being the
-// digit — is the stderr redirection, the way the classic shells read
-// it; a `2>&` that is not `2>&1` is refused by name. A `&` that is
-// not `&&` is its own operator — the pipeline before it runs in the
-// background. An unterminated quote is refused with the quote in the
-// message. Like the classic shells, an empty quoted string still
-// makes a word (`touch ''` must touch), so a word token can carry a
-// single empty literal part.
+// dropped. A `&` that is not `&&` is its own operator — the pipeline
+// before it runs in the background. An unterminated quote is refused
+// with the quote in the message, and a descriptor redirection whose
+// target digits run into a word character (`2>&11x`) refuses too — a
+// strict refusal beats a silent misread. Like the classic shells, an
+// empty quoted string still makes a word (`touch ''` must touch), so
+// a word token can carry a single empty literal part. A bare
+// trailing backslash asks the caller for the next line (`continues`
+// answers it); inside quotes the quote's own rules stand.
 //
 // The answers ride the standard library's error split — the shell has
 // no catch to survive, so a malformed line is the value
@@ -40,13 +44,92 @@ def op_pipe() String { return "|" }
 def op_lt() String { return "<" }
 def op_gt() String { return ">" }
 def op_gtgt() String { return ">>" }
-def op_2gt() String { return "2>" }
-def op_2gtgt() String { return "2>>" }
-def op_2gt1() String { return "2>&1" }
 def op_semi() String { return ";" }
 def op_andand() String { return "&&" }
 def op_oror() String { return "||" }
 def op_amp() String { return "&" }
+
+// The characters a descriptor redirection may sit against — the
+// boundary a `2>&1`'s target digits run to. A word character after
+// them (`2>&11x`) is a misread, refused.
+const redirect_after = " \t|<>;&#"
+
+// The digit run starting at i, a space or two of breathing room
+// allowed first (`>& 2` aims as well as `>&2`): the text and the
+// index just past it.
+def through_digits(line String, start Int64) (String, Int64) {
+  var j = start
+  while j < line.length()
+    && (line.substring(j, 1) == " " || line.substring(j, 1) == "\t") {
+    j = j + 1
+  }
+  const begin = j
+  while j < line.length() && expand.is_digits(line.substring(j, 1)) {
+    j = j + 1
+  }
+  return (line.substring(begin, j - begin), j)
+}
+
+// Whether the line asks for another one: a backslash the quoting walk
+// finds bare at the very end. Inside single or double quotes the
+// answer is no — the quote's own rules stand, an unterminated one
+// refusing as it always has. A doubled backslash escapes itself, no
+// continuation either.
+def continues(line String) Bool {
+  const len = line.length()
+  if len == 0 {
+    return false
+  }
+  if line.substring(len - 1, 1) != "\\" {
+    return false
+  }
+  var sq = false
+  var dq = false
+  var i = 0
+  while i < len - 1 {
+    const ch = line.substring(i, 1)
+    if sq {
+      if ch == "'" {
+        sq = false
+      }
+      i = i + 1
+    } else {
+      if dq {
+        if ch == "\\" {
+          i = i + 2
+        } else {
+          if ch == "\"" {
+            dq = false
+          }
+          i = i + 1
+        }
+      } else {
+        if ch == "'" {
+          sq = true
+          i = i + 1
+        } else {
+          if ch == "\"" {
+            dq = true
+            i = i + 1
+          } else {
+            if ch == "\\" {
+              i = i + 2
+            } else {
+              i = i + 1
+            }
+          }
+        }
+      }
+    }
+  }
+  // The walk landing past the end means the last backslash escaped
+  // something; standing on it with the double quote still open means
+  // it escapes this newline, the quote reaching for the next line;
+  // standing bare on it means the line asks for the next. An open
+  // single quote never continues — its backslash is literal, and the
+  // unterminated refusal stands.
+  return i == len - 1 && !sq
+}
 
 // The whole line's tokens, or the reason the line is malformed.
 def tokenize(line String) (R, Array[Tok]) {
@@ -77,27 +160,30 @@ def tokenize(line String) (R, Array[Tok]) {
         i = line.length()
       } else {
         if ch == "&" || ch == "|" || ch == "<" || ch == ">" || ch == ";" {
-          if ch == ">" && in_word && cur == "2" && parts.length() == 0 {
-            // the whole bare word is the digit: a descriptor number,
-            // not an argument — the stderr redirections. A `2>&`
-            // that is not `2>&1` refuses by name.
+          if (ch == ">" || ch == "<") && in_word && parts.length() == 0
+            && cur != "" && expand.is_digits(cur) {
+            // the whole bare word is a descriptor number: the
+            // fd-numbered redirections, `2>` their everyday face —
+            // `N<` file, `N>` file, `N>>` file, and the dups `N>&M`
+            // / `N<&M` (the digits of M running to the next boundary)
             in_word = false
+            const fd_text = cur
             cur = ""
-            if i + 1 < line.length() && line.substring(i + 1, 1) == ">" {
-              out.push(Tok.new(kind: op_2gtgt(), parts: []))
+            if ch == ">" && i + 1 < line.length() && line.substring(i + 1, 1) == ">" {
+              out.push(Tok.new(kind: fd_text + ">>", parts: []))
               i = i + 2
             } else {
               if i + 1 < line.length() && line.substring(i + 1, 1) == "&" {
-                const ok_after = " \t|<>;&#"
-                if i + 2 < line.length() && line.substring(i + 2, 1) == "1"
-                  && (i + 3 >= line.length() || ok_after.index_of(line.substring(i + 3, 1)) >= 0) {
-                  out.push(Tok.new(kind: op_2gt1(), parts: []))
-                  i = i + 3
-                } else {
-                  return (R.error, "emosh: syntax error: only 2>&1 is supported")
+                const target = through_digits(line, i + 2)
+                if target[0] == ""
+                  || (target[1] < line.length()
+                  && redirect_after.index_of(line.substring(target[1], 1)) < 0) {
+                  return (R.error, "emosh: syntax error: bad descriptor redirection")
                 }
+                out.push(Tok.new(kind: fd_text + ch + "&" + target[0], parts: []))
+                i = target[1]
               } else {
-                out.push(Tok.new(kind: op_2gt(), parts: []))
+                out.push(Tok.new(kind: fd_text + ch, parts: []))
                 i = i + 1
               }
             }
@@ -119,8 +205,21 @@ def tokenize(line String) (R, Array[Tok]) {
               out.push(Tok.new(kind: two, parts: []))
               i = i + 2
             } else {
-              out.push(Tok.new(kind: ch, parts: []))
-              i = i + 1
+              if (ch == ">" || ch == "<") && i + 1 < line.length()
+                && line.substring(i + 1, 1) == "&" {
+                // `>&M` / `<&M`: stdout or stdin aimed where fd M points
+                const target = through_digits(line, i + 2)
+                if target[0] == ""
+                  || (target[1] < line.length()
+                  && redirect_after.index_of(line.substring(target[1], 1)) < 0) {
+                  return (R.error, "emosh: syntax error: bad descriptor redirection")
+                }
+                out.push(Tok.new(kind: ch + "&" + target[0], parts: []))
+                i = target[1]
+              } else {
+                out.push(Tok.new(kind: ch, parts: []))
+                i = i + 1
+              }
             }
           }
         } else {

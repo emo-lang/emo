@@ -4,8 +4,18 @@ emosh: nosuch-emosh: command not found
 emosh: nosuch-emosh: command not found
 status=127
 emosh: nosuch-emosh: command not found
-emosh: syntax error: only 2>&1 is supported
-refused=2
+emosh: os: dup2: Bad file descriptor
+dup11=1
+emosh: syntax error: bad descriptor redirection
+bad=2
+carry
+noop=0
+bare
+bare=0
+indup
+indup=0
+fd3
+fd3.tmp
 emosh: os: open /nonexistent-emosh-dir/f: No such file or directory
 open=1
 still-here

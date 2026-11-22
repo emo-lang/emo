@@ -14,7 +14,11 @@ require "os"
 //   - `$?` is the last exit status, `$0` the name the shell was
 //     started with, `$1`…`$9` and `${N}` the positional parameters,
 //     `$$` the shell's own process id, `$!` the last background job's
-//     pid (the empty string until there is one);
+//     pid (the empty string until there is one), `$#` the positional
+//     count, `$@` the positionals as words of their own — but only
+//     when the form owns the whole word (`"$@"` or bare `$@`); mixed
+//     into other text it stays literal, since one expanded word is
+//     one argument and the strictness rule keeps it so;
 //   - `${name:-word}` answers the variable's value, or word when the
 //     variable is unset or empty (the word expands too; nested braces
 //     do not — the first `}` ends the form);
@@ -181,34 +185,39 @@ def dollars(text String, status Int64, name String, args Array[String], shell_pi
                 }
                 i = i + 2
               } else {
-                if digits.index_of(next) >= 0 {
-                  out = out + positional(digits.index_of(next), args, name)
+                if next == "#" {
+                  out = out + args.length().to_string()
                   i = i + 2
                 } else {
-                  if next == "{" {
-                    // the closing brace is searched from here, never from
-                    // the start of the run — a `}` the word carried before
-                    // the form must not end it
-                    const rest = text.substring(i + 2, text.length() - i - 2)
-                    const rel = rest.index_of("}")
-                    if rel < 0 {
-                      out = out + "$"
-                      i = i + 1
-                    } else {
-                      out = out + braced(rest.substring(0, rel), status, name, args, shell_pid, last_bg)
-                      i = i + 2 + rel + 1
-                    }
+                  if digits.index_of(next) >= 0 {
+                    out = out + positional(digits.index_of(next), args, name)
+                    i = i + 2
                   } else {
-                    if is_name_first(next) {
-                      var j = i + 1
-                      while j < text.length() && is_name_rest(text.substring(j, 1)) {
-                        j = j + 1
+                    if next == "{" {
+                      // the closing brace is searched from here, never from
+                      // the start of the run — a `}` the word carried before
+                      // the form must not end it
+                      const rest = text.substring(i + 2, text.length() - i - 2)
+                      const rel = rest.index_of("}")
+                      if rel < 0 {
+                        out = out + "$"
+                        i = i + 1
+                      } else {
+                        out = out + braced(rest.substring(0, rel), status, name, args, shell_pid, last_bg)
+                        i = i + 2 + rel + 1
                       }
-                      out = out + value_of(text.substring(i + 1, j - i - 1))
-                      i = j
                     } else {
-                      out = out + "$"
-                      i = i + 1
+                      if is_name_first(next) {
+                        var j = i + 1
+                        while j < text.length() && is_name_rest(text.substring(j, 1)) {
+                          j = j + 1
+                        }
+                        out = out + value_of(text.substring(i + 1, j - i - 1))
+                        i = j
+                      } else {
+                        out = out + "$"
+                        i = i + 1
+                      }
                     }
                   }
                 }
@@ -257,4 +266,18 @@ def value_of(name String) String {
     (R.ok, value) then { return value }
     (R.error, _)  then { return "" }
   }
+}
+
+// Whether the word is the positionals-as-words form standing alone:
+// `$@`, bare or whole-word double-quoted. A `$@` mixed into other
+// text — `x$@`, `$@y` — is not this word, and stays literal.
+def is_dollar_at(parts Array[Part]) Bool {
+  if parts.length() != 1 {
+    return false
+  }
+  const part = parts[0]
+  if part.lit {
+    return false
+  }
+  return part.text == "$@"
 }

@@ -13,3 +13,7 @@ escape-$EMOSH_TEST-literal
 ~zz-no-user stays
 pos=[]
 braced=[]
+count=[0]
+a b
+mixed=[$@]
+cont-works

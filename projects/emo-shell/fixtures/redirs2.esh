@@ -9,7 +9,18 @@ nosuch-emosh > emosh-both.tmp 2>&1
 cat emosh-both.tmp
 rm emosh-both.tmp
 echo probe 2>&11
-echo refused=$?
+echo dup11=$?
+echo stray 2>&x
+echo bad=$?
+echo carry 2>&2
+echo noop=$?
+echo bare >& 2
+echo bare=$?
+echo indup <& 0
+echo indup=$?
+echo fd3 3> fd3.tmp
+ls fd3.tmp
+rm fd3.tmp
 true 2> /nonexistent-emosh-dir/f
 echo open=$?
 echo still-here

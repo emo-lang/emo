@@ -5,7 +5,8 @@
 //   and_or   := pipeline ( "&&" | "||" pipeline )*
 //   pipeline := command ( "|" command )*
 //   command  := ( word | redirection )*
-//   redirection := "<" | ">" | ">>" word | "2>" | "2>>" word | "2>&1"
+//   redirection := "<" | ">" | ">>" word | "N<" | "N>" | "N>>" word
+//                | "N>&M" | "N<&M" | ">&M" | "<&M"
 //
 // A `&` after a pipeline marks the whole item background — `a | b &`
 // is one job, its status the spawn's.
@@ -152,20 +153,20 @@ def parse_command(tokens Array[lex.Tok], start Int64) (R, (Cmd, Int64)) {
       words.push(tok.parts)
       i = i + 1
     } else {
-      if tok.kind == lex.op_lt() || tok.kind == lex.op_gt() || tok.kind == lex.op_gtgt()
-        || tok.kind == lex.op_2gt() || tok.kind == lex.op_2gtgt() {
-        if i + 1 >= tokens.length() || tokens[i + 1].kind != "word" {
-          return (R.error, "emosh: syntax error: " + tok.kind + " needs a file name")
-        }
-        const fd = redirect_fd(tok.kind)
-        redirs.push(Redir.new(op: tok.kind, fd: fd, dup: 0 - 1, word: tokens[i + 1].parts))
-        i = i + 2
-      } else {
-        if tok.kind == lex.op_2gt1() {
-          redirs.push(Redir.new(op: tok.kind, fd: 2, dup: 1, word: []))
-          i = i + 1
-        } else {
-          in_command = false
+      case redir_of(tok.kind) {
+        (R.error, _) then { in_command = false }
+        (R.ok, shape) then {
+          if shape[1] == ">&" || shape[1] == "<&" {
+            // the dup forms: one token, no file follows
+            redirs.push(Redir.new(op: shape[1], fd: shape[0], dup: shape[2], word: []))
+            i = i + 1
+          } else {
+            if i + 1 >= tokens.length() || tokens[i + 1].kind != "word" {
+              return (R.error, "emosh: syntax error: " + tok.kind + " needs a file name")
+            }
+            redirs.push(Redir.new(op: shape[1], fd: shape[0], dup: 0 - 1, word: tokens[i + 1].parts))
+            i = i + 2
+          }
         }
       }
     }
@@ -179,14 +180,79 @@ def parse_command(tokens Array[lex.Tok], start Int64) (R, (Cmd, Int64)) {
   return (R.ok, (Cmd.new(words: words.to_array(), redirs: redirs.to_array()), i))
 }
 
-// The descriptor a file redirection lands on: `<` opens stdin, the
-// `>` family stdout, the `2>` family stderr.
-def redirect_fd(op String) Int64 {
-  if op == lex.op_lt() {
-    return 0
+// One redirection token's shape: the descriptor it lands on, the
+// operator (`<`, `>`, `>>` opening files, `>&`, `<&` following
+// another descriptor), and the descriptor a dup follows — or the
+// refusal for a token that is no redirection at all. `2>&1` is just
+// the family's everyday face here.
+def redir_of(kind String) (R, (Int64, String, Int64)) {
+  if kind == lex.op_lt() {
+    return (R.ok, (0, "<", 0 - 1))
   }
-  if op == lex.op_2gt() || op == lex.op_2gtgt() {
-    return 2
+  if kind == lex.op_gt() {
+    return (R.ok, (1, ">", 0 - 1))
   }
-  return 1
+  if kind == lex.op_gtgt() {
+    return (R.ok, (1, ">>", 0 - 1))
+  }
+  const len = kind.length()
+  if len >= 3 {
+    const tail = kind.substring(len - 2, 2)
+    if tail == ">>" && expand.is_digits(kind.substring(0, len - 2)) {
+      return (R.ok, (expand.digits_value(kind.substring(0, len - 2)), ">>", 0 - 1))
+    }
+  }
+  // the dup forms, `2>&1` their everyday face — and `>&2`, `<&0`,
+  // `10>&3` beside it: the last `&` splits the operator (the `>` or
+  // `<` before it) from the target descriptor digits after it, the
+  // head naming the descriptor the redirection lands on
+  var amp = 0 - 1
+  var scan = len - 1
+  var searching = scan >= 0
+  while searching {
+    if kind.substring(scan, 1) == "&" {
+      amp = scan
+      searching = false
+    } else {
+      scan = scan - 1
+      if scan < 0 {
+        searching = false
+      }
+    }
+  }
+  if amp > 0 {
+    const opch = kind.substring(amp - 1, 1)
+    if opch == ">" || opch == "<" {
+      const target = kind.substring(amp + 1, len - amp - 1)
+      if expand.is_digits(target) {
+        const head = kind.substring(0, amp - 1)
+        var fd = 1
+        var dup_op = ">&"
+        if opch == "<" {
+          fd = 0
+          dup_op = "<&"
+        }
+        if head == "" {
+          return (R.ok, (fd, dup_op, expand.digits_value(target)))
+        }
+        if expand.is_digits(head) {
+          return (R.ok, (expand.digits_value(head), dup_op, expand.digits_value(target)))
+        }
+        if head == ">" && opch == ">" {
+          return (R.ok, (1, ">&", expand.digits_value(target)))
+        }
+        if head == "<" && opch == "<" {
+          return (R.ok, (0, "<&", expand.digits_value(target)))
+        }
+      }
+    }
+  }
+  if len >= 2 {
+    const last = kind.substring(len - 1, 1)
+    const head = kind.substring(0, len - 1)
+    if (last == "<" || last == ">") && expand.is_digits(head) {
+      return (R.ok, (expand.digits_value(head), last, 0 - 1))
+    }
+  }
+  return (R.error, "no redirection")
 }

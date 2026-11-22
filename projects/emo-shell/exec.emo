@@ -44,7 +44,10 @@ def start() shell.Shell {
   if argv.length() > 0 {
     name = argv[0]
   }
-  var interactive = os.isatty(0)
+  // The classic interactive test, bash's own: stdin and stderr both
+  // on a terminal. The prompt rides stderr, so a redirected stdout
+  // stays clean no matter what the session is.
+  var interactive = os.isatty(0) && os.isatty(2)
   var read_fd = 0
   var args = ArrayBuilder.new().to_array()
   var one_shot = false
@@ -70,28 +73,40 @@ def start() shell.Shell {
       }
       args = given.to_array()
     } else {
-      if first.substring(0, 1) == "-" {
-        os.write(2, "emosh: unknown option: " + first + "\n")
-        os._exit(2)
-      }
-      // a script file: its lines are the session's input, its
-      // arguments the positionals
-      interactive = false
-      case os.open_read(first) {
-        (R.error, why) then {
-          os.write(2, "emosh: " + why + "\n")
-          os._exit(127)
+      if first == "-" {
+        // the classic explicit stdin: the lines come from fd 0 as a
+        // script's, the shell's name stays its own, and the words
+        // after the dash are the positionals
+        interactive = false
+        const given = ArrayBuilder.new()
+        for var k = 2; k < argv.length(); k = k + 1 {
+          given.push(argv[k])
         }
-        (R.ok, fd) then {
-          read_fd = fd
+        args = given.to_array()
+      } else {
+        if first.substring(0, 1) == "-" {
+          os.write(2, "emosh: unknown option: " + first + "\n")
+          os._exit(2)
         }
+        // a script file: its lines are the session's input, its
+        // arguments the positionals
+        interactive = false
+        case os.open_read(first) {
+          (R.error, why) then {
+            os.write(2, "emosh: " + why + "\n")
+            os._exit(127)
+          }
+          (R.ok, fd) then {
+            read_fd = fd
+          }
+        }
+        name = first
+        const given = ArrayBuilder.new()
+        for var k = 2; k < argv.length(); k = k + 1 {
+          given.push(argv[k])
+        }
+        args = given.to_array()
       }
-      name = first
-      const given = ArrayBuilder.new()
-      for var k = 2; k < argv.length(); k = k + 1 {
-        given.push(argv[k])
-      }
-      args = given.to_array()
     }
   }
   if interactive {
@@ -114,22 +129,54 @@ def main_entry() Int64 {
   while reading {
     if sh.interactive {
       sh.notify()
-      os.write(1, "emosh> ")
+      os.write(2, "emosh> ")
     }
     const raw = sh.read_line()
     if raw == "" {
       if sh.interactive {
-        os.write(1, "\n")
+        os.write(2, "\n")
       }
       reading = false
     } else {
-      run_line(sh, shell.strip_newline(raw))
-      if !sh.keeps_running() {
-        reading = false
+      case gather(sh, raw) {
+        (R.error, _) then { reading = false }
+        (R.ok, line) then {
+          run_line(sh, line)
+          if !sh.keeps_running() {
+            reading = false
+          }
+        }
       }
     }
   }
   return sh.status()
+}
+
+// One full logical line: a bare trailing backslash pulls the next
+// input line in — `> ` prompting for it interactively — until the
+// line ends bare, the pieces joined at the escape. The input running
+// out mid-continuation refuses, the classic unexpected end of file,
+// and ends the session's input.
+def gather(sh shell.Shell, first String) (R, String) {
+  var line = shell.strip_newline(first)
+  var ended = false
+  while lex.continues(line) && !ended {
+    if sh.interactive {
+      os.write(2, "> ")
+    }
+    const more = sh.read_line()
+    if more == "" {
+      sh.err("emosh: syntax error: unexpected end of input")
+      sh.set_status(2)
+      ended = true
+    } else {
+      line = line.substring(0, line.length() - 1) + shell.strip_newline(more)
+    }
+  }
+  if ended {
+    return (R.error, "")
+  }
+  return (R.ok, line)
 }
 
 // One line of input: lex, parse, walk.
@@ -343,17 +390,27 @@ def in_child(sh shell.Shell, cmd parse.Cmd, i Int64, n Int64, read_fds Array[Int
 def expand_words(sh shell.Shell, words Array[Array[expand.Part]]) (R, Array[String]) {
   const out = ArrayBuilder.new()
   for var k = 0; k < words.length(); k = k + 1 {
-    const text = expand.word(words[k], sh.status(), sh.name, sh.args, sh.pid, sh.last_bg.read())
-    if glob.patterned(words[k]) {
-      const found = glob.matches(text)
-      if found.length() == 0 {
-        return (R.error, "emosh: no matches: " + text)
-      }
-      for var m = 0; m < found.length(); m = m + 1 {
-        out.push(found[m])
+    if expand.is_dollar_at(words[k]) {
+      // `$@` standing alone fans into the positionals, one word per
+      // argument, vanishing entirely when there are none — and the
+      // fan-out never globs, expansion results never do
+      const all = sh.args
+      for var a = 0; a < all.length(); a = a + 1 {
+        out.push(all[a])
       }
     } else {
-      out.push(text)
+      const text = expand.word(words[k], sh.status(), sh.name, sh.args, sh.pid, sh.last_bg.read())
+      if glob.patterned(words[k]) {
+        const found = glob.matches(text)
+        if found.length() == 0 {
+          return (R.error, "emosh: no matches: " + text)
+        }
+        for var m = 0; m < found.length(); m = m + 1 {
+          out.push(found[m])
+        }
+      } else {
+        out.push(text)
+      }
     }
   }
   return (R.ok, out.to_array())

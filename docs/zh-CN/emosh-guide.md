@@ -11,11 +11,12 @@ $ cd projects/emo-shell
 $ emo build main.emo --target c -o emosh
 $ ./emosh                    (终端上交互态)
 $ ./emosh < script.esh       (脚本从 stdin 喂入)
+$ ./emosh - < script.esh     (显式短横:同上,按名字说话)
 $ ./emosh script.esh args    (脚本文件;args 是 $1、$2、…)
 $ ./emosh -c "echo hi $1"    (单行,其状态即 shell 的状态)
 ```
 
-不带参数时,模式由 fd 0 是什么决定:终端拿到 `emosh> ` 提示符,其余一律是逐行读取、无提示符的脚本。带脚本文件时,行来自文件,会话永不交互,文件后的参数成为位置参数。`-c` 跑这一行——连接符照常——并以其状态离场;行后跟一个可选词则充作 `$0`,其余是 `$1`、`$2`、…(`emosh -c 'echo $0 $1' shell hello`)。`-c` 缺命令串以状态 2 拒绝,未知选项以状态 2 拒绝,打不开的脚本文件报 os reason 并以 127 离场。
+不带参数时,模式由 fd 0 和 fd 2 是什么决定:两者都在终端上才有 `emosh> ` 提示符——提示符走 **stderr**,所以无论会话怎么跑,被重定向的 stdout 都保持干净。其余一律是逐行读取、无提示符的脚本。带脚本文件时,行来自文件,会话永不交互,文件后的参数成为位置参数;`-` 把同样的事按名字说给 stdin。`-c` 跑这一行——连接符照常——并以其状态离场;行后跟一个可选词则充作 `$0`,其余是 `$1`、`$2`、…(`emosh -c 'echo $0 $1' shell hello`)。`-c` 缺命令串以状态 2 拒绝,未知选项以状态 2 拒绝,打不开的脚本文件报 os reason 并以 127 离场。
 
 shell 声明 `ocaml` 与 `c` 两个 target——`emo run main.emo` 在解释器下运行(文件之后的词作为程序的 `os.argv` 传入,shell 会把它们当自己的参数解析),`fixtures/` 里的金测把两个 target 的输出逐字节钉死。
 
@@ -28,7 +29,8 @@ line     := and_or ( ";" and_or )* ";"?
 and_or   := pipeline ( "&&" | "||" pipeline )*
 pipeline := command ( "|" command )*
 command  := ( word | redirection )*
-redirection := "<" | ">" | ">>" word | "2>" | "2>>" word | "2>&1"
+redirection := "<" | ">" | ">>" word | "N<" | "N>" | "N>>" word
+             | "N>&M" | "N<&M" | ">&M" | "<&M"
 ```
 
 管道之后的 `&` 把整个条目送进后台——`a | b &` 是一个作业,见下文。
@@ -40,7 +42,7 @@ redirection := "<" | ">" | ">>" word | "2>" | "2>>" word | "2>&1"
 - 裸文本可扩展——`$var`、`$?`、词首 `~`、glob 字符在这里生长;
 - `'单引号'` 是字面,逐字节——什么都不扩展,转义不生效,内部不可能出现 `'`;
 - `"双引号"` 可扩展——`$var` 生长,`\$` `\"` `` \` `` `\\` 转义自身;其余反斜杠原样保留;
-- 引号外的反斜杠把下一字节转成字面;
+- 引号外的反斜杠把下一字节转成字面——**裸的行尾反斜杠续行**,交互态以 `> ` 提示下一行(被双引号落在行尾的 `\\` 同样把引号伸到下一行;未闭合的单引号照旧拒绝);
 - 词首的 `#` 注释到行尾;
 - 空引号串仍构成一个词(`touch ''` 会 touch)。
 
@@ -63,6 +65,8 @@ $NAME-literal
 - `$?` —— 上一条命令的退出状态。
 - `$0` —— shell 启动时的名字:裸跑是程序名,脚本模式是脚本路径,`-c` 模式是行后给的那个词(给了才算)。
 - `$1` … `$9` 与 `${N}` —— 位置参数:脚本文件的参数或 `-c` 的参数,越界为空。
+- `$#` —— 位置参数的个数。
+- `$@` —— 位置参数各自成词,一个都没有时整个消失——但前提是形态独占整个词(`"$@"` 或裸 `$@`);混进其他文本(`x$@`)保持字面,严格性规则守着"一个扩展后的词是一个参数"。
 - `$$` —— shell 自己的进程 id。
 - `$!` —— 最后一个后台作业的 pid;还没有后台作业时是空串。
 - 裸写、未加引号的词首 `~` —— `$HOME`;未设置时波浪号原样保留(`~user` 不是这里的形态,被引的波浪号 stays 波浪号)。
@@ -90,9 +94,9 @@ defaults.esh errors.esh flow.esh globs.esh pipes.esh redirs2.esh redirs.esh word
 
 ## 重定向与管道
 
-`<` 把命令的 stdin 接到文件,`>` 把 stdout 写进文件(创建或截断),`>>` 追加,`2>` 与 `2>>` 把 stderr 照同样规矩对准文件——每个文件都在命令即将运行前打开,在 fork 子进程里。`2` 后面跟了 `>` 时,只有整个裸词恰是这个数字才算 stderr 重定向:`echo hi 2> log` 收走错误,`echo hi2> log` 把 `hi2` 传给 `echo` 并重定向 stdout,经典的读法。`2>&1` 让 stderr 跟随 stdout 已去的地方,顺序即语义:`cmd > f 2>&1` 双双进 `f`,`cmd 2>&1 > f` 的 stderr 留在 stdout 原来的地方。纯重定向的命令也是命令:`> log` 截断 `log`,`2> log` 照样清空。
+`<` 把命令的 stdin 接到文件,`>` 把 stdout 写进文件(创建或截断),`>>` 追加——每个描述符都有同样的权利:`N<` / `N>` / `N>>` 把描述符 `N` 对准文件(`2>` 是它们日常的脸面),`N>&M` / `N<&M` 把描述符 `N` 对准 `M` 已去的地方,`>&M` 与 `<&M` 免去数字直说 stdout 与 stdin(`>&2` 是经典的"输出到 stderr")。每个文件都在命令即将运行前打开,在 fork 子进程里。数字只有当整个裸词恰是这个数字时才算描述符:`echo hi 2> log` 收走错误,`echo hi2> log` 把 `hi2` 传给 `echo` 并重定向 stdout,经典的读法。顺序即语义:`cmd > f 2>&1` 双双进 `f`,`cmd 2>&1 > f` 的 stderr 留在 stdout 原来的地方。纯重定向的命令也是命令:`> log` 截断 `log`,`2> log` 照样清空。
 
-管道逐段 fork 子进程,经管道接线:`a | b` 让 `a` 的 stdout 骑在管道上、`b` 的 stdin 骑在管道上。管道的退出状态取最后一段。管道里遇到的内建与其他一切一样,在 fork 子进程里运行。
+管道逐段 fork 子进程,经管道接线:`a | b` 让 `a` 的 stdout 骑在管道上、`b` 的 stdin 骑在管道上。管道的退出状态取最后一段。管道里遇到的内建与其他一切一样,在 fork 子进程里运行——`exit` 在其中结束的是那个子进程,不是会话,经典的读法。
 
 ```console
 $ printf 'b\na\nc\n' | sort
@@ -189,8 +193,8 @@ $ echo x > /no/such/dir/f
 emosh: os: open /no/such/dir/f: No such file or directory   (状态 1)
 $ echo dangling |
 emosh: syntax error: unexpected end of line    (状态 2)
-$ echo stray 2>&11
-emosh: syntax error: only 2>&1 is supported    (状态 2)
+$ echo stray 2>&x
+emosh: syntax error: bad descriptor redirection    (状态 2)
 $ echo *.nope
 emosh: no matches: *.nope                      (状态 1)
 $ ./emosh -z
@@ -212,13 +216,13 @@ cooked 模式下,Ctrl-C 之后要等下一行完成才会再见到提示符;行�
 契约,写明免得猜:
 
 - 无控制流——没有 `if`、`while`、`for`,没有函数;
-- 位置参数到头就到头:只有 `$1` … `$9` 与 `${N}`——无 `shift`,无 `$#`,无 `$@`;
+- 位置参数到头就到头:只有 `$1` … `$9`、`${N}`、`$#` 与 `$@`——无 `shift`,无 `$*`;
 - 后台任务有了,但终端不谈判:`fg` 只是等,Ctrl-C 够不到它带回来的作业(终端交接调用——`tcsetpgrp`——是等着落地的 os 半边);这里没有任何东西会停作业,`bg` 恒答 `already in background`;后台作业的 stdin 仍是 shell 的;
 - 无行编辑器——终端自己的 cooked 模式读入;无历史,无补全;
 - 扩展后无 IFS 字段切分;
 - 无 `~user`,无嵌套 `${…}` 形态,无不带冒号的 `${var-word}`;
 - 无子 shell 括号、无 here-doc、无 trap、无别名;
-- `2>&` 里不是 `2>&1` 的一律拒绝;没有 `<&`、`>&`,`2>` 家族之外的 fd 号也没有。
+- dup 形态把一个描述符对准另一个——不做关闭(`N>&-` 拒绝),`<>`(读写)也不是这里的形态。
 
 这些底下的 os 表面(进程组、`WNOHANG`、stat 家族)就是里程碑点名时活要去的地方。
 
