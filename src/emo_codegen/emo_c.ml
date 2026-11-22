@@ -1476,6 +1476,10 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
           Printf.sprintf "(uint8_t)((%s) & 255)" (emit_expr env self_)
       | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Byte ->
           Printf.sprintf "((int64_t)(%s))" (emit_expr env self_)
+      | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Char ->
+          box_int env result_ty
+            (Printf.sprintf "((int64_t)(%s))"
+               (as_native env self_ Emo_check.Char))
       | "is", [ { Emo_ir.desc = Type_ref target; _ } ] -> (
           (* a class target compares vtable identity; an interface target
          matches the shape *)

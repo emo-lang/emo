@@ -2978,13 +2978,20 @@ and builtin_method_call env self_ name args =
       e env (W.Struct_get (t_vfloat, 0));
       e env W.I64_trunc_f64_s;
       e env (W.Struct_new t_vint)
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Char ->
+      (* a Char is one code point: the immediate, widened *)
+      expr env self_;
+      e env (W.Ref_cast t_vchar);
+      e env (W.Struct_get (t_vchar, 0));
+      e env W.I64_extend_i32_s;
+      e env (W.Struct_new t_vint)
   | "to_int64", [] when self_.Emo_ir.ety = Emo_check.String ->
       expr env self_;
       e env (W.Call (rt "str_to_int64"))
   | "to_int64", [] ->
-      (* identity for Int64 and Byte; a String receiver the static type
-         did not name parses at run time — the shape test tells them
-         apart, and anything else traps. *)
+      (* identity for Int64 and Byte; a String or a Char receiver the
+         static type did not name answers by its runtime shape, and
+         anything else traps. *)
       let recv = fresh_local env "__to_int64_recv" W.Anyref in
       expr env self_;
       e env (W.Local_set recv);
@@ -2994,10 +3001,22 @@ and builtin_method_call env self_ name args =
              [ W.Local_get recv; W.Ref_test t_vstring ],
              [ W.Local_get recv; W.Call (rt "str_to_int64") ],
              [
-               W.Local_get recv;
-               W.Ref_test t_vint;
-               W.If (W.Void, [], [ W.Unreachable ]);
-               W.Local_get recv;
+               W.If_else
+                 ( W.Result W.Anyref,
+                   [ W.Local_get recv; W.Ref_test t_vchar ],
+                   [
+                     W.Local_get recv;
+                     W.Ref_cast t_vchar;
+                     W.Struct_get (t_vchar, 0);
+                     W.I64_extend_i32_s;
+                     W.Struct_new t_vint;
+                   ],
+                   [
+                     W.Local_get recv;
+                     W.Ref_test t_vint;
+                     W.If (W.Void, [], [ W.Unreachable ]);
+                     W.Local_get recv;
+                   ] );
              ] ))
   | "to_byte", [] ->
       expr env self_;

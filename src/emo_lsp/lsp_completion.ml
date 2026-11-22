@@ -266,7 +266,7 @@ let builtin_type_members : (string * (string * string) list) list =
         m "to_int64" "def to_int64() Int64";
       ] );
     ("Bool", []);
-    ("Char", []);
+    ("Char", [ m "to_int64" "def to_int64() Int64" ]);
     ( "Array",
       [
         m "append" "def append(value T) Array[T]";

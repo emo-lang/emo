@@ -5753,6 +5753,8 @@ static emo_value emo_bm_trim(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_to_int64(emo_value recv, const emo_value *args) {
   (void)args;
+  /* a Char immediate is not a cell: its code point is the answer */
+  if ((recv & 7) == 0b011) return emo_box_i64((int64_t)emo_char_of(recv));
   switch (emo_cell_kind(recv)) {
     case EMO_FLOAT64:
       return emo_box_i64((int64_t)emo_unbox_f64(recv));

@@ -2975,6 +2975,11 @@ and emit_method env d (ty : Emo_check.t) ~(boxed : bool) (self_ : Emo_ir.expr)
           end;
           put env "    fcvt.l.d a0, fa0, rtz\n";
           if boxed then box_result env "emo_box_i64"
+      | Emo_check.Char when name = "to_int64" && args = [] ->
+          (* the code point the kind-1 immediate carries *)
+          emit_expr env d self_;
+          put env "    srli a0, a0, 4\n";
+          if boxed then box_result env "emo_box_i64"
       | Emo_check.Int64 when name = "to_string" && args = [] ->
           emit_expr env d self_;
           if not boxed then ()

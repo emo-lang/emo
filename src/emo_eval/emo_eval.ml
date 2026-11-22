@@ -2631,6 +2631,9 @@ and call_method_value env span base mname args =
   | Byte n, "to_int64" ->
       none_expected "to_int64";
       Int64 (Int64.of_int n)
+  | Char c, "to_int64" ->
+      none_expected "to_int64";
+      Int64 (Int64.of_int c)
   | Float f, "to_bits" ->
       none_expected "to_bits";
       Int64 (Int64.bits_of_float f)

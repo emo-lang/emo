@@ -1723,6 +1723,10 @@ const E: any = {
           return utf8Decode(d);
         }
       }
+      if (isChar(recv)) {
+        if (name === "to_int64") return BigInt(recv.c);
+        if (name === "to_string") return String.fromCodePoint(recv.c);
+      }
       if (isFloat(recv) && name === "to_bits") {
         const buf = new ArrayBuffer(8);
         const dv = new DataView(buf);

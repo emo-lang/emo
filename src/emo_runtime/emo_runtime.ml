@@ -519,6 +519,9 @@ let method_call self name args =
   | Emo_eval.Byte n, "to_int64" ->
       none_expected ();
       Emo_eval.Int64 (Int64.of_int n)
+  | Emo_eval.Char c, "to_int64" ->
+      none_expected ();
+      Emo_eval.Int64 (Int64.of_int c)
   | Emo_eval.Float f, "to_bits" ->
       none_expected ();
       Emo_eval.Int64 (Int64.bits_of_float f)

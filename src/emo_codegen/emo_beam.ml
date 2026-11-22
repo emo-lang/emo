@@ -968,6 +968,9 @@ and builtin_method_call env self_ name args =
       put env "call 'erlang':'trunc'(";
       expr env self_;
       put env ")"
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Char ->
+      put env "apply 'emo_char_to_int'/1 ";
+      args_list env [ self_ ]
   | "to_int64", [] when self_.Emo_ir.ety = Emo_check.String ->
       put env "apply 'emo_str_to_int64'/1 ";
       args_list env [ self_ ]
@@ -3404,6 +3407,17 @@ let rt_source =
 	  <[_cp | _rest]> when 'true' ->
 	      [ call 'unicode':'characters_to_binary'([_cp])
 	      | apply 'emo_char_bins'/1 (_rest) ]
+	end
+
+%% The code point a one-Char binary names.
+'emo_char_to_int'/1 =
+    fun (_b) ->
+	case call 'unicode':'characters_to_list'(_b) of
+	  <[_cp]> when 'true' -> _cp
+	  <_bad> when 'true' ->
+	      call 'erlang':'error'
+		({'emo_bad_utf8',
+		  call 'erlang':'list_to_binary'("the String is not valid UTF-8")})
 	end
 
 'emo_str_index_of'/2 =

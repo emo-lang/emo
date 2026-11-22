@@ -3878,6 +3878,7 @@ and check_method_call ctx env span recv mname args : t =
     | MapType (_, vt), "values" -> builtin0 (ArrayType vt)
     | Int64, "to_byte" -> builtin0 Byte
     | Byte, "to_int64" -> builtin0 Int64
+    | Char, "to_int64" -> builtin0 Int64
     | Float64, "to_bits" -> builtin0 Int64
     | Float64, "sqrt" -> builtin0 Float64
     | Float64, "floor" -> builtin0 Float64

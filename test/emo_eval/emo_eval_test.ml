@@ -221,6 +221,9 @@ let expression_tests =
         check_value "ascii" (Emo_eval.Char 97) "'a'";
         check_value "cjk" (Emo_eval.Char 0x4E16) "'世'";
         check_value "supplementary" (Emo_eval.Char 0x1F600) "'😀'";
+        check_value "code point" (Emo_eval.Int64 0x4E16L) "'世'.to_int64()";
+        check_value "supplementary code point" (Emo_eval.Int64 0x1F600L)
+          "'😀'.to_int64()";
         check_value "length stays bytes" (Emo_eval.Int64 9L) "\"a世😀b\".length()";
         check_value "chars counts code points" (Emo_eval.Int64 4L)
           "\"a世😀b\".chars().length()";
