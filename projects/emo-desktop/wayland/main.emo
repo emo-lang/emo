@@ -1159,7 +1159,7 @@ def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
                                   keys: [("j", 0), ("k", 1), ("o", 2)]),
                                 Slot.new(index: 2, name: "editor",
                                   app: ui.App.new(view: ui_apps.editor.view, update: ui_apps.editor.update, model: ui_apps.editor.initial(), backend: QuietBackend.new()),
-                                  keys: [("a", 0), ("b", 1), ("Return", 2)])
+                                  keys: [("a", 0), ("b", 1), ("Return", 2), ("Left", 4), ("Right", 5), ("Up", 6), ("Down", 7), ("BackSpace", 8), ("Delete", 9)])
                               ]
                               const windows = Windows.new()
                               // The desktop's own routing tables: the

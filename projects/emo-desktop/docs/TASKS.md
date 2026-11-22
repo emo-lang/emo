@@ -2885,3 +2885,20 @@ session that runs the kernel whole and pins the bytes.
   its slot's table carries them — left, right, up, down, backspace and
   delete at 4 through 9 — the follow-up this step leaves open, the
   one-shot golden the fb's own.
+
+- [x] **A33.2** — The Wayland's editor answers the editing keys by
+  name: its slot's key table grows the six — Left, Right, Up, Down,
+  BackSpace, Delete at 4 through 9, the spellings the compositor's own
+  `pc+us` keymap decodes (`km_sym_at` takes each verbatim, the dock
+  already riding "Left" and "Right" the names' own witness) — so the
+  kernel A33.1's tags have their names on the Wayland's editor.
+  **complete 2026-11-22** — the editor's slot in `wayland/main.emo`
+  carries them beside a, b and Return; `emo check` is clean on this
+  step's line. **Found on the way, its own step:** the Wayland's face
+  has gone out of step with `emo_desktop` — it still calls `wallpaper`,
+  `paint` and `paint_header` in their pre-A31.1 shape, while the module
+  the A31.1 wallpaper's art and the M32 motion layer grew speaks
+  `wallpaper_decode` and the `art`-carrying signatures — so `emo check`
+  reports the face's own five errors (its lines 608 through 615) and
+  not one on this step's, the desync the commits that grew the module
+  never brought the face along for. The face's re-sync stands open.
