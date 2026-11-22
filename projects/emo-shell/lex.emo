@@ -84,20 +84,20 @@ def tokenize(line String) (R, Array[Tok]) {
             in_word = false
             cur = ""
             if i + 1 < line.length() && line.substring(i + 1, 1) == ">" {
-              out.push(Tok.new(kind: lex.op_2gtgt(), parts: []))
+              out.push(Tok.new(kind: op_2gtgt(), parts: []))
               i = i + 2
             } else {
               if i + 1 < line.length() && line.substring(i + 1, 1) == "&" {
                 const ok_after = " \t|<>;&#"
                 if i + 2 < line.length() && line.substring(i + 2, 1) == "1"
                   && (i + 3 >= line.length() || ok_after.index_of(line.substring(i + 3, 1)) >= 0) {
-                  out.push(Tok.new(kind: lex.op_2gt1(), parts: []))
+                  out.push(Tok.new(kind: op_2gt1(), parts: []))
                   i = i + 3
                 } else {
                   return (R.error, "emosh: syntax error: only 2>&1 is supported")
                 }
               } else {
-                out.push(Tok.new(kind: lex.op_2gt(), parts: []))
+                out.push(Tok.new(kind: op_2gt(), parts: []))
                 i = i + 1
               }
             }
