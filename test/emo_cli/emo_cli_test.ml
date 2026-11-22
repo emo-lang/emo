@@ -100,6 +100,50 @@ let run_tests =
           (Emo_cli.run_file
              ~file:(Filename.concat scratch "missing.emo")
              ~color:false ~error_limit:20));
+    tc "os.argv answers the file and the run's trailing arguments" (fun () ->
+        let manifest =
+          {|package {
+  name = "emo/argv-probe"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    "os" = "0.1.0"
+  }
+}
+|}
+        in
+        let file =
+          fixture ~manifest "argv.emo"
+            {|require "os"
+const a = os.argv()
+println(a.length().to_string())
+println(a[0])
+println(a[1])
+println(a[2])|}
+        in
+        let capture = Filename.concat scratch "argv.out" in
+        let saved_stdout = Unix.dup Unix.stdout in
+        let oc =
+          Unix.openfile capture
+            [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ]
+            0o644
+        in
+        Unix.dup2 oc Unix.stdout;
+        let code =
+          in_dir (Filename.dirname file) (fun () ->
+              Emo_cli.run_file_args ~args:[ "x"; "y" ] ~file:"argv.emo"
+                ~color:false ~error_limit:20)
+        in
+        Unix.dup2 saved_stdout Unix.stdout;
+        Unix.close oc;
+        Unix.close saved_stdout;
+        let ic = open_in capture in
+        let out = really_input_string ic (in_channel_length ic) in
+        close_in ic;
+        Alcotest.(check int) "exit" 0 code;
+        Alcotest.(check string)
+          "the file leads, the arguments follow" "3\nargv.emo\nx\ny\n" out);
   ]
 
 (* The curfew: a run that will not end gets stopped by the clock the

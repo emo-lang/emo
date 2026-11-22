@@ -17,7 +17,7 @@ $ ./emosh -c "echo hi $1"    (单行,其状态即 shell 的状态)
 
 不带参数时,模式由 fd 0 是什么决定:终端拿到 `emosh> ` 提示符,其余一律是逐行读取、无提示符的脚本。带脚本文件时,行来自文件,会话永不交互,文件后的参数成为位置参数。`-c` 跑这一行——连接符照常——并以其状态离场;行后跟一个可选词则充作 `$0`,其余是 `$1`、`$2`、…(`emosh -c 'echo $0 $1' shell hello`)。`-c` 缺命令串以状态 2 拒绝,未知选项以状态 2 拒绝,打不开的脚本文件报 os reason 并以 127 离场。
 
-shell 声明 `ocaml` 与 `c` 两个 target——`emo run main.emo` 在解释器下运行,`fixtures/` 里的金测把两个 target 的输出逐字节钉死。
+shell 声明 `ocaml` 与 `c` 两个 target——`emo run main.emo` 在解释器下运行(文件之后的词作为程序的 `os.argv` 传入,shell 会把它们当自己的参数解析),`fixtures/` 里的金测把两个 target 的输出逐字节钉死。
 
 ## 一行的生命周期
 

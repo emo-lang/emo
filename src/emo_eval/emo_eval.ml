@@ -2049,6 +2049,15 @@ external emo_stub_recvmsg_fd : int -> int -> int * string * int
 external emo_stub_ftruncate : int -> int64 -> unit = "emo_stub_ftruncate"
 external emo_stub_pwrite : int -> Bytes.t -> int64 -> int = "emo_stub_pwrite"
 
+(* The argv the interpreted program's os.argv answers. The compiler
+   process's own Sys.argv is never the program's — it is the CLI's —
+   so the run seats the program's name and its trailing arguments here
+   before it evaluates. The compiled targets need none of this: their
+   main captures argc and argv at the kernel's hands. Until a run
+   seats it, the answer is the compiler's argv, the shape the REPL's
+   ad-hoc statements see. *)
+let program_argv : string array ref = ref Sys.argv
+
 (* ---- The staging helpers ----
 
    The compiled-body layer stages a body's statements into OCaml closures
@@ -4952,7 +4961,7 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf "`os_isatty` expects (fd Int64), got %d"
              (List.length vs))
-    | "os_argv", [] -> Array (Array.map (fun s -> String s) Sys.argv)
+    | "os_argv", [] -> Array (Array.map (fun s -> String s) !program_argv)
     | "os_argv", vs ->
         error span "E3007"
           (Printf.sprintf "`os_argv` expects no arguments, got %d"

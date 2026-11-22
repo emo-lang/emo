@@ -37,8 +37,10 @@ refuses with status 2, and a script file that cannot open reports the
 os reason and leaves with 127.
 
 The shell declares the `ocaml` and `c` targets — `emo run main.emo`
-runs it under the interpreter, and the fixtures in `fixtures/` pin
-the two targets' outputs byte for byte.
+runs it under the interpreter (the words after the file ride in as
+the program's `os.argv`, so the shell parses them as its own), and
+the fixtures in `fixtures/` pin the two targets' outputs byte for
+byte.
 
 ## One line's life
 
