@@ -11,10 +11,7 @@ require "os"
 // server that cannot start.
 
 def start(cfg config.Config) httpd.Server {
-  case os.mkdir(cfg.runs_dir) {
-    (R.error, _) then {}
-    (R.ok, _) then {}
-  }
+  const _ = os.mkdir(cfg.runs_dir)
   const (R.ok, listener) = net.listen(cfg.host, cfg.port)
   const options = httpd.server_options().with_max_body_bytes(65536)
   return httpd.serve_routes_with(listener, handlers.routes(cfg), options)

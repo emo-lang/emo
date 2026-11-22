@@ -101,15 +101,9 @@ def tick_base() String {
 // on every submission that forks, and a server that cannot say so has
 // no business serving.
 def prepare_tick(runs_dir String) Void {
-  case os.mkdir(os.getcwd() + "/" + runs_dir) {
-    (R.error, _) then {}
-    (R.ok, _) then {}
-  }
+  const _ = os.mkdir(os.getcwd() + "/" + runs_dir)
   const dir = os.getcwd() + "/" + runs_dir + "/.tick"
-  case os.mkdir(dir) {
-    (R.error, _) then {}
-    (R.ok, _) then {}
-  }
+  const _ = os.mkdir(dir)
   case file.write(dir + "/tick.emo", tick_source) {
     (R.error, why) then {
       raise Exception.new(
@@ -203,10 +197,7 @@ def sweep_dir(dir String) Void {
       }
     }
     (R.error, _) then {
-      case os.unlink(dir) {
-        (R.error, _) then {}
-        (R.ok, _) then {}
-      }
+      const _ = os.unlink(dir)
     }
   }
   os.rmdir(dir)
@@ -421,10 +412,7 @@ def run_code(emo_bin String, curfew_seconds Float64, runs_dir String, code Strin
           }
           (R.ok, _) then {}
         }
-        case os.unsetenv("EMO_RUN_GROUP") {
-          (R.error, _) then {}
-          (R.ok, _) then {}
-        }
+        const _ = os.unsetenv("EMO_RUN_GROUP")
         os.chdir(dir)
         const argv = [emo_bin, "run", "main.emo", "--curfew", curfew_seconds.to_string()]
         os.execvp(emo_bin, argv)
