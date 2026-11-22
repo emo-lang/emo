@@ -589,6 +589,8 @@ let global_env () =
     { bound = RuntimeImplFn "os_fork"; mutable_ = false };
   Frame_tbl.replace env.frame "os_waitpid"
     { bound = RuntimeImplFn "os_waitpid"; mutable_ = false };
+  Frame_tbl.replace env.frame "os_waitpid_nohang"
+    { bound = RuntimeImplFn "os_waitpid_nohang"; mutable_ = false };
   Frame_tbl.replace env.frame "os_pipe"
     { bound = RuntimeImplFn "os_pipe"; mutable_ = false };
   Frame_tbl.replace env.frame "os_execv"
@@ -2033,6 +2035,7 @@ let expect_raise span message = net_raise span message
    c runtime and the other backends read. *)
 external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
+external emo_stub_waitpid_nohang : int -> int * int = "emo_stub_waitpid_nohang"
 external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
 
 external emo_stub_sendmsg_fd : int -> string -> int -> int
@@ -4640,6 +4643,20 @@ and apply_runtime_impl span name args =
     | "os_waitpid", vs ->
         error span "E3007"
           (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_waitpid_nohang", [ Int64 pid ] ->
+        os_result span (fun () ->
+            (* The stub answers (pid-or-0, the kernel's own 16-bit wait
+               status word): 0 when children exist and none has exited
+               yet, the pid beside the raw word when one has — and the
+               Unix error raised when the pid is nobody's child, whose
+               reason os_result spells byte-identically with the c
+               runtime's emo_os_fail. *)
+            let r, raw = emo_stub_waitpid_nohang (Int64.to_int pid) in
+            Tuple [ Int64 (Int64.of_int r); Int64 (Int64.of_int raw) ])
+    | "os_waitpid_nohang", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_waitpid_nohang` expects (pid Int64), got %d"
              (List.length vs))
     | "os_kill", [ Int64 pid; Int64 sig_no ] ->
         (* The classic range rides ahead of the call, the signal_*

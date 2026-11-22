@@ -62,6 +62,16 @@ def waitpid(pid Int64) (Int64, Int64) {
   return os_waitpid(pid)
 }
 
+// The polling half of waitpid: the caller keeps going when no child
+// has exited yet, the way a shell polls its background jobs without
+// parking on them. A child that has exited answers (pid, the same raw
+// status word waitpid carries); children but none exited yet answers
+// (0, 0); a pid that is nobody's child refuses, the same errno reason
+// on every target.
+def waitpid_nohang(pid Int64) (R, (Int64, Int64)) {
+  return os_waitpid_nohang(pid)
+}
+
 // The child process half of waitpid: true when the child exited through
 // exit or a return from main, false when it was signaled or stopped.
 def wait_exited(status Int64) Bool {

@@ -47,6 +47,21 @@ CAMLprim value emo_stub_waitpid(value v_pid) {
   CAMLreturn(Val_int(st));
 }
 
+CAMLprim value emo_stub_waitpid_nohang(value v_pid) {
+  CAMLparam1(v_pid);
+  CAMLlocal1(v_result);
+  int st = 0;
+  pid_t r;
+  caml_enter_blocking_section();
+  r = waitpid((pid_t)Int_val(v_pid), &st, WNOHANG);
+  caml_leave_blocking_section();
+  if (r < 0) unix_error(errno, "waitpid_nohang", Nothing);
+  /* the declared type is (int * int): the pid — 0 when children exist
+     and none has exited yet — then the kernel's own status word */
+  v_result = caml_alloc_2(0, Val_int((int)r), Val_int(st));
+  CAMLreturn(v_result);
+}
+
 CAMLprim value emo_stub_monotonic_ns(value v_unit) {
   CAMLparam1(v_unit);
   struct timespec ts;

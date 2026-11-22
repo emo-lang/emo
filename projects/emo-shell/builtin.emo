@@ -1,9 +1,10 @@
 require "os"
 
-// The shell's own commands — the eight a session cannot do without,
-// because no forked child can do them for it: `cd` and the
-// environment change this process, `exit` ends it, and the rest
-// answer from the state the session holds. Every one of them writes
+// The shell's own commands — the thirteen a forked child cannot do
+// for the session: `cd` and the environment change this process,
+// `exit` ends it, the job family (`jobs`/`fg`/`bg`/`wait`/`kill`)
+// answers from the job table the session holds, and the rest answer
+// from state every command shares. Every one of them writes
 // through the shell's raw-descriptor writers, so a builtin running in
 // a pipeline's fork child puts its bytes on the wired descriptor, not
 // in some buffer `_exit` would discard.
@@ -16,6 +17,8 @@ require "os"
 def is_builtin(name String) Bool {
   return name == "cd" || name == "pwd" || name == "echo" || name == "exit"
     || name == "export" || name == "unset" || name == "true" || name == "false"
+    || name == "jobs" || name == "fg" || name == "bg" || name == "wait"
+    || name == "kill"
 }
 
 // One builtin, its words already expanded; the answer is the exit
@@ -40,6 +43,21 @@ def run(sh shell.Shell, words Array[String]) Int64 {
   }
   if name == "unset" {
     return unset(sh, words)
+  }
+  if name == "jobs" {
+    return jobs(sh, words)
+  }
+  if name == "fg" {
+    return fg(sh, words)
+  }
+  if name == "bg" {
+    return bg(sh, words)
+  }
+  if name == "wait" {
+    return wait(sh, words)
+  }
+  if name == "kill" {
+    return kill(sh, words)
   }
   if name == "true" {
     return 0
@@ -166,6 +184,177 @@ def unset(sh shell.Shell, words Array[String]) Int64 {
     }
   }
   return status
+}
+
+// jobs: one poll first — the finished jobs announced and dropped —
+// then whatever is still running, the classic shape with the pid in
+// it.
+def jobs(sh shell.Shell, words Array[String]) Int64 {
+  sh.notify()
+  sh.list_jobs()
+  return 0
+}
+
+// fg: the job named by number comes to the foreground — the shell
+// parks on its whole pipeline, the job's own status the answer.
+// Honest limit: without a terminal-handoff call the job keeps its
+// own process group, so a Ctrl-C aimed at the shell's group cannot
+// reach it; the waiting is what foreground means here.
+def fg(sh shell.Shell, words Array[String]) Int64 {
+  if words.length() != 2 {
+    sh.err("emosh: fg: job spec required")
+    return 1
+  }
+  const n = job_spec(words[1])
+  if n < 1 {
+    sh.err("emosh: fg: " + words[1] + ": no such job")
+    return 1
+  }
+  case sh.find_job(n) {
+    (R.error, _) then {
+      sh.err("emosh: fg: " + words[1] + ": no such job")
+      return 1
+    }
+    (R.ok, job) then {
+      const status = job.wait_blocking()
+      sh.drop_job(job.n)
+      return status
+    }
+  }
+}
+
+// bg: nothing in this shell ever stops — a job is born running in a
+// process group of its own — so the only truthful answer is the
+// classic one, the job is already where it would go.
+def bg(sh shell.Shell, words Array[String]) Int64 {
+  if words.length() != 2 {
+    sh.err("emosh: bg: job spec required")
+    return 1
+  }
+  const n = job_spec(words[1])
+  if n < 1 {
+    sh.err("emosh: bg: " + words[1] + ": no such job")
+    return 1
+  }
+  case sh.find_job(n) {
+    (R.error, _) then {
+      sh.err("emosh: bg: " + words[1] + ": no such job")
+      return 1
+    }
+    (R.ok, job) then {
+      sh.err("emosh: bg: job " + job.n.to_string() + " already in background")
+      return 1
+    }
+  }
+}
+
+// wait: no argument parks on every job and empties the table; one
+// job spec parks on that job alone, its status the answer. An
+// unknown job is 127, the classic waited-for-nothing.
+def wait(sh shell.Shell, words Array[String]) Int64 {
+  if words.length() == 1 {
+    return sh.wait_all()
+  }
+  if words.length() > 2 {
+    sh.err("emosh: wait: too many arguments")
+    return 1
+  }
+  const n = job_spec(words[1])
+  if n < 1 {
+    sh.err("emosh: wait: " + words[1] + ": no such job")
+    return 127
+  }
+  case sh.find_job(n) {
+    (R.error, _) then {
+      sh.err("emosh: wait: " + words[1] + ": no such job")
+      return 127
+    }
+    (R.ok, job) then {
+      const status = job.wait_blocking()
+      sh.drop_job(job.n)
+      return status
+    }
+  }
+}
+
+// kill: each target — a pid, or `%n` for a whole job's process group,
+// the negative pid the os package documents — takes the signal, `-N`
+// naming it and 15 the default. One target failing fails the command.
+def kill(sh shell.Shell, words Array[String]) Int64 {
+  if words.length() < 2 {
+    sh.err("emosh: kill: usage: kill [-N] target...")
+    return 1
+  }
+  var sig = os.sig_term()
+  var first = 1
+  if words[1].length() > 1 && words[1].substring(0, 1) == "-" {
+    const body = words[1].substring(1, words[1].length() - 1)
+    if !numeric(body) {
+      sh.err("emosh: kill: unknown signal: " + words[1])
+      return 1
+    }
+    sig = body.to_int64()
+    first = 2
+    if words.length() == 2 {
+      sh.err("emosh: kill: usage: kill [-N] target...")
+      return 1
+    }
+  }
+  var status = 0
+  for var k = first; k < words.length(); k = k + 1 {
+    const target = words[k]
+    if target.substring(0, 1) == "%" {
+      const n = job_spec(target)
+      case sh.find_job(n) {
+        (R.error, _) then {
+          sh.err("emosh: kill: " + target + ": no such job")
+          status = 1
+        }
+        (R.ok, job) then {
+          case os.kill(0 - job.rep, sig) {
+            (R.error, why) then {
+              sh.err("emosh: kill: " + why)
+              status = 1
+            }
+            (R.ok, _) then {}
+          }
+        }
+      }
+    } else {
+      if !numeric(target) {
+        sh.err("emosh: kill: " + target + ": arguments must be pids or job specs")
+        status = 1
+      } else {
+        case os.kill(target.to_int64(), sig) {
+          (R.error, why) then {
+            sh.err("emosh: kill: " + why)
+            status = 1
+          }
+          (R.ok, _) then {}
+        }
+      }
+    }
+  }
+  return status
+}
+
+// One job spec: `%3` or a bare `3` names job number 3; anything else
+// answers -1 — no job number at all.
+def job_spec(text String) Int64 {
+  if text.length() == 0 {
+    return 0 - 1
+  }
+  if text.substring(0, 1) == "%" {
+    const body = text.substring(1, text.length() - 1)
+    if body.length() > 0 && numeric(body) {
+      return body.to_int64()
+    }
+    return 0 - 1
+  }
+  if numeric(text) {
+    return text.to_int64()
+  }
+  return 0 - 1
 }
 
 // The ASCII identifier set, the same rule the expansion's `$name`

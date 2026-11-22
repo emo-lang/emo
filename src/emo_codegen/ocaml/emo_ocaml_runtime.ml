@@ -35,6 +35,8 @@ module Emo_eval = struct
    runtime's and the interpreter's. *)
 external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
+external emo_stub_waitpid_nohang : int -> int * int
+  = "emo_stub_waitpid_nohang"
 (* The monotonic clock, which the Unix module does not wrap either:
    clock_gettime(CLOCK_MONOTONIC), nanoseconds, the same instrument the
    interpreter and the c runtime read. *)
@@ -1564,6 +1566,22 @@ let pf_hash_float conv minus plus space width prec f =
     | "os_waitpid", vs ->
         error "E3007"
           (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_waitpid_nohang", [ Int64 pid ] ->
+        os_result
+          (fun () ->
+            (* The stub answers (pid-or-0, the kernel's own 16-bit wait
+               status word): 0 when children exist and none has exited
+               yet, the pid beside the raw word when one has — and the
+               Unix error raised when the pid is nobody's child, whose
+               reason os_result spells byte-identically with the c
+               runtime's emo_os_fail. *)
+            let r, raw = emo_stub_waitpid_nohang (Int64.to_int pid) in
+            Tuple [ Int64 (Int64.of_int r); Int64 (Int64.of_int raw) ])
+    | "os_waitpid_nohang", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_waitpid_nohang` expects (pid Int64), got %d"
              (List.length vs))
     | "os_kill", [ Int64 pid; Int64 sig_no ] ->
         (* The classic range rides ahead of the call, the signal_*

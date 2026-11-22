@@ -113,6 +113,7 @@ def main_entry() Int64 {
   var reading = true
   while reading {
     if sh.interactive {
+      sh.notify()
       os.write(1, "emosh> ")
     }
     const raw = sh.read_line()
@@ -154,14 +155,19 @@ def refuse(sh shell.Shell, why String) Void {
 }
 
 // The item walk: run what the connectors allow, carry the status
-// forward.
+// forward. A `&` item spawns instead of waiting — its status is the
+// spawn's — and the walk goes on the way `;` would.
 def run_items(sh shell.Shell, items Array[parse.Item]) Void {
   var status = sh.status()
   var run = true
   for var i = 0; i < items.length(); i = i + 1 {
     const item = items[i]
     if run {
-      status = run_pipeline(sh, item.pipeline)
+      if item.bg {
+        status = run_background(sh, item.pipeline)
+      } else {
+        status = run_pipeline(sh, item.pipeline)
+      }
       sh.set_status(status)
     }
     if item.conn == ";" {
@@ -187,6 +193,44 @@ def run_pipeline(sh shell.Shell, stages Array[parse.Cmd]) Int64 {
   if stages.length() == 1 {
     return run_simple(sh, stages[0])
   }
+  case spawn_pipeline(sh, stages, false) {
+    (R.error, why) then {
+      sh.err("emosh: " + why)
+      return 1
+    }
+    (R.ok, pids) then { return wait_status(pids) }
+  }
+}
+
+// One background item: spawn without waiting, and the pipeline's last
+// member — the representative the job's status rides on — joins the
+// session's job table. The spawn's success is the item's status.
+def run_background(sh shell.Shell, stages Array[parse.Cmd]) Int64 {
+  case spawn_pipeline(sh, stages, true) {
+    (R.error, why) then {
+      sh.err("emosh: " + why)
+      return 1
+    }
+    (R.ok, pids) then {
+      const rep = pids[pids.length() - 1]
+      const rest = ArrayBuilder.new()
+      for var k = 0; k < pids.length() - 1; k = k + 1 {
+        rest.push(pids[k])
+      }
+      sh.job_new(rep, rest.to_array(), item_text(stages))
+      return 0
+    }
+  }
+}
+
+// The stages spawned and wired, foreground or background. A
+// background spawn pins every member into one new process group —
+// the parent's setpgid the moment each child is forked, the first
+// member's pid the group — so the terminal's Ctrl-C, aimed at the
+// shell's own group, can never reach a job the user asked to keep
+// out of it. The foreground keeps the v0 discipline: no group of its
+// own, Ctrl-C lands on the command.
+def spawn_pipeline(sh shell.Shell, stages Array[parse.Cmd], bg Bool) (R, Array[Int64]) {
   const n = stages.length()
   // n - 1 pipes; read end of pipe i - 1 feeds stage i, write end of
   // pipe i carries stage i's stdout
@@ -207,9 +251,8 @@ def run_pipeline(sh shell.Shell, stages Array[parse.Cmd]) Int64 {
     }
   }
   if !made {
-    sh.err("emosh: " + why)
     close_all(reads.to_array(), writes.to_array())
-    return 1
+    return (R.error, why)
   }
   const read_fds = reads.to_array()
   const write_fds = writes.to_array()
@@ -220,12 +263,20 @@ def run_pipeline(sh shell.Shell, stages Array[parse.Cmd]) Int64 {
     case os.fork() {
       (R.error, reason) then {
         forked = false
-        sh.err("emosh: " + reason)
+        why = reason
       }
       (R.ok, pid) then {
         if pid == 0 {
           in_child(sh, stages[i], i, n, read_fds, write_fds)
         } else {
+          if bg {
+            const group = pids.to_array()
+            if group.length() > 0 {
+              os.setpgid(pid, group[0])
+            } else {
+              os.setpgid(pid, pid)
+            }
+          }
           pids.push(pid)
           i = i + 1
         }
@@ -237,9 +288,32 @@ def run_pipeline(sh shell.Shell, stages Array[parse.Cmd]) Int64 {
   if !forked {
     // some stages may already run; wait what was spawned, then report
     reap(pids.to_array())
-    return 1
+    return (R.error, why)
   }
-  return wait_status(pids.to_array())
+  return (R.ok, pids.to_array())
+}
+
+// The job's display text: the words as the user wrote them — parts
+// joined, stages by ` | `. The redirections stay out; the words are
+// what the notifications name.
+def item_text(stages Array[parse.Cmd]) String {
+  var text = ""
+  for var s = 0; s < stages.length(); s = s + 1 {
+    if s > 0 {
+      text = text + " | "
+    }
+    const words = stages[s].words
+    for var k = 0; k < words.length(); k = k + 1 {
+      if k > 0 {
+        text = text + " "
+      }
+      const parts = words[k]
+      for var p = 0; p < parts.length(); p = p + 1 {
+        text = text + parts[p].text
+      }
+    }
+  }
+  return text
 }
 
 // The fork child of stage i: wire the pipe ends, reset the signals,
@@ -269,7 +343,7 @@ def in_child(sh shell.Shell, cmd parse.Cmd, i Int64, n Int64, read_fds Array[Int
 def expand_words(sh shell.Shell, words Array[Array[expand.Part]]) (R, Array[String]) {
   const out = ArrayBuilder.new()
   for var k = 0; k < words.length(); k = k + 1 {
-    const text = expand.word(words[k], sh.status(), sh.name, sh.args)
+    const text = expand.word(words[k], sh.status(), sh.name, sh.args, sh.pid, sh.last_bg.read())
     if glob.patterned(words[k]) {
       const found = glob.matches(text)
       if found.length() == 0 {
@@ -370,7 +444,7 @@ def apply_redirs(sh shell.Shell, redirs Array[parse.Redir]) Int64 {
       // a redirection's file name never carries an unexpanded $? the
       // user did not mean; expand it like a word — and a target is
       // one name, it does not glob
-      const path = expand.word(redir.word, sh.status(), sh.name, sh.args)
+      const path = expand.word(redir.word, sh.status(), sh.name, sh.args, sh.pid, sh.last_bg.read())
       if redir.op == lex.op_lt() {
         case os.open_read(path) {
           (R.error, why) then {
@@ -440,14 +514,11 @@ def wait_status(pids Array[Int64]) Int64 {
   return status
 }
 
-// Waits for one child and decodes the kernel's raw status word.
+// Waits for one child and decodes the kernel's raw status word —
+// the shell's own decoding, shared with the job table.
 def wait_one(pid Int64) Int64 {
   const w = os.waitpid(pid)
-  const raw = w[1]
-  if os.wait_signaled(raw) {
-    return 128 + os.wait_signal(raw)
-  }
-  return os.wait_exit_code(raw)
+  return shell.decode_status(w[1])
 }
 
 // Waits a fork failure's partial brood down; their statuses do not

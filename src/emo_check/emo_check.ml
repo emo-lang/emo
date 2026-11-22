@@ -1426,6 +1426,16 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
+        ( "os_waitpid_nohang",
+          {
+            vtype =
+              FuncType
+                ( [ ("pid", Int64) ],
+                  TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_kill",
           {
             vtype =

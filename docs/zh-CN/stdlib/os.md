@@ -34,6 +34,7 @@ def getpid() Int64
 def getppid() Int64
 def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
+def waitpid_nohang(pid Int64) (R, (Int64, Int64))
 def kill(pid Int64, sig Int64) (R, Int64)
 def setpgid(pid Int64, pgid Int64) (R, Int64)
 def execv(path String, argv Array[String]) Void
@@ -56,6 +57,13 @@ if os.wait_exited(w[1]) {
 - `wait_exited` / `wait_exit_code` —— 正常退出,以及退出码。
 - `wait_signaled` / `wait_signal` —— 被信号杀死,以及是哪个信号。
 - `wait_stopped` / `wait_stop_signal` —— 被停止,以及是哪个信号。
+
+`waitpid_nohang(pid)` 是 waitpid 的轮询半:尚无子进程退出时,调用
+者继续走自己的路。已退出的子进程回答 `(R.ok, (pid, status))`
+——与 waitpid 携带的同一个原始状态字;有子进程但都没退回答
+`(R.ok, (0, 0))`,内核自己的零;谁也不是的 pid 以 errno reason
+拒绝(`os: waitpid_nohang: No child processes`),两个目标同一
+文本。这正是 shell 轮询后台作业而不泊车的方式。
 
 `execv(path, argv)` 替换调用进程;成功时它绝不返回,失败时返回
 ——fork 子进程随后接 `_exit`,因为在那里抛异常会把父进程的清理
@@ -195,7 +203,8 @@ main 普通 `return` 会把父进程的清理逻辑跑两遍。
 `["ocaml", "c", "wasm"]`。ocaml 目标把 os 调用建在宿主的 Unix 模块上;
 c 目标直接发射 POSIX 调用;wasm 目标把 fd、目录与工作目录半边降级为
 模块的 syscall,把进程半边降级为运行时 raise——`fork`、`execv`、
-`execvp`、`waitpid`、`pipe`、`dup2`、`getpid`、`getppid`、`_exit`、
+`execvp`、`waitpid`、`waitpid_nohang`、`pipe`、`dup2`、`getpid`、
+`getppid`、`_exit`、
 `isatty`、`argv`、环境变量与信号处置各自在被调用时点名能力
 (`os_fs_demo` 走 fd 与目录半边;含 fork 的 `os_demo` 仍是 c
 golden)。typescript 与 beam 目标拒绝这个包。

@@ -696,6 +696,11 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "os_waitpid" ->
       let v = Printf.sprintf "emo_os_waitpid(%s)" (arg 0 Emo_check.Int64) in
       v
+  | "os_waitpid_nohang" ->
+      let v =
+        Printf.sprintf "emo_os_waitpid_nohang(%s)" (arg 0 Emo_check.Int64)
+      in
+      v
   | "os_kill" ->
       let v =
         Printf.sprintf "emo_os_kill(%s, %s)" (arg 0 Emo_check.Int64)

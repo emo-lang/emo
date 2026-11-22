@@ -10,17 +10,17 @@
 //              one part, so the `$` and the name after it reach the
 //              expander together;
 //   operator — `|`, `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`, `;`, `&&`,
-//              `||`, each its own token kind.
+//              `||`, `&`, each its own token kind.
 //
 // A `#` at the start of a word is a comment: the rest of the line is
 // dropped. A `2` that a `>` follows — the whole bare word being the
 // digit — is the stderr redirection, the way the classic shells read
 // it; a `2>&` that is not `2>&1` is refused by name. A `&` that is
-// not `&&` is refused — background jobs are not in this shell yet,
-// and a strict refusal beats a silent misread. An unterminated quote
-// is refused with the quote in the message. Like the classic shells,
-// an empty quoted string still makes a word (`touch ''` must touch),
-// so a word token can carry a single empty literal part.
+// not `&&` is its own operator — the pipeline before it runs in the
+// background. An unterminated quote is refused with the quote in the
+// message. Like the classic shells, an empty quoted string still
+// makes a word (`touch ''` must touch), so a word token can carry a
+// single empty literal part.
 //
 // The answers ride the standard library's error split — the shell has
 // no catch to survive, so a malformed line is the value
@@ -46,6 +46,7 @@ def op_2gt1() String { return "2>&1" }
 def op_semi() String { return ";" }
 def op_andand() String { return "&&" }
 def op_oror() String { return "||" }
+def op_amp() String { return "&" }
 
 // The whole line's tokens, or the reason the line is malformed.
 def tokenize(line String) (R, Array[Tok]) {
@@ -118,9 +119,6 @@ def tokenize(line String) (R, Array[Tok]) {
               out.push(Tok.new(kind: two, parts: []))
               i = i + 2
             } else {
-              if ch == "&" {
-                return (R.error, "emosh: syntax error: & is not supported yet")
-              }
               out.push(Tok.new(kind: ch, parts: []))
               i = i + 1
             }

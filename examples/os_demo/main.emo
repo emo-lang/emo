@@ -96,6 +96,45 @@ case os.setpgid(gone, gone) {
   (R.ok, _)     then { println("unexpected ok") }
 }
 
+// ---- polling: waitpid_nohang answers without parking ----
+const (R.ok, (poll_read, poll_write)) = os.pipe()
+const (R.ok, sleeper) = os.fork()
+if sleeper == 0 {
+  os.close(poll_write)
+  // Park on a read the parent answers only when the poll should end.
+  os.read(poll_read, 1)
+  os._exit(7)
+}
+os.close(poll_read)
+case os.waitpid_nohang(sleeper) {
+  (R.ok, hit) then { println(hit[0] == 0) }
+  (R.error, why) then { println(why) }
+}
+os.write(poll_write, "x")
+os.close(poll_write)
+var raw = 0
+var reaped = false
+while !reaped {
+  case os.waitpid_nohang(sleeper) {
+    (R.ok, hit) then {
+      if hit[0] != 0 {
+        raw = hit[1]
+        reaped = true
+      }
+    }
+    (R.error, why) then {
+      println(why)
+      reaped = true
+    }
+  }
+}
+println(os.wait_exited(raw))
+println(os.wait_exit_code(raw).to_string())
+case os.waitpid_nohang(sleeper) {
+  (R.error, why) then { println(why) }
+  (R.ok, _)     then { println("unexpected ok") }
+}
+
 // ---- process identity ----
 println(os.getpid() != os.getppid())
 println(os.getcwd().length() > 0)

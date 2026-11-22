@@ -72,6 +72,7 @@
 | M51 — GC 阶梯 | 90 | 堆长出自己的分配器与翅膀:step 90 落地 arena——`heap_new` 造它,裸 `heap_load`/`heap_store` 通道搬词,`heap_carve`/`heap_release` 绑定与解绑区间——`gc` 包的自由表(两张 Map 上的首适配、切分、邻合并)成为唯一分配器,`struct_new`/`array_new`/`heap_free` 随门退休;句柄携带 offset+代数,陈旧句柄无需墓碑即响亮死去;头词打包 magic/kind/代数/标记/尺寸;demo 的第二代落进 sweep 自己的词里,arena 从不增长(`CHECK.md`)。 |
 | M52 — GC 堆的 riscv64 宿主 | 91 | 金属加入堆的宿主环:镜像在自己的 `.bss` 里给收集器授予一个区域(一 MiB arena、绑定表、根表、slide 暂存),二十四扇门落成随程序编译的运行时助手,`Ref` 以 kind 12、金属的 Map 以 kind 13 加入 tagged 值模型(运行时引用计数之下的 identity kind,归零的释放从根表摘链),hash 孪生以来本宿主背负的 raise 缺口就此关上(`Raise` 降为 `emo_raise`,异常值按 `c` 宿主的方式渲染),模块级 `var` 也就位(静态内存里的格、序言初始化),`gc` 包自己的几何骑进镜像;demo 的 24 行金测在解释器、`c` 宿主与金属上逐字节一致——三 boot 稳定,经 EmoOS 内核与直跑皆然——调试轮的六面墙记录在 `CHECK.md`(序言的双重入池、Map 只落一半的 +8 平移、slide 的裸数组对、前向表的分裂键形状、只拷 `next` 的 rehash、不圆整的 arena 游标),金测腿骑 `@emo_os` 的 `gc_metal` 组(`CHECK.md`、`docs/gc-heap.md`、`plan/step-91-riscv64-gc-host.md`)。 |
 | M53 — shell 的日用表面 | 92 | `emosh` 长出日用 shell 离不开的表面,全部骑在已有的 `os`+`bufio` 面上:脚本文件与 `-c` 打开调用方式(`emosh script.esh args`、`emosh -c 'line' name args`,打不开的脚本 127,坏选项 2),位置参数落地(`$1`…`$9`、`${N}`),`${var:-default}` 加入花括号形态,叫不出名字的形态保持字面——整个形态,不只是美元符——且 `${` 扫描改为从形态自身起找(`a}b${SETV}c` 原是潜伏的负数 substring);stderr 重定向落地(`2>`、`2>>`、`2>&1`,数字词规则保住 `hi2>` 还是参数,dup 的顺序即语义);glob 落地(只 glob 用户裸写的 `*` 与 `?`——引号如今作为标记被记住,顺带修掉被引 `~` 够到 `$HOME` 的 v0 bug),按路径段行走、段首无 `.` 时隐藏名保持隐藏、答案排序、无匹配拒绝命令;单命令的词只展开一次不再两次;四套新 fixture 加入,harness 在双 target 上钉死调用方式(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-92-emosh-everyday.md`)。 |
+| M54 — shell 的后台任务 | 93 | `os` 在 0.1.0 上原位长出 waitpid 的轮询半(`waitpid_nohang`——已退子进程 `(R.ok, (pid, raw))`、有子但未退 `(R.ok, (0, 0))`、ECHILD errno reason 在解释器与 c 运行时逐字节一致、wasm 进程半 raise 点名能力),`emosh` 把它花掉:管道后的 `&` 让整条目作为一个作业运行(拉起即分隔符,`a & b` 随即跑 `b`),父进程用 `setpgid` 把每个成员钉进同一新进程组,终端的 Ctrl-C 永远够不到后台作业,而前台命令保持经典死法;作业表带最小空位号规则,`$!` 是其代表 pid,`$$` 是 shell 自己的;通知行 `[1] done sleep 5` 在每个交互提示符前轮询;内建 `jobs`(`[1] 4821 running sleep 5`)、`fg %n`(诚实的等——无终端交接,Ctrl-C 够不到它带回来的)、`bg %n`(无物会停——`already in background`,bash 自己的答词)、`wait [%n]`(未知 127)、`kill [-N] [%n|pid]...`(`%n` 以负 pid 打整组);`os_demo` 三种走法走轮询,`bg` fixture 骑 `sleep`/`kill`/`awk`,后台子进程输出永不交织(`CHECK.md`、`docs/stdlib/os.md`、`docs/emosh-guide.md`、`plan/step-93-emosh-jobs.md`)。 |
 
 ## 设计闸门
 
@@ -2569,4 +2570,46 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       拒绝、脚本文件的运行与打不开的孪生,`docs/emosh-guide.md` +
       zh 长出调用方式、glob 一节、花括号形态与诚实的边界新形状,
       本节 + zh 镜像,`plan/step-92-emosh-everyday.md`,CHECK.md 的
+      记录。
+
+## M54 — shell 的后台任务
+
+### Step 93 — `os.waitpid_nohang`,与 emosh 的 `&`、作业表、五个内建
+
+**状态:** complete。(`plan/step-93-emosh-jobs.md` 是本步的
+记录。)
+
+- [x] **T93.1** —— os 表面:`waitpid_nohang(pid)` 对已退子进程答
+      `(R.ok, (pid, raw))`(内核自己的 16 位状态字,waitpid 的同一
+      契约),有子进程但都没退答 `(R.ok, (0, 0))`,ECHILD 的 errno
+      reason 逐字节一致——落地骑 kill/setpgid 清单的每一处:
+      os.emo、解释器的臂与 stub(`emo_posix_stub.c`)、ocaml 目标
+      的运行时与 stub 孪生、c 运行时与头文件、c 发射器的名字表、
+      checker 的 empty_env 准入、点名能力的 wasm raise 臂、os 文档
+      EN+zh(以及 `docs/stdlib.md` 自进程半长出后一直陈旧的 targets
+      行)、与其进程组兄弟并列的 wasm 拒绝测试。
+- [x] **T93.2** —— os_demo 的轮询:泊在管道读上的子进程是"仍在
+      运行"的应答,父进程该让它结束时写下的唤醒字节——while 轮询
+      骑着已退的子进程回家(退出码解码),第三次轮询答 ECHILD
+      reason,三宿主对 `expected.txt` 逐字节一致(不用
+      `os.sleep_ms`——这个停顿只归 c 运行时,首版大声地撞上了)。
+- [x] **T93.3** —— 拉起:`&` 以自己的算符身份过词法,把整个条目标
+      记为后台;`a & b` 在拉起之后跑 `b`,拉起即分隔符;后台拉起由
+      父进程把每个 fork 出的成员钉进首成员的进程组——终端瞄准
+      shell 组的 Ctrl-C 永远够不到后台作业,前台保持 v0 纪律不动。
+- [x] **T93.4** —— 表与内建:`jobs`(先轮询一次,再列运行中的
+      `[1] 4821 running sleep 5`)、`fg %n`(阻塞等,作业自己的
+      状态,诚实边界是 Ctrl-C 够不到它带回来的)、`bg %n`
+      (`already in background`——这里无物会停)、`wait [%n]`
+      (无参清空作业表;未知 127)、`kill [-N] [%n|pid]...`(`%n`
+      以负 pid 打整组,缺省 15),以及 `$!`/`$$` 骑在扩展新添的
+      pid 应答上。
+- [x] **T93.5** —— 验收:通知行 `[1] done sleep 5` 在每个交互
+      提示符前轮询(pty 手驱,双二进制一致);`bg` fixture 骑
+      `sleep`/`kill`/`awk`,后台子进程的输出永不交织(一个 `echo`
+      作业的交织是首版被当场抓到的双腿分叉);`errors.esh` 里 `&`
+      拒绝行退役,让位给它一直坐在旁边的 `2>&11` 拒绝;十套
+      fixture 在 ocaml 与 c 目标逐字节;guide EN+zh 长出后台任务
+      节与诚实边界(无终端交接、无停止作业、stdin 仍是 shell 的),
+      本节 + zh 镜像,`plan/step-93-emosh-jobs.md`,CHECK.md 的
       记录。

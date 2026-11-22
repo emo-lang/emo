@@ -1,0 +1,14 @@
+bang-empty=[]
+wait=0
+killed=143
+[1] running sleep
+swept=0
+fg=0
+emosh: bg: job 1 already in background
+bg=1
+all=0
+bangkill=143
+1
+pipe=0
+emosh: kill: os: kill: No such process
+deadpid=1

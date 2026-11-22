@@ -5319,6 +5319,17 @@ int64_t emo_os_waitpid(int64_t pid) {
   return emo_tuple_new(2, elems);
 }
 
+emo_value emo_os_waitpid_nohang(int64_t pid) {
+  int st = 0;
+  pid_t r = waitpid((pid_t)pid, &st, WNOHANG);
+  if (r < 0)
+    return emo_os_fail("waitpid_nohang", "");
+  emo_value elems[2];
+  elems[0] = emo_box_i64((int64_t)r);
+  elems[1] = emo_box_i64((int64_t)st);
+  return emo_os_ok(emo_tuple_new(2, elems));
+}
+
 emo_value emo_os_pipe(void) {
   int fds[2];
   if (pipe(fds) != 0)

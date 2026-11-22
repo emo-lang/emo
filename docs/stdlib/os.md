@@ -42,6 +42,7 @@ def getpid() Int64
 def getppid() Int64
 def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
+def waitpid_nohang(pid Int64) (R, (Int64, Int64))
 def kill(pid Int64, sig Int64) (R, Int64)
 def setpgid(pid Int64, pgid Int64) (R, Int64)
 def execv(path String, argv Array[String]) Void
@@ -65,6 +66,15 @@ if os.wait_exited(w[1]) {
 - `wait_exited` / `wait_exit_code` — exited normally, and its status.
 - `wait_signaled` / `wait_signal` — killed by a signal, and which.
 - `wait_stopped` / `wait_stop_signal` — stopped, and which signal.
+
+`waitpid_nohang(pid)` is the polling half: the caller keeps going
+when no child has exited yet. A child that has exited answers
+`(R.ok, (pid, status))` — the same raw word `waitpid` carries;
+children but none exited yet answers `(R.ok, (0, 0))`, the kernel's
+own zero; a pid that is nobody's child refuses with the errno reason
+(`os: waitpid_nohang: No child processes`), the same text on both
+targets. The way a shell polls its background jobs without parking on
+them.
 
 `execv(path, argv)` replaces the calling process; on success it never
 returns, and on failure it returns — the fork child follows it with
@@ -219,8 +229,9 @@ end it does not use, and the child leaves through `_exit` — ordinary
 host's Unix module; the c target emits direct POSIX calls; the wasm
 target lowers the fd, directory, and working-directory half to the
 module's syscalls and lowers the process half to a run-time raise —
-`fork`, `execv`, `execvp`, `waitpid`, `pipe`, `dup2`, `getpid`,
-`getppid`, `_exit`, `isatty`, `argv`, the environment, and the signal
-dispositions each name the capability when called (`os_fs_demo` walks
-the fd and directory half; `os_demo`, which forks, stays a c golden).
-The typescript and beam targets refuse the package.
+`fork`, `execv`, `execvp`, `waitpid`, `waitpid_nohang`, `pipe`,
+`dup2`, `getpid`, `getppid`, `_exit`, `isatty`, `argv`, the
+environment, and the signal dispositions each name the capability
+when called (`os_fs_demo` walks the fd and directory half; `os_demo`,
+which forks, stays a c golden). The typescript and beam targets
+refuse the package.

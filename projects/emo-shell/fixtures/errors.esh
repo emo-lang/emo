@@ -2,8 +2,9 @@ no-such-command-emosh
 echo missing=$?
 echo dangling |
 echo syntax=$?
-echo stray &
-echo amp=$?
+echo stray 2>&11
+echo dup=$?
+true & echo back=$?
 echo 'unterminated
 echo quote=$?
 echo survived

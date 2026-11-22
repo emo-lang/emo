@@ -7,6 +7,9 @@
 //   command  := ( word | redirection )*
 //   redirection := "<" | ">" | ">>" word | "2>" | "2>>" word | "2>&1"
 //
+// A `&` after a pipeline marks the whole item background — `a | b &`
+// is one job, its status the spawn's.
+//
 // Every connector rides the item it terminates: an item is one
 // pipeline plus the `&&` / `||` / `;` that follows it, the executor's
 // walk using those to decide whether the next item runs at all.
@@ -44,11 +47,13 @@ class Redir {
 }
 
 // One pipeline plus the connector that follows it — `;`, `&&`, `||`,
-// or `""` at the end of the line.
+// or `""` at the end of the line — and whether `&` sent the whole
+// item to the background.
 class Item {
-  def init(pipeline Array[Cmd], conn String) {
+  def init(pipeline Array[Cmd], conn String, bg Bool) {
     self.pipeline = pipeline
     self.conn = conn
+    self.bg = bg
   }
 }
 
@@ -61,7 +66,7 @@ def parse(tokens Array[lex.Tok]) (R, Array[Item]) {
   // a line may not open with a connector — but a redirection alone
   // opens fine (`> log` truncates, the classic looseness)
   const first = tokens[0].kind
-  if first == lex.op_pipe() || first == lex.op_semi() || first == lex.op_andand() || first == lex.op_oror() {
+  if first == lex.op_pipe() || first == lex.op_semi() || first == lex.op_andand() || first == lex.op_oror() || first == lex.op_amp() {
     return (R.error, "emosh: syntax error: a line does not start with " + first)
   }
   var i = 0
@@ -71,7 +76,12 @@ def parse(tokens Array[lex.Tok]) (R, Array[Item]) {
       (R.error, why) then { return (R.error, why) }
       (R.ok, stage) then {
         var conn = ""
+        var bg = false
         var next = stage[1]
+        if next < tokens.length() && tokens[next].kind == lex.op_amp() {
+          bg = true
+          next = next + 1
+        }
         if next < tokens.length() {
           const kind = tokens[next].kind
           if kind == lex.op_semi() {
@@ -82,11 +92,16 @@ def parse(tokens Array[lex.Tok]) (R, Array[Item]) {
               conn = kind
               next = next + 1
             } else {
-              return (R.error, "emosh: syntax error: unexpected " + kind)
+              if !bg {
+                return (R.error, "emosh: syntax error: unexpected " + kind)
+              }
+              // a `&` and then more line: the spawn was the separator,
+              // the next item follows the way `;` would carry it
+              conn = ";"
             }
           }
         }
-        items.push(Item.new(pipeline: stage[0], conn: conn))
+        items.push(Item.new(pipeline: stage[0], conn: conn, bg: bg))
         if next >= tokens.length() {
           going = false
         } else {

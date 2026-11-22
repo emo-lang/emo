@@ -55,6 +55,9 @@ command  := ( word | redirection )*
 redirection := "<" | ">" | ">>" word | "2>" | "2>>" word | "2>&1"
 ```
 
+A `&` after a pipeline sends the whole item to the background —
+`a | b &` is one job, the section below.
+
 ## Words and quoting
 
 A word is the pieces a line was cut into; quoting is resolved at lex
@@ -96,6 +99,9 @@ $NAME-literal
   with `-c` when one is given.
 - `$1` … `$9` and `${N}` — the positional parameters: a script file's
   arguments or `-c`'s, empty past the last one.
+- `$$` — the shell's own process id.
+- `$!` — the last background job's pid; the empty string until there
+  is one.
 - `~` at the start of a bare, unquoted word — `$HOME`; unset leaves
   the tilde as it is (`~user` is not a form here, and a quoted tilde
   stays a tilde).
@@ -195,6 +201,44 @@ non-numeric argument with status 2. A script's exit status is the
 last command's; end of input in an interactive session leaves with
 the last status too.
 
+## Background jobs
+
+A `&` after a pipeline runs it in the background: `sleep 5 &` spawns
+the job and moves on — the spawn's success is that item's status, and
+the spawn itself is the separator (`a & b` runs `b` right away). The
+job takes the smallest free number, and `$!` answers its pid.
+
+The shell polls its jobs before every prompt; a job that finished
+gets its line — `[1] done sleep 5`, the status riding after `done`
+when it is not zero — and leaves the table. A background job runs in
+a process group of its own, so the terminal's Ctrl-C, aimed at the
+shell's group, can never reach it; a foreground command keeps the
+classic discipline and dies to Ctrl-C the way it should.
+
+| Builtin | What it does |
+|---|---|
+| `jobs` | one poll first, then the still-running jobs: `[1] 4821 running sleep 5` |
+| `fg %n` | park on the job's whole pipeline; its status the answer |
+| `bg %n` | nothing here ever stops — `emosh: bg: job 1 already in background` |
+| `wait [%n]` | park on that job, or on all of them; an unknown job is 127 |
+| `kill [-N] target...` | signal pids, or whole job groups with `%n` (15 the default) |
+
+The honest edges, stated: `fg` waits — without a terminal-handoff
+call the job keeps its own process group, so a Ctrl-C cannot reach a
+job brought back this way; a background job's stdin stays the shell's
+(there is no `/dev/null` redirection — two jobs racing to read is
+the user's to avoid); and the shell exits leaving running jobs
+behind, the way a script's shell does.
+
+```console
+$ sleep 5 &
+$ jobs
+[1] 4821 running sleep 5
+$ kill %1
+$ echo status=$?
+0
+```
+
 ## The builtins
 
 | Builtin | What it does |
@@ -237,8 +281,8 @@ $ echo x > /no/such/dir/f
 emosh: os: open /no/such/dir/f: No such file or directory   (status 1)
 $ echo dangling |
 emosh: syntax error: unexpected end of line    (status 2)
-$ echo stray &
-emosh: syntax error: & is not supported yet    (status 2)
+$ echo stray 2>&11
+emosh: syntax error: only 2>&1 is supported    (status 2)
 $ echo *.nope
 emosh: no matches: *.nope                      (status 1)
 $ ./emosh -z
@@ -271,7 +315,12 @@ The contract, stated so you never have to guess:
 - no control flow — no `if`, `while`, `for`, no functions;
 - the positionals end where they end: `$1` … `$9` and `${N}` only —
   no `shift`, no `$#`, no `$@`;
-- no background jobs — `&` refuses by name;
+- background jobs exist but the terminal does not negotiate: `fg`
+  waits, and a Ctrl-C cannot reach a job it brought back (the
+  terminal-handoff call — `tcsetpgrp` — is the os half waiting to
+  land); nothing here stops a job, so `bg` always answers
+  `already in background`; a background job's stdin stays the
+  shell's;
 - no line editor — the terminal's own cooked mode reads; no history,
   no completion;
 - no IFS field splitting after expansion;

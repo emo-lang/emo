@@ -570,6 +570,7 @@ emo_value emo_os_getenv(emo_str name);
 int64_t emo_os_getppid(void);
 emo_value emo_os_fork(void);
 int64_t emo_os_waitpid(int64_t pid);
+emo_value emo_os_waitpid_nohang(int64_t pid);
 emo_value emo_os_kill(int64_t pid, int64_t sig);
 emo_value emo_os_setpgid(int64_t pid, int64_t pgid);
 emo_value emo_os_pipe(void);

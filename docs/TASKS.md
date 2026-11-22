@@ -80,6 +80,7 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M51 — The GC ladder | 90 | The heap grows its own allocator and its wings: step 90 lands the arena — `heap_new` makes it, the raw `heap_load`/`heap_store` lane moves words, `heap_carve`/`heap_release` bind and unbind ranges — and the `gc` package's free list (first fit over two maps, split and neighbor-merge) becomes the only allocator, `struct_new`/`array_new`/`heap_free` retiring with the doors' blessing; handles carry offset + generation so a stale handle dies loudly without tombstones; the header word packs magic/kind/generation/mark/size; the demo's second generation lands inside the sweep's own words, the arena never growing (`CHECK.md`). |
 | M52 — The GC heap's riscv64 host | 91 | The metal joins the heap's hosts: the image grants the collector a region in its `.bss` (the mebibyte arena, the binding table, the root table, the slide's stage), the twenty-four doors land as runtime helpers compiled beside the program, `Ref` joins the tagged value model as kind 12 and the metal's `Map` as kind 13 (identity kinds under the runtime's reference counting, a zero release unlinking the root table), the raise gap this host carried since the hash twin closes (`Raise` lowers to `emo_raise`, the exception value rendering the `c` host's way), and module-level `var`s lower (cells in static memory, the prologue initializing) so the `gc` package's own geometry rides the image; the demo's 24 gold lines answer byte-for-byte on the interpreter, the `c` host and the metal — three boots stable, through the EmoOS kernel and direct — with the debug round's six walls named in `CHECK.md` (the prologue's double pool, the Map's half-taken +8 shift, the slide's raw pairs, the forwarding map's split key shapes, the rehash that copied only `next`, the unrounded arena cursor) and the gold leg riding `@emo_os`'s `gc_metal` group (`CHECK.md`, `docs/gc-heap.md`, `plan/step-91-riscv64-gc-host.md`). |
 | M53 — The shell's everyday surface | 92 | `emosh` grows the surface a daily shell cannot live without, all on the `os`+`bufio` face it already rides: a script file and `-c` open the invocation (`emosh script.esh args`, `emosh -c 'line' name args`, the script-unopenable 127, the broken option 2), the positional parameters land (`$1`…`$9`, `${N}`), `${var:-default}` joins the braced forms with the unnamed form staying literal — the whole form, not just the dollar — and the `${` scan now searches from the form instead of the word's start (`a}b${SETV}c` was a latent negative substring); the stderr redirections land (`2>`, `2>>`, `2>&1`, the digit-word rule keeping `hi2>` an argument, the dup's order the meaning); the glob lands (`*` and `?` the user typed bare only — quoting is remembered as a flag now, which also stops a quoted `~` from reaching `$HOME`, a found-and-fixed v0 bug), walking path segments, hiding dot names from a segment without the leading `.`, sorting the answers, refusing the command when nothing matches; the single command's words expand once instead of twice; four fixtures join and the harness pins the invocation modes on both targets (`CHECK.md`, `docs/emosh-guide.md`, `plan/step-92-emosh-everyday.md`). |
+| M54 — The shell's background jobs | 93 | `os` grows the polling half of waitpid in place at 0.1.0 (`waitpid_nohang` — the exited child `(R.ok, (pid, raw))`, children-but-none `(R.ok, (0, 0))`, the ECHILD errno reason byte-identical across the interpreter and the c runtime, the wasm process-half raise naming the capability) and `emosh` spends it: `&` after a pipeline runs the whole item as one job (the spawn the separator, `a & b` runs `b`), every member pinned by the parent's `setpgid` into one new process group so the terminal's Ctrl-C can never reach a background job while a foreground command keeps the classic death, the job table with the smallest-free-number rule and `$!` its representative pid and `$$` the shell's own, the notification `[1] done sleep 5` polled before every interactive prompt, and the builtins `jobs` (`[1] 4821 running sleep 5`), `fg %n` (the honest wait — no terminal handoff, the Ctrl-C cannot reach what it brings back), `bg %n` (nothing ever stops — `already in background`, bash's own answer), `wait [%n]` (127 the unknown), `kill [-N] [%n|pid]...` (`%n` the whole group by the negative pid); `os_demo` walks the poll three ways and the `bg` fixture rides `sleep`/`kill`/`awk` so no child output ever interleaves (`CHECK.md`, `docs/stdlib/os.md`, `docs/emosh-guide.md`, `plan/step-93-emosh-jobs.md`). |
 
 ## Design gates
 
@@ -5361,3 +5362,57 @@ record.)
       the glob's section, the braced forms and the honest limits'
       new shape, this section + zh mirror,
       `plan/step-92-emosh-everyday.md`, CHECK.md's record.
+
+## M54 — The shell's background jobs
+
+### Step 93 — `os.waitpid_nohang`, and emosh's `&`, the job table, and the five builtins
+
+**Status:** complete. (`plan/step-93-emosh-jobs.md` is the step's
+record.)
+
+- [x] **T93.1** — The os surface: `waitpid_nohang(pid)` answers
+      `(R.ok, (pid, raw))` for an exited child (the kernel's own
+      16-bit word, `waitpid`'s contract), `(R.ok, (0, 0))` while
+      children exist and none has exited, and the ECHILD errno reason
+      byte-identically — the landing rides the kill/setpgid
+      checklist's every site: os.emo, the interpreter's arm and stub
+      (`emo_posix_stub.c`), the ocaml target's runtime and its stub
+      twin, the c runtime and its header, the c emitter's name table,
+      the checker's empty_env admission, the wasm raise arm naming
+      the capability, the os docs EN+zh (and `docs/stdlib.md`'s
+      targets line, stale since the process half grew), and the
+      wasm-refusal test beside its process-group siblings.
+- [x] **T93.2** — The os_demo poll: a child parked on a pipe read is
+      the still-running answer, the parent's wake byte the moment it
+      should end — the while-poll rides the exited child home (the
+      exit-code decode), the third poll answers the ECHILD reason,
+      all three hosts byte-identical against `expected.txt` (no
+      `os.sleep_ms` — the pause is the c runtime's alone, the demo's
+      first cut found out the loud way).
+- [x] **T93.3** — The spawn: `&` lexes as its own operator and marks
+      the whole item background; `a & b` runs `b` on the spawn, the
+      separator itself; the background spawn pins each forked member
+      into the first member's process group from the parent — the
+      terminal's Ctrl-C aimed at the shell's group can never reach a
+      background job, and the foreground keeps the v0 discipline
+      untouched.
+- [x] **T93.4** — The table and the builtins: `jobs` (one poll, then
+      the running rows `[1] 4821 running sleep 5`), `fg %n` (the
+      blocking wait, the job's own status, the honest limit that a
+      Ctrl-C cannot reach what it brings back), `bg %n` (`already in
+      background` — nothing here stops), `wait [%n]` (no argument
+      empties the table; unknown 127), `kill [-N] [%n|pid]...` (the
+      `%n` a whole group by the negative pid, 15 the default), and
+      `$!`/`$$` riding the expansion's new pid answers.
+- [x] **T93.5** — The acceptance: the notification
+      `[1] done sleep 5` polled before every interactive prompt (a
+      pty drives it by hand, both binaries identical); the `bg`
+      fixture rides `sleep`/`kill`/`awk` so no background child's
+      output ever interleaves (an `echo` job's interleaving was the
+      first cut's found-and-fixed divergence between the targets);
+      the `&` refusal row in `errors.esh` retires to the `2>&11`
+      refusal it always sat beside; ten fixtures byte-identical on
+      the ocaml and c targets; the guide EN+zh grows the jobs
+      section and the honest edges (no terminal handoff, no stopped
+      jobs, stdin stays the shell's), this section + zh mirror,
+      `plan/step-93-emosh-jobs.md`, CHECK.md's record.

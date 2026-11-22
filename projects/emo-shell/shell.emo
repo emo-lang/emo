@@ -26,6 +26,84 @@ require "bufio"
 // never opens a reader at all; the positional parameters ride with
 // it.
 
+// One background job: the number the user names as %n, the pipeline's
+// member pids (the last stage the representative the job's status
+// rides), the command text the notifications speak, and the two
+// mutable answers — the pipeline's final status once the
+// representative has been reaped, and the members still unreaped
+// beside it.
+class Job {
+  def init(n Int64, rep Int64, rest Array[Int64], text String) {
+    self.n = n
+    self.rep = rep
+    self.rest = Box.new(rest)
+    self.text = text
+    self.final = Box.new(0 - 1)
+  }
+
+  // Whether the whole pipeline is in: the representative reaped and
+  // its status recorded.
+  def done() Bool {
+    return self.final.read() >= 0
+  }
+
+  // The pipeline's status, valid once done() answers true.
+  def final_status() Int64 {
+    return self.final.read()
+  }
+
+  // One nohang round: a still-running representative answers false; a
+  // reaped one is decoded, the stragglers waited down blocking (they
+  // die on their pipes the moment the representative does), and true
+  // comes back.
+  def poll() Bool {
+    if self.done() {
+      return true
+    }
+    case os.waitpid_nohang(self.rep) {
+      (R.ok, w) then {
+        if w[0] != 0 {
+          const rest = self.rest.read()
+          for var k = 0; k < rest.length(); k = k + 1 {
+            os.waitpid(rest[k])
+          }
+          self.rest.replace(ArrayBuilder.new().to_array())
+          self.final.replace(decode_status(w[1]))
+          return true
+        }
+        return false
+      }
+      (R.error, _) then { return false }
+    }
+  }
+
+  // The blocking form, fg's and wait's: the representative parked on
+  // until it is in, the stragglers waited down behind it.
+  def wait_blocking() Int64 {
+    if self.done() {
+      return self.final.read()
+    }
+    const w = os.waitpid(self.rep)
+    const rest = self.rest.read()
+    for var k = 0; k < rest.length(); k = k + 1 {
+      os.waitpid(rest[k])
+    }
+    self.rest.replace(ArrayBuilder.new().to_array())
+    const status = decode_status(w[1])
+    self.final.replace(status)
+    return status
+  }
+}
+
+// The kernel's raw status word to the exit status the session speaks:
+// a signal death 128 + signal, an exit the code.
+def decode_status(raw Int64) Int64 {
+  if os.wait_signaled(raw) {
+    return 128 + os.wait_signal(raw)
+  }
+  return os.wait_exit_code(raw)
+}
+
 class Shell {
   def init(interactive Bool, name String, read_fd Int64, args Array[String], one_shot Bool, command String) {
     self.interactive = interactive
@@ -33,6 +111,9 @@ class Shell {
     self.args = args
     self.one_shot = one_shot
     self.command = command
+    self.pid = os.getpid()
+    self.last_bg = Box.new(0)
+    self.jobs = Box.new(ArrayBuilder.new())
     self.last_status = Box.new(0)
     self.running = Box.new(true)
     self.reader = Box.new(bufio.reader(bufio.fd_reader(read_fd)))
@@ -74,6 +155,102 @@ class Shell {
 
   def stop() Void {
     self.running.replace(false)
+  }
+
+  // ---- the background jobs ----
+
+  // One job more: it takes the smallest free number, and the
+  // session's $! moves to its representative pid.
+  def job_new(rep Int64, rest Array[Int64], text String) Job {
+    const taken = self.jobs.read().to_array()
+    var n = 1
+    var taken_n = true
+    while taken_n {
+      taken_n = false
+      for var k = 0; k < taken.length(); k = k + 1 {
+        if taken[k].n == n {
+          taken_n = true
+        }
+      }
+      if taken_n {
+        n = n + 1
+      }
+    }
+    const job = Job.new(n: n, rep: rep, rest: rest, text: text)
+    const fresh = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      fresh.push(taken[k])
+    }
+    fresh.push(job)
+    self.jobs.replace(fresh)
+    self.last_bg.replace(rep)
+    return job
+  }
+
+  // One job by number, or the refusal.
+  def find_job(n Int64) (R, Job) {
+    const taken = self.jobs.read().to_array()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].n == n {
+        return (R.ok, taken[k])
+      }
+    }
+    return (R.error, "no such job")
+  }
+
+  // The job leaves the table — being reported and being removed are
+  // the same act, the notification the report.
+  def drop_job(n Int64) Void {
+    const taken = self.jobs.read().to_array()
+    const kept = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].n != n {
+        kept.push(taken[k])
+      }
+    }
+    self.jobs.replace(kept)
+  }
+
+  // One poll over every job, the finished ones announced and dropped:
+  // `[1] done sleep 5`, the status riding after `done` when it is not
+  // zero. The interactive loop calls this before each prompt.
+  def notify() Void {
+    const taken = self.jobs.read().to_array()
+    const kept = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      const j = taken[k]
+      if j.poll() {
+        const status = j.final_status()
+        var row = "[" + j.n.to_string() + "] done"
+        if status != 0 {
+          row = row + " " + status.to_string()
+        }
+        self.line(row + " " + j.text)
+      } else {
+        kept.push(j)
+      }
+    }
+    self.jobs.replace(kept)
+  }
+
+  // The jobs listing: whatever is still running, the classic shape
+  // with the pid in it.
+  def list_jobs() Void {
+    const taken = self.jobs.read().to_array()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      const j = taken[k]
+      self.line("[" + j.n.to_string() + "] " + j.rep.to_string() + " running " + j.text)
+    }
+  }
+
+  // The jobless wait: every job parked on, the table emptied.
+  def wait_all() Int64 {
+    const taken = self.jobs.read().to_array()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      taken[k].wait_blocking()
+    }
+    self.jobs.replace(ArrayBuilder.new())
+    return 0
   }
 
   // One more line of input; the empty string means end of input,
