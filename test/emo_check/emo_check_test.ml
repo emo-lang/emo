@@ -138,6 +138,14 @@ println(v.to_string())|}
           (List.length (check {|const ok = "a" < "b"|}));
         let diagnostics = check {|const bad = "a" < 1|} in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "comparison needs strings or numbers" (fun () ->
+        let diagnostics = check {|const bad = true < false|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
+    tc "strings order with the comparison operators" (fun () ->
+        let diagnostics = check {|println("a" < "b")|} in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
     tc "logic needs Bools" (fun () ->
         let diagnostics = check {|const bad = 1 && true|} in
         Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));

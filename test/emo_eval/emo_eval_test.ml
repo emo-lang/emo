@@ -216,6 +216,8 @@ let expression_tests =
         check_value "strings" (Emo_eval.Bool true) "\"a\" < \"b\"";
         check_value "prefix first" (Emo_eval.Bool true) "\"ab\" > \"a\"";
         let diagnostic = eval_err "\"a\" < 1" in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic);
+        let diagnostic = eval_err "true < false" in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic));
     tc "characters are Unicode code points" (fun () ->
         check_value "ascii" (Emo_eval.Char 97) "'a'";
