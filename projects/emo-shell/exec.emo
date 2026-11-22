@@ -354,6 +354,28 @@ def run_compound_background(sh shell.Shell, c parse.Compound, source String) Int
 // box, the loops and the call consuming what belongs to them.
 def run_compound(sh shell.Shell, c parse.Compound, source String) Int64 {
   if c.kind == "if" {
+    if c.cond_tok.length() > 0 {
+      // the expression condition: a comparison over numbers, its
+      // truth the branch
+      case eval_cond(c.cond_tok, sh) {
+        (R.error, why) then {
+          sh.err("emosh: if: " + why)
+          return 1
+        }
+        (R.ok, go) then {
+          if go {
+            run_items(sh, c.body, source)
+            return sh.status()
+          }
+          if c.else_body.length() > 0 {
+            run_items(sh, c.else_body, source)
+            return sh.status()
+          }
+          sh.set_status(0)
+          return 0
+        }
+      }
+    }
     run_items(sh, c.cond, source)
     const st = sh.status()
     if st == 0 {
@@ -371,18 +393,31 @@ def run_compound(sh shell.Shell, c parse.Compound, source String) Int64 {
   if c.kind == "while" {
     var last = 0
     while true {
-      run_items(sh, c.cond, source)
-      const st = sh.status()
-      const sig = sh.read_signal()
-      if sig == 1 || sig == 2 {
-        sh.clear_signal()
-        return last
-      }
-      if sig == 3 {
-        return last
-      }
-      if st != 0 {
-        return last
+      if c.cond_tok.length() > 0 {
+        case eval_cond(c.cond_tok, sh) {
+          (R.error, why) then {
+            sh.err("emosh: while: " + why)
+            return last
+          }
+          (R.ok, go) then {
+            if !go {
+              return last
+            }
+          }
+        }
+      } else {
+        run_items(sh, c.cond, source)
+        if sh.status() != 0 {
+          return last
+        }
+        const pre = sh.read_signal()
+        if pre == 1 || pre == 2 {
+          sh.clear_signal()
+          return last
+        }
+        if pre == 3 {
+          return last
+        }
       }
       run_items(sh, c.body, source)
       last = sh.status()
@@ -492,13 +527,47 @@ def for_restore(sh shell.Shell, name String, had Bool, old_value String) Void {
 }
 
 // One declaration bound: the const flag refusing any redeclaration
-// of a frozen name, the value the one word's expansion.
+// of a frozen name. A quoted value binds its expanded text as a
+// string; a bare run evaluates as an integer expression (one bare
+// word copies the variable it names, Emo's own reading).
 def bind_decl(sh shell.Shell, d parse.Decl) Int64 {
   if sh.var_is_const(d.name) {
     sh.err("emosh: " + d.name + ": is a constant")
     return 1
   }
-  const value = expand.word(d.value, sh.status(), sh.name, sh.current_args(), sh.pid, sh.last_bg.read(), sh.vars_list())
+  var value = ""
+  var stringy = false
+  for var k = 0; k < d.value_tok.length(); k = k + 1 {
+    const parts = d.value_tok[k].parts
+    for var q = 0; q < parts.length(); q = q + 1 {
+      if parts[q].lit || parts[q].quoted {
+        stringy = true
+      }
+    }
+  }
+  if stringy {
+    const parts_all = ArrayBuilder.new()
+    for var k = 0; k < d.value_tok.length(); k = k + 1 {
+      for var q = 0; q < d.value_tok[k].parts.length(); q = q + 1 {
+        parts_all.push(d.value_tok[k].parts[q])
+      }
+    }
+    value = expand.word(parts_all.to_array(), sh.status(), sh.name, sh.current_args(), sh.pid, sh.last_bg.read(), sh.vars_list())
+  } else {
+    case eval_expr(d.value_tok, sh, 0) {
+      (R.error, why) then {
+        sh.err("emosh: " + d.name + ": " + why)
+        return 1
+      }
+      (R.ok, got) then {
+        if got[1] != d.value_tok.length() {
+          sh.err("emosh: " + d.name + ": the value has trailing tokens")
+          return 1
+        }
+        value = got[0].to_string()
+      }
+    }
+  }
   if d.constant {
     sh.var_declare_const(d.name, value)
   } else {
@@ -537,12 +606,19 @@ def eval_assign(toks Array[lex.Tok], sh shell.Shell) (R, (String, Int64)) {
 // The for's condition: the header slice must compare — a bare sum is
 // not a condition — and nothing may trail the comparison.
 def eval_cond(toks Array[lex.Tok], sh shell.Shell) (R, Bool) {
-  case eval_cmp(toks, sh, 0) {
+  var has_cmp = false
+  for var k = 0; k < toks.length(); k = k + 1 {
+    const kind = toks[k].kind
+    if kind == "<" || kind == ">" || kind == "<=" || kind == ">=" || kind == "==" || kind == "!=" {
+      has_cmp = true
+    }
+  }
+  if !has_cmp {
+    return (R.error, "the condition must compare")
+  }
+  case eval_bool(toks, sh, 0) {
     (R.error, why) then { return (R.error, why) }
     (R.ok, got) then {
-      if !got[2] {
-        return (R.error, "the condition must compare")
-      }
       if got[1] != toks.length() {
         return (R.error, "the condition has trailing tokens")
       }
@@ -557,9 +633,48 @@ def eval_cond(toks Array[lex.Tok], sh shell.Shell) (R, Bool) {
 // to right. The first answer is the value, the second the index just
 // past it.
 def eval_expr(toks Array[lex.Tok], sh shell.Shell, pos Int64) (R, (Int64, Int64)) {
-  case eval_cmp(toks, sh, pos) {
+  case eval_bool(toks, sh, pos) {
     (R.error, why) then { return (R.error, why) }
     (R.ok, value) then { return (R.ok, (value[0], value[1])) }
+  }
+}
+
+// The boolean level above the comparisons: `&&` and `||` left to
+// right, each side a comparison — the value 1 or 0, no
+// short-circuit (a division by zero on the unused side still
+// refuses, the price of the eager read).
+def eval_bool(toks Array[lex.Tok], sh shell.Shell, pos Int64) (R, (Int64, Int64)) {
+  case eval_cmp(toks, sh, pos) {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, first) then {
+      var value = first[0]
+      var next = first[1]
+      var going = next < toks.length() && (toks[next].kind == "&&" || toks[next].kind == "||")
+      while going {
+        const kind = toks[next].kind
+        case eval_cmp(toks, sh, next + 1) {
+          (R.error, why) then { return (R.error, why) }
+          (R.ok, right) then {
+            if kind == "&&" {
+              if value == 0 || right[0] == 0 {
+                value = 0
+              } else {
+                value = 1
+              }
+            } else {
+              if value != 0 || right[0] != 0 {
+                value = 1
+              } else {
+                value = 0
+              }
+            }
+            next = right[1]
+            going = next < toks.length() && (toks[next].kind == "&&" || toks[next].kind == "||")
+          }
+        }
+      }
+      return (R.ok, (value, next))
+    }
   }
 }
 
@@ -721,6 +836,14 @@ def eval_factor(toks Array[lex.Tok], sh shell.Shell, pos Int64) (R, (Int64, Int6
             return (R.ok, (inner[0], inner[1] + 1))
           }
         }
+      }
+      if text.substring(0, 1) == "$" {
+        // a $-form read for its numeric value: $i, ${i}, $1, $#
+        const value = expand.word(tok.parts, sh.status(), sh.name, sh.current_args(), sh.pid, sh.last_bg.read(), sh.vars_list())
+        if !expand.is_digits(value) {
+          return (R.error, text + ": is not a number")
+        }
+        return (R.ok, (value.to_int64(), pos + 1))
       }
       if expand.is_name(text) {
         case sh.var_lookup(text) {

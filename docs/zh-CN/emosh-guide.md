@@ -154,14 +154,18 @@ hello shell
 
 - `const NAME = WORD` 绑定一个变量;重声明已冻结的名字——用
   `const`、`var` 或 `unset`——会拒绝(`NAME: is a constant`)。
-  `var NAME = WORD` 同样绑定;再 `var` 覆盖值。值是一个词——短语请
-  加引号——且该词会扩展(`$x` 生长;glob 不动:声明的值不做 glob)。
+  `var NAME = WORD` 同样绑定;再 `var` 覆盖值。带引号的值绑定其扩展后的
+  文本(`const g = "hello"`);裸的一串按整数表达式求值
+  (`var acc = acc + i`),单个裸词复制它所指的变量。
   `$NAME` 先读声明的绑定再读环境,`unset` 两者都除。
-- `if LIST { LIST } else { LIST }`——条件是命令列表,以其最后命令
-  的退出状态选分支(0 走 body)。`else` 可链 `else if … { … }`,
-  解析期压平为嵌套。无 `else` 且条件为假时答 0。
-- `while LIST { LIST }` 在条件最后一条命令成功时运行 body;零轮
-  答 0。
+- `if LIST { LIST } else { LIST }` 与 `while LIST { LIST }`——条件
+  有两种形态。**命令列表**:以其最后命令的退出状态决定(0 继续)。
+  **数值比较**:`if s > 5 { … }`、`if s == 3 && s < 10 { … }`——当
+  条件里的每个 token 都是裸词或比较/布尔运算符、且出现比较符时,
+  它按整数表达式求值,读声明的绑定与环境(`$i` 形也按值读入)。
+  无 `else` 且条件为假时答 0;`else` 可链 `else if … { … }`,解析
+  期压平为嵌套。
+- `while` 同上:条件命令列表成功即运行 body;零轮答 0。
 - `for var I = EXPR; I < EXPR; I = I + EXPR { LIST }`——数值 for,
   Emo 自己的形:头的三个表达式是裸变量名上的整数算术(`$#` 也可
   计入),循环变量是每轮赋值的声明绑定、循环后恢复原值,步进按头

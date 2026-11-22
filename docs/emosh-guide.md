@@ -249,12 +249,16 @@ hello shell
   (`$x` grows; globs stay put: a declaration's value does not glob).
   `$NAME` reads a declared binding before the environment, and
   `unset` removes both.
-- `if LIST { LIST } else { LIST }` — the condition is a command list,
-  its exit status choosing the branch (0 takes the body). `else` may
-  chain `else if … { … }`, flattened into nesting. No `else` and a
-  false condition answers 0.
-- `while LIST { LIST }` runs the body while the condition's last
-  command succeeds; zero runs answer 0.
+- `if LIST { LIST } else { LIST }` and
+  `while LIST { LIST }` — the condition has two shapes. A **command
+  list**: its last command's exit status chooses (0 continues).
+  A **numeric comparison**: `if s > 5 { … }`,
+  `if s == 3 && s < 10 { … }` — when every token in the condition is
+  a bare word or comparison/boolean operator and a comparison is
+  present, it evaluates as an integer expression over the declared
+  bindings and the environment (`$i` forms read for their values
+  too). No `else` and a false condition answers 0; `else` may chain
+  `else if … { … }`, flattened into nesting.
 - `for var I = EXPR; I < EXPR; I = I + EXPR { LIST }` — the numeric
   for, Emo's own shape: the header's three expressions are integer
   arithmetic over bare variable names (`$#` counts in too), the loop

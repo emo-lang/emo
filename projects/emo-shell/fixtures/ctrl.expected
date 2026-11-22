@@ -27,5 +27,15 @@ emosh: unset: greeting: is a constant
 unset-ok=1
 greeting=[hello]
 returned=3
+small
+mid
+three
+down 3
+down 2
+down 1
+final=0
+math
+sum=10
+phrase=[ab]
 emosh: return: only in a function
 never-after
