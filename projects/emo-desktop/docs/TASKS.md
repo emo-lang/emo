@@ -2901,4 +2901,15 @@ session that runs the kernel whole and pins the bytes.
   `wallpaper_decode` and the `art`-carrying signatures — so `emo check`
   reports the face's own five errors (its lines 608 through 615) and
   not one on this step's, the desync the commits that grew the module
-  never brought the face along for. The face's re-sync stands open.
+  never brought the face along for. The face's re-sync lands in A33.3.
+
+- [x] **A33.3** — The Wayland's face re-syncs with `emo_desktop`: the
+  three call sites in `paint_desktop` wear the module's grown
+  signatures — `wallpaper_decode` the decode, `paint_header` the
+  packed mode `(w << 32) | h`, `paint` the strip's top edge `h - 40` —
+  and the art they all walk is the flat ground's own, `wall_grad_runs`
+  building the wall's gradient row by row, one run a row, the display's
+  own `w` and `h`, the metal's fallback the face keeps, having no
+  volume to read. **complete 2026-11-22** — `emo check` on the face
+  is clean, the five pre-A31.1 errors gone, the desync A33.2 stood
+  open now closed.

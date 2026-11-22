@@ -598,21 +598,47 @@ def main() {
   }
 }
 
-// The face whole: the wallpaper's formula, the header bar, the dock
+// The flat ground's art (emo-desktop A33.3): the metal's fallback when
+// the volume's file is missing — the wall's gradient, row by row, one
+// run a row, the display's own rows. The Wayland's face has no volume
+// to read, so the flat ground is its wall; the chrome's material
+// samples it the way the metal's does.
+def wall_grad_runs(w Int64, h Int64) Array[Int64] {
+  const holder = ArrayBuilder.new()
+  const denom = h - 1
+  const tr = (emo_desktop.wall_top() >> 16) & 0xFF
+  const tg = (emo_desktop.wall_top() >> 8) & 0xFF
+  const tb = emo_desktop.wall_top() & 0xFF
+  const br = (emo_desktop.wall_bottom() >> 16) & 0xFF
+  const bg = (emo_desktop.wall_bottom() >> 8) & 0xFF
+  const bb = emo_desktop.wall_bottom() & 0xFF
+  var y = 0
+  while y < h {
+    const r = (tr * (denom - y) + br * y) / denom
+    const g = (tg * (denom - y) + bg * y) / denom
+    const b = (tb * (denom - y) + bb * y) / denom
+    holder.push((((r << 16) | (g << 8) | b) << 32) | w)
+    y = y + 1
+  }
+  return holder.to_array()
+}
+
+// The face whole: the flat ground's wall, the header bar, the dock
 // with its tiles — the desktop's own chrome, the digest the
 // transcript's evidence per frame. The apps live in windows of
 // their own now; the desktop carries the launch dots and nothing
 // else of them.
 def paint_desktop(eye LiveEye, f ui_fb.raster.Strike, w Int64, h Int64,
                   focused Int64, launched Int64) {
-  emo_desktop.wallpaper(eye, w, h)
+  const runs = wall_grad_runs(w, h)
+  emo_desktop.wallpaper_decode(eye, w, h, runs)
   // the clock and the pager read what the caller hands them (the
   // package's own rule, M26/M27) — the harness has neither verb, so a
   // fixed epoch and the quiet word stand in, the transcript's digests
   // the fixed bytes' evidence
-  emo_desktop.paint_header(eye, f, w, w, h, launched, 1774775100, 0)
+  emo_desktop.paint_header(eye, f, w, (w << 32) | h, launched, 1774775100, 0, runs)
   const dock = DockSurface.new(base: eye, dy: h - 40)
-  emo_desktop.paint(dock, f, w, 40, 0, ["counter", "files", "editor"], focused, launched)
+  emo_desktop.paint(dock, f, w, h - 40, ["counter", "files", "editor"], focused, launched, runs)
   eye.present()
   println("frame " + ui_fb_frame.digest(eye).to_string())
 }
