@@ -90,9 +90,10 @@ byte-identical is the bar the tracker's tasks are held to.
 they are missing or stale, creates the disk when it is missing
 (`--fresh` trades the volume for a blank one), **feeds the proof
 chain's windows automatically** — the same beats the golden asserts —
-and boots to the desktop; the terminal becomes the REPL's console at
-the prompt. `--hand` keeps the raw ride, and the raw steps follow for
-anyone driving by hand.
+and boots to the shell; the terminal becomes the REPL's console at
+the prompt, and the line's `desktop` command opens the desktop when
+it is wanted. `--hand` keeps the raw ride, and the raw steps follow
+for anyone driving by hand.
 
 The disk is a raw 4 MiB image. The filesystem formats a blank one at
 its first mount and keeps its files across boots, so create it once
@@ -118,7 +119,7 @@ serial console stays the terminal (`-serial mon:stdio` holds the mux
 OpenSBI's banner goes by, the
 kernel boots paged on the table it built (the `sv39 8 0x…` line), the
 block device and the filesystem report — and the chain stops for keys
-on its way to the desktop. **Until the desktop composes, the screen
+on its way to the shell. **Until the shell composes, the screen
 holds the boot's own gradient flush** — the banded colors are the
 machine waiting for its keys, not a fault. The windows, in order:
 
@@ -149,9 +150,8 @@ machine waiting for its keys, not a fault. The windows, in order:
 The four kill reports before the counter are the proof chain doing
 its job — misbehaving passes dying alone (one of them by its own
 allocator's exhaustion) while the machine goes on — not trouble. Then
-the desktop composes — the wallpaper, the header bar, the dock and
-the volume's icons on it (emo-desktop A13) — and the banner and the
-prompt arrive (the `O` and `S` in ANSI cyan):
+the banner and the prompt arrive (the `O` and `S` in ANSI cyan) and
+the machine is the shell:
 
     _____                      ____     ____
    | ____|  __  __    ____    / __ \   / ___|
@@ -161,6 +161,12 @@ prompt arrive (the `O` and `S` in ANSI cyan):
 
     emo-os>
 
+Type `desktop` at the prompt and the machine composes the desktop —
+the wallpaper, the header bar, the dock and the volume's icons on it
+(emo-desktop A13) — the dock's tiles becoming the apps' launcher and
+the line staying the REPL's. Until then the screen holds the boot's
+own gradient flush.
+
 Keys typed outside those three windows are not simply lost. OpenSBI
 drains the UART while it runs, and whatever it leaves sits in the FIFO
 until the kernel's driver picks it up — the bytes surface later, in
@@ -168,18 +174,21 @@ order, feeding whichever reader comes next: the proof chain's answers
 come out wrong, and the shell's first command arrives prefixed with
 them. Type only in the windows, and only what they ask for.
 
-The prompt answers nine commands, lowercase and exact:
+The prompt answers twelve commands, lowercase and exact:
 
 | Command | Effect |
 | --- | --- |
-| `help` | names the nine |
+| `help` | names the twelve |
 | `echo TEXT` | prints the text back |
 | `ls` | lists the volume's files, one per line |
 | `cat NAME` | prints a file's bytes |
 | `write NAME TEXT` | makes the file the text's bytes; quiet on success |
 | `rm NAME` | removes the file; quiet on success |
+| `desktop` | opens the desktop — the wallpaper, the header, the dock and the icons; the boot itself lands at the shell |
 | `counter` | starts the machine's program — the console renderer: the frames paint on the console, `a`/`b` add and subtract, `q` returns to the prompt |
 | `exec NAME.elf` | starts a disk ELF on the desktop — the dock's tiles are the same door by click |
+| `passwd SECRET` | writes the secret's digest to `lock.hash`; 1 to 64 bytes |
+| `lock` | locks the session behind the full-screen face; the next line is the secret's check |
 | `poweroff` | ends the machine — the exit route's `dma` line and frames account, then QEMU exits on its own |
 
 `write`/`ls`/`cat`/`rm` are the filesystem's roundtrip — the files

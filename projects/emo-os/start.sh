@@ -7,13 +7,17 @@ cd "$(dirname "$0")"
 # it the terminal — the hand-driven boot of
 # docs/how-to-start-emoos.md in one command. run.sh is the golden smoke
 # that asserts the serial chain; this one asserts nothing and drives.
-# The display leg (T8.8): the machine's screen is a cocoa window — the
-# same virtio-gpu and 1920x1080 baseline the golden asserts through the
-# monitor's screendump, here shown live — while the serial console
-# stays the terminal (`-serial mon:stdio`, the mux `-nographic` used
-# to keep). The keyboard rides along: without a DeviceID 18 on the
-# buses the input service's scan ends loudly, so the ride's boot needs
-# the device half of its input stream.
+# The boot ends at the shell, not at the desktop: the ride feeds the
+# proof chain's windows, the banner and the prompt arrive, and the
+# terminal is the REPL's console — the line's `desktop` word opens the
+# desktop whenever it is wanted. The display leg (T8.8): the machine's
+# screen is a cocoa window — the same virtio-gpu and 1920x1080
+# baseline the golden asserts through the monitor's screendump, here
+# shown live — while the serial console stays the terminal
+# (`-serial mon:stdio`, the mux `-nographic` used to keep). The
+# keyboard rides along: without a DeviceID 18 on the buses the input
+# service's scan ends loudly, so the ride's boot needs the device half
+# of its input stream.
 #
 # The images are not committed. The user image builds first — the
 # kernel's build assembles user.S, which embeds hello.elf, so the ELF
@@ -189,14 +193,15 @@ fi
 
 # The ride drives itself: the proof chain's windows are fed their bytes
 # automatically — the same beats `run.sh` asserts — so the machine
-# boots to the desktop hands-free and the terminal becomes the REPL's
-# console at the prompt. `--hand` keeps the old ride: the windows listed
-# in docs/how-to-start-emoos.md, typed by you.
+# boots to the shell hands-free and the terminal becomes the REPL's
+# console at the prompt; the desktop waits for the line's `desktop`
+# word, whenever it is wanted. `--hand` keeps the old ride: the windows
+# listed in docs/how-to-start-emoos.md, typed by you.
 if [ "$hand" = yes ]; then
   echo 'EmoOS: the machine'"'"'s screen is the window that opens; this terminal is the serial console.' >&2
-  echo '  the proof chain stops for keys on its way to the desktop — the windows and' >&2
+  echo '  the proof chain stops for keys on its way to the shell — the windows and' >&2
   echo '  their bytes are listed in docs/how-to-start-emoos.md (driving it by hand)' >&2
-  echo '  until the desktop composes, the screen holds the boot'"'"'s own gradient flush —' >&2
+  echo '  until the shell composes, the screen holds the boot'"'"'s own gradient flush —' >&2
   echo '  the banded colors are the machine waiting, not a fault' >&2
   echo '  the kill reports on the way are the proof chain working, not trouble' >&2
   echo '  poweroff ends the machine; Ctrl-A X kills QEMU' >&2
@@ -211,8 +216,9 @@ if [ "$hand" = yes ]; then
 fi
 
 echo 'EmoOS: the machine'"'"'s screen is the window that opens; the boot drives itself to' >&2
-echo '  the desktop — the proof chain'"'"'s windows are fed automatically. At the prompt' >&2
-echo '  this terminal is the REPL'"'"'s console: poweroff ends the machine, Ctrl-A X kills QEMU.' >&2
+echo '  the shell — the proof chain'"'"'s windows are fed automatically. At the prompt' >&2
+echo '  this terminal is the REPL'"'"'s console: type `desktop` to open the desktop,' >&2
+echo '  poweroff ends the machine, Ctrl-A X kills QEMU.' >&2
 
 # The serial rides a FIFO so the ride's feeder and, after the prompt,
 # the terminal relay both write it; the serial's bytes land in
@@ -307,8 +313,9 @@ ride() {
 }
 
 if ride; then
-  echo 'EmoOS: the desktop is up — this terminal is the REPL'"'"'s console now.' >&2
-  echo '  poweroff ends the machine; Ctrl-D or Ctrl-A X also quit.' >&2
+  echo 'EmoOS: the shell is up — this terminal is the REPL'"'"'s console now.' >&2
+  echo '  type `desktop` for the desktop; poweroff ends the machine,' >&2
+  echo '  Ctrl-D or Ctrl-A X also quit.' >&2
 else
   echo 'EmoOS: the auto-ride stalled — drive the remaining windows by hand;' >&2
   echo '  docs/how-to-start-emoos.md lists them in order.' >&2

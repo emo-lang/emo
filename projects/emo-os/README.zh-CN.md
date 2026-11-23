@@ -66,7 +66,7 @@ $ ./run.sh
 $ ./start.sh
 ```
 
-`./run.sh` 是金测一条龙;`./start.sh` 是 ride——镜像缺失或过期时先构建,然后把终端交给机器,机器的屏幕在一旁的窗口里活着。步骤的完整走法——编译器构建、两个镜像、金测一条龙、直到提示符的手动启动——见 [`docs/how-to-start-emoos.zh-CN.md`](docs/how-to-start-emoos.zh-CN.md)。
+`./run.sh` 是金测一条龙;`./start.sh` 是 ride——镜像缺失或过期时先构建,然后把终端交给机器,机器的屏幕在一旁的窗口里活着。机器启动到 shell;在提示符敲 `desktop`,桌面才打开。步骤的完整走法——编译器构建、两个镜像、金测一条龙、直到提示符的手动启动——见 [`docs/how-to-start-emoos.zh-CN.md`](docs/how-to-start-emoos.zh-CN.md)。
 
 ## 里程碑
 

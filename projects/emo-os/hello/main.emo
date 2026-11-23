@@ -2739,17 +2739,21 @@ case desk_spawned {
   }
 }
 
-// The desktop (emo-desktop A12.1, EmoOS T8.19): the shell becomes the
-// machine's desktop. The desk pass has handed the display over and
-// its exit answered: the top level takes the foreground for its life,
-// the launcher's dock its panel and the merged stream its ear — no
-// wait verb anywhere, the exits riding the stream to their parent
-// now, a launch and a death the same loop's ordinary events. A press
-// on the strip names a tile and the tile launches its app (the exec
-// verb, the disk ELF); a byte names the REPL line and the line names
-// its command (the shell's own assembly, `feed` — the serial's bytes
-// ride the stream as 0x454D events, and the focus is the gate they
-// pass: the desktop hears them when the dock holds the focus, an
+// The shell's foreground (T7.3, docs/shell.md): the desk pass has
+// handed the display over and its exit answered, and the top level
+// takes the machine's foreground as the REPL — the prompt the boot's
+// end. The desktop is the line's own door (the `desktop` word,
+// shell_mode below): when the line names it the era paints — the
+// wallpaper, the header, the dock and the icons (emo-desktop A12.1,
+// EmoOS T8.19) — and the top level's loop becomes the desktop's for
+// its life: the launcher's dock its panel and the merged stream its
+// ear, no wait verb anywhere, the exits riding the stream to their
+// parent now, a launch and a death the same loop's ordinary events. A
+// press on the strip names a tile and the tile launches its app (the
+// exec verb, the disk ELF); a byte names the REPL line and the line
+// names its command (the shell's own assembly, `feed` — the serial's
+// bytes ride the stream as 0x454D events, and the focus is the gate
+// they pass: the desktop hears them when the dock holds the focus, an
 // application when its window does, the missing echo the tell). The
 // dock knows residency, not focus — no wire tells the shell a focus
 // moved, so no tile wears the focused steel; the running dot is the
@@ -2844,6 +2848,33 @@ def desk_exit_line(name Int64, nlen Int64, code Int64) Void {
   p = byte_at(p, 116) // t
   p = byte_at(p, 32)
   p = num_at(code, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
+// The line's `desktop` word once the era is up: the shell's door is
+// already open — `desktop: already up`, the strict answer a second
+// press gets.
+def desk_note() Void {
+  var p = byte_at(0, 100) // d
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 112) // p
+  p = byte_at(p, 58) // :
+  p = byte_at(p, 32)
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 108) // l
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 97) // a
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 121) // y
+  p = byte_at(p, 32)
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 112) // p
   p = byte_at(p, 10)
   gate_line(p)
 }
@@ -4890,14 +4921,51 @@ def lock_byte(f ui_fb.raster.Strike, b Int64) Void {
   }
 }
 
-// The desktop takes the foreground (emo-desktop A12.1): the loop
-// never returns — the poweroff command's exit verb is what ends the
-// machine now, and the launcher's tiles are how a program begins.
-desktop()
+// The shell takes the foreground (T7.3, docs/shell.md): the proof
+// chain is done and the terminal is the REPL's console at the prompt.
+// The desktop is a command now, not the boot's own act: the line's
+// `desktop` word opens it (the era's surfaces, its launcher and its
+// loop), and until then the machine is the shell.
+shell_mode()
 
-// The desktop's own body (emo-desktop A12.1): the dock's panel up,
-// the slots' names poked, the banner and the prompt — then the loop
-// that never returns.
+// The shell's own loop: the banner and the first prompt, then the
+// merged stream's bytes fed to the line; a line that names `desktop`
+// opens the desktop (main.emo's era — the shell module names the word,
+// the era is this module's), every other line the shell's commands.
+// The desktop, once opened, never returns: poweroff ends the machine.
+def shell_mode() Void {
+  shell.sh_init()
+  shell.banner()
+  shell.prompt()
+  while true {
+    const ev = syscall.input_read()
+    if ev_type(ev) == 17741 {
+      const n = shell.feed(ev_value(ev))
+      if n >= 0 {
+        const s = shell.skip_spaces(0, n)
+        const e = shell.word_end(s, n)
+        if shell.desktop_p(s, e - s) {
+          if shell.extra_args(e, n) {
+            shell.desk_err("bad argument")
+            shell.prompt()
+          } else {
+            desktop()
+          }
+        } else {
+          shell.execute(n)
+          shell.prompt()
+        }
+      }
+    }
+  }
+}
+
+// The desktop's own body (emo-desktop A12.1): the wallpaper, the
+// header and the dock up, the slots' names poked — then the loop that
+// never returns. The shell is already in the foreground when the line
+// names `desktop` (shell_mode above): its texts are poked and its
+// banner and prompt are on the console, so this body paints the era
+// and takes the stream.
 def desktop() Void {
   const fholder = ArrayBuilder.new()
   case desk_strike() {
@@ -4905,7 +4973,6 @@ def desktop() Void {
     (R.ok, s) then { fholder.push(s) }
   }
   const f = fholder.get(0)
-  shell.sh_init()
   var nb = byte_at(desk_names, 99) // counter.elf
   nb = byte_at(nb, 111)
   nb = byte_at(nb, 117)
@@ -5036,8 +5103,6 @@ def desktop() Void {
   poke64(buf + desk_dock_base, base_d)
   const labels = ["s", "c", "f", "e"]
   desk_dock(f, labels)
-  shell.banner()
-  shell.prompt()
   // The notification center's state (emo-desktop M25): the metal
   // provider's feed and the center, both surfaces' seats empty — the
   // first take claims the center, the service's own first-taker rule.
@@ -5161,12 +5226,16 @@ def desktop() Void {
                 if shell.lock_p(s, e - s) {
                   desk_lock_cmd(f, mw, mh)
                 } else {
-                  shell.execute(n)
-                  // the volume may have changed under the command (the
-                  // write, the rm): the fold's comparison is the
-                  // refresh's whole cost when it did not (emo-desktop
-                  // A13)
-                  desk_icons_refresh(f)
+                  if shell.desktop_p(s, e - s) {
+                    desk_note()
+                  } else {
+                    shell.execute(n)
+                    // the volume may have changed under the command (the
+                    // write, the rm): the fold's comparison is the
+                    // refresh's whole cost when it did not (emo-desktop
+                    // A13)
+                    desk_icons_refresh(f)
+                  }
                 }
               }
             }

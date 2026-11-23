@@ -68,7 +68,9 @@ $ ./start.sh
 
 `./run.sh` is the golden smoke; `./start.sh` is the ride — it builds
 the images when they are missing or stale and hands the terminal to
-the machine, the machine's screen a live window beside it. The walk-through — the compiler build, both images, the
+the machine, the machine's screen a live window beside it. The
+machine boots to the shell; type `desktop` at the prompt and the
+desktop opens. The walk-through — the compiler build, both images, the
 golden smoke, and the hand-driven boot up to the prompt — is
 [`docs/how-to-start-emoos.md`](docs/how-to-start-emoos.md).
 
