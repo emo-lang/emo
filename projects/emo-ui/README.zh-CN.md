@@ -30,6 +30,8 @@ def inbox(users Array[User]) ui.Node {
 
 可移植的 **`ui` 核心**(T48.1)、**Elm 循环**(T48.2)、无头 **`debug` 后端及其金标**(T48.3)、终端 **`ui_tui` 后端及其脚本化输入金标**(T48.4)、服务端渲染的 **`ui_ssr` 后端**(T48.6)、原生 **`ui_macos` 后端及其自驱动语料**(T48.8)、**GTK 4 `ui_gtk` 后端**(T48.9)、浏览器 **`ui_browser` 后端及其 DOM 语料**(T48.10、T48.11)与**收敛语料**——同一个共享应用跑在每个后端上(T48.12)——都已落地;**帧缓冲 `ui_fb` 后端**是第六个运行时家族,住在 [`projects/emo-desktop`](../../emo-desktop),让同一份收敛语料经 Elm 循环跑在像素表面上——五个宿主目标加金属(emo-desktop A7–A10)。终端输入本身(T48.5)也已落地,是 `stdlib/` 里的标准库 **`term` 包**——按行读取、raw mode、解码后的按键事件与终端尺寸,形状同 `sqlite3`,普通 `require` 即可到达。`ui.emo` 是节点脊柱——一个 `Node` 接口,加上 `Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer`、`Scroll` 这些带类型化属性、由位置参数小写构造函数建起的类——以及带 `style()` 工厂与 `with_*` 拷贝的类型化 `Style`、布局词汇(`Align`,以及 style 上的 padding、gap、grow、width、height)、`Backend` 接口(`mount`/`patch`/`run`),还有循环本身:`App`,以及事件登记 tag 用的 `Registry`。它是纯 Emo:没有平台、没有 FFI,并声明了全部五个宿主目标。
 
+`marked_text` 是一个 `Text`,其字节区间允许后端在正文之下绘制——帧缓冲的选区高亮,也是后端唯一允许忽略的属性:选区是绘制者的关切,没有任何布局依赖它。
+
 一个应用就是 model、纯 `update`、纯 `view` 加一个后端:
 
 ```emo
@@ -45,6 +47,8 @@ def main() {
 ```
 
 tag 登记表是循环自己持有的对象,而不是 `docs/emo-ui.md` Layer 5 草拟的模块级 `ui.on(msg)` 表:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 又只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。这张表属于某一个正在跑的循环,由循环把它交给 `view`。tag 一律在建树之前用独立语句取好,而不是写在构成树的那些实参里:`on` 是副作用,独立语句让注册顺序在调用处一眼可见。操作数顺序本身不再是跨 target 的变量——语言已写明从左到右,每个 target 都遵守——曾经让两者不同的那个缺陷及其修复记在 `CHECK.md` 与 `probe/eval_order`。
+
+`ui.run_raw` 是同一个循环、去掉这张表:后端的 tag 本身就是消息,到达即交给 `update`。它服务于消息本身就是整数的应用——文本编辑器的按键,一个字节一条、一种编辑操作一条——那里若用一张上百条的表并在每次渲染时线性去重,在 metal 上会比画一帧还贵。`view` 依然收到一个 `Registry`,所以两种循环共用同一个应用签名。
 
 循环在全部五个托管 target 上都能编译并运行。裸 def 名是唯一能产出 `ui.run` 所收 `Block` 值的表达式,而 `c` 以前没有 def 当值(`Global`);T48.8 给它补上了——每个 def 一条动态 thunk,把 def 当作值时得到的是一层空捕获闭包——于是托管在 `c` 上的后端编译的是同一个循环。`wasm` 以前也拒绝同一个形状,直到 T48.6 让它的闭包长出任意参数个数:`Call_value`、`Closure` 与 `Global` 提上来的函数按参数个数分配一对函数/struct 类型(`closure_type`),于是无论收几个参数,`Block` 值都是一等值。`probe/` 把两种写法做成一对最小对照——`def_shape/` 是已落地的写法,如今五个 target 全部可编译;`handler_shape/` 把应用那两个函数放到 `Handler` 接口后面,是同一个循环,五个 target 全部可编译,在 `c` 与 `ocaml` 上打印出的结果与 `emo run` 一致(`CHECK.md`,Elm 循环的形状)。最终选了补 target:def-as-value 是后端的缺口而非新语法,而且保住了已落地的 `ui.run` 拼写。在 `beam` 上,循环以前只是能构建、不能运行:裸 def 会变成指向未导出函数的远程 fun,`erlc` 接受但加载器让它无法调用;那个缺陷已修好,TUI 金标就是证据。
 `debug.emo` 是无头后端(T48.3):`render(node)` 把一棵树变成稳定文本——一个节点一行、每层两个空格,先节点自己的属性,再一份字段顺序固定的样式摘要——而 `Debug` 类就在这份文本之上实现 `Backend`,把循环交给它的每一棵树记进日志而不是打印出来,于是何时让文本到达 stdout 由调用方决定。它的 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。

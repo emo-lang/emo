@@ -1,13 +1,15 @@
 require "syscall"
+require "emo/ui"
 require "emo/ui_fb"
 require "emo/ui_fb_win"
 require "emo_desktop"
 
 // The window buffer's metal side (emo-desktop A11.1): the package an
 // application program requires to run as its own image — the raw shim
-// between the fb core and a `win_new` buffer, the byte table in the
-// merged stream's seat, and the few line helpers a session speaks
-// through the console verb. The boot image carries its own copy of
+// between the fb core and a `win_new` buffer, the merged stream's seat
+// (the byte table and, since A33.1, its raw mode), and the few line
+// helpers a session speaks through the console verb. The boot image
+// carries its own copy of
 // every def here (the shell and the desk pass predate the package);
 // the apps' images are the package's consumers, and the corpus's
 // digests are what keep the two from drifting — both print
@@ -97,69 +99,185 @@ def ev_value(e Int64) Int64 {
   return e & 4294967295
 }
 
-// The keyboard's half in bytes (emo-desktop A11.2): the golden's hand
-// is the monitor's sendkey, whose events ride the merged stream as the
-// keyboard's device reports — the key's set 2 scancode, a press and a
-// release — and the applications speak bytes. The stream stays raw
-// (the input beat's own assertion reads a device report whole); the
-// translation lives here, in the seat the apps share: the letters'
-// codes are an irregular row (one literal, the pairs code-then-byte),
-// the digits' a contiguous run, the enter the newline byte's own, and
-// the editing keys (A33.1) their own control bytes below.
+// The keyboard's half in bytes (emo-desktop A11.2; the editing
+// vocabulary with A33.1): the golden's hand is the monitor's sendkey,
+// whose events ride the merged stream as the keyboard's device
+// reports — the key's input code, a press and a release — and the
+// applications speak the core's key vocabulary (`emo/ui`). The stream
+// stays raw (the input beat's own assertion reads a device report
+// whole); the translation lives here, in the seat the apps share. The
+// layout is the US one: the letters' irregular row is one literal of
+// code-then-byte pairs, the digits' a contiguous run, punctuation
+// beside them, and Shift reaches the upper level. A Ctrl chord is its
+// ASCII control byte (`Ctrl+Q` 17, `Ctrl+S` 19) — the same byte the
+// serial line produces — and the keys with no byte are the core's
+// numbers above 255. Shift and Ctrl themselves are state the seat
+// tracks, never bytes.
 const key_pairs = [30, 97, 31, 115, 32, 100, 33, 102, 34, 103, 35, 104,
   36, 106, 37, 107, 38, 108, 44, 122, 45, 120, 46, 99, 47, 118, 48, 98,
   49, 110, 50, 109, 24, 111, 25, 112, 16, 113, 17, 119, 18, 101, 19,
   114, 20, 116, 21, 121, 22, 117, 23, 105]
 
-// The editing keys' bytes (emo-desktop A33.1): the arrows and the
-// deletes ride control bytes the letters' ASCII never takes — 1 through
-// 4 the four arrows, 8 backspace's own, 127 the forward delete's — so a
-// key table that lists them picks them out by their index, the way the
-// letters' are picked out.
-const key_left = 1
-const key_right = 2
-const key_up = 3
-const key_down = 4
-const key_backspace = 8
-const key_del = 127
+// Shift's upper level on the digits' row: `1` to `9` as their symbols.
+const shifted_digits = [33, 64, 35, 36, 37, 94, 38, 42, 40]
 
-def key_byte(code Int64) Int64 {
+def is_ctrl_key(code Int64) Bool {
+  return code == 29 || code == 97
+}
+
+def is_shift_key(code Int64) Bool {
+  return code == 42 || code == 54
+}
+
+def key_byte(code Int64, shift Bool, ctrl Bool) Int64 {
   var i = 0
   while i < 52 {
     if key_pairs[i] == code {
-      return key_pairs[i + 1]
+      const lower = key_pairs[i + 1]
+      if ctrl {
+        return lower - 96
+      }
+      if shift {
+        return lower - 32
+      }
+      return lower
     }
     i = i + 2
   }
+  if ctrl {
+    return -1
+  }
   if code >= 2 && code <= 10 {
+    if shift {
+      return shifted_digits[code - 2]
+    }
     return 47 + code
   }
   if code == 11 {
+    if shift {
+      return 41
+    }
     return 48
   }
-  if code == 28 {
-    return 10
+  if code == 12 {
+    if shift {
+      return 95
+    }
+    return 45
   }
-  // the editing keys (emo-desktop A33.1), the set 2 scancodes:
-  // backspace, the four arrows, and the forward delete, each onto its
-  // byte above
+  if code == 13 {
+    if shift {
+      return 43
+    }
+    return 61
+  }
+  if code == 26 {
+    if shift {
+      return 123
+    }
+    return 91
+  }
+  if code == 27 {
+    if shift {
+      return 125
+    }
+    return 93
+  }
+  if code == 39 {
+    if shift {
+      return 58
+    }
+    return 59
+  }
+  if code == 40 {
+    if shift {
+      return 34
+    }
+    return 39
+  }
+  if code == 41 {
+    if shift {
+      return 126
+    }
+    return 96
+  }
+  if code == 43 {
+    if shift {
+      return 124
+    }
+    return 92
+  }
+  if code == 51 {
+    if shift {
+      return 60
+    }
+    return 44
+  }
+  if code == 52 {
+    if shift {
+      return 62
+    }
+    return 46
+  }
+  if code == 53 {
+    if shift {
+      return 63
+    }
+    return 47
+  }
+  if code == 57 {
+    return 32
+  }
+  if code == 15 {
+    return ui.key_tab()
+  }
+  if code == 14 {
+    return ui.key_backspace()
+  }
+  if code == 28 {
+    return ui.key_enter()
+  }
+  if code == 111 {
+    return ui.key_delete()
+  }
+  // the movements answer their extension keys under Shift (A35): the
+  // application tells an extending move from a collapsing one without
+  // seeing the modifier itself
+  if code == 105 {
+    if shift {
+      return ui.key_shift_left()
+    }
+    return ui.key_left()
+  }
+  if code == 106 {
+    if shift {
+      return ui.key_shift_right()
+    }
+    return ui.key_right()
+  }
+  if code == 103 {
+    if shift {
+      return ui.key_shift_up()
+    }
+    return ui.key_up()
+  }
+  if code == 108 {
+    if shift {
+      return ui.key_shift_down()
+    }
+    return ui.key_down()
+  }
   if code == 102 {
-    return key_backspace
+    if shift {
+      return ui.key_shift_home()
+    }
+    return ui.key_home()
   }
   if code == 107 {
-    return key_left
-  }
-  if code == 116 {
-    return key_right
-  }
-  if code == 117 {
-    return key_up
-  }
-  if code == 114 {
-    return key_down
-  }
-  if code == 113 {
-    return key_del
+    if shift {
+      return ui.key_shift_end()
+    }
+    return ui.key_end()
   }
   return -1
 }
@@ -272,6 +390,11 @@ const seat_menub = buf + 2136
 const seat_drag = buf + 2144
 const seat_dragx = buf + 2152
 const seat_dragy = buf + 2160
+// the keyboard's level (A33.1): the modifiers' current state, 0 up —
+// the reports set and clear them, and every other key translates at
+// the level they hold.
+const seat_shift = buf + 2168
+const seat_ctrl = buf + 2176
 
 // The menu's surface up and painted: the popup declared by its role,
 // bound to the window, moved to the button's side (the
@@ -490,20 +613,33 @@ def seat_drag_step(raw Int64, surf Win) Void {
   }
 }
 
-// The byte table in the input's seat: one tag per byte, the tag its
-// index in the table names — the table the app's own registration
-// order keeps (`a` first, `b` second, and so on, the same tags the
-// golden's script names) — and `q` the loop's end, the quit byte every
-// seat's session ends on. Every other byte is dropped, never guessed
-// at. The stream's device reports come too: the keyboard's press is
-// the key it names (the translation above), and the press-at
-// (emo-desktop A16.2) the window's own word — the bar's button and
-// the open menu's items the seat judges by it, the pointer's other
-// reports riding past as they always have.
+// The input's seat. Two modes, one discipline:
+//
+// - The table seat (`keys`): one tag per byte, the tag its index in
+//   the table names — the table the app's own registration order keeps
+//   (`a` first, `b` second, and so on, the same tags the golden's
+//   script names). Every other byte is dropped, never guessed at.
+//
+// - The raw seat (`keys_raw`): the translated key itself is the tag,
+//   no table and no index — the editor's shape, whose messages are the
+//   key vocabulary (A33.1). A byte the seat's translation refuses is
+//   still dropped.
+//
+// Both modes end the session on `Ctrl+Q` (`emo/ui`'s `key_quit`),
+// however the byte arrives — from the serial line or from the device's
+// reports. The stream's device reports come too: the keyboard's press
+// is the key it names (the translation above, at the modifiers' level),
+// and the press-at (emo-desktop A16.2) the window's own word — the
+// bar's button and the open menu's items the seat judges by it, the
+// pointer's other reports riding past as they always have.
 class Keys {
   def init(bytes Array[Int64], surf Win, f ui_fb.raster.Strike, x Int64,
            y Int64, mw Int64, mh Int64) {
     self.bytes = bytes
+    // the mode is the table's own shape: an empty table is the raw
+    // seat — there is no index to name, so the key is the tag. A table
+    // seat is never empty (a seat that drops every key is no seat).
+    self.raw = bytes.length() == 0
     self.surf = surf
     self.strike = f
     poke64(seat_grant, surf.grant)
@@ -521,6 +657,8 @@ class Keys {
     poke64(seat_savedy, y)
     poke64(seat_maxx, 1)
     poke64(seat_maxy, 1)
+    poke64(seat_shift, 0)
+    poke64(seat_ctrl, 0)
     case syscall.input_info(0) {
       (R.error, _) then {}
       (R.ok, m) then {
@@ -547,32 +685,57 @@ class Keys {
             seat_drag_step(ev_value(ev), self.surf)
           } else {
             if ev_type(ev) == 1 {
-              if ev_value(ev) == 1 {
-                b = key_byte(ev_code(ev))
+              const code = ev_code(ev)
+              const down = ev_value(ev) == 1
+              if is_shift_key(code) {
+                poke64(seat_shift, down_bool(down))
               } else {
-                // the release disarms the hand (emo-desktop A16.5):
-                // the drag's steps stop, the window standing where
-                // the last step set it
-                poke64(seat_drag, 0)
+                if is_ctrl_key(code) {
+                  poke64(seat_ctrl, down_bool(down))
+                } else {
+                  if down {
+                    b = key_byte(code, peek64(seat_shift) != 0,
+                      peek64(seat_ctrl) != 0)
+                  } else {
+                    // the release disarms the hand (emo-desktop A16.5):
+                    // the drag's steps stop, the window standing where
+                    // the last step set it
+                    poke64(seat_drag, 0)
+                  }
+                }
               }
             }
           }
         }
       }
-      if b == 113 {
+      if b == ui.key_quit() {
         seat_menu_close()
         return (R.error, 0)
       }
-      var i = 0
-      while tag < 0 && b >= 0 && i < self.bytes.length() {
-        if self.bytes[i] == b {
-          tag = i
+      if self.raw {
+        if b >= 0 {
+          tag = b
         }
-        i = i + 1
+      } else {
+        var i = 0
+        while tag < 0 && b >= 0 && i < self.bytes.length() {
+          if self.bytes[i] == b {
+            tag = i
+          }
+          i = i + 1
+        }
       }
     }
     return (R.ok, tag)
   }
+}
+
+// A key's press state as its cell's word.
+def down_bool(down Bool) Int64 {
+  if down {
+    return 1
+  }
+  return 0
 }
 
 // The buffer's raw pixel lanes: the carve's own shapes over a smaller
@@ -1027,4 +1190,11 @@ def keys(bytes Array[Int64], surf Win, f ui_fb.raster.Strike, x Int64,
          y Int64, mw Int64, mh Int64) Keys {
   return Keys.new(bytes: bytes, surf: surf, f: f, x: x, y: y, mw: mw,
     mh: mh)
+}
+
+// The raw seat (A33.1): the translated key is the tag. The byte table
+// is empty, and the seat reads that shape as the mode.
+def keys_raw(surf Win, f ui_fb.raster.Strike, x Int64, y Int64, mw Int64,
+             mh Int64) Keys {
+  return Keys.new(bytes: [], surf: surf, f: f, x: x, y: y, mw: mw, mh: mh)
 }

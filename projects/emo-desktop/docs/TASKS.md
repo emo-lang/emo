@@ -2823,93 +2823,168 @@ decisions the item opens on:
   retired, CHECK.md's entries, and the TASKS' boxes — **M32
   complete**.
 
-## M33 — the text and input tier (opened 2026-11-22)
+## M33 — the text kernel (opened 2026-11-23)
 
-The modernization round (docs/modern-desktop.md) opens on the text and
-input tier — the round's largest gap and the one its highest-value item
-(the terminal's window) leans on: a keyboard the editor already has.
-The item's shape is the round's own rhythm — the kernel's def and the
-one-shot golden: the corpus's editing kernel, the seat's bytes that
-reach it, the app's key table that carries them, and the golden's
-session that runs the kernel whole and pins the bytes.
+The editor has typed at the end of a row and moved between the two
+since A10.3 — a put appended, a newline stepped down — and the modern
+desktop's first gap is the thing every other text surface stands on: a
+caret, and the keys that move and erase around it. The kernel is the
+corpus's (portable, dual-run where hosted), and the loop is where it
+pays for itself: the Elm loop's tag table exists to turn a small
+stable integer into a message value, and a text buffer's messages are
+already integers — a printable byte, an arrow, a chord. A hundred
+entries deduplicated linearly on every render is the metal's arena
+gone before the frame paints, so the loop grows a sibling that hands
+the backend's tag to `update` as the message itself (`ui.run_raw`),
+the view still receiving a `Registry` so both shapes share one
+application signature.
 
-- [x] **A33.1** — The keyboard's editing kernel: the cursor the model
-  carries becomes a pen in the row it stands on — `put_a` and `put_b`
-  insert at the pen (the end-of-line typing they were), `left` and
-  `right` walk it held to the row's own extent, `up` and `down` carry
-  it to the neighbouring row with the pen held inside that row's end,
-  `backspace` cuts the character to the pen's left and `del` the one to
-  its right, and `newline` still moves it down. The six editing tags
-  ride the view's registration order, appended after `save` — put_a,
-  put_b, newline and save at 0 through 3 as they stood, left, right,
-  up, down, backspace and del at 4 through 9 — so the tags the
-  Wayland's seat already maps by name keep their numbers, the change
-  backward-compatible by construction, and the metal's key table is
-  where the new ones land. The seat's bytes grow the editing keys on
-  their own control bytes — the set 2 scancodes for backspace, the four
-  arrows and the forward delete onto 8, 1 through 4 and 127, control
-  bytes the letters' ASCII never takes — and the golden's session runs
-  the kernel whole: type, walk the pen, cut, move the rows, and save.
-  **complete 2026-11-22** — the kernel is `apps/editor.emo`: the Model
-  carries `col` beside the `row`, the Msg gains the six editing tags
-  after `save`, and the string steps — `insert_at` (the head, the
-  typed, the tail), `delete_at` (the two halves carried) and `hold`
-  (the clamp a row change or a step asks of the pen) — are the kernel's
-  own; the buffer stays the model's two rows (the terminal's real
-  buffer is this round's later item, so the kernel is the editing, not
-  the size) and the status names the pen now, `row r col c`. The
-  seat's half is `ui_fb_winbuf`'s `key_byte` grown with the six
-  scancodes onto their named bytes (`key_left` through `key_del`), and
-  the metal editor's key table carries them at tags 4 through 9. The
-  golden's session is the one-shot — `script([0, 1, 4, 0, 8, 9, 5, 2,
-  1, 6, 7, 3])`, a, b, left, a typed in the middle, backspace, del,
-  right held at the end, newline, b on the second row, up, down, save
-  — and the digest's honesty shows in the pins: the backspace's frame
-  is the left's own, the del's the first put's, the down's and the
-  save's the second row's, the states the kernel walks back to.
-  Verified: the apps' golden byte-identical on the interpreter, ocaml,
-  c, typescript, wasm and beam — the one-shot the round's rhythm asks
-  for. **Found on the way, and named by the gate, separate from this
-  step:** the gate's other legs ran red on two pre-existing issues,
-  both on goldens whose dependencies do not reach this change's
-  packages (`emo/ui_apps`, `emo/ui_fb_winbuf`) and neither the compiler
-  this step leaves untouched — the beam legs the M25 frame-beam
-  family's hang, the `timeout 120`'s own red, and the dock's and the
-  notification center's wasm legs a deterministic codegen the host
-  refuses, its `WebAssembly.compile` answering "function #235 …
-  expected 0 elements on the stack for fallthru, found 1" on the module
-  the build writes, reproduced in isolation off the staged registry —
-  so both stand found-not-fixed, the beam's the ledger's known one and
-  the wasm's a new one the round's gate will need its own step to
-  retire. The Wayland's editor answers the editing keys by name once
-  its slot's table carries them — left, right, up, down, backspace and
-  delete at 4 through 9 — the follow-up this step leaves open, the
-  one-shot golden the fb's own.
+The seat keeps its one discipline — the merged stream's bytes and the
+device's reports become the same key vocabulary — and grows the US
+layout's two levels and the chords: Shift and Ctrl track as state,
+`Ctrl+Q` (17) ends every seat's session, `Ctrl+S` (19) is the editor's
+save, and the keys with no byte (the arrows, Home, End) are numbers
+above 255, so no serial byte and no printable key can be mistaken for
+one.
 
-- [x] **A33.2** — The Wayland's editor answers the editing keys by
-  name: its slot's key table grows the six — Left, Right, Up, Down,
-  BackSpace, Delete at 4 through 9, the spellings the compositor's own
-  `pc+us` keymap decodes (`km_sym_at` takes each verbatim, the dock
-  already riding "Left" and "Right" the names' own witness) — so the
-  kernel A33.1's tags have their names on the Wayland's editor.
-  **complete 2026-11-22** — the editor's slot in `wayland/main.emo`
-  carries them beside a, b and Return; `emo check` is clean on this
-  step's line. **Found on the way, its own step:** the Wayland's face
-  has gone out of step with `emo_desktop` — it still calls `wallpaper`,
-  `paint` and `paint_header` in their pre-A31.1 shape, while the module
-  the A31.1 wallpaper's art and the M32 motion layer grew speaks
-  `wallpaper_decode` and the `art`-carrying signatures — so `emo check`
-  reports the face's own five errors (its lines 608 through 615) and
-  not one on this step's, the desync the commits that grew the module
-  never brought the face along for. The face's re-sync lands in A33.3.
+- [x] **A33.1** — The editor's caret and the raw loop: the corpus's
+  model grows the cursor of (row, column) — insert at the caret,
+  Backspace and Delete with the rows' join at either edge, the arrows,
+  Home and End, Enter stepping the rows, the 40-byte row bound the
+  window's own arithmetic — and the view inks `|` between the row's
+  bytes, never in the buffer; `emo/ui` grows `run_raw`/`RawApp` and the
+  key vocabulary (`key_left` and its family, `key_quit`); the seat
+  grows `keys_raw` (an empty table is the mode — the constructor's
+  seven-parameter ceiling the emitter's own, so the mode rides the
+  table's shape), the modifier cells and the US layout's upper level;
+  the metal editor's saver joins the rows with the file's line breaks.
+  The goldens: the apps golden's session is the script's key numbers
+  (`a`, Enter, `b`, Left, Backspace, End, `c`, Home, Delete) and the
+  fixture the interpreter's bytes; `run.sh`'s legs send the arrows and
+  Home/End by the monitor's sendkey, the byte keys by the serial, and
+  every app session ends on the `Ctrl+Q` byte, the notification beats'
+  save on `Ctrl+S`. **Landed 2026-11-23** — the constructor's ceiling
+  was the one find (an eight-parameter `Keys.init` refused by
+  `emo_riscv.emit_ctor`'s seven-parameter bound; the raw mode became
+  the empty table's shape instead), and every lock the family's
+  content moved re-pinned. Verified: the apps golden byte-identical on
+  the interpreter and `c`; the editor program and the boot image build
+  for riscv64; `ui.emo` and the editor corpus type-check.
 
-- [x] **A33.3** — The Wayland's face re-syncs with `emo_desktop`: the
-  three call sites in `paint_desktop` wear the module's grown
-  signatures — `wallpaper_decode` the decode, `paint_header` the
-  packed mode `(w << 32) | h`, `paint` the strip's top edge `h - 40` —
-  and the art they all walk is the flat ground's own, `wall_grad_runs`
-  building the wall's gradient row by row, one run a row, the display's
-  own `w` and `h`, the metal's fallback the face keeps, having no
-  volume to read. **complete 2026-11-22** — `emo check` on the face
-  is clean, the five pre-A31.1 errors gone, the desync A33.2 stood
-  open now closed.
+## M34 — the clipboard (opened 2026-11-23)
+
+The desktop's first cross-process resource, and the one the kernel must
+own: the editor copies a row, the focus moves, another app pastes it —
+the source may die and the compositor may restart in between, so no
+app's memory can be the store. The decision (D19): the clipboard is the
+machine's, **two verbs and no service between** — the bytes on one page
+of the kernel's fixed region, the length on the compositor's page
+beside the focus, so the state that outlives the compositor's
+instances keeps the clipboard's claim with it. The write belongs to
+the focused surface's owner, the app the stream's copy key reaches
+(a background caller is the permission refusal); the read is any
+process's, a paste being the focused app's by the same routing. The
+copy runs inside the caller's trap through its own table, one volatile
+byte at a time, and a trap does not yield — no reader sees half a
+selection. The kernel side is EmoOS T15.1 (the page, the gate's pair,
+the stub, the ABI's docs); the half here is the corpus's seam and the
+editor's chords.
+
+- [x] **A34.1** — The editor's clipboard and the corpus's seam: the
+  editor's model grows a `Clipper` provider — copy hands it the caret's
+  row, cut hands it the row and clears it, paste inserts what it
+  answers — the hosted golden's a `Box` behind the seam (the quiet
+  saver's twin, so the session's copy and paste agree), the metal's
+  the gate's two verbs over this image's scratch (`clip_set`/
+  `clip_get`, the row poked out and read back through `Bytes`), and
+  the chords `Ctrl+C`/`Ctrl+X`/`Ctrl+V` — the seat's translation
+  already produces 3, 24 and 22. The session's beats and the
+  goldens: the apps golden's script grows copy, End, paste, Home, cut,
+  d, paste (the copy a duplicate frame — no pixel changes), the fixture
+  the interpreter's bytes, and `run.sh` drives the chords by serial and
+  the arrows by the monitor's sendkey. **Landed 2026-11-23** — the
+  clipboard's window is the caret's row until A3's selection narrows
+  it; five targets byte-identical, the editor image and the kernel
+  build for riscv64, and the locks the syscall package's content moved
+  re-pinned. **Found on the way**: the wayland face's slot held a
+  `ui.App` for the editor (the raw loop's update takes keys, so the
+  table would have raised on the first key) and its `emo_desktop` calls
+  had drifted from the M26–M31 signatures — the demo had not built
+  since M31. Fixed with a small `FaceApp` interface (a tag delivered,
+  the tree it left) that both loops satisfy, the editor slot moved to
+  `ui.RawApp` with its byte keys, and the dock/header/wallpaper calls
+  brought to the current signatures (the demo's backdrop the package's
+  gradient anchors, its art the empty array the formula has no need
+  of).
+
+## M35 — the selection (opened 2026-11-23)
+
+The text kernel's second half: the caret could move and the clipboard
+could hold, and no byte could be named as a range. The model grows an
+anchor — where the selection began — with the caret its other end; a
+shift-move sets the anchor at the caret it found and moves the caret
+on, every other edit collapses it. The seat answers the movements'
+extension keys under Shift (`ui.key_shift_left` and its family), so an
+application tells an extending move from a collapsing one without
+seeing the modifier, and the corpus's acts take the selection when one
+stands: copy and cut read the selected bytes (the rows' seam a
+newline), typing, Backspace, Delete and paste replace them, and paste
+of text that would need a new row is refused rather than guessed at.
+
+The highlight is the painter's. The core's `Text` grows a mark — the
+byte span a backend may paint behind the body — and `marked_text`
+constructs one; the framebuffer blends the accent at half opacity
+through the surface's own source-over, so the canvas and the carve
+agree byte for byte. Every other backend paints the body plain: the
+mark is the one property a backend is allowed to ignore, because no
+layout depends on it. The view never puts the selection in the buffer;
+the caret's own glyph shifts the mark's indices, which is the view's
+arithmetic.
+
+- [x] **A35.1** — The selection's model, highlight and beats: the
+  editor's model grows the packed anchor (row above, column below, -1
+  none), the normalized ends, `range_deleted` (the rows' join), the
+  selected text and the per-row mark (the caret glyph's shift included);
+  `ui` grows `Text`'s mark and `marked_text` plus the six
+  `key_shift_*` constants; `ui_fb` blends the marked span behind the
+  glyphs (the pen advanced through the prefix's advances); the seat's
+  translation answers the extension keys under Shift. The goldens: the
+  apps golden's session grows Home, Shift+End, Copy, Left, Shift+Home,
+  x, Paste (the copy a duplicate frame), the fixture the interpreter's
+  bytes, and `run.sh` drives the shifted movements by the monitor's
+  chords. **Landed 2026-11-23** — five targets byte-identical, the
+  editor and boot images build for riscv64, the wayland face
+  type-checks beside them, and the locks the core's content moved
+  re-pinned.
+
+## M36 — the global shortcut layer (opened 2026-11-23)
+
+Every key so far belongs to the focused window: the stream's routing
+is the focus's, and a chord that must work *from any window* has no
+place above the gate — each app would have to implement it, and a
+window that never reads would swallow it. The layer is therefore the
+input service's (EmoOS T16.1), below every app: Alt is the layer's
+modifier — Ctrl and Shift stay the apps' — and the service parses a
+small table of chords itself, consuming the chord's key at the head
+whatever reader it was meant for. The result is the stream's third
+machine type, 0x5343 ("SC"), and it answers the **panel owner's**
+held read: the shell hears the chord whatever window holds the focus,
+which is the layer's whole point. The first row is Alt+1..4, the
+desks; Alt-Tab's cycle (B8) and the overview (B7) are later rows,
+their consumers their own, the delivery shared.
+
+- [x] **A36.1** — The shell's dispatch and the beats: `hello/main.emo`
+  handles 0x5343 — `shortcut desk <n>` on the wire, `desk_show(n)`
+  (the shell's own panel authority), the chrome's repaint the new
+  active cell's news — with the lock's session guarded (a chord under
+  the face is nobody's); `run.sh` drives `sendkey alt-2` and `alt-1`
+  and folds the desk-one picture against the pager's own first
+  switch's. **Landed 2026-11-23** — the kernel's half is T16.1 (the
+  Alt state and pending cell, the chord table, the panel owner's
+  delivery); `run.sh` exit 0 on both transports, the `shortcut desk
+  1`/`shortcut desk 0` lines the ordered chain's. The same session's
+  QEMU run found the display driver's arena death and fixed it
+  (EmoOS T17.1): the driver's own 2 MiB run — the desktop no longer
+  freezes when a session outgrows the services' four blocks. The chord
+  layer carries the desk switches and the vocabulary's rows for
+  Alt-Tab and the overview, whose actions are B8's and B7's.

@@ -96,6 +96,8 @@ projects/emo-os/.deskw4.ppm
 projects/emo-os/.deskp1.ppm
 projects/emo-os/.deskp2.ppm
 projects/emo-os/.deskp3.ppm
+# emo-desktop M36: the chord's, desk one quiet under a focused window
+projects/emo-os/.chord.ppm
 projects/emo-os/.ride.log
 projects/emo-os/.blk.img.gdb
 *.wasm-art

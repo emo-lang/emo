@@ -1025,3 +1025,121 @@ opening records.
 M31 (the wallpaper's RLE art, the palette's extraction, the icon
 strikes) adds no step — the filesystem's verbs carry the art and the
 shape arithmetic carries the icons, both landed.
+
+## Step 15 — the clipboard's verbs (M34, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-23. The desktop's first cross-process resource: the
+editor copies a row and the shell (or any app the focus moves to)
+pastes it, and no app's memory can be the store — the source may die,
+the compositor may restart, and every app is its own process. The
+desktop's half is emo-desktop M34, whose tracker records the shape
+(D19); the verbs are additions-only under the frozen numbering, the
+gate's own pair with no service between: the bytes on `.emo_clip`, one
+page above the notification service's, the length on the compositor's
+page past the shape pads, so the state that outlives the compositor's
+instances keeps the clipboard's claim with it. The copy runs inside
+the caller's trap through its own table — the console's staging's
+discipline — and a trap does not yield, so no reader sees half a
+selection.
+
+- [x] **T15.1** — The clipboard's page and the gate's pair: `link.ld`
+  gives `.emo_clip` its page at `0x87007000`, the comp page's map grows
+  `comp_clip_len` at `+3528`, and `gate.emo` answers verbs 34
+  (`clip_set(buf, len)`) and 35 (`clip_get(buf, cap)`) itself — the
+  write judged by the focused surface's owner (the input routing's own
+  rule, a background caller reason 3), the pointer arguments judged by
+  the caller's segments (`check_write`), the copy in and out one
+  volatile byte at a time through `caller_pa` (`copy_to`'s new
+  mirror). The stub grows the typed pair, the docs (`syscalls.md`'s
+  rows and section, both languages; `desktop-abi.md`'s Tier C entry)
+  ride with it, and `run.sh`'s beats drive copy/cut/paste through the
+  editor. **Landed 2026-11-23** — the apps golden's session grew the
+  clipboard's beats (copy, End, paste, Home, cut, d, paste), the copy
+  a duplicate frame because it changes no pixel; five targets
+  byte-identical, the kernel and the editor image build for riscv64,
+  and the locks the syscall package's content moved re-pinned.
+
+## Step 16 — the global shortcut layer (M36, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-23. Every key so far is the focused window's, and a
+chord that must work from any window has no place above the gate —
+each app would have to implement it, and a window that never reads
+would swallow it. The layer is the input service's, below every app:
+Alt is the layer's modifier (Ctrl and Shift stay the apps'), the
+service parses a small chord table itself, and the chord's key is
+consumed at the head whatever reader it was meant for — the reader
+that asked goes back to the hold. The result is the stream's third
+machine type, 0x5343 ("SC"), answered to the **panel owner's** held
+read: the shell hears the chord whatever window holds the focus. The
+desktop's half — the shell's dispatch, the chord home, the beats — is
+emo-desktop M36's A36.1.
+
+- [x] **T16.1** — The chord layer in the input service: the Alt state
+  and the one pending shortcut on the input page's free tail past the
+  pointer's ring (`input_alt_cell`, `input_shortcut_cell`),
+  `input_peek_key` (the keyboard's head, seen and not taken) and
+  `input_chord` (Alt held and a press of 1..4, the value the desk),
+  `input_track` in the head's consume (Alt's press and release, and
+  nothing else), the chord consumed in the serve before the focus's
+  judgment (`input_serve_read` re-holds the reader and pends the
+  event), and `shortcut_take_for` answering the panel's owner before
+  the entitlement check in `input_hold_serve`. The event type and the
+  layer's shape ride the docs (`syscalls.md`'s verb 12 section and
+  `desktop-abi.md`'s stream, both languages). **Landed 2026-11-23** —
+  the kernel and boot images build for riscv64; the beats and the
+  desktop's record are A36.1. The vocabulary's later rows (Alt-Tab's
+  cycle, the overview) are the desktop's B8 and B7, the delivery
+  theirs for free.
+
+## Step 17 — the desktop's session: the display driver's run (the session's report)
+
+Opened 2026-11-23, from the machine's own report: a manual session
+(three apps open, a drag, the launcher's spring) ended with
+`heap gone in process 5` on the wire and a dead screen. The pid
+arithmetic names the display driver (`do gpu_service` is the boot's
+fourth spawn, pid 5); the compositor's early exit had already
+restarted it twice (`comp gen 2`, `comp gen 3` on the wire), the files
+app's arena had died at ~100 presents (`heap gone in process 19`), and
+the driver's own death — no supervisor, and the compositor parked on
+the flush's lost reply, with no timeout to break it — was the
+irrecoverable one: every later composition waits forever.
+
+The root is the value kind's message. Every service request is a
+mailbox message: the receiver's copy lands in the service's arena and
+the reply's copy in the sender's, and a boxed value kind is never
+handed back by the bump allocator — the one documented leak (T8.7).
+A service's arena is four blocks (256 KiB); the desktop's per-frame
+flush path spends a few hundred bytes a frame, so a session of a few
+hundred frames exhausts it. The supervisor lineage covers the
+filesystem, the compositor and the notifications; the display driver
+has none, and its death wedges every client.
+
+- [x] **T17.1** — The display driver's own run: `frames.emo` grows
+  `display_arena_run` (32 blocks, 2 MiB) beside the services' four and
+  the user pass's sixteen, `frames.arena_for_display` writes the
+  runtime's run word, and the boot brackets the driver's spawn with it
+  (`main.emo`). The app budget was the session's other half: sixteen
+  blocks leave a windowed app ~200 KiB after its strike (793–862 KiB,
+  A17.4's measure), and 32 and 64 were both tried — `take_run 127 no:
+  391 66` at 32 (the third resident's image run found the buddy's
+  largest free run spent), the second app's refusal at 64 — so the
+  constant stays sixteen with the measurement and the refusals
+  recorded in its comment; the region's fragmentation and the
+  127-block image runs are the lever the app budget wants, the
+  runtime's value-kind leak the real fix. **Landed 2026-11-23** —
+  `run.sh` exit 0 on both transports (the ledger re-pinned
+  `frames 1918 1674`, the display's 28 extra blocks taken and never
+  given), and the run also carried the global shortcut layer's first
+  QEMU verification: the `shortcut desk 1`/`shortcut desk 0` chord
+  beats now ride the ordered chain. The desktop no longer freezes; an
+  app still dies of its ~200 KiB after a long drag session (relaunch,
+  the clipboard survives) until the arena work lands. **Found on the
+  way from the ride's own report**: the auto-ride waited on the
+  compositor's `pointer <x> <y>` line — a one-shot printed at the
+  plane's *first* notice — and a hand over the cocoa window (it opens
+  under the pointer) takes that notice before the ride's QMP center
+  move, so the wait timed out and the ride stalled with the machine
+  parked, by design, at the proof chain's era gate (`win 0` on the
+  wire, the screen its last frame). The ride's move is now
+  fire-and-forget (`start.sh`); the golden, which has no mouse, keeps
+  the line's pin.

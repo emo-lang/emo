@@ -158,6 +158,18 @@ const comp_slot_cell = koff + 0x87002eb8
 const comp_slots = koff + 0x87008000 + 2704
 const comp_slot_count = 4
 const comp_slot_bytes = 40
+// The clipboard (emo-desktop M34, EmoOS T15.1): the bytes on their own
+// page above the notification service's, the length on the
+// compositor's page at its free tail (+3528, past the shape pads) —
+// the state that outlives the compositor's instances keeps the
+// clipboard's claim with it. The gate copies in and out inside the
+// trap, through the caller's own table, the console's staging's
+// shape: no service between, and no interleaving — a trap does not
+// yield.
+const clip_page = koff + 0x87007000
+const clip_cap = 4096
+const comp_focus_cell = koff + 0x87008000 + 16
+const comp_clip_len = koff + 0x87008000 + 3528
 // The workspaces' bound (emo-desktop M27, EmoOS T13.2): the
 // vocabulary's own, the compositor's count's twin.
 const comp_desks = 4
@@ -343,6 +355,33 @@ def copy_to(dst Int64, buf Int64, len Int64) Void {
     poke8(dst + i, peek8(caller_pa(buf + i)))
     i = i + 1
   }
+}
+
+// One byte from the kernel's page into the caller's buffer, the range
+// already judged writable — `copy_to`'s mirror, the clipboard's paste
+// side.
+def copy_from(buf Int64, src Int64, len Int64) Void {
+  var i = 0
+  while i < len {
+    poke8(caller_pa(buf + i), peek8(src + i))
+    i = i + 1
+  }
+}
+
+// The clipboard's writer is the focused surface's owner (T8.13's
+// rule, the input routing's own): a background app's copy is refused.
+// No focus, or a focus whose row died with its window, serves whoever
+// asks — the input service's fallback, kept.
+def clip_writer_ok(pid Int64) Bool {
+  var fid = peek64(comp_focus_cell)
+  if fid == 0 {
+    return true
+  }
+  var idx = grant_row_of(fid)
+  if idx < 0 {
+    return true
+  }
+  return peek64(grant_table + (idx * grant_row) + 8) == pid
 }
 
 // The first free request slot of the filesystem's four, or -1 when
@@ -1072,6 +1111,47 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   }
   if n == 5 {
     return route_heap_gone
+  }
+  if n == 34 {
+    // clip_set(buf, len) (emo-desktop M34, EmoOS T15.1): the caller's
+    // bytes replace the clipboard whole. The writer is the focused
+    // surface's owner — the app the stream's copy key reaches — and
+    // the buffer is judged like every pointer argument; the length's
+    // bound is the page's.
+    if r1 < 0 || r1 > clip_cap {
+      return -reason_argument
+    }
+    var vcl = check_write(r0, r1)
+    if vcl != 0 {
+      return -vcl
+    }
+    if clip_writer_ok(peek64(handoff_caller)) == false {
+      return -reason_permission
+    }
+    copy_to(clip_page, r0, r1)
+    poke64(comp_clip_len, r1)
+    return 0
+  }
+  if n == 35 {
+    // clip_get(buf, cap) (emo-desktop M34, EmoOS T15.1): as many of
+    // the clipboard's bytes as fit land at buf, the answer the count.
+    // Reading is any process's — a paste is the focused app's by the
+    // stream's routing, and the bytes are no secret; the writer's
+    // check is the write's own.
+    if r1 < 0 {
+      return -reason_argument
+    }
+    var clen = peek64(comp_clip_len)
+    var cget = clen
+    if cget > r1 {
+      cget = r1
+    }
+    var vcg = check_write(r0, cget)
+    if vcg != 0 {
+      return -vcg
+    }
+    copy_from(r0, clip_page, cget)
+    return cget
   }
   return -reason_unknown
 }

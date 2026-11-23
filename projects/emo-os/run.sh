@@ -115,9 +115,13 @@ win_line() {
 # sessions the metal's passes run — the launcher's exec order now: the
 # counter's tile (its session whole), the browser's tile, the editor's
 # the REPL's own exec command — on the hosted canvas, one `frame
-# <digest>` line per present: ten lines, the counter's mount and keys,
-# the browser's mount and keys, the editor's four; the exits close the
-# block as the desktop hears them (`desktop <name> exit 0`). The
+# <digest>` line per present: thirty lines, the counter's mount and
+# keys, the browser's mount and keys, the editor's mount and its
+# twenty-three keys (a, Enter, b, Left, Backspace, End, c, Home,
+# Delete, Copy, End, Paste, Home, Cut, d, Paste, Home, Shift+End,
+# Copy, Left, Shift+Home, x, Paste — the copy repeating the frame
+# before it, no pixel of its own); the exits close the block as
+# the desktop hears them (`desktop <name> exit 0`). The
 # assertions below read that file the way they read the windows': the
 # frames in the file's order and the folds over each app's rectangle
 # of the display's screendumps at the beats the pointer is parked
@@ -139,11 +143,13 @@ for d in $apps_digests; do
       ;;
   esac
 done
-if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 10 ]; then
-  echo "run.sh: $apps_expected must carry ten 'frame <digest>' lines — the" >&2
+if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 30 ]; then
+  echo "run.sh: $apps_expected must carry thirty 'frame <digest>' lines — the" >&2
   echo "  launcher's session is the counter's mount and its keys (add, sub)," >&2
-  echo "  the browser's mount and keys (down, open), and the editor's" >&2
-  echo "  (put, newline, put)" >&2
+  echo "  the browser's mount and keys (down, open), and the editor's mount" >&2
+  echo "  and its twenty-three keys (a, Enter, b, Left, Backspace, End, c," >&2
+  echo "  Home, Delete, Copy, End, Paste, Home, Cut, d, Paste, Home, Shift+End," >&2
+  echo "  Copy, Left, Shift+Home, x, Paste)" >&2
   exit 1
 fi
 app_line() {
@@ -1736,9 +1742,9 @@ PYLOCK
   # second, each exec answered by `desktop <name> up`, the mount's
   # frame, the window's composition; the sessions the keys, each to
   # the window its mount focused. The exits are the stream's (EmoOS
-  # T8.19): the click raises a window, the q ends its pass, and the
-  # death rides the ring to the parent's ear — the dot out, the dock
-  # repainted, `desktop <name> exit 0` on the wire. The REPL beats
+  # T8.19): the click raises a window, the Ctrl+Q byte ends its pass,
+  # and the death rides the ring to the parent's ear — the dot out, the
+  # dock repainted, `desktop <name> exit 0` on the wire. The REPL beats
   # ride the dock's gap: a press there is the panel's focus and the
   # serial's bytes are the shell's — the focus the gate they pass, an
   # application's when its window holds it. The pointer parks at
@@ -1856,6 +1862,97 @@ PYLOCK
   sleep 1
   hmp 'screendump .trio.ppm'
   apps_is .trio.ppm 768 476 "$(app_line 3)" 374 238 "$(app_line 6)" 374 476 "$(app_line 10)" 16 700 "$(dock_line 7)" 'three up' 'doc:boot.txt,doc:hello.txt' 3 ''
+  # The editing kernel (A33.1): the caret's moves and the erasures —
+  # Left to the row's seam, Backspace joining the rows there, End, an
+  # in-line insert, Home, Delete — each state the hosted twin pins.
+  # The arrows and Home/End are the monitor's sendkey (the device half
+  # of the merged stream); the byte keys are the serial's.
+  hmp 'sendkey left'
+  await 'left'
+  await "frame $(app_line 11)"
+  printf '\b' >&3
+  await 'back'
+  await "frame $(app_line 12)"
+  hmp 'sendkey end'
+  await 'end'
+  await "frame $(app_line 13)"
+  printf 'c' >&3
+  await 'put c'
+  await "frame $(app_line 14)"
+  hmp 'sendkey home'
+  await 'home'
+  await "frame $(app_line 15)"
+  printf '\177' >&3
+  await 'del'
+  await "frame $(app_line 16)"
+  # The clipboard (emo-desktop M34, EmoOS T15.1): the caret's row
+  # copied through the gate's verbs, pasted at the row's end, then cut
+  # and pasted behind a fresh byte — each changing state the hosted
+  # twin pins. The copy itself changes no pixel (the same frame the
+  # delete left), so only its transition is awaited; the chords are
+  # the serial's control bytes, the same the seat's translation
+  # produces.
+  printf '\003' >&3
+  await 'copy'
+  hmp 'sendkey end'
+  await 'end'
+  await "frame $(app_line 18)"
+  printf '\026' >&3
+  await 'paste'
+  await "frame $(app_line 19)"
+  hmp 'sendkey home'
+  await 'home'
+  await "frame $(app_line 20)"
+  printf '\030' >&3
+  await 'cut'
+  await "frame $(app_line 21)"
+  printf 'd' >&3
+  await 'put d'
+  await "frame $(app_line 22)"
+  printf '\026' >&3
+  await 'paste'
+  await "frame $(app_line 23)"
+  # The selection (emo-desktop M35): Home, Shift+End selecting the row,
+  # Copy, Left collapsing to a caret, Shift+Home selecting the head, a
+  # byte replacing that selection, Paste behind it — the highlight the
+  # marked span the framebuffer blends behind the bytes. The shifted
+  # movements are the monitor's chords; the copy is the serial's.
+  hmp 'sendkey home'
+  await_count 'home' 2
+  await "frame $(app_line 24)"
+  hmp 'sendkey shift-end'
+  await 'sel end'
+  await "frame $(app_line 25)"
+  printf '\003' >&3
+  await_count 'copy' 2
+  hmp 'sendkey left'
+  await_count 'left' 2
+  await "frame $(app_line 27)"
+  hmp 'sendkey shift-home'
+  await 'sel home'
+  await "frame $(app_line 28)"
+  printf 'x' >&3
+  await 'put x'
+  await "frame $(app_line 29)"
+  printf '\026' >&3
+  await_count 'paste' 3
+  await "frame $(app_line 30)"
+  # The global shortcut layer (emo-desktop M36, EmoOS T16.1): Alt+2
+  # switches the desk from under the *editor's* focus — the chord
+  # parsed by the input service and the shell's held read answered,
+  # the layer's whole point — desk one quiet's picture (the dock's
+  # three dots, no tile lit); Alt+1 returns, the desk's remembered
+  # focus the editor's again. The three apps keep running throughout.
+  hmp 'sendkey alt-2'
+  await 'shortcut desk 1'
+  abs 274 21239
+  sleep 1
+  hmp 'screendump .chord.ppm'
+  apps_is .chord.ppm 0 0 '' 0 0 '' 0 0 '' 16 700 "$(dock_line 7)" 'chord under focus' 'doc:boot.txt,doc:hello.txt' 3 ''
+  hmp 'sendkey alt-1'
+  await 'shortcut desk 0'
+  abs 274 21239
+  sleep 1
   # The bar's own hand (emo-desktop A16.5): a press beside the button
   # arms the drag, and the move-at's steps move the window with the
   # pointer — the seat's own win_move per step, the even x the blit's
@@ -1919,8 +2016,8 @@ PYLOCK
   btn true
   btn false
   await 'comp 768 476'
-  # the menu's own Quit: the session's end the q byte spoke before it,
-  # the sink and the close behind it
+  # the menu's own Quit: the session's end the Ctrl+Q byte speaks in
+  # the seats, the sink and the close behind it
   abs 13346 14810
   btn true
   btn false
@@ -1940,14 +2037,14 @@ PYLOCK
   btn true
   btn false
   sleep 1
-  printf 'q' >&3
+  printf '\021' >&3
   await 'desktop files exit 0'
   await 'comp 0 0'
   abs 6827 15171
   btn true
   btn false
   sleep 1
-  printf 'q' >&3
+  printf '\021' >&3
   await 'desktop editor exit 0'
   await 'comp 0 0'
   abs 274 21239
@@ -1998,7 +2095,7 @@ PYLOCK
   btn true
   btn false
   sleep 1
-  printf 'q' >&3
+  printf '\021' >&3
   await_count 'desktop counter exit 0' 2
   sleep 1
   abs 1895 364
@@ -2114,7 +2211,7 @@ PYLOCK
   await_count 'sub 0' 2
   abs 274 21239
   sleep 1
-  printf 'q' >&3
+  printf '\021' >&3
   await_count 'desktop counter exit 0' 3
   # the lock's session: the face the whole display, the wrong secret
   # the line's clear, the right one the lift
@@ -2203,7 +2300,7 @@ PYLOCK
   await 'comp 0 0'
   # ---- the notification center (emo-desktop M25, A25.3) ----
   #
-  # The editor's `s` byte is its save: the buffer's two rows onto the
+  # The editor's `Ctrl+S` byte is its save: the buffer's rows onto the
   # volume, then the gate's verb 27. The editor's own quit is the wake
   # the shell's take rides — the desk loop's poll runs before the exit
   # is handled, so the card (the shell's toplevel, the card's own size)
@@ -2220,9 +2317,9 @@ PYLOCK
   await_count 'desktop editor up' 2
   printf 'a' >&3
   await_count 'put a' 2
-  printf 's' >&3
+  printf '\023' >&3
   await_count 'save' 1
-  printf 'q' >&3
+  printf '\021' >&3
   sleep 1
   await_count 'desktop editor exit 0' 2
   await "frame $notify_card"
@@ -2255,9 +2352,9 @@ PYLOCK
   await_count 'desktop editor up' 3
   printf 'a' >&3
   await_count 'put a' 3
-  printf 's' >&3
+  printf '\023' >&3
   await_count 'save' 2
-  printf 'q' >&3
+  printf '\021' >&3
   sleep 1
   await_count 'desktop editor exit 0' 3
   await "frame $notify_panel2"
@@ -2527,7 +2624,7 @@ PYLOCK
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 7' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'shape 10 16 ok' 'shape r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 879805928' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 2015241062' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'comp 64 128' 'desk assign a 1' 'desk word 768' 'comp 0 0' 'desk word 769' 'comp 64 128' 'desk assign a 0' 'desk word 257' 'comp 0 0' 'desk word 256' 'desk 0' 'clock ' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'desk 1' 'comp 0 0' 'desktop counter up' 'comp 0 1040' 'desk 513' 'comp 0 0' "frame $(app_line 1)" 'desk 514' 'comp 0 0' 'comp 768 476' 'desktop counter exit 0' 'comp 0 1040' 'desk 1' 'comp 0 0' 'desk 0' 'comp 0 0' 'comp 1636 32' 'comp 0 0' 'comp 0 0' 'commands: help echo ls cat write rm counter exec passwd lock poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1890 1674'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 7' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'shape 10 16 ok' 'shape r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 879805928' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 2015241062' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'comp 64 128' 'desk assign a 1' 'desk word 768' 'comp 0 0' 'desk word 769' 'comp 64 128' 'desk assign a 0' 'desk word 257' 'comp 0 0' 'desk word 256' 'desk 0' 'clock ' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'shortcut desk 1' 'shortcut desk 0' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'desk 1' 'comp 0 0' 'desktop counter up' 'comp 0 1040' 'desk 513' 'comp 0 0' "frame $(app_line 1)" 'desk 514' 'comp 0 0' 'comp 768 476' 'desktop counter exit 0' 'comp 0 1040' 'desk 1' 'comp 0 0' 'desk 0' 'comp 0 0' 'comp 1636 32' 'comp 0 0' 'comp 0 0' 'commands: help echo ls cat write rm counter exec passwd lock poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1918 1674'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2

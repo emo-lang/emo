@@ -8,31 +8,53 @@ sel files.emo
 frame 128423328
 open files.emo
 frame 128423328
-frame 3453852352
+frame 220008735
 put a
-frame 2444514002
-put b
-frame 2143741361
-left
-frame 923600666
-put a
-frame 2639039240
-backspace
-frame 923600666
-del
-frame 2444514002
-right
-frame 2444514002
+frame 1495754131
 newline
-frame 2857580936
+frame 389115879
 put b
-frame 3129143431
-up
-frame 850653066
-down
-frame 3129143431
-save
-frame 3129143431
+frame 3791700390
+left
+frame 4062232623
+back
+frame 2619040843
+end
+frame 1536345522
+put c
+frame 492833012
+home
+frame 2961670180
+del
+frame 3684468545
+copy
+frame 3684468545
+end
+frame 871385999
+paste
+frame 1288242423
+home
+frame 2347700319
+cut
+frame 545165599
+put d
+frame 3066990091
+paste
+frame 275198202
+home
+frame 376537452
+sel end
+frame 3944575443
+copy
+frame 3944575443
+left
+frame 2012975352
+sel home
+frame 3028259158
+put x
+frame 3398664441
+paste
+frame 3086689792
 desktop counter exit 0
 desktop files exit 0
 desktop editor exit 0

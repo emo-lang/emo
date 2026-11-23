@@ -153,6 +153,15 @@ def ink_of(n ui.Node) Int64 {
   return 0x282830
 }
 
+// The selection's ground (emo-desktop M35): the accent at half
+// opacity, blended over whatever the text sits on — the panel's paper
+// in the apps' bodies, the window's own ground under the bars. A
+// marked span's bytes composite through the surface's blend, the
+// canvas and the carve over the same words.
+def selection_ink() Int64 {
+  return 0x803A6AD8
+}
+
 def paints_box(n ui.Node) Bool {
   return !n.is(ui.Spacer) && !n.is(ui.Text)
 }
@@ -628,6 +637,20 @@ def place(n ui.Node, x Int64, y Int64, w Int64, h Int64, s Surface,
   }
   const label = label_of(n)
   if label.length() > 0 {
+    // The marked span's ground (emo-desktop M35): the bytes the
+    // selection covers blended behind the glyphs, the pen advanced
+    // through the prefix's own advances — the selection's highlight.
+    if n.is(ui.Text) {
+      if n.mark() >= 0 {
+        const start = n.mark() >> 32
+        const len = n.mark() & 4294967295
+        if start >= 0 && len > 0 && start + len <= label.length() {
+          const x0 = x + text_width(f, label.substring(0, start))
+          const mw = text_width(f, label.substring(start, len))
+          s.blend(x0, y, mw, h, selection_ink())
+        }
+      }
+    }
     text(f, label, x, y, ink_of(n), s)
   }
 }

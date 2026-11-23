@@ -238,6 +238,43 @@ as seat 1's op 0 — the request word packs the seat at thirty-two), and
 the desktop's open (verb 26) follows the window: a window of another
 desk shows that desk first, the switch and the focus the verb's own.
 
+## The clipboard (emo-desktop M34, EmoOS T15.1)
+
+Tier C's named example, landed as its own pair. The clipboard is the
+machine's, not any app's: **two verbs, no service between** — the
+bytes on one page of the kernel's fixed region, the length on the
+compositor's page beside the focus, so the text outlives the app that
+copied it and the compositor's every instance. **The write** (verb 34,
+`clip_set(buf, len)`) replaces the whole clipboard — an empty copy is
+`len` 0 — and belongs to the focused surface's owner, the app the
+stream's copy key reaches; a background caller is the permission
+refusal, the input routing's own rule applied to the clipboard.
+**The read** (verb 35, `clip_get(buf, cap)`) is any process's: a paste
+is the focused app's by the same routing, and the bytes are no secret.
+The whole copy happens inside the caller's trap — one byte through the
+caller's own table, no yield — so no reader ever sees half a
+selection, and the bound is the page's 4096 bytes. The clipboard is
+RAM: it survives every process and every compositor restart, and ends
+with the machine; a selection's format is not carried (text is the
+first cut's whole), and the corpus's seam (`Clipper` in
+`emo/ui_apps`) keeps the apps portable.
+
+## The global shortcut layer (emo-desktop M36, EmoOS T16.1)
+
+Tier A's event stream grows one type: **0x5343 ("SC")**, the code 0 and
+the value the chord's id — the machine's third marker beside the serial
+bytes' 0x454D and the exits' 0x4558. The parse is the input service's,
+below every app: Alt is the layer's modifier (Ctrl and Shift stay the
+apps'), a chord's key is consumed at the head before any reader sees
+it, and the event answers the **panel owner's** held read — the shell
+hears the chord whatever window holds the focus, which is the layer's
+whole point. The vocabulary is a table, not a syntax: the first row is
+Alt+1..4, the desks, the value 0..3; a later binding (Alt-Tab's cycle,
+the overview) is its own row and its own consumer, the delivery — the
+event, the panel owner's read — shared. The one pending cell is the
+layer's bound, honestly stated: a second chord before the shell reads
+replaces the first.
+
 ## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
 
 The pointer's sprite is the desktop's — a Wayland client's cursor is

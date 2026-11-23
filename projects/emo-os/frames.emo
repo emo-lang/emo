@@ -63,29 +63,43 @@ const frame = 4096
 // blocks, claimed in one take_run at the spawn, mapped whole by the
 // build, walked home block by block at the death — each slot keeps
 // its own base and end, so the walk never asks how long a run was
-// meant to be. The length is the spawn's, and there are two:
+// meant to be. The length is the spawn's, and there are three:
 //
 // The services' run — what the stub parks in the runtime's
 // emo_arena_run_len (runtime.S) — is the kernel's own green processes'
 // arena: the drivers and services, whose live data is a few tuples.
 // Four blocks is A11.1's value, the one the fs service's per-sector
-// tuples asked for and every service has run in since.
+// tuples asked for and every service has run in since. The display
+// driver's traffic is the exception (below).
+//
+// The display driver's run (emo-desktop M36's session, the arena's own
+// report): the driver answers every composition's flush and writes
+// every window's close and creation row — a message per request, each
+// copied into its arena and never handed back — so four blocks died
+// after a few hundred frames of a manual session, and the compositor
+// waiting the lost reply wedged the machine (the driver has no
+// supervisor, and the deadlock has no timeout to break it). Thirty-two
+// blocks carries a session's traffic; the budget is a bound, not a
+// guarantee — the value kind's message is the runtime's to reclaim.
+const display_arena_run = 32
 //
 // A user pass's run is the process service's to set: it pokes the
 // runtime's word through arena_len_cell before the spawn and puts the
 // services' value back after (arena_run_set below; one gate
 // transaction runs at a time, so the word is never read between).
 // The measure that sized it is the machine's own (emo-desktop A17.4's
-// bring-up): a pass that builds a strike has spent 2039 KiB by its
-// first present — the face's parse and the rasterizer's work box
-// every Int64 they push or index by, and a boxed cell is a value
-// kind, uncounted, never handed back to a bump arena — so the run is
-// 64 blocks, the construction and as much again for the session.
-//
-// One length for both was what the region could not afford: at 32 the
-// strike's pass died one repaint after its mount, and at 128 the
-// eighth spawn found the region spent (`take_run 128 no: 90 90`) —
-// the services had each taken a run they never fill.
+// bring-up, CHECK.md 2026-11-10): a pass that builds a strike has
+// spent 793–862 KiB by its first present — the face's parse and the
+// rasterizer's work box every Int64 they push or index by, and a boxed
+// cell is a value kind, uncounted, never handed back to a bump arena.
+// Sixteen blocks (1 MiB) leaves a windowed app ~200 KiB after its
+// strike, and a desktop session of a minute's dragging spends it (the
+// desktop's report: an app's heap gone at ~100 events). The larger
+// runs the sessions want — 32 and 64 were both measured — did not
+// seat: at 32 the third resident's image take refused (`take_run 127
+// no: 391 66`, the buddy's largest run spent), at 64 the second's.
+// The lever is the region's run fragmentation and the 127-block image
+// run, not this constant; the value kind's leak is the runtime's own.
 const arena_run = 4
 const user_arena_run = 16
 // The runtime's emo_arena_run_len, by address: the stub parks it here
@@ -219,16 +233,21 @@ def user_run() Int64 {
   return user_arena_run
 }
 
-// The two settings of the runtime's run word. A user pass's spawn
+// The three settings of the runtime's run word. A user pass's spawn
 // brackets itself with them: its own run before, the services' back
 // after — the runtime reads the word inside the spawn, twice (the
-// take's length and the arena's end), and nowhere else.
+// take's length and the arena's end), and nowhere else. The display
+// driver's spawn borrows the same bracket with its own length.
 def arena_for_user() Void {
   poke64(peek64(arena_len_cell), user_arena_run)
 }
 
 def arena_for_service() Void {
   poke64(peek64(arena_len_cell), arena_run)
+}
+
+def arena_for_display() Void {
+  poke64(peek64(arena_len_cell), display_arena_run)
 }
 
 // A single 4 KiB frame — a page table's unit (T6.1) — or 0 when the

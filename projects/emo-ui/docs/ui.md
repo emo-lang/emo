@@ -31,6 +31,7 @@ def column(children Array[Node], style Style) Node
 def row(children Array[Node], style Style) Node
 def scroll(children Array[Node], style Style) Node
 def text(body String, style Style) Node
+def marked_text(body String, start Int64, len Int64, style Style) Node
 def button(label String, event Int64, style Style) Node
 def text_input(value String, style Style) Node
 def image(src String, style Style) Node
@@ -41,8 +42,13 @@ The concrete classes are `Column`, `Row`, `Scroll`, `Text`, `Button`,
 `TextInput`, `Image` and `Spacer`; each constructor function returns the
 interface type, so a tree is one `Node` value whatever it is built from.
 The classes are not invoked in a tree — every component is a lowercase
-function, and `.new` never appears. `button` is the only leaf that
-carries an event, and it carries an `Int64` tag rather than a closure:
+function, and `.new` never appears. `marked_text` is a `Text` whose
+byte span `[start, start + len)` a backend may paint behind the body —
+the framebuffer's selection highlight, the one property a backend is
+allowed to ignore (a selection is the painter's concern and no layout
+depends on it; every other backend paints the body plain). `button` is
+the only leaf that carries an event, and it carries an `Int64` tag
+rather than a closure:
 closures cannot cross the FFI, so the backend delivers one integer and
 the loop maps it back to a typed message.
 
@@ -152,6 +158,36 @@ corpus and the goldens do: `on` is a side effect, so a statement of its
 own keeps the registration order visible at the call site. Operand order
 is no longer a cross-target variable — the language states left to
 right and every target obeys it (`CHECK.md`, `probe/eval_order`).
+
+### The raw loop
+
+```emo
+class RawApp {
+  def init(view Block, update Block, model Block, backend Backend)
+  def deliver(tag Int64) Void
+  def root() Node
+}
+
+def run_raw(view Block, update Block, model Block, backend Backend) Void
+```
+
+`run_raw` is the loop without the tag table: the backend's tag is the
+message, handed to `update` as it arrives. It exists for applications
+whose messages are already integers — a text editor's keys, one per
+byte and one per editing op — where a table of a hundred entries
+deduplicated linearly on every render would cost more than the frame
+paints on the metal. `view` still receives a `Registry`, so both loop
+shapes keep one application signature; an application that adds a
+button under `run_raw` registers it as `run`'s does. The key
+vocabulary the raw loop's backends and applications share — the
+printable bytes, the control chords, and the arrows' numbers above 255
+— is the core's: `key_backspace`, `key_tab`, `key_enter`, `key_quit`,
+`key_delete`, `key_left`, `key_right`, `key_up`, `key_down`, `key_home`
+and `key_end`, and the selection's extension keys `key_shift_left`,
+`key_shift_right`, `key_shift_up`, `key_shift_down`, `key_shift_home`
+and `key_shift_end` — a seat that tracks Shift answers these in place
+of the movement's own number, so an application tells an extending move
+from a collapsing one without seeing the modifier.
 
 `run` builds the `App`, hands the first tree and the loop's `Events`
 sink to `backend.mount`, and then calls `backend.run()`.

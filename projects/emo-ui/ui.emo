@@ -149,9 +149,10 @@ class Scroll {
 }
 
 class Text {
-  def init(body String, style Style) {
+  def init(body String, style Style, mark Int64) {
     self.body = body
     self.style = style
+    self.mark = mark
   }
 
   def style() Style {
@@ -164,6 +165,16 @@ class Text {
 
   def body() String {
     return self.body
+  }
+
+  // The mark (emo-desktop M35): the byte span a backend that carries
+  // the vocabulary paints behind the body — the framebuffer's
+  // selection highlight. -1 is no mark; the pack is the start above,
+  // the length below. Every other backend paints the body plain: the
+  // mark is the one property a backend may ignore, because a selection
+  // is the painter's concern and no layout depends on it.
+  def mark() Int64 {
+    return self.mark
   }
 }
 
@@ -264,7 +275,17 @@ def scroll(children Array[Node], style Style) Node {
 }
 
 def text(body String, style Style) Node {
-  return Text.new(body: body, style: style)
+  return Text.new(body: body, style: style, mark: 0 - 1)
+}
+
+// A text whose byte span `[start, start + len)` a backend may paint
+// behind the body — the selection's highlight (emo-desktop M35). The
+// indices are the body's own bytes; a backend that does not carry the
+// vocabulary paints the body plain, which is every backend but the
+// framebuffer's.
+def marked_text(body String, start Int64, len Int64, style Style) Node {
+  return Text.new(body: body, style: style,
+    mark: (start << 32) | (len & 4294967295))
 }
 
 def button(label String, event Int64, style Style) Node {
@@ -281,6 +302,89 @@ def image(src String, style Style) Node {
 
 def spacer(style Style) Node {
   return Spacer.new(style: style)
+}
+
+// ---- The raw loop's key vocabulary ----
+//
+// One event per key, shared by the backends that translate a device's
+// reports and the applications that read them. A printable key is its
+// own byte, and the ASCII control codes a Ctrl chord produces are the
+// chords' bytes (`Ctrl+Q` is 17, `Ctrl+S` is 19); every key that has no
+// byte — the arrows, Home and End — is a number above 255, so no
+// serial byte and no printable key can ever be mistaken for one. The
+// vocabulary is the core's because it is a contract, not a layout: the
+// keys' placement and the shift level are the backend's (the desktop's
+// seat speaks the US layout), the meanings are these.
+def key_backspace() Int64 {
+  return 8
+}
+
+def key_tab() Int64 {
+  return 9
+}
+
+def key_enter() Int64 {
+  return 10
+}
+
+def key_quit() Int64 {
+  return 17
+}
+
+def key_delete() Int64 {
+  return 127
+}
+
+def key_left() Int64 {
+  return 1001
+}
+
+def key_right() Int64 {
+  return 1002
+}
+
+def key_up() Int64 {
+  return 1003
+}
+
+def key_down() Int64 {
+  return 1004
+}
+
+def key_home() Int64 {
+  return 1005
+}
+
+def key_end() Int64 {
+  return 1006
+}
+
+// The selection's extension keys (emo-desktop M35): Shift with a
+// movement. A seat that tracks the modifier answers these in place of
+// the movement's own number, so an application tells an extending move
+// from a collapsing one without seeing the modifier itself.
+def key_shift_left() Int64 {
+  return 1011
+}
+
+def key_shift_right() Int64 {
+  return 1012
+}
+
+def key_shift_up() Int64 {
+  return 1013
+}
+
+def key_shift_down() Int64 {
+  return 1014
+}
+
+def key_shift_home() Int64 {
+  return 1015
+}
+
+def key_shift_end() Int64 {
+  return 1016
 }
 
 // ---- The Elm loop (docs/emo-ui.md, Layer 5) ----
@@ -397,6 +501,47 @@ class App {
 // `view` takes the loop's `Registry` and then the model.
 def run(view Block, update Block, model Block, backend Backend) Void {
   const app = App.new(view: view, update: update, model: model,
+    backend: backend)
+  backend.mount(app.root(), app)
+  backend.run()
+}
+
+// The raw loop: the same application shape, the event handed to
+// `update` as itself. A tag table exists to turn a backend's small,
+// stable integer into a message value; an application whose messages
+// are themselves integers — a text editor's keys, one per byte and one
+// per editing op — has nothing to turn. Registering a hundred messages
+// and deduplicating them linearly on every render would allocate more
+// than the frame paints on the metal; here there is no table, no
+// lookup, and the event is the message. The view still receives a
+// registry (born empty, and an application ready for buttons fills it
+// as `run`'s does), so both loops share one application shape.
+class RawApp {
+  def init(view Block, update Block, model Block, backend Backend) {
+    self.view_fn = Box.new(view)
+    self.update_fn = Box.new(update)
+    self.model = Box.new(model)
+    self.backend = backend
+    self.registry = Registry.new()
+    self.current = Box.new(view(self.registry, model))
+  }
+
+  def deliver(tag Int64) Void {
+    const next = self.update_fn.read()(tag, self.model.read())
+    self.model.replace(next)
+    const tree = self.view_fn.read()(self.registry, next)
+    self.backend.patch(self.current.read(), tree)
+    self.current.replace(tree)
+  }
+
+  def root() Node {
+    return self.current.read()
+  }
+}
+
+// The raw entry point, `run`'s sibling.
+def run_raw(view Block, update Block, model Block, backend Backend) Void {
+  const app = RawApp.new(view: view, update: update, model: model,
     backend: backend)
   backend.mount(app.root(), app)
   backend.run()

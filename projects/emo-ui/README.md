@@ -60,6 +60,10 @@ and `with_*` copies, the layout vocabulary (`Align`, and padding, gap, grow,
 width and height on the style), the `Backend` interface (`mount`/`patch`/`run`),
 and the loop: `App`, plus the `Registry` an event is tagged in. It is pure Emo,
 with no platform and no FFI, and it declares all five hosted targets.
+`marked_text` is a `Text` whose byte span a backend may paint behind the body —
+the framebuffer's selection highlight, the one property a backend is allowed to
+ignore, because a selection is the painter's concern and no layout depends on
+it.
 
 An application is a model, a pure `update`, a pure `view`, and a backend:
 
@@ -86,6 +90,13 @@ a statement of its own keeps the registration order visible at the call site.
 Operand order is no longer a cross-target variable — the language states left
 to right and every target obeys it; the defect that made the two differ, and
 its fix, are in `CHECK.md` and `probe/eval_order`.
+
+`ui.run_raw` is the same loop without the table: the backend's tag is the
+message, handed to `update` as it arrives. It exists for applications whose
+messages are already integers — a text editor's keys, one per byte and one per
+editing op — where a hundred-entry table deduplicated per render would cost more
+than the frame paints on the metal. The view still receives a `Registry`, so
+both shapes share one application signature.
 
 The loop compiles and runs on all five hosted targets. A bare def name is the
 only expression that yields the `Block` value `ui.run` takes, and `c` had no
