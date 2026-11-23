@@ -335,6 +335,34 @@ def desk_workspace() (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The clipboard's write (emo-desktop M34, EmoOS T15.1, verb 34): the
+// `len` bytes at `buf` replace the clipboard whole — `len` 0 clears
+// it. The writer is the focused surface's owner, the app the stream's
+// copy key reaches: a background caller is (R.error, "not writable"),
+// a buffer outside the caller's memory or longer than the clipboard's
+// page is the range or the out-of-range reason. The gate copies
+// inside the trap, so the clipboard never holds half a selection.
+def clip_set(buf Int64, len Int64) (R, Int64) {
+  var answer = ecall(34, buf, len, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The clipboard's read (emo-desktop M34, EmoOS T15.1, verb 35): as
+// many of the clipboard's bytes as fit land at `buf` — at most `cap`
+// of them — and the answer is the count. Reading is any process's: a
+// paste is the focused app's by the stream's routing, and the bytes
+// are no secret.
+def clip_get(buf Int64, cap Int64) (R, Int64) {
+  var answer = ecall(35, buf, cap, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The frame callback (EmoOS T8.15, verb 22, emo-desktop A9.3): the
 // caller parks, and the answer is the tick — the next composition's
 // completion, the flush that put a frame on the display. The
@@ -352,8 +380,9 @@ def win_frame() (R, Int64) {
 
 // The desktop protocol's version (EmoOS T8.15, verb 23, emo-desktop
 // A9.3): one word, the negotiation's anchor — the answer is 1, the
-// protocol the verbs 10..26 carry. A client that reads it before its
-// first desktop call knows every shape this document names.
+// protocol the verbs 10..35 carry (the numbering's additions-only rule:
+// the additions never move the word). A client that reads it before
+// its first desktop call knows every shape this document names.
 def desktop_version() (R, Int64) {
   var answer = ecall(23, 0, 0, 0, 0, 0, 0)
   if answer >= 0 {

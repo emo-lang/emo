@@ -115,10 +115,12 @@ win_line() {
 # sessions the metal's passes run — the launcher's exec order now: the
 # counter's tile (its session whole), the browser's tile, the editor's
 # the REPL's own exec command — on the hosted canvas, one `frame
-# <digest>` line per present: sixteen lines, the counter's mount and
-# keys, the browser's mount and keys, the editor's mount and its nine
-# keys (a, Enter, b, Left, Backspace, End, c, Home, Delete); the exits
-# close the block as the desktop hears them (`desktop <name> exit 0`). The
+# <digest>` line per present: twenty-three lines, the counter's mount
+# and keys, the browser's mount and keys, the editor's mount and its
+# sixteen keys (a, Enter, b, Left, Backspace, End, c, Home, Delete,
+# Copy, End, Paste, Home, Cut, d, Paste — the copy repeating the
+# delete's frame, no pixel of its own); the exits close the block as
+# the desktop hears them (`desktop <name> exit 0`). The
 # assertions below read that file the way they read the windows': the
 # frames in the file's order and the folds over each app's rectangle
 # of the display's screendumps at the beats the pointer is parked
@@ -140,11 +142,12 @@ for d in $apps_digests; do
       ;;
   esac
 done
-if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 16 ]; then
-  echo "run.sh: $apps_expected must carry sixteen 'frame <digest>' lines — the" >&2
+if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 23 ]; then
+  echo "run.sh: $apps_expected must carry twenty-three 'frame <digest>' lines — the" >&2
   echo "  launcher's session is the counter's mount and its keys (add, sub)," >&2
   echo "  the browser's mount and keys (down, open), and the editor's mount" >&2
-  echo "  and its nine keys (a, Enter, b, Left, Backspace, End, c, Home, Delete)" >&2
+  echo "  and its sixteen keys (a, Enter, b, Left, Backspace, End, c, Home," >&2
+  echo "  Delete, Copy, End, Paste, Home, Cut, d, Paste)" >&2
   exit 1
 fi
 app_line() {
@@ -1880,6 +1883,33 @@ PYLOCK
   printf '\177' >&3
   await 'del'
   await "frame $(app_line 16)"
+  # The clipboard (emo-desktop M34, EmoOS T15.1): the caret's row
+  # copied through the gate's verbs, pasted at the row's end, then cut
+  # and pasted behind a fresh byte — each changing state the hosted
+  # twin pins. The copy itself changes no pixel (the same frame the
+  # delete left), so only its transition is awaited; the chords are
+  # the serial's control bytes, the same the seat's translation
+  # produces.
+  printf '\003' >&3
+  await 'copy'
+  hmp 'sendkey end'
+  await 'end'
+  await "frame $(app_line 18)"
+  printf '\026' >&3
+  await 'paste'
+  await "frame $(app_line 19)"
+  hmp 'sendkey home'
+  await 'home'
+  await "frame $(app_line 20)"
+  printf '\030' >&3
+  await 'cut'
+  await "frame $(app_line 21)"
+  printf 'd' >&3
+  await 'put d'
+  await "frame $(app_line 22)"
+  printf '\026' >&3
+  await 'paste'
+  await "frame $(app_line 23)"
   # The bar's own hand (emo-desktop A16.5): a press beside the button
   # arms the drag, and the move-at's steps move the window with the
   # pointer — the seat's own win_move per step, the even x the blit's

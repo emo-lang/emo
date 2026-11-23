@@ -50,11 +50,12 @@ English version: [`README.md`](README.md).
 | M31 — 壁纸的艺术与图标 | 壁纸成为卷宗自己的 RLE 文件(`gen-wallpaper.py` 的渲染,boot 时解码),取色为 chrome 供给强调色与材质,图标家族的笔画从 shapes 文件为 dock 瓦片、启动器行与通知行换装 | complete |
 | M32 — 动效层 | 缓动词表(`emo_motion.emo`——方衰、镜像、spring)落进桌面包,焦点的到来走扫入(窗条上四帧),启动器面板弹跳落座,workspace 的 pager 强调块跨条滑向下一格(D13:硬切保留,chrome 动画);dock 悬停与 toast 滑入在金属上停靠,画师与钉行站立(found-not-fixed:走查的 digest 差一、越界座位的 toplevel 挂死 walk) | complete |
 | M33 — 文本内核 | 编辑器的缓冲与光标——在光标处插入、Backspace/Delete 与行的合并、方向键、Home/End——raw Elm 循环(`ui.run_raw`)让一次按键不必查 tag 表,以及座位在 Shift 与 Ctrl 层级的 US 布局(`Ctrl+Q` 退出,`Ctrl+S` 保存编辑器) | complete |
+| M34 — 剪贴板 | 门之上的机器剪贴板:`clip_set`/`clip_get` 是门自己的一对(字节在 `.emo_clip`,长度在合成器页上,写入属于焦点应用,中间没有服务),语料的 `Clipper` 接缝,以及编辑器在光标所在行上的 `Ctrl+C`/`Ctrl+X`/`Ctrl+V` | complete |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 
 ## 体验是什么——不是什么
 
-可达:合成窗口、拖动、聚焦、鼠标、带抗锯齿字形的真实字体、圆角与阴影的形状、半透明 chrome 盖在卷宗自己的壁纸上(emo-desktop M31 的 RLE 文件,boot 时解码)、dock、真实应用(计数器、文件浏览器、在光标处编辑的编辑器)。这套栈上不可达:GPU 加速、模糊、动画级帧节奏、硬实时。诚实的体感是九十年代初的工作站长出了一副现代的脸面。架构在这之上的生长路径也是记录的一部分:[`docs/assessment.md`](docs/assessment.md) 收着可扩展性契约(什么冻结、什么可搬、什么可加)与完整的调研讨论,包括 M7 之前已定案的决策点(2026-10-31)。
+可达:合成窗口、拖动、聚焦、鼠标、带抗锯齿字形的真实字体、圆角与阴影的形状、半透明 chrome 盖在卷宗自己的壁纸上(emo-desktop M31 的 RLE 文件,boot 时解码)、dock、真实应用(计数器、文件浏览器、在光标处编辑并通过机器剪贴板复制粘贴的编辑器)。这套栈上不可达:GPU 加速、模糊、动画级帧节奏、硬实时。诚实的体感是九十年代初的工作站长出了一副现代的脸面。架构在这之上的生长路径也是记录的一部分:[`docs/assessment.md`](docs/assessment.md) 收着可扩展性契约(什么冻结、什么可搬、什么可加)与完整的调研讨论,包括 M7 之前已定案的决策点(2026-10-31)。
 
 逐任务清单见 [`docs/TASKS.md`](docs/TASKS.md)。每个里程碑的内核侧一半住在 [EmoOS 的追踪器](../emo-os/docs/TASKS.md);ABI 的稳定性契约是 [EmoOS 的文档](../emo-os/docs/desktop-abi.md)。

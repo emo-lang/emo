@@ -268,6 +268,12 @@ const comp_desks = 4
 // sizes' own reason, the painted records'). The undeclared's the
 // toplevels' nine, the flat pad every mark has used since T10.1.
 const comp_paint_pad = comp_page + 3464
+// The clipboard's length (emo-desktop M34, EmoOS T15.1): the word the
+// gate keeps at the map's free tail past the shape pads (+3528; the
+// gate's `comp_clip_len`). The bytes live on their own page above —
+// `.emo_clip` at `0x87007000` — so this page carries the claim, not the
+// text; the compositor never reads it, and the state outliving the
+// instances is the point.
 // The dead owners' cells (emo-desktop A9.2, T8.14; the array T8.15):
 // the trap shim writes the dead pass's pid into its own cell on every
 // user death (fault, heap, exit) and the comp service's walk reclaims

@@ -1025,3 +1025,36 @@ opening records.
 M31 (the wallpaper's RLE art, the palette's extraction, the icon
 strikes) adds no step — the filesystem's verbs carry the art and the
 shape arithmetic carries the icons, both landed.
+
+## Step 15 — the clipboard's verbs (M34, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-23. The desktop's first cross-process resource: the
+editor copies a row and the shell (or any app the focus moves to)
+pastes it, and no app's memory can be the store — the source may die,
+the compositor may restart, and every app is its own process. The
+desktop's half is emo-desktop M34, whose tracker records the shape
+(D19); the verbs are additions-only under the frozen numbering, the
+gate's own pair with no service between: the bytes on `.emo_clip`, one
+page above the notification service's, the length on the compositor's
+page past the shape pads, so the state that outlives the compositor's
+instances keeps the clipboard's claim with it. The copy runs inside
+the caller's trap through its own table — the console's staging's
+discipline — and a trap does not yield, so no reader sees half a
+selection.
+
+- [x] **T15.1** — The clipboard's page and the gate's pair: `link.ld`
+  gives `.emo_clip` its page at `0x87007000`, the comp page's map grows
+  `comp_clip_len` at `+3528`, and `gate.emo` answers verbs 34
+  (`clip_set(buf, len)`) and 35 (`clip_get(buf, cap)`) itself — the
+  write judged by the focused surface's owner (the input routing's own
+  rule, a background caller reason 3), the pointer arguments judged by
+  the caller's segments (`check_write`), the copy in and out one
+  volatile byte at a time through `caller_pa` (`copy_to`'s new
+  mirror). The stub grows the typed pair, the docs (`syscalls.md`'s
+  rows and section, both languages; `desktop-abi.md`'s Tier C entry)
+  ride with it, and `run.sh`'s beats drive copy/cut/paste through the
+  editor. **Landed 2026-11-23** — the apps golden's session grew the
+  clipboard's beats (copy, End, paste, Home, cut, d, paste), the copy
+  a duplicate frame because it changes no pixel; five targets
+  byte-identical, the kernel and the editor image build for riscv64,
+  and the locks the syscall package's content moved re-pinned.

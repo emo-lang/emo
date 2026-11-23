@@ -2870,3 +2870,49 @@ one.
   content moved re-pinned. Verified: the apps golden byte-identical on
   the interpreter and `c`; the editor program and the boot image build
   for riscv64; `ui.emo` and the editor corpus type-check.
+
+## M34 — the clipboard (opened 2026-11-23)
+
+The desktop's first cross-process resource, and the one the kernel must
+own: the editor copies a row, the focus moves, another app pastes it —
+the source may die and the compositor may restart in between, so no
+app's memory can be the store. The decision (D19): the clipboard is the
+machine's, **two verbs and no service between** — the bytes on one page
+of the kernel's fixed region, the length on the compositor's page
+beside the focus, so the state that outlives the compositor's
+instances keeps the clipboard's claim with it. The write belongs to
+the focused surface's owner, the app the stream's copy key reaches
+(a background caller is the permission refusal); the read is any
+process's, a paste being the focused app's by the same routing. The
+copy runs inside the caller's trap through its own table, one volatile
+byte at a time, and a trap does not yield — no reader sees half a
+selection. The kernel side is EmoOS T15.1 (the page, the gate's pair,
+the stub, the ABI's docs); the half here is the corpus's seam and the
+editor's chords.
+
+- [x] **A34.1** — The editor's clipboard and the corpus's seam: the
+  editor's model grows a `Clipper` provider — copy hands it the caret's
+  row, cut hands it the row and clears it, paste inserts what it
+  answers — the hosted golden's a `Box` behind the seam (the quiet
+  saver's twin, so the session's copy and paste agree), the metal's
+  the gate's two verbs over this image's scratch (`clip_set`/
+  `clip_get`, the row poked out and read back through `Bytes`), and
+  the chords `Ctrl+C`/`Ctrl+X`/`Ctrl+V` — the seat's translation
+  already produces 3, 24 and 22. The session's beats and the
+  goldens: the apps golden's script grows copy, End, paste, Home, cut,
+  d, paste (the copy a duplicate frame — no pixel changes), the fixture
+  the interpreter's bytes, and `run.sh` drives the chords by serial and
+  the arrows by the monitor's sendkey. **Landed 2026-11-23** — the
+  clipboard's window is the caret's row until A3's selection narrows
+  it; five targets byte-identical, the editor image and the kernel
+  build for riscv64, and the locks the syscall package's content moved
+  re-pinned. **Found on the way**: the wayland face's slot held a
+  `ui.App` for the editor (the raw loop's update takes keys, so the
+  table would have raised on the first key) and its `emo_desktop` calls
+  had drifted from the M26–M31 signatures — the demo had not built
+  since M31. Fixed with a small `FaceApp` interface (a tag delivered,
+  the tree it left) that both loops satisfy, the editor slot moved to
+  `ui.RawApp` with its byte keys, and the dock/header/wallpaper calls
+  brought to the current signatures (the demo's backdrop the package's
+  gradient anchors, its art the empty array the formula has no need
+  of).

@@ -112,6 +112,18 @@ SECTIONS
   . = KOFF + 0x87006000;
   .emo_notify (NOLOAD) : AT(ADDR(.emo_notify) - KOFF) { *(.emo_notify) } :tick
 
+  /* The clipboard's page (emo-desktop M34, EmoOS T15.1), a page above
+     the notification service's: the copied bytes, shared by every app
+     through the gate's two verbs — the length cell rides the
+     compositor's page beside the focus, so the clipboard's claim
+     outlives the compositor's instances and every app's process. The
+     gate copies in and out inside its trap, one byte a volatile load
+     and store through the caller's own table, like the console's
+     staging; no service sits between. NOLOAD — the page is the
+     machine's zeroed RAM until the first copy. */
+  . = KOFF + 0x87007000;
+  .emo_clip (NOLOAD) : AT(ADDR(.emo_clip) - KOFF) { *(.emo_clip) } :tick
+
   /* The console's staging page (T8.15), a page above the compositor's:
      the four request slots the gate fills for the write verb — busy
      lengths and the bytes, one slot per parked writer, the slot's

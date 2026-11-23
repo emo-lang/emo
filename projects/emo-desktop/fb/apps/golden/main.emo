@@ -92,6 +92,27 @@ class Eye {
   }
   const f = holder.get(0)
 
+// The hosted clipper (emo-desktop M34): the quiet one's own store —
+// the session's copy and paste must agree, so the text rides a `Box`
+// behind the corpus's seam, the quiet saver's twin.
+class GoldClip {
+  def init() {
+    self.text = Box.new("")
+  }
+
+  def copy(s String) Void {
+    self.text.replace(s)
+  }
+
+  def paste() String {
+    return self.text.read()
+  }
+}
+
+def gold_clip() GoldClip {
+  return GoldClip.new()
+}
+
 def main() {
   // The launcher's replay (emo-desktop A12.1): the counter's tile
   // first — its mount frame, its two keys — then the browser's tile,
@@ -116,15 +137,17 @@ def main() {
   fbackend.run()
   const e = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
   const che = ui_fb_win.chrome(e, f, "editor")
-  // The editor's session (A33.1): the raw loop's keys are the byte
-  // script's numbers — type a, Enter, type b, Left, Backspace (the
-  // join), End, type c, Home, Delete. The same numbers the metal's
-  // seat delivers; the save's chord belongs to the notification beats
-  // (M25), where the raise is the point.
+  // The editor's session (A33.1; the clipboard's beats with M34): the
+  // raw loop's keys are the byte script's numbers — type a, Enter,
+  // type b, Left, Backspace (the join), End, type c, Home, Delete,
+  // then Copy, End, Paste, Home, Cut, type d, Paste. The same numbers
+  // the metal's seat delivers; the save's chord belongs to the
+  // notification beats (M25), where the raise is the point.
   ui.run_raw(ui_apps.editor.view, ui_apps.editor.update,
-    ui_apps.editor.initial(),
+    ui_apps.editor.initial_with(ui_apps.editor.quiet(), gold_clip()),
     ui_fb.backend(che,
-      ui_fb.script([97, 10, 98, 1001, 8, 1006, 99, 1005, 127]), f))
+      ui_fb.script([97, 10, 98, 1001, 8, 1006, 99, 1005, 127, 3, 1006,
+        22, 1005, 24, 100, 22]), f))
   println("desktop counter exit 0")
   println("desktop files exit 0")
   println("desktop editor exit 0")

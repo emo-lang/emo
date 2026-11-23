@@ -238,6 +238,27 @@ as seat 1's op 0 — the request word packs the seat at thirty-two), and
 the desktop's open (verb 26) follows the window: a window of another
 desk shows that desk first, the switch and the focus the verb's own.
 
+## The clipboard (emo-desktop M34, EmoOS T15.1)
+
+Tier C's named example, landed as its own pair. The clipboard is the
+machine's, not any app's: **two verbs, no service between** — the
+bytes on one page of the kernel's fixed region, the length on the
+compositor's page beside the focus, so the text outlives the app that
+copied it and the compositor's every instance. **The write** (verb 34,
+`clip_set(buf, len)`) replaces the whole clipboard — an empty copy is
+`len` 0 — and belongs to the focused surface's owner, the app the
+stream's copy key reaches; a background caller is the permission
+refusal, the input routing's own rule applied to the clipboard.
+**The read** (verb 35, `clip_get(buf, cap)`) is any process's: a paste
+is the focused app's by the same routing, and the bytes are no secret.
+The whole copy happens inside the caller's trap — one byte through the
+caller's own table, no yield — so no reader ever sees half a
+selection, and the bound is the page's 4096 bytes. The clipboard is
+RAM: it survives every process and every compositor restart, and ends
+with the machine; a selection's format is not carried (text is the
+first cut's whole), and the corpus's seam (`Clipper` in
+`emo/ui_apps`) keeps the apps portable.
+
 ## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
 
 The pointer's sprite is the desktop's — a Wayland client's cursor is

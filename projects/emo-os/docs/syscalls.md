@@ -79,6 +79,8 @@ undocumented ever acts.
 | 31 | `desk_show(desk)` | the shell's switch: the named desk's windows on the display, the outgoing desk's focus remembered, the incoming desk's own restored — falling to its top toplevel when it remembers none — the whole mode the damage the switch's composition repaints. The caller must own a panel (the desktop's authority, the desktop's open's own rule); a desk past the bound is reason 4, an app's call reason 3; showing the shown desk answers plainly, nothing composed (emo-desktop M27, EmoOS T13.2, below) |
 | 32 | `desk_workspace()` | the desks asked: one packed word, the active desk in the low byte and the occupancy above it — a bit set while a live toplevel carries the desk, the minimized alive where they are. The gate never refuses it (emo-desktop M27, EmoOS T13.2, below) |
 | 33 | `win_shape(grant, radius, softness)` | the surface's shape recorded on its row — the radius and the softness the compositor's mask and shadow wear, the toplevels' 10 and 16 the rows carry unset and zero the bare rectangle every other role wears. Zero the radius is the words' own meaning (a toplevel stripped, a panel shaped), and a softness of zero is the mask without the ring; a value past 255 is reason 4, and the shape binds at its declaration — the second call is reason 4, the format's own rule (emo-desktop M30, A30.2, below) |
+| 34 | `clip_set(buf, len)` | the `len` bytes at `buf` replace the clipboard whole (0 clears it). The writer must be the focused surface's owner — the app the stream's copy key reaches; a background caller is reason 3. `len` past the clipboard page's 4096 is reason 4, a buffer outside the caller's memory reason 2, one in a segment that is not writable reason 3; the gate copies inside the trap, so the clipboard never holds half a selection (emo-desktop M34, EmoOS T15.1, below) |
+| 35 | `clip_get(buf, cap)` | as many of the clipboard's bytes as fit land at `buf`, at most `cap`; answers the count copied. Reading is any process's: a paste is the focused app's by the stream's routing, and the bytes are no secret (emo-desktop M34, EmoOS T15.1, below) |
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -349,13 +351,28 @@ request at a time (the busy cell, held from the staging to the
 pickup); one exec'd image's arena rides the shared cells at a time
 (the bound A11.2's two-desktop acceptance grows).
 
+The clipboard (T15.1, emo-desktop M34) is the gate's own pair — no
+service between. The bytes ride one page above the notification
+service's (`.emo_clip`, `0x87007000`), the length rides the
+compositor's page past the shape pads (`0x87008DC8`, the compositor's
+`+3528`), so the clipboard outlives every app and the compositor's
+instances both. The write is the focused surface's owner's — the app
+the stream's copy key reaches — and a background caller is refused
+(reason 3); the read is any process's, because a paste is the focused
+app's by the same routing and the bytes are no secret. The gate copies
+in and out inside the trap, one byte a volatile load and store
+through the caller's own table (the console's staging's discipline),
+and a trap does not yield: no reader sees half a selection. The bound
+is the page's 4096 bytes; a longer write is the argument refusal. The
+clipboard is RAM — it survives every process and the compositor's
+restarts, and ends with the machine.
+
 ## The user surface
 
 User code does not spell the raw ecall. The `syscall` package — its
 own package, distinct from the hosted `os` — is the gate's user side: the
 typed Emo surface, and the only thing user code sees of the boundary.
-It admits the `riscv64` target alone; the raw `ecall` lives in its
-eighteen
+It admits the `riscv64` target alone; the raw `ecall` lives in its own
 bodies and nowhere else a user program writes.
 
 - `syscall.exit(code)` — the exit verb; never returns. The root's exit
@@ -412,6 +429,13 @@ bodies and nowhere else a user program writes.
   or `(R.error, why)`; the reasons the earlier verbs name, plus
   `"no such file"` for reason 6. The names and the bytes are raw
   addresses in the program's own memory, like `write`'s buffer.
+- `syscall.clip_set(buf, len)` — the clipboard's write (T15.1,
+  verb 34): the bytes at `buf` replace the clipboard whole, answering
+  `(R.ok, 0)`; a caller that is not the focused surface's owner is
+  `(R.error, "not writable")`.
+- `syscall.clip_get(buf, cap)` — the clipboard's read (T15.1, verb
+  35): as many bytes as fit land at `buf`, answering
+  `(R.ok, the count)`.
 
 Programs pin it like any package (`deps { "syscall" = "0.1.0" }`) and
 resolve it from the bundled registry. The kernel profile refuses it
@@ -497,6 +521,12 @@ The filesystem's pages (T7.2, `.emo_fs`, three pages from
 supervisor's pid cell the runtime's death notice posts to, the stash,
 and the four request slots the gate fills; the layout is in
 [`docs/fs.md`](fs.md).
+
+The clipboard's page (T15.1, `.emo_clip`) sits a page above the
+notification service's at `0x87007000`, its bytes up to the page's
+end; the length rides the compositor's page at `0x87008DC8` — the
+state that outlives the compositor's instances keeps the clipboard's
+claim with it.
 
 The user window is `[0x87100000, 0x88000000)`; the user profile links
 at its base.

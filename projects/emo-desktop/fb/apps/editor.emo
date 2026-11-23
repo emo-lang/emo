@@ -11,8 +11,8 @@ require "emo/ui"
 // rows' value discipline, the before never touched — and the caret is
 // the view's: `|` inked between the row's bytes, never in the buffer.
 // `update` says each transition (`put a`, `back`, `del`, `left`,
-// `right`, `up`, `down`, `home`, `end`, `newline`, `save`) and hands
-// the save's buffer to the provider.
+// `right`, `up`, `down`, `home`, `end`, `newline`, `save`, `copy`,
+// `cut`, `paste`) and hands the save's buffer to the provider.
 //
 // The app dual-runs where hosted: the hosted families through
 // `apps/golden/`, each key the script's own number; the metal in a
@@ -29,10 +29,23 @@ require "emo/ui"
 // hosted golden's saver is the quiet one; the metal editor's speaks the
 // gate's write and notify verbs. `update` says `save` and hands the
 // buffer over; what saving means is the provider's.
+//
+// The clipboard (emo-desktop M34, D19): the buffer is the machine's —
+// one page the gate copies through, shared by every app — so the
+// acts leave through a second provider, the Clipper: copy hands it the
+// row, paste asks it for the clipboard's text. Without a selection
+// (A3's, still ahead) the acts are the caret's row whole: copy takes
+// it, cut takes and clears it, paste inserts at the caret. The hosted
+// golden's clipper is the quiet one (a `Box` behind the seam, so the
+// session's copy and paste still agree); the metal's speaks the gate's
+// two verbs.
 
-// The save's chord (`Ctrl+S`), the bytes a Ctrl chord produces: the
-// core's vocabulary carries the keys' meanings, and this one is the
-// app's.
+// The chords, the bytes a Ctrl chord produces: the core's vocabulary
+// carries the keys' meanings, and these are the app's — `Ctrl+C`,
+// `Ctrl+X`, `Ctrl+V` and the save's `Ctrl+S`.
+const key_copy = 3
+const key_cut = 24
+const key_paste = 22
 const key_save = 19
 
 // The buffer's one line bound: the window is 384 pixels wide at the
@@ -60,16 +73,51 @@ def quiet() Quiet {
   return Quiet.new()
 }
 
+// The clipboard's two acts as the corpus sees them: copy hands the
+// row over, paste asks for the text. The store is the provider's —
+// a page in the kernel on the metal, a `Box` in the hosted golden —
+// and the app never learns which.
+interface Clipper {
+  def copy(s String) Void
+  def paste() String
+}
+
+// The quiet clipper: the hosted golden's feeder — the text kept in a
+// `Box`, so the session's paste returns what its copy handed over.
+class QuietClip {
+  def init() {
+    self.text = Box.new("")
+  }
+
+  def copy(s String) Void {
+    self.text.replace(s)
+  }
+
+  def paste() String {
+    return self.text.read()
+  }
+}
+
+def quiet_clip() QuietClip {
+  return QuietClip.new()
+}
+
 class Model {
-  def init(rows Array[String], row Int64, col Int64, saver Saver) {
+  def init(rows Array[String], row Int64, col Int64, saver Saver,
+           clipper Clipper) {
     self.rows = rows
     self.row = row
     self.col = col
     self.saver = saver
+    self.clipper = clipper
   }
 
   def saver() Saver {
     return self.saver
+  }
+
+  def clipper() Clipper {
+    return self.clipper
   }
 
   def rows() Array[String] {
@@ -86,13 +134,14 @@ class Model {
 }
 
 def initial() Model {
-  return initial_with(quiet())
+  return initial_with(quiet(), quiet_clip())
 }
 
-// The same start with the act's provider in hand — the metal editor's
+// The same start with the acts' providers in hand — the metal editor's
 // door (the hosted golden takes `initial`).
-def initial_with(saver Saver) Model {
-  return Model.new(rows: ["", ""], row: 0, col: 0, saver: saver)
+def initial_with(saver Saver, clipper Clipper) Model {
+  return Model.new(rows: ["", ""], row: 0, col: 0, saver: saver,
+    clipper: clipper)
 }
 
 // The buffer's `at`th row replaced: a builder, because the rows array
@@ -154,7 +203,7 @@ def inserted(m Model, s String) Model {
   const next = r.substring(0, m.col()) + s +
     r.substring(m.col(), r.length() - m.col())
   return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
-    col: m.col() + s.length(), saver: m.saver())
+    col: m.col() + s.length(), saver: m.saver(), clipper: m.clipper())
 }
 
 // Backspace: the byte before the caret, or — at the row's head — the
@@ -165,13 +214,13 @@ def backspaced(m Model) Model {
     const next = r.substring(0, m.col() - 1) +
       r.substring(m.col(), r.length() - m.col())
     return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
-      col: m.col() - 1, saver: m.saver())
+      col: m.col() - 1, saver: m.saver(), clipper: m.clipper())
   }
   if m.row() > 0 {
     const prev = m.rows()[m.row() - 1]
     const joined = rows_with(m.rows(), m.row() - 1, prev + r)
     return Model.new(rows: rows_cut(joined, m.row()), row: m.row() - 1,
-      col: prev.length(), saver: m.saver())
+      col: prev.length(), saver: m.saver(), clipper: m.clipper())
   }
   return m
 }
@@ -184,12 +233,12 @@ def deleted(m Model) Model {
     const next = r.substring(0, m.col()) +
       r.substring(m.col() + 1, r.length() - m.col() - 1)
     return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
-      col: m.col(), saver: m.saver())
+      col: m.col(), saver: m.saver(), clipper: m.clipper())
   }
   if m.row() < m.rows().length() - 1 {
     const joined = rows_with(m.rows(), m.row(), r + m.rows()[m.row() + 1])
     return Model.new(rows: rows_cut(joined, m.row() + 1), row: m.row(),
-      col: m.col(), saver: m.saver())
+      col: m.col(), saver: m.saver(), clipper: m.clipper())
   }
   return m
 }
@@ -204,7 +253,8 @@ def moved(m Model, row Int64, col Int64) Model {
   if c > len {
     c = len
   }
-  return Model.new(rows: m.rows(), row: row, col: c, saver: m.saver())
+  return Model.new(rows: m.rows(), row: row, col: c, saver: m.saver(),
+    clipper: m.clipper())
 }
 
 def left(m Model) Model {
@@ -241,11 +291,48 @@ def down(m Model) Model {
   return m
 }
 
+// The clipboard's acts, the caret's row whole until the selection
+// narrows them (A3): copy hands the row over, cut hands it over and
+// leaves the row empty with the caret at its head, paste inserts what
+// the clipboard holds. An empty paste is the no-op the empty string
+// spells — the model itself, no allocation.
+def copied(m Model) Model {
+  m.clipper().copy(m.rows()[m.row()])
+  return m
+}
+
+def cut(m Model) Model {
+  const r = m.rows()[m.row()]
+  m.clipper().copy(r)
+  return Model.new(rows: rows_with(m.rows(), m.row(), ""), row: m.row(),
+    col: 0, saver: m.saver(), clipper: m.clipper())
+}
+
+def pasted(m Model) Model {
+  const s = m.clipper().paste()
+  if s.length() == 0 {
+    return m
+  }
+  return inserted(m, s)
+}
+
 def update(key Int64, m Model) Model {
   if key == key_save {
     println("save")
     m.saver().save(m.rows())
     return m
+  }
+  if key == key_copy {
+    println("copy")
+    return copied(m)
+  }
+  if key == key_cut {
+    println("cut")
+    return cut(m)
+  }
+  if key == key_paste {
+    println("paste")
+    return pasted(m)
   }
   if key == ui.key_enter() {
     println("newline")

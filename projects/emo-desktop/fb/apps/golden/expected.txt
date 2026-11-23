@@ -27,6 +27,20 @@ home
 frame 2961670180
 del
 frame 3684468545
+copy
+frame 3684468545
+end
+frame 871385999
+paste
+frame 1288242423
+home
+frame 2347700319
+cut
+frame 545165599
+put d
+frame 3066990091
+paste
+frame 275198202
 desktop counter exit 0
 desktop files exit 0
 desktop editor exit 0

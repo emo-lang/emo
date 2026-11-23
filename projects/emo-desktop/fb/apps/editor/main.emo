@@ -13,9 +13,10 @@ require "emo/ui_fb_winbuf"
 // (A10.3): a window of its own, the loop over the window buffer's
 // surface, the printable keys inserting at the caret, Backspace and
 // Delete erasing beside it, the arrows and Home/End moving it, Enter
-// stepping the rows — `Ctrl+S` saves and `Ctrl+Q` ends the loop
-// (A33.1), the window closed behind it, the exit answering the
-// parent's wait (`app editor 0`).
+// stepping the rows — `Ctrl+C`/`Ctrl+X` copy and cut the caret's row
+// and `Ctrl+V` pastes through the machine's clipboard (M34), `Ctrl+S`
+// saves and `Ctrl+Q` ends the loop (A33.1), the window closed behind
+// it, the exit answering the parent's wait (`app editor 0`).
 
 // The interface strike, built once at boot: the Inter face at 16
 // pixels — the window's bar and the app's own labels draw in it.
@@ -83,6 +84,52 @@ def editor_saver() EditorSaver {
   return EditorSaver.new()
 }
 
+// The clipboard's metal side (emo-desktop M34): the gate's two verbs
+// over this image's scratch — the copy pokes the row into the buffer
+// and hands the gate its bytes; the paste asks for as many as fit and
+// reads them back as a String (the notification feed's own path).
+// The cap is the app's own: the corpus's row bound makes a longer
+// paste a refusal anyway.
+const clip_buf = buf + 8192
+const clip_cap = 1024
+
+def scratch_str(at Int64, n Int64) String {
+  const b = Bytes.new(n)
+  var i = 0
+  while i < n {
+    b.set(i, peek8(at + i).to_int64())
+    i = i + 1
+  }
+  return b.to_string()
+}
+
+class MetalClip {
+  def copy(s String) Void {
+    const n = poke_str(s, clip_buf)
+    case syscall.clip_set(clip_buf, n) {
+      (R.error, _) then { ui_fb_winbuf.mark() }
+      (R.ok, _) then {}
+    }
+  }
+
+  def paste() String {
+    const answer = syscall.clip_get(clip_buf, clip_cap)
+    case answer {
+      (R.error, _) then { ui_fb_winbuf.mark() }
+      (R.ok, n) then {
+        if n > 0 {
+          return scratch_str(clip_buf, n)
+        }
+      }
+    }
+    return ""
+  }
+}
+
+def metal_clip() MetalClip {
+  return MetalClip.new()
+}
+
 def main() {
   const holder = ArrayBuilder.new()
   case strike() {
@@ -140,7 +187,7 @@ def main() {
   // byte inserts, the arrows and the editing keys move and erase,
   // `Ctrl+S` saves, `Ctrl+Q` ends the loop — no tag table between
   ui.run_raw(ui_apps.editor.view, ui_apps.editor.update,
-    ui_apps.editor.initial_with(editor_saver()),
+    ui_apps.editor.initial_with(editor_saver(), metal_clip()),
     ui_fb.backend(ch, ui_fb_winbuf.keys_raw(we, fs, fx, fy, mw, mh), fs))
   we.sink(fx, fy)
   case syscall.win_close(ge) {

@@ -769,10 +769,19 @@ def make_window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64,
 }
 }
 
+// What a dock slot holds (emo-desktop A33.1): the loop's two faces —
+// a tag delivered and the tree it left — behind one interface, so a
+// table loop (`ui.App`) and a raw one (`ui.RawApp`, the editor's)
+// stand beside each other in the same slot.
+interface FaceApp {
+  def deliver(tag Int64) Void
+  def root() ui.Node
+}
+
 // An app window's frame: the card, the title strip, the tree over
 // the content area — the tree's rects, moved into the window's own
 // coordinates, the hit table a click in this window tests.
-def paint_app_window(win Win, app ui.App, f ui_fb.raster.Strike,
+def paint_app_window(win Win, app FaceApp, f ui_fb.raster.Strike,
                      name String) {
   const eye = win.eye()
   const w = eye.width()
@@ -838,7 +847,7 @@ def rect_tag(table Array[(Int64, Int64, Int64, Int64, Int64)], x Int64,
 // (the keysym names its window answers), the name on its title
 // strip.
 class Slot {
-  def init(index Int64, name String, app ui.App,
+  def init(index Int64, name String, app FaceApp,
            keys Array[(String, Int64)]) {
     self.index = index
     self.name = name
@@ -854,7 +863,7 @@ class Slot {
     return self.name
   }
 
-  def app() ui.App {
+  def app() FaceApp {
     return self.app
   }
 
@@ -1184,8 +1193,8 @@ def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
                                   app: ui.App.new(view: ui_apps.files.view, update: ui_apps.files.update, model: ui_apps.files.initial(), backend: QuietBackend.new()),
                                   keys: [("j", 0), ("k", 1), ("o", 2)]),
                                 Slot.new(index: 2, name: "editor",
-                                  app: ui.App.new(view: ui_apps.editor.view, update: ui_apps.editor.update, model: ui_apps.editor.initial(), backend: QuietBackend.new()),
-                                  keys: [("a", 0), ("b", 1), ("Return", 2), ("Left", 4), ("Right", 5), ("Up", 6), ("Down", 7), ("BackSpace", 8), ("Delete", 9)])
+                                  app: ui.RawApp.new(view: ui_apps.editor.view, update: ui_apps.editor.update, model: ui_apps.editor.initial(), backend: QuietBackend.new()),
+                                  keys: [("a", 97), ("b", 98), ("Return", 10), ("Left", ui.key_left()), ("Right", ui.key_right()), ("Up", ui.key_up()), ("Down", ui.key_down()), ("BackSpace", ui.key_backspace()), ("Delete", ui.key_delete())])
                               ]
                               const windows = Windows.new()
                               // The desktop's own routing tables: the
