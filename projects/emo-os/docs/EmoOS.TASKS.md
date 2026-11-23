@@ -169,6 +169,28 @@ takes its own typed listing. The metal proof: `chello.elf` (19,840
 bytes) answered `stat ok`, `read back: fd table on EmoOS`, `fd table
 cleaned`, `path ok`, `dir listing ok`, `rename ok`, `vfs cleaned`.
 
+### T1.2d's record (2026-11-23)
+
+The service's typed listing is verb 45, `list_dir`: the named
+directory's immediate children, each a type byte (0 file, 1
+directory), a length byte and the name, deduped in the name table's
+order, the implicit directories included. The desktop's
+`desk_list_load` loads the launcher's flat list and the current
+folder's typed list; `desk_view_build` parses the typed records (the
+prefix grouping retired), `desk_icons_refresh` and `desk_icon_press`
+reload the typed list when the view or folder moves, and the `.elf`
+catalog still reads the flat list. The syscall package grew
+`list_dir` in place; its five locks were re-pinned (`hello`,
+`counter`, `files`, `editor`, `winbuf`).
+
+The metal proof: the desktop's boot wrote `comp 0 0 884125748` (the
+golden's wallpaper pin), `desktop icons 2` and `desktop apps 5`;
+`write note.txt shell wrote this` answered `frame 624477878`, and
+`write a/one.txt first inside` answered `frame 1586168726` — both
+the golden's pins, the typed view's pixels identical to the prefix
+view's. The folder screendump's own golden run remains the pin (not
+run here).
+
 ### M1 — the POSIX substrate (the kernel and the library)
 
 The layer every C program stands on. Tasks land only as their first
@@ -200,10 +222,12 @@ consumer asks, but the order is the dependency order.
   `mkdir` and `rmdir` as verbs 42..44, and the C library switched to
   them. An implicit directory — names under a prefix — still answers
   as a directory, so the flat years' volumes keep working.
-- [ ] **T1.2d** — The desktop's typed listing: a list verb that
-  carries the type, the icons and the folder view reading it, and the
-  prefix grouping retiring from `desk_view_build`; the golden's
-  screenshots re-pinned.
+- [x] **T1.2d** — The desktop's typed listing: verb 45 `list_dir`
+  carries the type byte, the icons and the folder view read it, and
+  the prefix grouping retired from `desk_view_build`. The launcher's
+  `.elf` catalog still reads the flat list. The golden's own run is
+  the remaining pin; the boot's wallpaper and both write beats'
+  frame digests matched by hand.
 - [ ] **T1.3** — Memory: `brk` and anonymous private `mmap`/`munmap`/
   `mprotect` over the process arena; a fault past the mapping is the
   kill it is today.

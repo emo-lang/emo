@@ -3070,15 +3070,17 @@ def desk_exec_cmd(f ui_fb.raster.Strike, e Int64, n Int64, labels Array[String])
 //   entry: the name's bytes [0..24), its length at +24, its kind at +32
 //     — 0 a document, 1 a folder, 2 the `..` way up. 40 bytes, and the
 //     fs's own 64-entry table the bound the view never outgrows.
-const desk_list = 9344 // the listing's bytes, the fs's newline form
+const desk_list = 9344 // the app catalog's bytes, the fs's newline form
 const desk_list_len = 11392 // the bytes the answer wrote
-const desk_list_fold = 11400 // the listing's fold, the change detector
+const desk_list_fold = 11400 // the typed view's fold, the change detector
 const desk_view = 11408 // the view's entries
 const desk_view_count = 13968
+const desk_tmp_len = 13960 // the typed listing's bytes (the view)
+
 const desk_folder = 13976 // the current folder's prefix bytes
 const desk_folder_len = 14000
 const desk_sel = 14008 // the selected entry, -1 none
-const desk_tmp = 14016 // the re-list's scratch, the fold's input
+const desk_tmp = 14016 // the typed listing's buffer, the view's input
 // Whether a name is an app's: the `.elf` the dock's slots carry, off
 // the desktop.
 def desk_is_elf(namep Int64, nlen Int64) Bool {
@@ -3149,7 +3151,6 @@ def desk_view_has(count Int64, namep Int64, nlen Int64) Bool {
 // entries of the volume, and the view hides nothing else.
 def desk_view_build() Void {
   var count = 0
-  const flen = peek64(buf + desk_list_len)
   const folder_len = peek64(buf + desk_folder_len)
   if folder_len > 0 {
     const e = buf + desk_view
@@ -3159,70 +3160,21 @@ def desk_view_build() Void {
     poke64(e + 32, 2)
     count = 1
   }
+  // The typed listing (T1.2d): each record a kind byte, a length byte
+  // and the name, already the current folder's immediate children —
+  // the service did the grouping the view used to guess.
+  const flen = peek64(buf + desk_tmp_len)
   var pos = 0
-  while pos < flen {
-    var n = pos
-    while n < flen && peek8(buf + desk_list + n) != 10B {
-      n = n + 1
-    }
-    const nlen = n - pos
-    const namep = buf + desk_list + pos
-    if !desk_is_elf(namep, nlen) && !desk_is_wall(namep, nlen) {
-      // the first slash, or -1: the name's folder membership
-      var slash = -1
-      var k = 0
-      while k < nlen {
-        if peek8(namep + k) == 47B {
-          slash = k
-          k = nlen
-        } else {
-          k = k + 1
-        }
-      }
-      if folder_len == 0 {
-        if slash < 0 {
-          count = desk_view_put(count, namep, nlen, 0)
-        } else {
-          if !desk_view_has(count, namep, slash) {
-            count = desk_view_put(count, namep, slash, 1)
-          }
-        }
-      } else {
-        // under F: the name is F's own bytes, the slash, the child
-        var under = true
-        var k2 = 0
-        while k2 < folder_len {
-          if peek8(namep + k2) != peek8(buf + desk_folder + k2) {
-            under = false
-            k2 = folder_len
-          } else {
-            k2 = k2 + 1
-          }
-        }
-        if under && slash == folder_len && nlen > folder_len + 1 {
-          const restp = namep + folder_len + 1
-          const rest = nlen - folder_len - 1
-          var sub = -1
-          var k3 = 0
-          while k3 < rest {
-            if peek8(restp + k3) == 47B {
-              sub = k3
-              k3 = rest
-            } else {
-              k3 = k3 + 1
-            }
-          }
-          if sub < 0 {
-            count = desk_view_put(count, restp, rest, 0)
-          } else {
-            if !desk_view_has(count, restp, sub) {
-              count = desk_view_put(count, restp, sub, 1)
-            }
-          }
-        }
+  while pos + 2 <= flen {
+    const kind = peek8(buf + desk_tmp + pos).to_int64()
+    const nlen = peek8(buf + desk_tmp + pos + 1).to_int64()
+    const namep = buf + desk_tmp + pos + 2
+    if nlen > 0 {
+      if !desk_is_elf(namep, nlen) && !desk_is_wall(namep, nlen) {
+        count = desk_view_put(count, namep, nlen, kind)
       }
     }
-    pos = n + 1
+    pos = pos + 2 + nlen
   }
   poke64(buf + desk_view_count, count)
   // a selection past the view is no selection
@@ -3234,14 +3186,22 @@ def desk_view_build() Void {
 // The listing taken and its fold kept — the boot's one load, the
 // refresh's comparison the command loop's.
 def desk_list_load() Void {
+  // The launcher's catalog reads the flat list (every name; the .elf
+  // rows are its apps), the view the typed listing of the current
+  // folder (T1.2d) — the service does the grouping now.
   case syscall.file_list(buf + desk_list, 2048) {
     (R.error, _) then { mark() }
+    (R.ok, n) then { poke64(buf + desk_list_len, n) }
+  }
+  const flen = peek64(buf + desk_folder_len)
+  case syscall.list_dir(buf + desk_folder, flen, buf + desk_tmp, 2048) {
+    (R.error, _) then { mark() }
     (R.ok, n) then {
-      poke64(buf + desk_list_len, n)
+      poke64(buf + desk_tmp_len, n)
       var d = 0
       var i = 0
       while i < n {
-        d = (d * 31 + peek8(buf + desk_list + i).to_int64()) & 4294967295
+        d = (d * 31 + peek8(buf + desk_tmp + i).to_int64()) & 4294967295
         i = i + 1
       }
       poke64(buf + desk_list_fold, d)
@@ -4060,6 +4020,7 @@ def desk_icon_press(f ui_fb.raster.Strike, hit Int64) Void {
         }
       }
       poke64(buf + desk_sel, -1)
+      desk_list_load()
       desk_view_build()
       desk_wall_repaint(f)
     }
@@ -4071,7 +4032,8 @@ def desk_icon_press(f ui_fb.raster.Strike, hit Int64) Void {
 // repaint the answer. An unchanged fold is the common case, and it
 // costs one list and one fold — no present, no frame.
 def desk_icons_refresh(f ui_fb.raster.Strike) Void {
-  case syscall.file_list(buf + desk_tmp, 2048) {
+  const flen = peek64(buf + desk_folder_len)
+  case syscall.list_dir(buf + desk_folder, flen, buf + desk_tmp, 2048) {
     (R.error, _) then { mark() }
     (R.ok, n) then {
       var d = 0
@@ -4081,15 +4043,18 @@ def desk_icons_refresh(f ui_fb.raster.Strike) Void {
         i = i + 1
       }
       if d != peek64(buf + desk_list_fold) {
-        var j = 0
-        while j < n {
-          poke8(buf + desk_list + j, peek8(buf + desk_tmp + j))
-          j = j + 1
-        }
-        poke64(buf + desk_list_len, n)
+        poke64(buf + desk_tmp_len, n)
         poke64(buf + desk_list_fold, d)
         desk_view_build()
-        desk_apps_build()
+        // the launcher's catalog: the flat list, reloaded when the
+        // view moved (the apps are the .elf rows)
+        case syscall.file_list(buf + desk_list, 2048) {
+          (R.error, _) then { mark() }
+          (R.ok, m) then {
+            poke64(buf + desk_list_len, m)
+            desk_apps_build()
+          }
+        }
         desk_wall_repaint(f)
       }
     }

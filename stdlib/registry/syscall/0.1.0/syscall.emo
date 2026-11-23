@@ -469,6 +469,18 @@ def file_list(buf Int64, cap Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The typed directory listing (EmoOS plan B, T1.2d): the named
+// directory's immediate children, each a type byte (0 file, 1
+// directory), a length byte and the name; answers the bytes written.
+// The root is the empty name.
+def list_dir(name Int64, name_len Int64, buf Int64, cap Int64) (R, Int64) {
+  var answer = ecall(45, name, name_len, buf, cap, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 def file_remove(name Int64, name_len Int64) (R, Int64) {
   var answer = ecall(9, name, name_len, 0, 0, 0, 0)
   if answer >= 0 {

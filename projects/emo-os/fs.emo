@@ -710,6 +710,173 @@ def remove_dir(me Pid, blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
   return 0
 }
 
+// One entry's immediate child under `dir`, packed: kind (0 file, 1
+// directory) in bits 40.., the child's start in bits 8..15, its
+// length in bits 0..7; -1 when the entry is not the directory's
+// child. The root is the empty dir.
+def child_of(cache Int64, i Int64, dirp Int64, dlen Int64) Int64 {
+  var a = entry(cache, i)
+  var n = name_len_at(a)
+  if n == 0 {
+    return -1
+  }
+  var start = 0
+  var len = 0
+  var kind = 0
+  if dlen == 0 {
+    start = 0
+    var k = 0
+    while k < n {
+      if peek8(a + k).to_int64() == 47 {
+        k = n
+      } else {
+        k = k + 1
+      }
+    }
+    if k == n {
+      var j = 0
+      var slash = -1
+      while j < n {
+        if peek8(a + j).to_int64() == 47 {
+          slash = j
+          j = n
+        } else {
+          j = j + 1
+        }
+      }
+      if slash >= 0 {
+        len = slash
+        kind = 1
+      } else {
+        len = n
+        kind = peek8(a + c_type).to_int64()
+      }
+    } else {
+      len = k
+      kind = 1
+    }
+  } else {
+    if n <= dlen {
+      return -1
+    }
+    var same = true
+    var j = 0
+    while j < dlen {
+      if peek8(a + j).to_int64() != peek8(dirp + j).to_int64() {
+        same = false
+      }
+      j = j + 1
+    }
+    if !same {
+      return -1
+    }
+    if peek8(a + dlen).to_int64() != 47 {
+      return -1
+    }
+    start = dlen + 1
+    var k = start
+    while k < n {
+      if peek8(a + k).to_int64() == 47 {
+        k = n
+      } else {
+        k = k + 1
+      }
+    }
+    if k == n {
+      var j2 = start
+      var slash2 = -1
+      while j2 < n {
+        if peek8(a + j2).to_int64() == 47 {
+          slash2 = j2
+          j2 = n
+        } else {
+          j2 = j2 + 1
+        }
+      }
+      if slash2 >= 0 {
+        len = slash2 - start
+        kind = 1
+      } else {
+        len = n - start
+        kind = peek8(a + c_type).to_int64()
+      }
+    } else {
+      len = k - start
+      kind = 1
+    }
+  }
+  if len <= 0 {
+    return -1
+  }
+  return (kind << 40) | (start << 8) | len
+}
+
+// The immediate children of `dirp`, each as a type byte, a length
+// byte and the name — the desktop's typed view (T1.2d). Deduped in
+// the name table's order; the record the caller's buffer, the space
+// word the walk.
+def list_dir(cache Int64, dirp Int64, dlen Int64, buf Int64, cap Int64,
+             root Int64) Int64 {
+  if dlen < 0 || dlen > name_max || cap < 0 {
+    return -4
+  }
+  if dlen > 0 {
+    if path_type(cache, dirp, dlen) != 1 {
+      return -4
+    }
+  }
+  var pos = 0
+  var i = 0
+  while i < entries {
+    var c = child_of(cache, i, dirp, dlen)
+    if c >= 0 {
+      var len = c & 255
+      var start = (c >> 8) & 255
+      var kind = c >> 40
+      var seen = false
+      var j = 0
+      while j < i {
+        var p = child_of(cache, j, dirp, dlen)
+        if p >= 0 {
+          if (p & 255) == len {
+            var ps = (p >> 8) & 255
+            var a = entry(cache, i)
+            var b = entry(cache, j)
+            var same = true
+            var k = 0
+            while k < len {
+              if peek8(a + start + k).to_int64() != peek8(b + ps + k).to_int64() {
+                same = false
+              }
+              k = k + 1
+            }
+            if same {
+              seen = true
+            }
+          }
+        }
+        j = j + 1
+      }
+      if !seen {
+        if pos + 2 + len > cap {
+          return pos
+        }
+        var a2 = entry(cache, i)
+        poke8(buf_pa(buf + pos, root), kind.to_byte())
+        poke8(buf_pa(buf + pos + 1, root), len.to_byte())
+        var k = 0
+        while k < len {
+          poke8(buf_pa(buf + pos + 2 + k, root), peek8(a2 + start + k))
+          k = k + 1
+        }
+        pos = pos + 2 + len
+      }
+    }
+    i = i + 1
+  }
+  return pos
+}
+
 // ---- the open-file table (EmoOS plan B, T1.1k) ----
 
 def handle_at(i Int64) Int64 {
@@ -1078,6 +1245,10 @@ def serve_fd(me Pid, blk Pid, cache Int64, n Int64, s Int64) Int64 {
   }
   if n == 44 {
     return remove_dir(me, blk, cache, s + 64, peek64(s + 48))
+  }
+  if n == 45 {
+    return list_dir(cache, s + 64, peek64(s + 48), peek64(s + 32),
+      peek64(s + 56), peek64(s + 40))
   }
   if n == 36 {
     return handle_open(me, blk, cache, pid, fd, s + 64, peek64(s + 48),

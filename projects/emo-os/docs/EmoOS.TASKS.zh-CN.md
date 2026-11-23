@@ -58,6 +58,12 @@ C 库的 fd 表是 `c/emo_posix.c`:16 个描述符、8 个 2048 字节的文件�
 
 C 程序里的 `dir` 是真类型条目;shell 与桌面一直在写的 `a/one.txt` 隐式名字仍作为隐式目录工作。桌面的前缀视图没动——T1.2d 接管它自己的类型化列举。真机证明:`chello.elf`(19,840 字节)答 `stat ok`、`read back: fd table on EmoOS`、`fd table cleaned`、`path ok`、`dir listing ok`、`rename ok`、`vfs cleaned`。
 
+### T1.2d 的记录(2026-11-23)
+
+服务的类型化列举是动词 45 `list_dir`:命名目录的直接子项,每个是类型字节(0 文件、1 目录)、长度字节和名字,按名字表顺序去重,隐式目录也算。桌面的 `desk_list_load` 同时装启动器的平铺列表与当前文件夹的类型化列表;`desk_view_build` 解析类型化记录(前缀分组退休),`desk_icons_refresh`/`desk_icon_press` 在视图或文件夹移动时重载类型化列表,`.elf` 目录仍读平铺列表。syscall 包就地长出 `list_dir`;它的五个 lock 重新钉住(`hello`、`counter`、`files`、`editor`、`winbuf`)。
+
+真机证明:桌面启动写出 `comp 0 0 884125748`(金测的壁纸引脚)、`desktop icons 2`、`desktop apps 5`;`write note.txt shell wrote this` 答 `frame 624477878`,`write a/one.txt first inside` 答 `frame 1586168726`——两个都是金测的引脚,类型化视图的像素与前缀视图一致。文件夹 screendump 自己的金测运行仍是引脚(这里没跑)。
+
 ### M1——POSIX 底座(内核与库)
 
 每个 C 程序站立的那一层。任务只在第一个消费者提出时落地,但顺序就是依赖顺序。
@@ -67,7 +73,7 @@ C 程序里的 `dir` 是真类型条目;shell 与桌面一直在写的 `a/one.tx
 - [x] **T1.1k**——文件系统服务的打开文件表:句柄按 pid 归属,偏移与大小归服务,部分读写、追加、超过门 2048 字节的文件;句柄区放在自己的一页上,重启的 `abandon` 清掉它。
 - [x] **T1.2**——C 库的路径层:根、相对与绝对路径、`.` 与 `..`、进程的 `cwd`、`mkdir`/`rmdir`/`stat`/`rename`、`opendir`/`readdir`/`closedir`,都建在卷的平铺名字上。目录就是标记名 `dir/` 与它前缀下的名字;24 字节的平铺名上界就是切法,更长的路径答 `ENAMETOOLONG`。
 - [x] **T1.2k**——服务里的真目录条目:名字条目 `+56` 的类型字(0 文件、1 目录)、`path_type`/`mkdir`/`rmdir` 作为动词 42..44,C 库改用它们。隐式目录——前缀下的名字——仍答为目录,所以平铺年代的卷继续可用。
-- [ ] **T1.2d**——桌面的类型化列举:带类型的 list 动词、图标与文件夹视图读它、`desk_view_build` 的前缀分组退休;金测截图重新钉住。
+- [x] **T1.2d**——桌面的类型化列举:动词 45 `list_dir` 带类型字节,图标与文件夹视图读它,`desk_view_build` 的前缀分组退休。启动器 `.elf` 目录仍读平铺列表。金测自己的运行是剩下的引脚;启动壁纸与两个写节拍的 frame 摘要已手动对上。
 - [ ] **T1.3**——内存:进程 arena 上的 `brk` 与匿名私有 `mmap`/`munmap`/`mprotect`;越界访问仍是今天的击杀。
 - [ ] **T1.4**——进程:`exec` 时的 `argv`/`envp`,`fork`(复制地址空间;COW 是后续优化)、`execve`、`wait4` 状态字、进程组。
 - [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
