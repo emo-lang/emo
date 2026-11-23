@@ -149,9 +149,10 @@ class Scroll {
 }
 
 class Text {
-  def init(body String, style Style) {
+  def init(body String, style Style, mark Int64) {
     self.body = body
     self.style = style
+    self.mark = mark
   }
 
   def style() Style {
@@ -164,6 +165,16 @@ class Text {
 
   def body() String {
     return self.body
+  }
+
+  // The mark (emo-desktop M35): the byte span a backend that carries
+  // the vocabulary paints behind the body — the framebuffer's
+  // selection highlight. -1 is no mark; the pack is the start above,
+  // the length below. Every other backend paints the body plain: the
+  // mark is the one property a backend may ignore, because a selection
+  // is the painter's concern and no layout depends on it.
+  def mark() Int64 {
+    return self.mark
   }
 }
 
@@ -264,7 +275,17 @@ def scroll(children Array[Node], style Style) Node {
 }
 
 def text(body String, style Style) Node {
-  return Text.new(body: body, style: style)
+  return Text.new(body: body, style: style, mark: 0 - 1)
+}
+
+// A text whose byte span `[start, start + len)` a backend may paint
+// behind the body — the selection's highlight (emo-desktop M35). The
+// indices are the body's own bytes; a backend that does not carry the
+// vocabulary paints the body plain, which is every backend but the
+// framebuffer's.
+def marked_text(body String, start Int64, len Int64, style Style) Node {
+  return Text.new(body: body, style: style,
+    mark: (start << 32) | (len & 4294967295))
 }
 
 def button(label String, event Int64, style Style) Node {
@@ -336,6 +357,34 @@ def key_home() Int64 {
 
 def key_end() Int64 {
   return 1006
+}
+
+// The selection's extension keys (emo-desktop M35): Shift with a
+// movement. A seat that tracks the modifier answers these in place of
+// the movement's own number, so an application tells an extending move
+// from a collapsing one without seeing the modifier itself.
+def key_shift_left() Int64 {
+  return 1011
+}
+
+def key_shift_right() Int64 {
+  return 1012
+}
+
+def key_shift_up() Int64 {
+  return 1013
+}
+
+def key_shift_down() Int64 {
+  return 1014
+}
+
+def key_shift_home() Int64 {
+  return 1015
+}
+
+def key_shift_end() Int64 {
+  return 1016
 }
 
 // ---- The Elm loop (docs/emo-ui.md, Layer 5) ----

@@ -60,6 +60,10 @@ and `with_*` copies, the layout vocabulary (`Align`, and padding, gap, grow,
 width and height on the style), the `Backend` interface (`mount`/`patch`/`run`),
 and the loop: `App`, plus the `Registry` an event is tagged in. It is pure Emo,
 with no platform and no FFI, and it declares all five hosted targets.
+`marked_text` is a `Text` whose byte span a backend may paint behind the body —
+the framebuffer's selection highlight, the one property a backend is allowed to
+ignore, because a selection is the painter's concern and no layout depends on
+it.
 
 An application is a model, a pure `update`, a pure `view`, and a backend:
 

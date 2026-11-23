@@ -115,11 +115,12 @@ win_line() {
 # sessions the metal's passes run — the launcher's exec order now: the
 # counter's tile (its session whole), the browser's tile, the editor's
 # the REPL's own exec command — on the hosted canvas, one `frame
-# <digest>` line per present: twenty-three lines, the counter's mount
-# and keys, the browser's mount and keys, the editor's mount and its
-# sixteen keys (a, Enter, b, Left, Backspace, End, c, Home, Delete,
-# Copy, End, Paste, Home, Cut, d, Paste — the copy repeating the
-# delete's frame, no pixel of its own); the exits close the block as
+# <digest>` line per present: thirty lines, the counter's mount and
+# keys, the browser's mount and keys, the editor's mount and its
+# twenty-three keys (a, Enter, b, Left, Backspace, End, c, Home,
+# Delete, Copy, End, Paste, Home, Cut, d, Paste, Home, Shift+End,
+# Copy, Left, Shift+Home, x, Paste — the copy repeating the frame
+# before it, no pixel of its own); the exits close the block as
 # the desktop hears them (`desktop <name> exit 0`). The
 # assertions below read that file the way they read the windows': the
 # frames in the file's order and the folds over each app's rectangle
@@ -142,12 +143,13 @@ for d in $apps_digests; do
       ;;
   esac
 done
-if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 23 ]; then
-  echo "run.sh: $apps_expected must carry twenty-three 'frame <digest>' lines — the" >&2
+if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 30 ]; then
+  echo "run.sh: $apps_expected must carry thirty 'frame <digest>' lines — the" >&2
   echo "  launcher's session is the counter's mount and its keys (add, sub)," >&2
   echo "  the browser's mount and keys (down, open), and the editor's mount" >&2
-  echo "  and its sixteen keys (a, Enter, b, Left, Backspace, End, c, Home," >&2
-  echo "  Delete, Copy, End, Paste, Home, Cut, d, Paste)" >&2
+  echo "  and its twenty-three keys (a, Enter, b, Left, Backspace, End, c," >&2
+  echo "  Home, Delete, Copy, End, Paste, Home, Cut, d, Paste, Home, Shift+End," >&2
+  echo "  Copy, Left, Shift+Home, x, Paste)" >&2
   exit 1
 fi
 app_line() {
@@ -1910,6 +1912,31 @@ PYLOCK
   printf '\026' >&3
   await 'paste'
   await "frame $(app_line 23)"
+  # The selection (emo-desktop M35): Home, Shift+End selecting the row,
+  # Copy, Left collapsing to a caret, Shift+Home selecting the head, a
+  # byte replacing that selection, Paste behind it — the highlight the
+  # marked span the framebuffer blends behind the bytes. The shifted
+  # movements are the monitor's chords; the copy is the serial's.
+  hmp 'sendkey home'
+  await_count 'home' 2
+  await "frame $(app_line 24)"
+  hmp 'sendkey shift-end'
+  await 'sel end'
+  await "frame $(app_line 25)"
+  printf '\003' >&3
+  await_count 'copy' 2
+  hmp 'sendkey left'
+  await_count 'left' 2
+  await "frame $(app_line 27)"
+  hmp 'sendkey shift-home'
+  await 'sel home'
+  await "frame $(app_line 28)"
+  printf 'x' >&3
+  await 'put x'
+  await "frame $(app_line 29)"
+  printf '\026' >&3
+  await_count 'paste' 3
+  await "frame $(app_line 30)"
   # The bar's own hand (emo-desktop A16.5): a press beside the button
   # arms the drag, and the move-at's steps move the window with the
   # pointer — the seat's own win_move per step, the even x the blit's

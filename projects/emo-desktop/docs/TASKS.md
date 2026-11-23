@@ -2916,3 +2916,43 @@ editor's chords.
   brought to the current signatures (the demo's backdrop the package's
   gradient anchors, its art the empty array the formula has no need
   of).
+
+## M35 — the selection (opened 2026-11-23)
+
+The text kernel's second half: the caret could move and the clipboard
+could hold, and no byte could be named as a range. The model grows an
+anchor — where the selection began — with the caret its other end; a
+shift-move sets the anchor at the caret it found and moves the caret
+on, every other edit collapses it. The seat answers the movements'
+extension keys under Shift (`ui.key_shift_left` and its family), so an
+application tells an extending move from a collapsing one without
+seeing the modifier, and the corpus's acts take the selection when one
+stands: copy and cut read the selected bytes (the rows' seam a
+newline), typing, Backspace, Delete and paste replace them, and paste
+of text that would need a new row is refused rather than guessed at.
+
+The highlight is the painter's. The core's `Text` grows a mark — the
+byte span a backend may paint behind the body — and `marked_text`
+constructs one; the framebuffer blends the accent at half opacity
+through the surface's own source-over, so the canvas and the carve
+agree byte for byte. Every other backend paints the body plain: the
+mark is the one property a backend is allowed to ignore, because no
+layout depends on it. The view never puts the selection in the buffer;
+the caret's own glyph shifts the mark's indices, which is the view's
+arithmetic.
+
+- [x] **A35.1** — The selection's model, highlight and beats: the
+  editor's model grows the packed anchor (row above, column below, -1
+  none), the normalized ends, `range_deleted` (the rows' join), the
+  selected text and the per-row mark (the caret glyph's shift included);
+  `ui` grows `Text`'s mark and `marked_text` plus the six
+  `key_shift_*` constants; `ui_fb` blends the marked span behind the
+  glyphs (the pen advanced through the prefix's advances); the seat's
+  translation answers the extension keys under Shift. The goldens: the
+  apps golden's session grows Home, Shift+End, Copy, Left, Shift+Home,
+  x, Paste (the copy a duplicate frame), the fixture the interpreter's
+  bytes, and `run.sh` drives the shifted movements by the monitor's
+  chords. **Landed 2026-11-23** — five targets byte-identical, the
+  editor and boot images build for riscv64, the wayland face
+  type-checks beside them, and the locks the core's content moved
+  re-pinned.

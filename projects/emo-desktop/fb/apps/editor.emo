@@ -12,7 +12,15 @@ require "emo/ui"
 // the view's: `|` inked between the row's bytes, never in the buffer.
 // `update` says each transition (`put a`, `back`, `del`, `left`,
 // `right`, `up`, `down`, `home`, `end`, `newline`, `save`, `copy`,
-// `cut`, `paste`) and hands the save's buffer to the provider.
+// `cut`, `paste`, and `sel left` and its family).
+//
+// The selection (emo-desktop M35): Shift with a movement anchors at
+// the caret it found and moves the other end; every other edit
+// collapses it. Copy and cut take the selected bytes when one stands
+// (the rows' seam a newline) and the caret's row otherwise; typing,
+// Backspace, Delete and paste replace the selection. The highlight is
+// the view's — the marked span the framebuffer blends behind the row's
+// bytes, never in the buffer.
 //
 // The app dual-runs where hosted: the hosted families through
 // `apps/golden/`, each key the script's own number; the metal in a
@@ -104,12 +112,13 @@ def quiet_clip() QuietClip {
 
 class Model {
   def init(rows Array[String], row Int64, col Int64, saver Saver,
-           clipper Clipper) {
+           clipper Clipper, anchor Int64) {
     self.rows = rows
     self.row = row
     self.col = col
     self.saver = saver
     self.clipper = clipper
+    self.anchor = anchor
   }
 
   def saver() Saver {
@@ -131,6 +140,14 @@ class Model {
   def col() Int64 {
     return self.col
   }
+
+  // Where the selection began, packed (row above, column below), or -1
+  // when nothing is selected. The caret is the selection's other end:
+  // a shift-move sets the anchor at the caret it found and moves the
+  // caret on; every other edit collapses it.
+  def anchor() Int64 {
+    return self.anchor
+  }
 }
 
 def initial() Model {
@@ -141,7 +158,7 @@ def initial() Model {
 // door (the hosted golden takes `initial`).
 def initial_with(saver Saver, clipper Clipper) Model {
   return Model.new(rows: ["", ""], row: 0, col: 0, saver: saver,
-    clipper: clipper)
+    clipper: clipper, anchor: 0 - 1)
 }
 
 // The buffer's `at`th row replaced: a builder, because the rows array
@@ -194,6 +211,168 @@ def shown_row(m Model, i Int64) String {
     r.substring(m.col(), r.length() - m.col())
 }
 
+// ---- the selection (emo-desktop M35) ----
+//
+// A point packed row above, column below — the anchor's own word; the
+// anchor is where the selection began, the caret its other end. The
+// packed comparison is row-major because the column is under sixteen
+// bits and the row above it.
+
+def point(row Int64, col Int64) Int64 {
+  return (row << 16) | col
+}
+
+def point_row(p Int64) Int64 {
+  return p >> 16
+}
+
+def point_col(p Int64) Int64 {
+  return p & 65535
+}
+
+def has_selection(m Model) Bool {
+  if m.anchor() < 0 {
+    return false
+  }
+  return m.anchor() != point(m.row(), m.col())
+}
+
+// The selection's ends, normalized: the earlier point first.
+def sel_lo(m Model) Int64 {
+  const pc = point(m.row(), m.col())
+  if m.anchor() < pc {
+    return m.anchor()
+  }
+  return pc
+}
+
+def sel_hi(m Model) Int64 {
+  const pc = point(m.row(), m.col())
+  if m.anchor() > pc {
+    return m.anchor()
+  }
+  return pc
+}
+
+def anchored(m Model, a Int64) Model {
+  return Model.new(rows: m.rows(), row: m.row(), col: m.col(),
+    saver: m.saver(), clipper: m.clipper(), anchor: a)
+}
+
+// An unshifted move or an edit: the selection is gone.
+def collapsed(m Model) Model {
+  if m.anchor() < 0 {
+    return m
+  }
+  return anchored(m, 0 - 1)
+}
+
+// A shift-move's first step anchors at the caret it found; later steps
+// carry it (the move's own Model.new does). A move that could not
+// happen is no selection — the anchor is not invented.
+def extended_from(prev Model, next Model) Model {
+  if prev.anchor() >= 0 {
+    return next
+  }
+  if next.row() == prev.row() && next.col() == prev.col() {
+    return prev
+  }
+  return anchored(next, point(prev.row(), prev.col()))
+}
+
+// The selected bytes, the rows' seam a newline — the clipboard's text.
+def selected_text(m Model) String {
+  const lo = sel_lo(m)
+  const hi = sel_hi(m)
+  const sr = point_row(lo)
+  const sc = point_col(lo)
+  const er = point_row(hi)
+  const ec = point_col(hi)
+  if sr == er {
+    return m.rows()[sr].substring(sc, ec - sc)
+  }
+  var out = m.rows()[sr].substring(sc, m.rows()[sr].length() - sc)
+  var i = sr + 1
+  while i <= er {
+    out = out + "\n"
+    if i == er {
+      out = out + m.rows()[er].substring(0, ec)
+    } else {
+      out = out + m.rows()[i]
+    }
+    i = i + 1
+  }
+  return out
+}
+
+// The selection removed: the caret at its earlier end, the rows the
+// range spanned joined — the buffer's value discipline, a new model.
+def range_deleted(m Model) Model {
+  const lo = sel_lo(m)
+  const hi = sel_hi(m)
+  const sr = point_row(lo)
+  const sc = point_col(lo)
+  const er = point_row(hi)
+  const ec = point_col(hi)
+  if sr == er {
+    const r = m.rows()[sr]
+    const next = r.substring(0, sc) + r.substring(ec, r.length() - ec)
+    return Model.new(rows: rows_with(m.rows(), sr, next), row: sr, col: sc,
+      saver: m.saver(), clipper: m.clipper(), anchor: 0 - 1)
+  }
+  const tail = m.rows()[er]
+  const joined = m.rows()[sr].substring(0, sc) +
+    tail.substring(ec, tail.length() - ec)
+  var rows = rows_with(m.rows(), sr, joined)
+  var i = er
+  while i > sr {
+    rows = rows_cut(rows, i)
+    i = i - 1
+  }
+  return Model.new(rows: rows, row: sr, col: sc, saver: m.saver(),
+    clipper: m.clipper(), anchor: 0 - 1)
+}
+
+// Row `r`'s mark in its displayed string (the caret glyph included),
+// packed (start above, length below) or -1: the selection's indices
+// shifted by the caret's own glyph when it stands before them.
+def row_mark(m Model, r Int64) Int64 {
+  if has_selection(m) == false {
+    return 0 - 1
+  }
+  const lo = sel_lo(m)
+  const hi = sel_hi(m)
+  const sr = point_row(lo)
+  const er = point_row(hi)
+  if r < sr || r > er {
+    return 0 - 1
+  }
+  var a = 0
+  if r == sr {
+    a = point_col(lo)
+  }
+  var b = m.rows()[r].length()
+  if r == er {
+    b = point_col(hi)
+  }
+  var caret = 0 - 1
+  if r == m.row() {
+    caret = m.col()
+  }
+  var start = a
+  if caret >= 0 && a >= caret {
+    start = a + 1
+  }
+  var end = b
+  if caret >= 0 && b > caret {
+    end = b + 1
+  }
+  if end <= start {
+    return 0 - 1
+  }
+  return (start << 32) | (end - start)
+}
+
 // The insertion at the caret; a row already at the bound refuses it.
 def inserted(m Model, s String) Model {
   const r = m.rows()[m.row()]
@@ -203,7 +382,8 @@ def inserted(m Model, s String) Model {
   const next = r.substring(0, m.col()) + s +
     r.substring(m.col(), r.length() - m.col())
   return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
-    col: m.col() + s.length(), saver: m.saver(), clipper: m.clipper())
+    col: m.col() + s.length(), saver: m.saver(), clipper: m.clipper(),
+    anchor: 0 - 1)
 }
 
 // Backspace: the byte before the caret, or — at the row's head — the
@@ -214,13 +394,15 @@ def backspaced(m Model) Model {
     const next = r.substring(0, m.col() - 1) +
       r.substring(m.col(), r.length() - m.col())
     return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
-      col: m.col() - 1, saver: m.saver(), clipper: m.clipper())
+      col: m.col() - 1, saver: m.saver(), clipper: m.clipper(),
+      anchor: 0 - 1)
   }
   if m.row() > 0 {
     const prev = m.rows()[m.row() - 1]
     const joined = rows_with(m.rows(), m.row() - 1, prev + r)
     return Model.new(rows: rows_cut(joined, m.row()), row: m.row() - 1,
-      col: prev.length(), saver: m.saver(), clipper: m.clipper())
+      col: prev.length(), saver: m.saver(), clipper: m.clipper(),
+      anchor: 0 - 1)
   }
   return m
 }
@@ -233,12 +415,12 @@ def deleted(m Model) Model {
     const next = r.substring(0, m.col()) +
       r.substring(m.col() + 1, r.length() - m.col() - 1)
     return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
-      col: m.col(), saver: m.saver(), clipper: m.clipper())
+      col: m.col(), saver: m.saver(), clipper: m.clipper(), anchor: 0 - 1)
   }
   if m.row() < m.rows().length() - 1 {
     const joined = rows_with(m.rows(), m.row(), r + m.rows()[m.row() + 1])
     return Model.new(rows: rows_cut(joined, m.row() + 1), row: m.row(),
-      col: m.col(), saver: m.saver(), clipper: m.clipper())
+      col: m.col(), saver: m.saver(), clipper: m.clipper(), anchor: 0 - 1)
   }
   return m
 }
@@ -254,7 +436,7 @@ def moved(m Model, row Int64, col Int64) Model {
     c = len
   }
   return Model.new(rows: m.rows(), row: row, col: c, saver: m.saver(),
-    clipper: m.clipper())
+    clipper: m.clipper(), anchor: m.anchor())
 }
 
 def left(m Model) Model {
@@ -291,27 +473,43 @@ def down(m Model) Model {
   return m
 }
 
-// The clipboard's acts, the caret's row whole until the selection
-// narrows them (A3): copy hands the row over, cut hands it over and
-// leaves the row empty with the caret at its head, paste inserts what
-// the clipboard holds. An empty paste is the no-op the empty string
-// spells — the model itself, no allocation.
+// The clipboard's acts, the selection when one stands — the caret's
+// row whole otherwise: copy hands the bytes over (the selection stays
+// for the next act, the editor convention), cut hands them over and
+// removes them, paste inserts what the clipboard holds and replaces
+// the selection. An empty paste is the no-op the empty string spells —
+// the model itself, no allocation; a paste that would need a new row
+// is refused, not guessed at (the buffer is the two-row shape).
 def copied(m Model) Model {
-  m.clipper().copy(m.rows()[m.row()])
+  if has_selection(m) {
+    m.clipper().copy(selected_text(m))
+  } else {
+    m.clipper().copy(m.rows()[m.row()])
+  }
   return m
 }
 
 def cut(m Model) Model {
+  if has_selection(m) {
+    m.clipper().copy(selected_text(m))
+    return range_deleted(m)
+  }
   const r = m.rows()[m.row()]
   m.clipper().copy(r)
   return Model.new(rows: rows_with(m.rows(), m.row(), ""), row: m.row(),
-    col: 0, saver: m.saver(), clipper: m.clipper())
+    col: 0, saver: m.saver(), clipper: m.clipper(), anchor: 0 - 1)
 }
 
 def pasted(m Model) Model {
   const s = m.clipper().paste()
   if s.length() == 0 {
     return m
+  }
+  if s.index_of("\n") >= 0 {
+    return m
+  }
+  if has_selection(m) {
+    return inserted(range_deleted(m), s)
   }
   return inserted(m, s)
 }
@@ -336,43 +534,76 @@ def update(key Int64, m Model) Model {
   }
   if key == ui.key_enter() {
     println("newline")
-    return down(m)
+    return collapsed(down(m))
   }
   if key == ui.key_backspace() {
     println("back")
+    if has_selection(m) {
+      return range_deleted(m)
+    }
     return backspaced(m)
   }
   if key == ui.key_delete() {
     println("del")
+    if has_selection(m) {
+      return range_deleted(m)
+    }
     return deleted(m)
   }
   if key == ui.key_left() {
     println("left")
-    return left(m)
+    return collapsed(left(m))
   }
   if key == ui.key_right() {
     println("right")
-    return right(m)
+    return collapsed(right(m))
   }
   if key == ui.key_up() {
     println("up")
-    return up(m)
+    return collapsed(up(m))
   }
   if key == ui.key_down() {
     println("down")
-    return down(m)
+    return collapsed(down(m))
   }
   if key == ui.key_home() {
     println("home")
-    return moved(m, m.row(), 0)
+    return collapsed(moved(m, m.row(), 0))
   }
   if key == ui.key_end() {
     println("end")
-    return moved(m, m.row(), m.rows()[m.row()].length())
+    return collapsed(moved(m, m.row(), m.rows()[m.row()].length()))
+  }
+  if key == ui.key_shift_left() {
+    println("sel left")
+    return extended_from(m, left(m))
+  }
+  if key == ui.key_shift_right() {
+    println("sel right")
+    return extended_from(m, right(m))
+  }
+  if key == ui.key_shift_up() {
+    println("sel up")
+    return extended_from(m, up(m))
+  }
+  if key == ui.key_shift_down() {
+    println("sel down")
+    return extended_from(m, down(m))
+  }
+  if key == ui.key_shift_home() {
+    println("sel home")
+    return extended_from(m, moved(m, m.row(), 0))
+  }
+  if key == ui.key_shift_end() {
+    println("sel end")
+    return extended_from(m, moved(m, m.row(), m.rows()[m.row()].length()))
   }
   if key >= 32 && key <= 126 {
     const s = char_of(key)
     println("put ${s}")
+    if has_selection(m) {
+      return inserted(range_deleted(m), s)
+    }
     return inserted(m, s)
   }
   return m
@@ -382,7 +613,13 @@ def view(reg ui.Registry, m Model) ui.Node {
   const kids = ArrayBuilder.new()
   var i = 0
   while i < m.rows().length() {
-    kids.push(ui.text(shown_row(m, i), ui.style()))
+    const mark = row_mark(m, i)
+    if mark >= 0 {
+      kids.push(ui.marked_text(shown_row(m, i), mark >> 32,
+        mark & 4294967295, ui.style()))
+    } else {
+      kids.push(ui.text(shown_row(m, i), ui.style()))
+    }
     i = i + 1
   }
   kids.push(ui.text("row ${m.row()} col ${m.col()}", ui.style()))

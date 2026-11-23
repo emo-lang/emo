@@ -240,22 +240,43 @@ def key_byte(code Int64, shift Bool, ctrl Bool) Int64 {
   if code == 111 {
     return ui.key_delete()
   }
+  // the movements answer their extension keys under Shift (A35): the
+  // application tells an extending move from a collapsing one without
+  // seeing the modifier itself
   if code == 105 {
+    if shift {
+      return ui.key_shift_left()
+    }
     return ui.key_left()
   }
   if code == 106 {
+    if shift {
+      return ui.key_shift_right()
+    }
     return ui.key_right()
   }
   if code == 103 {
+    if shift {
+      return ui.key_shift_up()
+    }
     return ui.key_up()
   }
   if code == 108 {
+    if shift {
+      return ui.key_shift_down()
+    }
     return ui.key_down()
   }
   if code == 102 {
+    if shift {
+      return ui.key_shift_home()
+    }
     return ui.key_home()
   }
   if code == 107 {
+    if shift {
+      return ui.key_shift_end()
+    }
     return ui.key_end()
   }
   return -1

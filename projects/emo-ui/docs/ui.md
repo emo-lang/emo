@@ -31,6 +31,7 @@ def column(children Array[Node], style Style) Node
 def row(children Array[Node], style Style) Node
 def scroll(children Array[Node], style Style) Node
 def text(body String, style Style) Node
+def marked_text(body String, start Int64, len Int64, style Style) Node
 def button(label String, event Int64, style Style) Node
 def text_input(value String, style Style) Node
 def image(src String, style Style) Node
@@ -41,8 +42,13 @@ The concrete classes are `Column`, `Row`, `Scroll`, `Text`, `Button`,
 `TextInput`, `Image` and `Spacer`; each constructor function returns the
 interface type, so a tree is one `Node` value whatever it is built from.
 The classes are not invoked in a tree — every component is a lowercase
-function, and `.new` never appears. `button` is the only leaf that
-carries an event, and it carries an `Int64` tag rather than a closure:
+function, and `.new` never appears. `marked_text` is a `Text` whose
+byte span `[start, start + len)` a backend may paint behind the body —
+the framebuffer's selection highlight, the one property a backend is
+allowed to ignore (a selection is the painter's concern and no layout
+depends on it; every other backend paints the body plain). `button` is
+the only leaf that carries an event, and it carries an `Int64` tag
+rather than a closure:
 closures cannot cross the FFI, so the backend delivers one integer and
 the loop maps it back to a typed message.
 
@@ -177,7 +183,11 @@ vocabulary the raw loop's backends and applications share — the
 printable bytes, the control chords, and the arrows' numbers above 255
 — is the core's: `key_backspace`, `key_tab`, `key_enter`, `key_quit`,
 `key_delete`, `key_left`, `key_right`, `key_up`, `key_down`, `key_home`
-and `key_end`.
+and `key_end`, and the selection's extension keys `key_shift_left`,
+`key_shift_right`, `key_shift_up`, `key_shift_down`, `key_shift_home`
+and `key_shift_end` — a seat that tracks Shift answers these in place
+of the movement's own number, so an application tells an extending move
+from a collapsing one without seeing the modifier.
 
 `run` builds the `App`, hands the first tree and the loop's `Events`
 sink to `backend.mount`, and then calls `backend.run()`.

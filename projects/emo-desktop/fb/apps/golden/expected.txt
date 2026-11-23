@@ -41,6 +41,20 @@ put d
 frame 3066990091
 paste
 frame 275198202
+home
+frame 376537452
+sel end
+frame 3944575443
+copy
+frame 3944575443
+left
+frame 2012975352
+sel home
+frame 3028259158
+put x
+frame 3398664441
+paste
+frame 3086689792
 desktop counter exit 0
 desktop files exit 0
 desktop editor exit 0
