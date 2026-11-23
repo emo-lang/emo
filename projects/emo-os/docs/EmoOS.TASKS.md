@@ -132,6 +132,23 @@ The metal proof: `chello.elf` (10,336 bytes) answered `stat ok`,
 `read back: fd table on EmoOS`, `fd table cleaned`; the fresh boot
 said `installed chello.elf 10336`, `fs gen 2 files 7`, `fs ls 8`.
 
+### T1.2's record (2026-11-23)
+
+The path layer is `c/emo_posix.c`'s: `resolve` canonicalizes a path
+against the cwd (`.` skipped, `..` pops, a leading `/` starts at the
+root) into the volume's flat name; `mkdir` writes the zero-length
+marker `dir/`, `rmdir` requires it empty, `unlink` refuses it,
+`rename` copies through the fd layer, `stat` probes the size with a
+zero-cap read, and `opendir`/`readdir` parse the gate's newline list
+into the immediate children (deduped, the marker skipped). The cut is
+the 24-byte flat name and the marker directory; `T1.2k` takes real
+entries into the service.
+
+The metal proof: `chello.elf` (19,816 bytes) answered `stat ok`,
+`read back: fd table on EmoOS`, `fd table cleaned`, `path ok`,
+`dir listing ok`, `rename ok`, `vfs cleaned`; the volume was back to
+its eight files after the run.
+
 ### M1 — the POSIX substrate (the kernel and the library)
 
 The layer every C program stands on. Tasks land only as their first
@@ -152,9 +169,15 @@ consumer asks, but the order is the dependency order.
   reads and writes, append, files past the gate's 2048 bytes; the
   handle area on its own page and the restart's `abandon` clearing
   it.
-- [ ] **T1.2** — The VFS: a root, directories, path lookup, `cwd`,
-  `mkdir`/`unlink`/`rename`; the volume's flat names grow the
-  directory form, the golden's listing re-pinned.
+- [x] **T1.2** — The C library's path layer: a root, relative and
+  absolute paths, `.` and `..`, the process's `cwd`, `mkdir`/`rmdir`/
+  `stat`/`rename`, `opendir`/`readdir`/`closedir` over the volume's
+  flat names. A directory is the marker `dir/` and the names under its
+  prefix; the 24-byte flat name bound is the cut, a longer path
+  answering `ENAMETOOLONG`.
+- [ ] **T1.2k** — The service's real directory entries: a type word in
+  the name table, listings per directory, the on-disk form and the
+  golden's listing re-pinned; the desktop's prefix grouping retires.
 - [ ] **T1.3** — Memory: `brk` and anonymous private `mmap`/`munmap`/
   `mprotect` over the process arena; a fault past the mapping is the
   kill it is today.

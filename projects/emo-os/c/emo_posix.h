@@ -30,11 +30,33 @@
 #define EMO_EACCES 13
 #define EMO_ENOSPC 28
 #define EMO_EIO 5
+#define EMO_EEXIST 17
+#define EMO_ENOTDIR 20
+#define EMO_EISDIR 21
+#define EMO_ERANGE 34
+#define EMO_ENAMETOOLONG 36
+#define EMO_ENOTEMPTY 39
+
+#define EMO_PATH_MAX 24
+#define EMO_DIR_LIST 2048
 
 struct emo_stat {
   long size;
   int flags;
+  int is_dir;
 };
+
+struct emo_dirent {
+  char name[EMO_PATH_MAX + 1];
+};
+
+typedef struct emo_DIR {
+  int used;
+  long index;
+  long total;
+  char path[EMO_PATH_MAX + 1];
+  char names[EMO_DIR_LIST];
+} EMO_DIR;
 
 extern int errno;
 
@@ -45,5 +67,19 @@ long write(int fd, const void *buf, unsigned long n);
 long lseek(int fd, long off, int whence);
 int fstat(int fd, struct emo_stat *st);
 int unlink(const char *path);
+
+// The path layer (EmoOS plan B, T1.2): a root, relative and absolute
+// names, `.` and `..`, the process's cwd, and the directory calls over
+// the volume's flat names — a directory is the marker name `dir/` and
+// the names under its prefix.
+char *getcwd(char *buf, unsigned long size);
+int chdir(const char *path);
+int mkdir(const char *path, int mode);
+int rmdir(const char *path);
+int rename(const char *old_path, const char *new_path);
+int stat(const char *path, struct emo_stat *st);
+EMO_DIR *opendir(const char *path);
+struct emo_dirent *readdir(EMO_DIR *d);
+int closedir(EMO_DIR *d);
 
 #endif

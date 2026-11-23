@@ -11,6 +11,22 @@ static char second[] = "read back: ";
 static char cleaned[] = "fd table cleaned\n";
 static char stat_ok[] = "stat ok\n";
 static char stat_bad[] = "stat wrong\n";
+static char path_ok[] = "path ok\n";
+static char dir_ok[] = "dir listing ok\n";
+static char dir_bad[] = "dir listing bad\n";
+static char rename_ok[] = "rename ok\n";
+static char vfs_clean[] = "vfs cleaned\n";
+
+static int streq(const char *a, const char *b) {
+  int i = 0;
+  while (a[i] != 0 && b[i] != 0) {
+    if (a[i] != b[i]) {
+      return 0;
+    }
+    i = i + 1;
+  }
+  return a[i] == b[i];
+}
 
 int main(void) {
   char head[3];
@@ -49,5 +65,63 @@ int main(void) {
   write(1, buf, (unsigned long)n);
   write(1, cleaned, sizeof(cleaned) - 1);
   unlink(name);
+
+  // ---- the path layer (T1.2): a directory, a relative open, the
+  // cwd, the listing, a rename, and the clean-up.
+  char here[32];
+  if (mkdir("dir", 0755) != 0) {
+    write(2, "mkdir failed\n", 13);
+    return 5;
+  }
+  fd = open("dir/one.txt", EMO_O_WRONLY | EMO_O_CREAT | EMO_O_TRUNC);
+  if (fd < 0) {
+    write(2, "dir write failed\n", 17);
+    return 6;
+  }
+  write(fd, first, sizeof(first) - 1);
+  close(fd);
+  if (chdir("dir") != 0) {
+    write(2, "chdir failed\n", 13);
+    return 7;
+  }
+  if (getcwd(here, sizeof(here)) == 0 || !streq(here, "/dir")) {
+    write(2, "cwd wrong\n", 10);
+    return 8;
+  }
+  fd = open("one.txt", EMO_O_RDONLY);
+  if (fd < 0) {
+    write(2, "relative open failed\n", 21);
+    return 9;
+  }
+  n = read(fd, buf, sizeof(buf));
+  close(fd);
+  write(1, path_ok, sizeof(path_ok) - 1);
+  if (chdir("..") != 0) {
+    write(2, "chdir back failed\n", 18);
+    return 10;
+  }
+  EMO_DIR *d = opendir("dir");
+  struct emo_dirent *e = d == 0 ? 0 : readdir(d);
+  if (e == 0 || !streq(e->name, "one.txt")) {
+    write(2, dir_bad, sizeof(dir_bad) - 1);
+    return 11;
+  }
+  closedir(d);
+  write(1, dir_ok, sizeof(dir_ok) - 1);
+  if (rename("dir/one.txt", "dir/two.txt") != 0) {
+    write(2, "rename failed\n", 14);
+    return 12;
+  }
+  if (stat("dir/two.txt", &st) != 0 || st.is_dir ||
+      st.size != (long)(sizeof(first) - 1)) {
+    write(2, "rename stat failed\n", 19);
+    return 13;
+  }
+  write(1, rename_ok, sizeof(rename_ok) - 1);
+  if (unlink("dir/two.txt") != 0 || rmdir("dir") != 0) {
+    write(2, "vfs clean failed\n", 17);
+    return 14;
+  }
+  write(1, vfs_clean, sizeof(vfs_clean) - 1);
   return 0;
 }

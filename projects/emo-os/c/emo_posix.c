@@ -1,9 +1,10 @@
-// The fd surface (EmoOS plan B, T1.1/T1.1k): the kernel's open-file
-// table does the work now — the filesystem service owns each handle's
-// offset and size, so reads and writes are partial, appends land at
-// the end, and the gate's 2048-byte staging bounds a single call, not
-// the file. This library keeps only the fd numbers: which of 3..15
-// are open, and the writable bounce the console's verb wants.
+// The POSIX surface (EmoOS plan B, T1.1/T1.1k/T1.2): the fd table the
+// filesystem service owns, and the path layer over the volume's flat
+// names — a root, relative and absolute paths, `.` and `..`, the
+// process's cwd, and the directory calls. A directory is the marker
+// name `dir/` and the names under its prefix; the service still sees
+// one flat name table (T1.2k takes the real directory entries into
+// the service).
 
 #include "emo_syscall.h"
 #include "emo_posix.h"
@@ -16,6 +17,11 @@ static char name_buf[EMO_NAME_MAX];
 static char bounce[2048];
 static char read_bounce[2048];
 static char used[EMO_MAX_FD];
+static char cwd[EMO_PATH_MAX + 1] = "/";
+static char list_buf[EMO_DIR_LIST];
+static long list_total;
+static struct emo_dirent dirent;
+static EMO_DIR dirs[2];
 
 static int reason_errno(long answer) {
   if (answer == -6) {
@@ -45,22 +51,238 @@ static int fd_errno(long answer) {
   return reason_errno(answer);
 }
 
-static int name_of(const char *path, int *len) {
-  int n = 0;
-  while (n < EMO_NAME_MAX && path[n] != 0) {
+static unsigned long slen(const char *s) {
+  unsigned long n = 0;
+  while (s[n] != 0) {
     n = n + 1;
   }
-  if (n == 0 || n >= EMO_NAME_MAX) {
+  return n;
+}
+
+static int seq(const char *a, const char *b) {
+  unsigned long i = 0;
+  while (a[i] != 0 && b[i] != 0) {
+    if (a[i] != b[i]) {
+      return 0;
+    }
+    i = i + 1;
+  }
+  return a[i] == b[i];
+}
+
+static void scopy(char *dst, const char *src, unsigned long cap) {
+  unsigned long i = 0;
+  while (src[i] != 0 && i + 1 < cap) {
+    dst[i] = src[i];
+    i = i + 1;
+  }
+  dst[i] = 0;
+}
+
+static int line_eq(const char *line, unsigned long len, const char *name,
+                   unsigned long nlen) {
+  if (len != nlen) {
     return 0;
   }
-  *len = n;
+  unsigned long i = 0;
+  while (i < len) {
+    if (line[i] != name[i]) {
+      return 0;
+    }
+    i = i + 1;
+  }
   return 1;
 }
 
-int open(const char *path, int flags) {
-  int nlen = 0;
-  if (!name_of(path, &nlen)) {
-    errno = EMO_EINVAL;
+// The canonical volume name: no leading slash, no trailing slash, the
+// root the empty string. A relative path starts at the cwd's tail.
+static int resolve(const char *path, char *out, unsigned long cap) {
+  unsigned long n = 0;
+  if (path[0] != '/') {
+    const char *base = cwd + 1;
+    unsigned long i = 0;
+    while (base[i] != 0) {
+      if (n + 1 >= cap) {
+        errno = EMO_ENAMETOOLONG;
+        return -1;
+      }
+      out[n] = base[i];
+      n = n + 1;
+      i = i + 1;
+    }
+  }
+  unsigned long i = 0;
+  while (path[i] != 0) {
+    while (path[i] == '/') {
+      i = i + 1;
+    }
+    if (path[i] == 0) {
+      break;
+    }
+    unsigned long start = i;
+    while (path[i] != 0 && path[i] != '/') {
+      i = i + 1;
+    }
+    unsigned long len = i - start;
+    if (len == 1 && path[start] == '.') {
+      continue;
+    }
+    if (len == 2 && path[start] == '.' && path[start + 1] == '.') {
+      unsigned long k = n;
+      while (k > 0 && out[k - 1] != '/') {
+        k = k - 1;
+      }
+      if (k > 0) {
+        n = k - 1;
+      } else {
+        n = 0;
+      }
+      continue;
+    }
+    if (n > 0) {
+      if (n + 1 >= cap) {
+        errno = EMO_ENAMETOOLONG;
+        return -1;
+      }
+      out[n] = '/';
+      n = n + 1;
+    }
+    if (n + len >= cap) {
+      errno = EMO_ENAMETOOLONG;
+      return -1;
+    }
+    unsigned long j = 0;
+    while (j < len) {
+      out[n] = path[start + j];
+      n = n + 1;
+      j = j + 1;
+    }
+  }
+  out[n] = 0;
+  return 0;
+}
+
+static int list_load(void) {
+  long answer = emo_file_list(list_buf, sizeof(list_buf));
+  if (answer < 0) {
+    errno = reason_errno(answer);
+    return -1;
+  }
+  list_total = answer;
+  return 0;
+}
+
+// The line at list_buf[start..start+len): does it name `dir/...`? The
+// marker `dir/` itself matches; a plain file `dir` does not.
+static int under(const char *line, unsigned long len, const char *dir,
+                 unsigned long plen) {
+  if (plen == 0) {
+    return 1;
+  }
+  if (len <= plen) {
+    return 0;
+  }
+  unsigned long i = 0;
+  while (i < plen) {
+    if (line[i] != dir[i]) {
+      return 0;
+    }
+    i = i + 1;
+  }
+  return line[plen] == '/';
+}
+
+static int dir_exists(const char *dir) {
+  unsigned long plen = slen(dir);
+  if (plen == 0) {
+    return 1;
+  }
+  if (list_load() != 0) {
+    return -1;
+  }
+  unsigned long pos = 0;
+  while (pos < (unsigned long)list_total) {
+    unsigned long start = pos;
+    while (pos < (unsigned long)list_total && list_buf[pos] != '\n') {
+      pos = pos + 1;
+    }
+    unsigned long len = pos - start;
+    if (pos < (unsigned long)list_total) {
+      pos = pos + 1;
+    }
+    if (under(list_buf + start, len, dir, plen)) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int file_exists(const char *name) {
+  unsigned long nlen = slen(name);
+  if (list_load() != 0) {
+    return -1;
+  }
+  unsigned long pos = 0;
+  while (pos < (unsigned long)list_total) {
+    unsigned long start = pos;
+    while (pos < (unsigned long)list_total && list_buf[pos] != '\n') {
+      pos = pos + 1;
+    }
+    unsigned long len = pos - start;
+    if (pos < (unsigned long)list_total) {
+      pos = pos + 1;
+    }
+    if (line_eq(list_buf + start, len, name, nlen)) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int parent_exists(const char *full) {
+  unsigned long n = slen(full);
+  unsigned long k = n;
+  while (k > 0 && full[k - 1] != '/') {
+    k = k - 1;
+  }
+  if (k == 0) {
+    return 1;
+  }
+  char parent[EMO_PATH_MAX + 1];
+  unsigned long plen = k - 1;
+  unsigned long i = 0;
+  while (i < plen) {
+    parent[i] = full[i];
+    i = i + 1;
+  }
+  parent[plen] = 0;
+  return dir_exists(parent) > 0;
+}
+
+static int path_exists_guard(const char *full) {
+  int d = dir_exists(full);
+  if (d != 0) {
+    return 1;
+  }
+  return file_exists(full) != 0;
+}
+
+static int put_name(const char *name, unsigned long nlen) {
+  if (nlen < 1 || nlen > EMO_NAME_MAX) {
+    errno = EMO_ENAMETOOLONG;
+    return -1;
+  }
+  unsigned long i = 0;
+  while (i < nlen) {
+    name_buf[i] = name[i];
+    i = i + 1;
+  }
+  return 0;
+}
+
+static int open_name(const char *full, int flags) {
+  unsigned long nlen = slen(full);
+  if (put_name(full, nlen) != 0) {
     return -1;
   }
   int fd = 3;
@@ -71,18 +293,46 @@ int open(const char *path, int flags) {
     errno = EMO_EMFILE;
     return -1;
   }
-  int i = 0;
-  while (i < nlen) {
-    name_buf[i] = path[i];
-    i = i + 1;
-  }
-  long answer = emo_fd_open(fd, name_buf, (unsigned long)nlen, flags);
+  long answer = emo_fd_open(fd, name_buf, nlen, flags);
   if (answer < 0) {
     errno = reason_errno(answer);
     return -1;
   }
   used[fd] = 1;
   return fd;
+}
+
+static int remove_name(const char *full) {
+  unsigned long nlen = slen(full);
+  if (put_name(full, nlen) != 0) {
+    return -1;
+  }
+  long answer = emo_file_remove(name_buf, nlen);
+  if (answer < 0) {
+    errno = reason_errno(answer);
+    return -1;
+  }
+  return 0;
+}
+
+int open(const char *path, int flags) {
+  char full[EMO_PATH_MAX + 1];
+  if (resolve(path, full, sizeof(full)) != 0) {
+    return -1;
+  }
+  if (full[0] == 0) {
+    errno = EMO_EISDIR;
+    return -1;
+  }
+  if (dir_exists(full) > 0) {
+    errno = EMO_EISDIR;
+    return -1;
+  }
+  if (!parent_exists(full)) {
+    errno = EMO_ENOENT;
+    return -1;
+  }
+  return open_name(full, flags);
 }
 
 int close(int fd) {
@@ -218,24 +468,347 @@ int fstat(int fd, struct emo_stat *st) {
   }
   st->size = answer >> 32;
   st->flags = (int)(answer & 4294967295);
+  st->is_dir = 0;
   return 0;
 }
 
 int unlink(const char *path) {
-  int nlen = 0;
-  if (!name_of(path, &nlen)) {
-    errno = EMO_EINVAL;
+  char full[EMO_PATH_MAX + 1];
+  if (resolve(path, full, sizeof(full)) != 0) {
     return -1;
   }
-  int i = 0;
-  while (i < nlen) {
-    name_buf[i] = path[i];
+  if (full[0] == 0) {
+    errno = EMO_EISDIR;
+    return -1;
+  }
+  if (dir_exists(full) != 0) {
+    errno = EMO_EISDIR;
+    return -1;
+  }
+  if (file_exists(full) != 1) {
+    errno = EMO_ENOENT;
+    return -1;
+  }
+  return remove_name(full);
+}
+
+char *getcwd(char *buf, unsigned long size) {
+  unsigned long n = slen(cwd);
+  if (size < n + 1) {
+    errno = EMO_ERANGE;
+    return 0;
+  }
+  scopy(buf, cwd, size);
+  return buf;
+}
+
+int chdir(const char *path) {
+  char full[EMO_PATH_MAX + 1];
+  if (resolve(path, full, sizeof(full)) != 0) {
+    return -1;
+  }
+  if (full[0] == 0) {
+    cwd[0] = '/';
+    cwd[1] = 0;
+    return 0;
+  }
+  if (dir_exists(full) != 1) {
+    errno = EMO_ENOENT;
+    return -1;
+  }
+  cwd[0] = '/';
+  unsigned long i = 0;
+  while (full[i] != 0) {
+    cwd[i + 1] = full[i];
     i = i + 1;
   }
-  long answer = emo_file_remove(name_buf, (unsigned long)nlen);
+  cwd[i + 1] = 0;
+  return 0;
+}
+
+int mkdir(const char *path, int mode) {
+  (void)mode;
+  char full[EMO_PATH_MAX + 1];
+  if (resolve(path, full, sizeof(full)) != 0) {
+    return -1;
+  }
+  if (full[0] == 0) {
+    errno = EMO_EEXIST;
+    return -1;
+  }
+  if (path_exists_guard(full)) {
+    errno = EMO_EEXIST;
+    return -1;
+  }
+  if (!parent_exists(full)) {
+    errno = EMO_ENOENT;
+    return -1;
+  }
+  unsigned long nlen = slen(full);
+  if (nlen + 1 > EMO_NAME_MAX) {
+    errno = EMO_ENAMETOOLONG;
+    return -1;
+  }
+  if (put_name(full, nlen) != 0) {
+    return -1;
+  }
+  name_buf[nlen] = '/';
+  long answer = emo_file_write(name_buf, nlen + 1, name_buf, 0);
   if (answer < 0) {
     errno = reason_errno(answer);
     return -1;
   }
+  return 0;
+}
+
+int rmdir(const char *path) {
+  char full[EMO_PATH_MAX + 1];
+  if (resolve(path, full, sizeof(full)) != 0) {
+    return -1;
+  }
+  if (full[0] == 0) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  if (dir_exists(full) != 1) {
+    errno = EMO_ENOENT;
+    return -1;
+  }
+  if (list_load() != 0) {
+    return -1;
+  }
+  unsigned long plen = slen(full);
+  unsigned long pos = 0;
+  while (pos < (unsigned long)list_total) {
+    unsigned long start = pos;
+    while (pos < (unsigned long)list_total && list_buf[pos] != '\n') {
+      pos = pos + 1;
+    }
+    unsigned long len = pos - start;
+    if (pos < (unsigned long)list_total) {
+      pos = pos + 1;
+    }
+    if (under(list_buf + start, len, full, plen)) {
+      if (len > plen + 1) {
+        errno = EMO_ENOTEMPTY;
+        return -1;
+      }
+    }
+  }
+  if (put_name(full, plen) != 0) {
+    return -1;
+  }
+  name_buf[plen] = '/';
+  long answer = emo_file_remove(name_buf, plen + 1);
+  if (answer < 0) {
+    errno = reason_errno(answer);
+    return -1;
+  }
+  return 0;
+}
+
+int rename(const char *old_path, const char *new_path) {
+  char old_full[EMO_PATH_MAX + 1];
+  char new_full[EMO_PATH_MAX + 1];
+  if (resolve(old_path, old_full, sizeof(old_full)) != 0) {
+    return -1;
+  }
+  if (resolve(new_path, new_full, sizeof(new_full)) != 0) {
+    return -1;
+  }
+  if (old_full[0] == 0 || new_full[0] == 0) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  if (seq(old_full, new_full)) {
+    return 0;
+  }
+  if (dir_exists(old_full) != 0 || dir_exists(new_full) != 0) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  if (file_exists(old_full) != 1) {
+    errno = EMO_ENOENT;
+    return -1;
+  }
+  if (!parent_exists(new_full)) {
+    errno = EMO_ENOENT;
+    return -1;
+  }
+  int src = open_name(old_full, EMO_O_RDONLY);
+  if (src < 0) {
+    return -1;
+  }
+  int dst = open_name(new_full, EMO_O_WRONLY | EMO_O_CREAT | EMO_O_TRUNC);
+  if (dst < 0) {
+    close(src);
+    return -1;
+  }
+  char buf[512];
+  long n = 0;
+  int failed = 0;
+  while ((n = read(src, buf, sizeof(buf))) > 0) {
+    if (write(dst, buf, (unsigned long)n) != n) {
+      failed = 1;
+      break;
+    }
+  }
+  if (n < 0) {
+    failed = 1;
+  }
+  if (close(dst) != 0) {
+    failed = 1;
+  }
+  if (close(src) != 0) {
+    failed = 1;
+  }
+  if (failed) {
+    return -1;
+  }
+  return remove_name(old_full);
+}
+
+int stat(const char *path, struct emo_stat *st) {
+  char full[EMO_PATH_MAX + 1];
+  if (resolve(path, full, sizeof(full)) != 0) {
+    return -1;
+  }
+  if (full[0] == 0 || dir_exists(full) > 0) {
+    st->size = 0;
+    st->flags = 0;
+    st->is_dir = 1;
+    return 0;
+  }
+  if (file_exists(full) != 1) {
+    errno = EMO_ENOENT;
+    return -1;
+  }
+  unsigned long nlen = slen(full);
+  if (put_name(full, nlen) != 0) {
+    return -1;
+  }
+  long answer = emo_file_read(name_buf, nlen, list_buf, 0);
+  if (answer < 0) {
+    errno = reason_errno(answer);
+    return -1;
+  }
+  st->size = answer;
+  st->flags = 0;
+  st->is_dir = 0;
+  return 0;
+}
+
+EMO_DIR *opendir(const char *path) {
+  char full[EMO_PATH_MAX + 1];
+  if (resolve(path, full, sizeof(full)) != 0) {
+    return 0;
+  }
+  if (full[0] != 0 && dir_exists(full) != 1) {
+    errno = EMO_ENOENT;
+    return 0;
+  }
+  int i = 0;
+  while (i < 2 && dirs[i].used) {
+    i = i + 1;
+  }
+  if (i == 2) {
+    errno = EMO_EMFILE;
+    return 0;
+  }
+  EMO_DIR *d = &dirs[i];
+  d->used = 1;
+  d->index = 0;
+  scopy(d->path, full, sizeof(d->path));
+  long answer = emo_file_list(d->names, sizeof(d->names));
+  if (answer < 0) {
+    d->used = 0;
+    errno = reason_errno(answer);
+    return 0;
+  }
+  d->total = answer;
+  return d;
+}
+
+struct emo_dirent *readdir(EMO_DIR *d) {
+  if (d == 0 || !d->used) {
+    errno = EMO_EBADF;
+    return 0;
+  }
+  unsigned long plen = slen(d->path);
+  long pos = d->index;
+  while (pos < d->total) {
+    long start = pos;
+    while (pos < d->total && d->names[pos] != '\n') {
+      pos = pos + 1;
+    }
+    long len = pos - start;
+    if (pos < d->total) {
+      pos = pos + 1;
+    }
+    long child = 0;
+    if (plen > 0) {
+      if (!under(d->names + start, (unsigned long)len, d->path, plen)) {
+        continue;
+      }
+      child = (long)plen + 1;
+    }
+    long clen = 0;
+    while (child + clen < len && d->names[start + child + clen] != '/') {
+      clen = clen + 1;
+    }
+    if (clen == 0) {
+      continue;
+    }
+    int seen = 0;
+    long q = 0;
+    while (q < start) {
+      long s2 = q;
+      while (q < d->total && d->names[q] != '\n') {
+        q = q + 1;
+      }
+      long l2 = q - s2;
+      if (q < d->total) {
+        q = q + 1;
+      }
+      long c2 = 0;
+      if (plen > 0) {
+        if (!under(d->names + s2, (unsigned long)l2, d->path, plen)) {
+          continue;
+        }
+        c2 = (long)plen + 1;
+      }
+      long k2 = 0;
+      while (c2 + k2 < l2 && d->names[s2 + c2 + k2] != '/') {
+        k2 = k2 + 1;
+      }
+      if (k2 == clen &&
+          line_eq(d->names + s2 + c2, (unsigned long)k2,
+                  d->names + start + child, (unsigned long)clen)) {
+        seen = 1;
+        break;
+      }
+    }
+    if (seen) {
+      continue;
+    }
+    long k = 0;
+    while (k < clen) {
+      dirent.name[k] = d->names[start + child + k];
+      k = k + 1;
+    }
+    dirent.name[clen] = 0;
+    d->index = pos;
+    return &dirent;
+  }
+  d->index = pos;
+  return 0;
+}
+
+int closedir(EMO_DIR *d) {
+  if (d == 0 || !d->used) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  d->used = 0;
   return 0;
 }

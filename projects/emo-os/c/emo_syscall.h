@@ -53,6 +53,12 @@ static inline long emo_file_read(const void *name, unsigned long nlen,
   return emo_ecall(7, (long)name, (long)nlen, (long)buf, (long)cap, 0, 0);
 }
 
+// Verb 8: the names, each followed by a newline, land at buf; the
+// answer is the bytes written.
+static inline long emo_file_list(void *buf, unsigned long cap) {
+  return emo_ecall(8, (long)buf, (long)cap, 0, 0, 0, 0);
+}
+
 // Verb 9: the file is gone.
 static inline long emo_file_remove(const void *name, unsigned long nlen) {
   return emo_ecall(9, (long)name, (long)nlen, 0, 0, 0, 0);
