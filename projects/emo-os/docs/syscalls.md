@@ -99,6 +99,12 @@ undocumented ever acts.
 | 51 | `getpgid(pid)` | the group the pid carries, its own pid when the byte is 0; the same authority as `setpgid`; answers the group (EmoOS plan B, T1.4b1) |
 | 52 | `fork(ctx, entry)` | the caller's saved context and resume entry; the child's image, stack, arena and grown blocks are copied and mapped at the caller's virtual bases, and the child returns from `fork` with 0 — the parent with the child's pid. Only an exec'd image may fork; the entry must sit in an executable segment (EmoOS plan B, T1.4b2) |
 | 54 | `execve(name, name_len, args, args_len, env, env_len)` | the caller's image replaced in place: the name and both texts (args at most 512 bytes, env at most 256, split at spaces) stage, the process service loads the new image on a fresh stack and arena, and the runtime reaps the old image, stack, arena and grown blocks and starts the same pid at the new entry. `argv[0]` is the name; the envp is the text's words. Never returns on success; a refusal is a reason (EmoOS plan B, T1.4b3b) |
+| 55 | `pipe_bind(rfd, wfd)` | two fresh ends of a new pipe, bound to the caller's descriptors — `rfd` the read end, `wfd` the write end; whatever bindings the two fds carried are dropped first. Answers the pipe's id, or a reason (a full table); the library's `pipe` picks the numbers (EmoOS plan B, T1.5) |
+| 56 | `pipe_read(fd, buf, cap)` | the ring's bytes into the caller's buffer, at most `cap` (2048 the gate's bound); blocks on an empty ring a writer may still fill, and answers 0 the moment no writer is left — the last writer's close is EOF. A descriptor that is no read end is reason 4 (EmoOS plan B, T1.5) |
+| 57 | `pipe_probe(fd)` | 0 when the descriptor is no pipe, 1 the read end, 2 the write end — the gate's own peek of the binding map, no service between. The library asks once per fd and caches the answer, so an exec'd image's fresh table finds the low ends its predecessor redirected (EmoOS plan B, T1.5) |
+| 58 | `pipe_write(fd, buf, len)` | the caller's bytes into the ring, what its room takes this pass (the partial answer POSIX gives past a buffer); a full ring parks the writer until a read or a close frees room, and no reader at all answers the broken pipe (EmoOS plan B, T1.5) |
+| 59 | `pipe_dup(oldfd, newfd)` | the pipe end the old fd names, the new fd's — the binding at `newfd` dropped first, the pipe's count one higher. The library's `dup2` has already dropped whatever file the new fd held; answers 0 or a reason (EmoOS plan B, T1.5) |
+| 60 | `pipe_close(fd)` | one end's holder gone: the last writer's close is the readers' EOF, the last reader's the writers' broken pipe, and both ends' the pipe's own end. A descriptor that is no pipe end is reason 4 (EmoOS plan B, T1.5) |
 
 The fd and path verbs share the filesystem's four request slots; the
 slot's `+88` marker selects the open-file table and the path calls,
@@ -114,6 +120,21 @@ tail at 0x8700b900: verb 48's args at the page's `+64` (512 bytes),
 verb 54's env at 0x8700b900 (256 bytes) — clear of the console's
 per-pid cells. The exec's use flag names the door: 0 plain, 1 args,
 2 replace.
+
+The pipe family (verbs 55..60, EmoOS plan B, T1.5) is the process
+service's second arm: the gate stages each request in the calling
+pid's record on `.emo_pipe`'s request page (op, fd, the second fd, the
+buffer, the length, the caller's space word) and routes op 40..44; the
+service — the one green thread that mutates the pipe tables — serves
+it, or holds the caller in gate-wait until a peer's read, write or
+close makes it servable. The verbs 55 and 57 answer inside the gate
+(the bind and the probe need no wake); 56, 58, 59 and 60 ride the
+route because every one of them can wake a parked peer, and the reply
+that wakes it is the service's to give. The binding map is one byte a
+descriptor: 0 no pipe, `0x10 | id` a read end, `0x20 | id` a write
+end; eight pipe blocks carry the two ends' counts, the ring's cursors
+and 768 bytes, and the four parked readers and four parked writers a
+block keeps.
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -568,6 +589,12 @@ The filesystem's pages (T7.2, `.emo_fs`, three pages from
 supervisor's pid cell the runtime's death notice posts to, the stash,
 and the four request slots the gate fills; the layout is in
 [`docs/fs.md`](fs.md).
+
+The pipes' pages (T1.5, `.emo_pipe`, six pages from `0x87010000`):
+the binding map (one byte per pid and fd, 256 pids of sixteen), the
+per-pid request records the gate stages (48 bytes each), and the eight
+pipe blocks of 1024 bytes (the counts, the cursors, the parked ends'
+pids, the 768-byte ring).
 
 The clipboard's page (T15.1, `.emo_clip`) sits a page above the
 notification service's at `0x87007000`, its bytes up to the page's

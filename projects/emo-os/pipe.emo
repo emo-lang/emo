@@ -1,0 +1,502 @@
+// The pipes (EmoOS plan B, T1.5): the kernel's byte channels between
+// processes — a pipe is two bound descriptor ends (one read, one
+// write), a ring of bytes between them, and the readers and writers
+// parked on it. The state lives on fixed pages above the filesystem's
+// growth page, the services' own shape: a per-(pid, fd) binding map,
+// the per-pid request records the gate stages, and eight pipe blocks.
+// The process service owns every mutation — it is the one green thread
+// that runs them in order, so no two clients mutate a count at once —
+// and the read and write verbs park their caller when the ring cannot
+// serve them, the wait's own gate-wait: the service keeps the pid and
+// answers later, when a peer's write, read or close makes the request
+// servable. A pipe end closes when its last holder does: the close
+// verb, the fork's copied ends, the exec's dropped high fds, and the
+// exit's walk all decrement the same counts, and the last writer's
+// close is the reader's EOF.
+//
+// The library's own table names no pipe: a descriptor is a pipe only if
+// the kernel's binding map says so, and the library asks once per fd
+// (verb 57 pipe_probe) and caches the answer — the execve's fresh image
+// finds the fds 0..2 its predecessor redirected by asking again.
+//
+// The bindings survive a fork (the process service copies them to the
+// child's pid) and an exec (the lows 0..2, a pipeline's standard
+// ends); the high fds are dropped at the exec, because the new image's
+// fresh library table cannot name them and a stale end would hold a
+// peer's pipe open forever.
+//
+// The untyped-memory discipline as everywhere: Int64 addresses,
+// peek/poke, bit masks, every def fully typed — the mutators run in
+// the service, the gate's probe and staging inside the trap.
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+
+// The binding map: one byte per (pid, fd) — 0 no pipe, 0x10 | id a
+// read end, 0x20 | id a write end. 256 pids of sixteen fds.
+const pipe_map = koff + 0x87010000
+const pipe_fd_count = 16
+const pipe_pid_bound = 256
+
+// The request records: the gate stages the calling pid's next pipe
+// request here inside the trap that checked it, and the process
+// service reads it at the pickup. The record stays untouched while
+// the caller parks, so its second serving needs no copy.
+const pipe_reqs = koff + 0x87011000
+const pipe_req_stride = 48
+const pipe_rq_op = 0
+const pipe_rq_fd = 8
+const pipe_rq_fd2 = 16
+const pipe_rq_buf = 24
+const pipe_rq_len = 32
+const pipe_rq_space = 40
+
+// The pipes: eight blocks of 1024 bytes. The control words fill the
+// first 256 bytes, the data ring the rest — three quarters of a
+// kilobyte, the shell's lines and a program's short output many times
+// over.
+const pipe_base = koff + 0x87014000
+const pipe_count = 8
+const pipe_stride = 1024
+const pipe_ring = 256
+const pipe_ring_size = 768
+
+const pipe_p_used = 0
+const pipe_p_readers = 8
+const pipe_p_writers = 16
+const pipe_p_head = 24
+const pipe_p_tail = 32
+const pipe_p_fill = 40
+const pipe_p_rd_n = 48
+const pipe_p_rd_pids = 56
+const pipe_p_wr_n = 88
+const pipe_p_wr_pids = 96
+const pipe_wait_max = 4
+
+const pipe_bind_read = 0x10
+const pipe_bind_write = 0x20
+const pipe_bind_mask = 0x30
+const pipe_bind_id = 0x07
+
+// The service's ops, the gate's records: the request word the shim
+// posts carries one of these above the caller's pid.
+const pipe_op_bind = 40
+const pipe_op_read = 41
+const pipe_op_write = 42
+const pipe_op_dup = 43
+const pipe_op_close = 44
+
+// The answers the verbs carry home: the fd reason the gate's own verbs
+// share, and the broken pipe a write to a readerless pipe answers
+// (T1.6's signal will grow out of it).
+const pipe_reason_badf = -4
+const pipe_reason_full = -5
+const pipe_reason_epipe = -32
+
+def pipe_block(id Int64) Int64 {
+  return pipe_base + id * pipe_stride
+}
+
+def pipe_bind_at(pid Int64, fd Int64) Int64 {
+  return pipe_map + pid * pipe_fd_count + fd
+}
+
+def pipe_binding(pid Int64, fd Int64) Int64 {
+  if pid < 0 || pid >= pipe_pid_bound {
+    return 0
+  }
+  if fd < 0 || fd >= pipe_fd_count {
+    return 0
+  }
+  return peek8(pipe_bind_at(pid, fd)).to_int64()
+}
+
+def pipe_bind_set(pid Int64, fd Int64, v Int64) Void {
+  poke8(pipe_bind_at(pid, fd), v.to_byte())
+}
+
+// The gate's staging: the request record the process service reads.
+def pipe_stage(pid Int64, op Int64, fd Int64, fd2 Int64, buf Int64,
+               len Int64, space Int64) Void {
+  var r = pipe_reqs + pid * pipe_req_stride
+  poke64(r + pipe_rq_op, op)
+  poke64(r + pipe_rq_fd, fd)
+  poke64(r + pipe_rq_fd2, fd2)
+  poke64(r + pipe_rq_buf, buf)
+  poke64(r + pipe_rq_len, len)
+  poke64(r + pipe_rq_space, space)
+}
+
+// One free pipe block, its control words cleared: the id, or -1.
+def pipe_new() Int64 {
+  var i = 0
+  while i < pipe_count {
+    var b = pipe_block(i)
+    if peek64(b + pipe_p_used) == 0 {
+      var w = 0
+      while w < 32 {
+        poke64(b + (w * 8), 0)
+        w = w + 1
+      }
+      poke64(b + pipe_p_used, 1)
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+def pipe_ref_add(b Int64, kind Int64) Void {
+  if kind == pipe_bind_read {
+    poke64(b + pipe_p_readers, peek64(b + pipe_p_readers) + 1)
+  } else {
+    poke64(b + pipe_p_writers, peek64(b + pipe_p_writers) + 1)
+  }
+}
+
+def pipe_ref_drop(b Int64, kind Int64) Void {
+  if kind == pipe_bind_read {
+    poke64(b + pipe_p_readers, peek64(b + pipe_p_readers) - 1)
+  } else {
+    poke64(b + pipe_p_writers, peek64(b + pipe_p_writers) - 1)
+  }
+}
+
+// The parked waiters: a small queue of pids a pipe keeps, each a
+// request the service could not serve yet. A full queue is the
+// service's loud end — four parked readers on one pipe is a program
+// shape this machine does not carry.
+def pipe_rd_push(b Int64, p Int64) Void {
+  var n = peek64(b + pipe_p_rd_n)
+  if n >= pipe_wait_max {
+    println("pipe: the reader queue is full")
+    halt()
+  }
+  poke64(b + pipe_p_rd_pids + (n * 8), p)
+  poke64(b + pipe_p_rd_n, n + 1)
+}
+
+def pipe_wr_push(b Int64, p Int64) Void {
+  var n = peek64(b + pipe_p_wr_n)
+  if n >= pipe_wait_max {
+    println("pipe: the writer queue is full")
+    halt()
+  }
+  poke64(b + pipe_p_wr_pids + (n * 8), p)
+  poke64(b + pipe_p_wr_n, n + 1)
+}
+
+def pipe_rd_remove(b Int64, i Int64) Void {
+  var n = peek64(b + pipe_p_rd_n)
+  var j = i
+  while j + 1 < n {
+    poke64(b + pipe_p_rd_pids + (j * 8),
+      peek64(b + pipe_p_rd_pids + ((j + 1) * 8)))
+    j = j + 1
+  }
+  poke64(b + pipe_p_rd_n, n - 1)
+}
+
+def pipe_wr_remove(b Int64, i Int64) Void {
+  var n = peek64(b + pipe_p_wr_n)
+  var j = i
+  while j + 1 < n {
+    poke64(b + pipe_p_wr_pids + (j * 8),
+      peek64(b + pipe_p_wr_pids + ((j + 1) * 8)))
+    j = j + 1
+  }
+  poke64(b + pipe_p_wr_n, n - 1)
+}
+
+// The ring's two ends, the caller's memory walked through its own
+// table (`space` is the root the gate staged): one volatile byte load
+// and store per step, the fs service's discipline.
+def pipe_ring_put(b Int64, src Int64, n Int64, space Int64) Void {
+  var tail = peek64(b + pipe_p_tail)
+  var i = 0
+  while i < n {
+    var at = tail + i
+    if at >= pipe_ring_size {
+      at = at - pipe_ring_size
+    }
+    poke8(b + pipe_ring + at, peek8(sv39.lookup(space, src + i)))
+    i = i + 1
+  }
+  var nt = tail + n
+  if nt >= pipe_ring_size {
+    nt = nt - pipe_ring_size
+  }
+  poke64(b + pipe_p_tail, nt)
+  poke64(b + pipe_p_fill, peek64(b + pipe_p_fill) + n)
+}
+
+def pipe_ring_get(b Int64, dst Int64, n Int64, space Int64) Void {
+  var head = peek64(b + pipe_p_head)
+  var i = 0
+  while i < n {
+    var at = head + i
+    if at >= pipe_ring_size {
+      at = at - pipe_ring_size
+    }
+    poke8(sv39.lookup(space, dst + i), peek8(b + pipe_ring + at))
+    i = i + 1
+  }
+  var nh = head + n
+  if nh >= pipe_ring_size {
+    nh = nh - pipe_ring_size
+  }
+  poke64(b + pipe_p_head, nh)
+  poke64(b + pipe_p_fill, peek64(b + pipe_p_fill) - n)
+}
+
+// A read serviced: the answer written and the caller resumed, or a
+// park's honesty — the ring is empty and a writer may still fill it.
+// The answer is whether the caller was served.
+def pipe_do_read(p Int64, id Int64) Bool {
+  var b = pipe_block(id)
+  var r = pipe_reqs + p * pipe_req_stride
+  if peek64(b + pipe_p_fill) == 0 {
+    if peek64(b + pipe_p_writers) == 0 {
+      gate_reply(p, 0)
+      return true
+    }
+    return false
+  }
+  var n = peek64(b + pipe_p_fill)
+  var cap = peek64(r + pipe_rq_len)
+  if cap < n {
+    n = cap
+  }
+  if n == 0 {
+    gate_reply(p, 0)
+    return true
+  }
+  pipe_ring_get(b, peek64(r + pipe_rq_buf), n, peek64(r + pipe_rq_space))
+  gate_reply(p, n)
+  return true
+}
+
+// A write serviced: what the ring's room takes, the partial answer
+// POSIX gives a write past the buffer; no reader at all is the broken
+// pipe. Never parks on a full ring without an answer's alternative.
+def pipe_do_write(p Int64, id Int64) Bool {
+  var b = pipe_block(id)
+  var r = pipe_reqs + p * pipe_req_stride
+  if peek64(b + pipe_p_readers) == 0 {
+    gate_reply(p, pipe_reason_epipe)
+    return true
+  }
+  var len = peek64(r + pipe_rq_len)
+  if len == 0 {
+    gate_reply(p, 0)
+    return true
+  }
+  var room = pipe_ring_size - peek64(b + pipe_p_fill)
+  if room == 0 {
+    return false
+  }
+  var n = len
+  if n > room {
+    n = room
+  }
+  pipe_ring_put(b, peek64(r + pipe_rq_buf), n, peek64(r + pipe_rq_space))
+  gate_reply(p, n)
+  return true
+}
+
+// The pump: every parked request a pipe can serve now, served — the
+// rounds until none moves, because a reader's bytes free a writer's
+// room and a writer's bytes fill a reader's ring, and the bounded pass
+// is the loop's own end.
+def pipe_pump(id Int64) Void {
+  var b = pipe_block(id)
+  var rounds = 0
+  var moved = peek64(b + pipe_p_used) != 0
+  while moved && rounds < 8 {
+    moved = false
+    rounds = rounds + 1
+    var i = 0
+    while i < peek64(b + pipe_p_rd_n) {
+      var p = peek64(b + pipe_p_rd_pids + (i * 8))
+      if pipe_do_read(p, id) {
+        pipe_rd_remove(b, i)
+        moved = true
+      } else {
+        i = i + 1
+      }
+    }
+    var j = 0
+    while j < peek64(b + pipe_p_wr_n) {
+      var q = peek64(b + pipe_p_wr_pids + (j * 8))
+      if pipe_do_write(q, id) {
+        pipe_wr_remove(b, j)
+        moved = true
+      } else {
+        j = j + 1
+      }
+    }
+  }
+}
+
+// One end closed: the count down, the binding gone, the pipe freed
+// when both ends' holders are — or the pump, whose readers and writers
+// the close just made servable (the last writer's close is EOF).
+def pipe_drop_binding(p Int64, fd Int64) Void {
+  var v = pipe_binding(p, fd)
+  if (v & pipe_bind_mask) != 0 {
+    pipe_bind_set(p, fd, 0)
+    var id = v & pipe_bind_id
+    var b = pipe_block(id)
+    pipe_ref_drop(b, v & pipe_bind_mask)
+    var ended = false
+    if peek64(b + pipe_p_readers) == 0 {
+      if peek64(b + pipe_p_writers) == 0 {
+        poke64(b + pipe_p_used, 0)
+        poke64(b + pipe_p_rd_n, 0)
+        poke64(b + pipe_p_wr_n, 0)
+        ended = true
+      }
+    }
+    if ended == false {
+      pipe_pump(id)
+    }
+  }
+}
+
+// The bind: two fresh ends of a new pipe, whatever old bindings the
+// two fds carried dropped first (a fork's inherited fd the new image
+// reuses, an exec's stale high fd).
+def pipe_serve_bind(p Int64) Void {
+  var r = pipe_reqs + p * pipe_req_stride
+  var rfd = peek64(r + pipe_rq_fd)
+  var wfd = peek64(r + pipe_rq_fd2)
+  pipe_drop_binding(p, rfd)
+  pipe_drop_binding(p, wfd)
+  var id = pipe_new()
+  if id < 0 {
+    gate_reply(p, pipe_reason_full)
+  } else {
+    var b = pipe_block(id)
+    poke64(b + pipe_p_readers, 1)
+    poke64(b + pipe_p_writers, 1)
+    pipe_bind_set(p, rfd, pipe_bind_read | id)
+    pipe_bind_set(p, wfd, pipe_bind_write | id)
+    gate_reply(p, id)
+  }
+}
+
+def pipe_serve_read(p Int64) Void {
+  var r = pipe_reqs + p * pipe_req_stride
+  var v = pipe_binding(p, peek64(r + pipe_rq_fd))
+  if (v & pipe_bind_mask) != pipe_bind_read {
+    gate_reply(p, pipe_reason_badf)
+  } else {
+    var id = v & pipe_bind_id
+    if pipe_do_read(p, id) {
+      pipe_pump(id)
+    } else {
+      pipe_rd_push(pipe_block(id), p)
+    }
+  }
+}
+
+def pipe_serve_write(p Int64) Void {
+  var r = pipe_reqs + p * pipe_req_stride
+  var v = pipe_binding(p, peek64(r + pipe_rq_fd))
+  if (v & pipe_bind_mask) != pipe_bind_write {
+    gate_reply(p, pipe_reason_badf)
+  } else {
+    var id = v & pipe_bind_id
+    if pipe_do_write(p, id) {
+      pipe_pump(id)
+    } else {
+      pipe_wr_push(pipe_block(id), p)
+    }
+  }
+}
+
+def pipe_serve_dup(p Int64) Void {
+  var r = pipe_reqs + p * pipe_req_stride
+  var oldf = peek64(r + pipe_rq_fd)
+  var newf = peek64(r + pipe_rq_fd2)
+  if oldf == newf {
+    gate_reply(p, 0)
+  } else {
+    var v = pipe_binding(p, oldf)
+    if (v & pipe_bind_mask) == 0 {
+      gate_reply(p, pipe_reason_badf)
+    } else {
+      pipe_drop_binding(p, newf)
+      pipe_bind_set(p, newf, v)
+      pipe_ref_add(pipe_block(v & pipe_bind_id), v & pipe_bind_mask)
+      gate_reply(p, 0)
+      pipe_pump(v & pipe_bind_id)
+    }
+  }
+}
+
+def pipe_serve_close(p Int64) Void {
+  var r = pipe_reqs + p * pipe_req_stride
+  var fd = peek64(r + pipe_rq_fd)
+  var v = pipe_binding(p, fd)
+  if (v & pipe_bind_mask) == 0 {
+    gate_reply(p, pipe_reason_badf)
+  } else {
+    pipe_drop_binding(p, fd)
+    gate_reply(p, 0)
+  }
+}
+
+// One request, whichever of the family: the process service's arm.
+def pipe_serve(p Int64, op Int64) Void {
+  if op == pipe_op_bind {
+    pipe_serve_bind(p)
+  }
+  if op == pipe_op_read {
+    pipe_serve_read(p)
+  }
+  if op == pipe_op_write {
+    pipe_serve_write(p)
+  }
+  if op == pipe_op_dup {
+    pipe_serve_dup(p)
+  }
+  if op == pipe_op_close {
+    pipe_serve_close(p)
+  }
+}
+
+// A fork's inheritance: every end the parent holds, the child's copy
+// of it — one more holder on the pipe, so the parent's close does not
+// sound the child's EOF.
+def pipe_clone_pid(parent Int64, child Int64) Void {
+  var fd = 0
+  while fd < pipe_fd_count {
+    var v = pipe_binding(parent, fd)
+    if (v & pipe_bind_mask) != 0 {
+      pipe_bind_set(child, fd, v)
+      pipe_ref_add(pipe_block(v & pipe_bind_id), v & pipe_bind_mask)
+    }
+    fd = fd + 1
+  }
+}
+
+// The death's walk: every end the pid holds, closed — the lasts of
+// them are the peers' EOF and broken pipe.
+def pipe_drop_pid(p Int64) Void {
+  var fd = 0
+  while fd < pipe_fd_count {
+    pipe_drop_binding(p, fd)
+    fd = fd + 1
+  }
+}
+
+// The exec's walk: the fds 3..15 dropped, the standard ends 0..2
+// kept — a pipeline's redirection is exactly the low three, and the
+// new image's fresh library names them again by probing.
+def pipe_keep_low(p Int64) Void {
+  var fd = 3
+  while fd < pipe_fd_count {
+    pipe_drop_binding(p, fd)
+    fd = fd + 1
+  }
+}

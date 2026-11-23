@@ -180,6 +180,39 @@ def take() Int64 {
   return b
 }
 
+// A block outside a physical range (EmoOS plan B, T1.5's fork): the
+// child's stack is mapped at its own physical identity — the trap
+// anchor's address — and the parent's virtual arena range (its run and
+// the grown blocks past it) may cover the block the freelist would
+// hand out, so the identity and the parent's copy would claim one page
+// differently. The first free block outside [from_pa, to_pa) is
+// unlinked and claimed, `take`'s bookkeeping otherwise. The answer is
+// 0 when every free block lies inside the range.
+def take_outside(from_pa Int64, to_pa Int64) Int64 {
+  var prev = 0
+  var b = peek64(head)
+  while b != 0 {
+    var next = peek64(b)
+    var pa = b - koff
+    if pa < from_pa || pa >= to_pa {
+      if prev == 0 {
+        poke64(head, next)
+      } else {
+        poke64(prev, next)
+      }
+      var i = (b - peek64(lo)) / block
+      var w = claimed + ((i / 64) * 8)
+      poke64(w, peek64(w) | (1 << (i % 64)))
+      poke64(free, peek64(free) - 1)
+      poke64(taken, peek64(taken) + 1)
+      return b
+    }
+    prev = b
+    b = next
+  }
+  return 0
+}
+
 // A block goes home. Strict: the base must be a claimed block of this
 // region — anything else is a kernel bug (a double give, a base the
 // allocator never handed out), and the machine ends loudly rather than

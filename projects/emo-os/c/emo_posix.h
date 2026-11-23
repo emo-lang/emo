@@ -40,6 +40,8 @@
 #define EMO_ENOTEMPTY 39
 #define EMO_ENOMEM 12
 #define EMO_ENOSYS 38
+#define EMO_ESPIPE 29
+#define EMO_EPIPE 32
 
 #define EMO_PATH_MAX 24
 #define EMO_DIR_LIST 2048
@@ -125,6 +127,15 @@ void _exit(int code) __attribute__((noreturn));
 // the kernel starts. Success never returns.
 int execve(const char *path, char *const argv[], char *const envp[]);
 int execv(const char *path, char *const argv[]);
+
+// The pipes (EmoOS plan B, T1.5): `pipe` binds two fresh descriptors to
+// a new pipe — fds[0] the read end, fds[1] the write end. A read of an
+// empty pipe whose writers are all gone answers 0 (the last writer's
+// close is EOF); a write to a pipe whose readers are all gone is EPIPE.
+// The ends copy across `fork` and the low three across `execve`.
+int pipe(int fds[2]);
+int dup(int fd);
+int dup2(int oldfd, int newfd);
 
 #define EMO_WIFEXITED(s) (((s) & 0xff) == 0)
 #define EMO_WEXITSTATUS(s) (((s) >> 8) & 0xff)

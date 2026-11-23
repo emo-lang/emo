@@ -32,6 +32,19 @@ static char fdfork_msg[] = "fork fd\n";
 static char execve_ok[] = "execve ok\n";
 static char execve_child_ok[] = "execve child ok\n";
 static char execve_child_bad[] = "execve child bad\n";
+static char pipe_ok[] = "pipe ok\n";
+static char pipe_bad[] = "pipe bad\n";
+static char pipe_dup_ok[] = "pipe dup ok\n";
+static char pipe_dup_bad[] = "pipe dup bad\n";
+static char pipe_exec_ok[] = "pipe exec ok\n";
+static char pipe_exec_bad[] = "pipe exec bad\n";
+static char pipe_big_ok[] = "pipe big ok\n";
+static char pipe_big_bad[] = "pipe big bad\n";
+static char pipe_epipe_ok[] = "pipe epipe ok\n";
+static char pipe_epipe_bad[] = "pipe epipe bad\n";
+static char pipe_child_line[] = "pipe child line\n";
+static char pipe_greet[] = "pipe greeting\n";
+static char pipe_dup_line[] = "dup2 line\n";
 
 static long parse_dec(const char *s) {
   long n = 0;
@@ -77,6 +90,10 @@ static int streq(const char *a, const char *b) {
 }
 
 int main(int argc, char **argv, char **envp) {
+  if (argc >= 2 && streq(argv[1], "pipechild")) {
+    write(1, pipe_greet, sizeof(pipe_greet) - 1);
+    return 0;
+  }
   if (argc >= 2 && streq(argv[1], "execchild")) {
     const char *ev = getenv("EMO_EXEC");
     long want = argc >= 3 ? parse_dec(argv[2]) : -1;
@@ -349,5 +366,202 @@ int main(int argc, char **argv, char **envp) {
     return 32;
   }
   write(1, execve_ok, sizeof(execve_ok) - 1);
+
+  // ---- the pipes (T1.5): a child's write, the parent's read, and the
+  // last writer's close for EOF.
+  int p[2];
+  if (pipe(p) != 0) {
+    write(2, "pipe failed\n", 12);
+    return 33;
+  }
+  long pp = fork();
+  if (pp == 0) {
+    close(p[0]);
+    write(p[1], pipe_child_line, sizeof(pipe_child_line) - 1);
+    close(p[1]);
+    _exit(0);
+  }
+  if (pp < 0) {
+    write(2, "pipe fork failed\n", 17);
+    return 34;
+  }
+  close(p[1]);
+  long pn = read(p[0], buf, sizeof(buf));
+  int pmatch = pn == (long)(sizeof(pipe_child_line) - 1);
+  long pi = 0;
+  while (pmatch && pi < pn) {
+    if (buf[pi] != pipe_child_line[pi]) {
+      pmatch = 0;
+    }
+    pi = pi + 1;
+  }
+  long peof = read(p[0], buf, sizeof(buf));
+  close(p[0]);
+  int pst = 0;
+  long pw = waitpid(pp, &pst, 0);
+  if (!pmatch || peof != 0 || pw != pp || !EMO_WIFEXITED(pst) ||
+      EMO_WEXITSTATUS(pst) != 0) {
+    write(2, pipe_bad, sizeof(pipe_bad) - 1);
+    return 35;
+  }
+  write(1, pipe_ok, sizeof(pipe_ok) - 1);
+
+  // ---- dup2: the console saved, the pipe's write end onto fd 1, the
+  // line into the pipe, then the console back.
+  int q[2];
+  if (pipe(q) != 0) {
+    write(2, pipe_dup_bad, sizeof(pipe_dup_bad) - 1);
+    return 36;
+  }
+  int saved = dup(1);
+  if (saved < 0) {
+    write(2, pipe_dup_bad, sizeof(pipe_dup_bad) - 1);
+    return 37;
+  }
+  if (dup2(q[1], 1) != 1) {
+    write(2, pipe_dup_bad, sizeof(pipe_dup_bad) - 1);
+    return 38;
+  }
+  write(1, pipe_dup_line, sizeof(pipe_dup_line) - 1);
+  if (dup2(saved, 1) != 1) {
+    write(2, pipe_dup_bad, sizeof(pipe_dup_bad) - 1);
+    return 39;
+  }
+  close(saved);
+  write(1, pipe_dup_ok, sizeof(pipe_dup_ok) - 1);
+  close(q[1]);
+  long qn = read(q[0], buf, sizeof(buf));
+  int qmatch = qn == (long)(sizeof(pipe_dup_line) - 1);
+  long qi = 0;
+  while (qmatch && qi < qn) {
+    if (buf[qi] != pipe_dup_line[qi]) {
+      qmatch = 0;
+    }
+    qi = qi + 1;
+  }
+  close(q[0]);
+  if (!qmatch) {
+    write(2, pipe_dup_bad, sizeof(pipe_dup_bad) - 1);
+    return 39;
+  }
+
+  // ---- the pipeline's route (T1.5): the child's fd 1 into a pipe,
+  // then its image replaced — the low end survives the exec.
+  int x[2];
+  if (pipe(x) != 0) {
+    write(2, pipe_exec_bad, sizeof(pipe_exec_bad) - 1);
+    return 40;
+  }
+  long xp = fork();
+  if (xp == 0) {
+    close(x[0]);
+    dup2(x[1], 1);
+    close(x[1]);
+    char *xav[3];
+    xav[0] = "chello.elf";
+    xav[1] = "pipechild";
+    xav[2] = 0;
+    execve("chello.elf", xav, 0);
+    _exit(127);
+  }
+  if (xp < 0) {
+    write(2, pipe_exec_bad, sizeof(pipe_exec_bad) - 1);
+    return 41;
+  }
+  close(x[1]);
+  long xtot = 0;
+  long xr = 0;
+  while ((xr = read(x[0], buf, sizeof(buf))) > 0) {
+    xtot = xtot + xr;
+    if (xtot > 4096) {
+      break;
+    }
+  }
+  close(x[0]);
+  int xst = 0;
+  long xw = waitpid(xp, &xst, 0);
+  if (xtot != (long)(sizeof(pipe_greet) - 1) || xr < 0 || xw != xp ||
+      !EMO_WIFEXITED(xst) || EMO_WEXITSTATUS(xst) != 0) {
+    write(2, pipe_exec_bad, sizeof(pipe_exec_bad) - 1);
+    return 42;
+  }
+  write(1, pipe_exec_ok, sizeof(pipe_exec_ok) - 1);
+
+  // ---- a transfer past the ring: the writer blocks, the reader
+  // drains, and both ends keep their order.
+  int z[2];
+  if (pipe(z) != 0) {
+    write(2, pipe_big_bad, sizeof(pipe_big_bad) - 1);
+    return 43;
+  }
+  long zp = fork();
+  if (zp == 0) {
+    close(z[0]);
+    char blk[200];
+    long sent = 0;
+    while (sent < 2000) {
+      long lim = 2000 - sent;
+      if (lim > (long)sizeof(blk)) {
+        lim = (long)sizeof(blk);
+      }
+      int bi = 0;
+      while ((long)bi < lim) {
+        blk[bi] = (char)('a' + ((sent + bi) % 26));
+        bi = bi + 1;
+      }
+      long w = write(z[1], blk, (unsigned long)lim);
+      if (w <= 0) {
+        break;
+      }
+      sent = sent + w;
+    }
+    close(z[1]);
+    _exit(sent == 2000 ? 0 : 1);
+  }
+  if (zp < 0) {
+    write(2, pipe_big_bad, sizeof(pipe_big_bad) - 1);
+    return 44;
+  }
+  close(z[1]);
+  long ztot = 0;
+  int zgood = 1;
+  long zr = 0;
+  while ((zr = read(z[0], buf, sizeof(buf))) > 0) {
+    long zi = 0;
+    while (zi < zr) {
+      if (buf[zi] != (char)('a' + ((ztot + zi) % 26))) {
+        zgood = 0;
+      }
+      zi = zi + 1;
+    }
+    ztot = ztot + zr;
+  }
+  close(z[0]);
+  int zst = 0;
+  long zw = waitpid(zp, &zst, 0);
+  if (ztot != 2000 || !zgood || zr != 0 || zw != zp ||
+      !EMO_WIFEXITED(zst) || EMO_WEXITSTATUS(zst) != 0) {
+    write(2, pipe_big_bad, sizeof(pipe_big_bad) - 1);
+    return 45;
+  }
+  write(1, pipe_big_ok, sizeof(pipe_big_ok) - 1);
+
+  // ---- the broken pipe (T1.5): the last reader's close is the
+  // writer's EPIPE.
+  int w[2];
+  if (pipe(w) != 0) {
+    write(2, pipe_epipe_bad, sizeof(pipe_epipe_bad) - 1);
+    return 46;
+  }
+  close(w[0]);
+  errno = 0;
+  long wp = write(w[1], pipe_dup_line, sizeof(pipe_dup_line) - 1);
+  int we = errno;
+  close(w[1]);
+  if (wp != -1 || we != EMO_EPIPE) {
+    write(2, pipe_epipe_bad, sizeof(pipe_epipe_bad) - 1);
+    return 47;
+  }
+  write(1, pipe_epipe_ok, sizeof(pipe_epipe_ok) - 1);
   return 0;
 }

@@ -126,6 +126,8 @@ const exec_busy_cell = koff + 0x8700c000 + 3912
 const exec_pending_cell = koff + 0x8700c000 + 3904
 const pgid_base = koff + 0x8700f000 + 3784
 const pgid_bound = 256
+const arena_for = koff + 0x8700d800
+const arena_bound = 256
 const user_program_cell = 0x87fff000
 const exit_count = koff + 0x87002118
 const exit_pids = koff + 0x87002120
@@ -895,6 +897,19 @@ def console_service(boss Pid) Void {
 // cells the service's own.
 def process_serve(w Int64) Void {
     var op = op_of(w)
+    if op >= 40 {
+      // the pipes' arm (EmoOS plan B, T1.5): the gate staged the
+      // request's record, and the service's own thread is what mutates
+      // the pipe tables — a request may park its caller and wake a
+      // peer, so no other context may run them.
+      pipe.pipe_serve(caller_of(w), op)
+    } else {
+    process_serve_gate(w)
+    }
+}
+
+def process_serve_gate(w Int64) Void {
+    var op = op_of(w)
     if op == 3 {
           // A spawn is backed before it is served: the stack block and
           // the arena's run — a user pass's (frames.user_run), which
@@ -1034,7 +1049,23 @@ def process_serve(w Int64) Void {
                     poke64(exec_busy_cell, 0)
                     gate_reply(fme, -5)
                   } else {
-                    var fstack = frames.take()
+                    // the child's stack must not land at a physical
+                    // address the parent's virtual arena range already
+                    // claims (T1.5): the child's table maps the block
+                    // at its own identity for the trap anchor, and the
+                    // parent's grown copies map at the arena's end —
+                    // one page, two translations, the build's loud end
+                    var pcell = 0
+                    if fme < arena_bound {
+                      pcell = peek64(arena_for + (fme * 8))
+                    }
+                    var fstack = 0
+                    if pcell == 0 {
+                      fstack = frames.take()
+                    } else {
+                      fstack = frames.take_outside((pcell >> 20) << 12,
+                        (pcell & 1048575) << 12)
+                    }
                     if fstack == 0 {
                       poke64(exec_busy_cell, 0)
                       gate_reply(fme, -5)
@@ -1068,6 +1099,11 @@ def process_serve(w Int64) Void {
                           if fchild < pgid_bound {
                             poke8(pgid_base + fchild, fg.to_byte())
                           }
+                          // the pipes' ends copy with the world
+                          // (T1.5): every end the parent held is one
+                          // more holder on its pipe, so the parent's
+                          // close is not yet the child's EOF
+                          pipe.pipe_clone_pid(fme, fchild)
                           poke64(exec_busy_cell, 0)
                           gate_reply(fme, fchild)
                         }
@@ -1144,6 +1180,7 @@ def process_serve(w Int64) Void {
                           gate_reply(rme, rrec)
                         } else {
                           fs.drop_pid(rme)
+                          pipe.pipe_keep_low(rme)
                           poke64(exec_pending_cell, rrec)
                           var rentry = exec.entry_of(rrec)
                           var rans = user_replace(rme, rentry,
@@ -1229,6 +1266,10 @@ def process_serve(w Int64) Void {
           // the arena's grown blocks go home (T1.3v): the normal
           // exit's half of the reclaim, the fault's in the shim
           space.grow_reap(pid)
+          // the pipe ends go home (T1.5): the lasts of them are a
+          // peer's EOF or broken pipe, answered here while the
+          // service can still reply
+          pipe.pipe_drop_pid(pid)
           // The parked waiter's judgment first (T1.4b2): a hit is
           // answered here and never enters the exit table; a dead
           // waiter's pending is cleared and the exit is recorded like

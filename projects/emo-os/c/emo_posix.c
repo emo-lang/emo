@@ -17,6 +17,19 @@ static char name_buf[EMO_NAME_MAX];
 static char bounce[2048];
 static char read_bounce[2048];
 static char used[EMO_MAX_FD];
+// The descriptor's kind (T1.5): 0 unknown, 1 console in, 2 file, 3 pipe
+// read end, 4 pipe write end, 5 closed, 6 console out. A pipe is the
+// kernel's binding map's — the library asks once (pipe_probe) and
+// caches the answer, so an exec'd image's fresh table finds the low
+// ends its predecessor redirected.
+#define EMO_KIND_UNKNOWN 0
+#define EMO_KIND_CIN 1
+#define EMO_KIND_FILE 2
+#define EMO_KIND_PREAD 3
+#define EMO_KIND_PWRITE 4
+#define EMO_KIND_CLOSED 5
+#define EMO_KIND_COUT 6
+static char fd_kind[EMO_MAX_FD];
 // The descriptor's own copy (T1.4b3a): the name, flags and offset the
 // child inherits with the image. The service's handle is per pid, so a
 // forked child's first access reopens the name under its own pid and
@@ -61,6 +74,92 @@ static int fd_errno(long answer) {
     return EMO_EBADF;
   }
   return reason_errno(answer);
+}
+
+// The pipe verbs' answers (T1.5): the broken pipe is its own number.
+static int pipe_errno(long answer) {
+  if (answer == -32) {
+    return EMO_EPIPE;
+  }
+  return fd_errno(answer);
+}
+
+// The descriptor's kind, asked of the kernel once (T1.5): fds 0..2 are
+// the console until the binding map says a pipe, every higher fd a
+// file until the map says otherwise. The answer stays cached; the
+// library's own verbs maintain it from here.
+static int fd_kind_of(int fd) {
+  if (fd_kind[fd] != EMO_KIND_UNKNOWN) {
+    return (int)fd_kind[fd];
+  }
+  long a = emo_pipe_probe(fd);
+  if (a == 1) {
+    fd_kind[fd] = EMO_KIND_PREAD;
+    return EMO_KIND_PREAD;
+  }
+  if (a == 2) {
+    fd_kind[fd] = EMO_KIND_PWRITE;
+    return EMO_KIND_PWRITE;
+  }
+  if (fd == 0) {
+    fd_kind[fd] = EMO_KIND_CIN;
+    return EMO_KIND_CIN;
+  }
+  if (fd <= 2) {
+    fd_kind[fd] = EMO_KIND_COUT;
+    return EMO_KIND_COUT;
+  }
+  fd_kind[fd] = EMO_KIND_FILE;
+  return EMO_KIND_FILE;
+}
+
+static int fd_is_open(int fd) {
+  if (fd < 0 || fd >= EMO_MAX_FD) {
+    return 0;
+  }
+  int k = fd_kind_of(fd);
+  if (k == EMO_KIND_CLOSED) {
+    return 0;
+  }
+  if (k == EMO_KIND_PREAD || k == EMO_KIND_PWRITE) {
+    return 1;
+  }
+  if (k == EMO_KIND_CIN || k == EMO_KIND_COUT) {
+    // a console stream, the low three's own or a dup's copy
+    return 1;
+  }
+  return used[fd] != 0;
+}
+
+// Whatever the descriptor holds, dropped: a pipe end's binding (its
+// count down, the peers woken), a file's service handle, or nothing.
+// `errno` stays the caller's — this is dup2's inner step.
+static void fd_drop(int fd) {
+  if (fd < 0 || fd >= EMO_MAX_FD) {
+    return;
+  }
+  int k = fd_kind_of(fd);
+  if (k == EMO_KIND_PREAD || k == EMO_KIND_PWRITE) {
+    emo_pipe_close(fd);
+  } else if (used[fd]) {
+    emo_fd_close(fd);
+  }
+  used[fd] = 0;
+  fd_kind[fd] = EMO_KIND_UNKNOWN;
+}
+
+// The lowest free descriptor the library can hand out: 3 and up, never
+// one a pipe end holds (the table's own number is the authority).
+static int free_fd(void) {
+  int fd = 3;
+  while (fd < EMO_MAX_FD) {
+    int k = fd_kind[fd];
+    if (!used[fd] && k != EMO_KIND_PREAD && k != EMO_KIND_PWRITE) {
+      return fd;
+    }
+    fd = fd + 1;
+  }
+  return -1;
 }
 
 static unsigned long slen(const char *s) {
@@ -262,11 +361,8 @@ static int open_name(const char *full, int flags) {
   if (put_name(full, nlen) != 0) {
     return -1;
   }
-  int fd = 3;
-  while (fd < EMO_MAX_FD && used[fd]) {
-    fd = fd + 1;
-  }
-  if (fd == EMO_MAX_FD) {
+  int fd = free_fd();
+  if (fd < 0) {
     errno = EMO_EMFILE;
     return -1;
   }
@@ -285,6 +381,7 @@ static int open_name(const char *full, int flags) {
   fd_flags[fd] = flags;
   fd_off[fd] = 0;
   used[fd] = 1;
+  fd_kind[fd] = EMO_KIND_FILE;
   return fd;
 }
 
@@ -348,27 +445,121 @@ int open(const char *path, int flags) {
 }
 
 int close(int fd) {
-  if (fd == 0 || fd == 1 || fd == 2) {
-    return 0;
-  }
-  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
+  if (fd < 0 || fd >= EMO_MAX_FD) {
     errno = EMO_EBADF;
     return -1;
   }
-  long answer = emo_fd_close(fd);
-  if (answer < 0 && answer != -4) {
-    errno = fd_errno(answer);
-    used[fd] = 0;
+  int k = fd_kind_of(fd);
+  if (k == EMO_KIND_CLOSED) {
+    errno = EMO_EBADF;
     return -1;
   }
-  // -4 is a descriptor this pid never opened — a fork's inherited fd
-  // the child closes before touching it; the child's copy closes.
-  used[fd] = 0;
-  return 0;
+  if (k == EMO_KIND_PREAD || k == EMO_KIND_PWRITE) {
+    // a pipe end's close (T1.5): the kernel's binding goes, and the
+    // last writer's close is the readers' EOF
+    long answer = emo_pipe_close(fd);
+    fd_kind[fd] = EMO_KIND_UNKNOWN;
+    used[fd] = 0;
+    if (answer < 0) {
+      errno = pipe_errno(answer);
+      return -1;
+    }
+    return 0;
+  }
+  if (used[fd]) {
+    long answer = emo_fd_close(fd);
+    used[fd] = 0;
+    fd_kind[fd] = EMO_KIND_UNKNOWN;
+    if (answer < 0 && answer != -4) {
+      errno = fd_errno(answer);
+      return -1;
+    }
+    // -4 is a descriptor this pid never opened — a fork's inherited fd
+    // the child closes before touching it; the child's copy closes.
+    return 0;
+  }
+  if (k == EMO_KIND_CIN || k == EMO_KIND_COUT) {
+    // a console stream's close: nothing of the kernel's to give back,
+    // but the library's number is spent — a later read or write is the
+    // EBADF POSIX says. The low three stay CLOSED; a dup's copy is
+    // just freed for the next open.
+    if (fd <= 2) {
+      fd_kind[fd] = EMO_KIND_CLOSED;
+    } else {
+      fd_kind[fd] = EMO_KIND_UNKNOWN;
+    }
+    return 0;
+  }
+  errno = EMO_EBADF;
+  return -1;
+}
+
+// The pipe's read: the caller's bytes bounce through .bss (the gate's
+// checks cover the image's segments, not the stack), and the answer is
+// the bytes or 0 at the last writer's close.
+static long pipe_read_call(int fd, void *buf, unsigned long n) {
+  unsigned long cap = n;
+  if (cap > sizeof(read_bounce)) {
+    cap = sizeof(read_bounce);
+  }
+  long answer = emo_pipe_read(fd, read_bounce, cap);
+  if (answer < 0) {
+    errno = pipe_errno(answer);
+    return -1;
+  }
+  unsigned long i = 0;
+  while (i < (unsigned long)answer) {
+    ((char *)buf)[i] = read_bounce[i];
+    i = i + 1;
+  }
+  return answer;
+}
+
+// The pipe's write: chunks of the bounce, each answered by what the
+// ring's room took — a short answer loops, and no reader at all is
+// EPIPE.
+static long pipe_write_call(int fd, const void *buf, unsigned long n) {
+  unsigned long done = 0;
+  while (done < n) {
+    unsigned long chunk = n - done;
+    if (chunk > sizeof(bounce)) {
+      chunk = sizeof(bounce);
+    }
+    unsigned long i = 0;
+    while (i < chunk) {
+      bounce[i] = ((const char *)buf)[done + i];
+      i = i + 1;
+    }
+    long answer = emo_pipe_write(fd, bounce, chunk);
+    if (answer < 0) {
+      errno = pipe_errno(answer);
+      return done == 0 ? -1 : (long)done;
+    }
+    if (answer == 0) {
+      break;
+    }
+    done = done + answer;
+  }
+  return (long)done;
 }
 
 long read(int fd, void *buf, unsigned long n) {
-  if (fd == 0) {
+  if (fd < 0 || fd >= EMO_MAX_FD) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  int k = fd_kind_of(fd);
+  if (k == EMO_KIND_PREAD) {
+    if (n == 0) {
+      return 0;
+    }
+    return pipe_read_call(fd, buf, n);
+  }
+  if (k == EMO_KIND_PWRITE || k == EMO_KIND_COUT) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  if (k == EMO_KIND_CIN) {
     long b = emo_ecall(2, 0, 0, 0, 0, 0, 0);
     if (b < 0) {
       errno = EMO_EIO;
@@ -380,7 +571,7 @@ long read(int fd, void *buf, unsigned long n) {
     ((char *)buf)[0] = (char)b;
     return 1;
   }
-  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
+  if (k == EMO_KIND_CLOSED || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
@@ -418,7 +609,19 @@ long write(int fd, const void *buf, unsigned long n) {
   if (n == 0) {
     return 0;
   }
-  if (fd == 1 || fd == 2) {
+  if (fd < 0 || fd >= EMO_MAX_FD) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  int k = fd_kind_of(fd);
+  if (k == EMO_KIND_PWRITE) {
+    return pipe_write_call(fd, buf, n);
+  }
+  if (k == EMO_KIND_PREAD || k == EMO_KIND_CIN) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  if (k == EMO_KIND_COUT) {
     unsigned long done = 0;
     while (done < n) {
       unsigned long chunk = n - done;
@@ -439,7 +642,7 @@ long write(int fd, const void *buf, unsigned long n) {
     }
     return (long)n;
   }
-  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
+  if (k == EMO_KIND_CLOSED || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
@@ -472,7 +675,16 @@ long write(int fd, const void *buf, unsigned long n) {
 }
 
 long lseek(int fd, long off, int whence) {
-  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
+  if (fd < 0 || fd >= EMO_MAX_FD) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  int kind = fd_kind_of(fd);
+  if (kind == EMO_KIND_PREAD || kind == EMO_KIND_PWRITE) {
+    errno = EMO_ESPIPE;
+    return -1;
+  }
+  if (kind == EMO_KIND_CLOSED || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
@@ -492,7 +704,18 @@ long lseek(int fd, long off, int whence) {
 }
 
 int fstat(int fd, struct emo_stat *st) {
-  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
+  if (fd < 0 || fd >= EMO_MAX_FD) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  int kind = fd_kind_of(fd);
+  if (kind == EMO_KIND_PREAD || kind == EMO_KIND_PWRITE) {
+    st->size = 0;
+    st->flags = 0;
+    st->is_dir = 0;
+    return 0;
+  }
+  if (kind == EMO_KIND_CLOSED || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
@@ -1373,4 +1596,98 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
 
 int execv(const char *path, char *const argv[]) {
   return execve(path, argv, environ);
+}
+
+// ---- the pipes (T1.5) ----
+//
+// `pipe` takes two free descriptor numbers and binds them to one new
+// pipe; the kernel owns the ends, the counts and the ring, and the
+// library's kind byte mirrors the binding so a read, write or close
+// finds the kernel verb without a probe. `dup2` copies a descriptor:
+// a pipe end's binding moves to the new number through the kernel, a
+// file's name/flags/offset through the library's own table, a console
+// stream's number bestows the console.
+
+int pipe(int fds[2]) {
+  int r = free_fd();
+  int w = -1;
+  if (r >= 0) {
+    fd_kind[r] = EMO_KIND_PREAD;
+    w = free_fd();
+    fd_kind[r] = EMO_KIND_UNKNOWN;
+  }
+  if (r < 0 || w < 0) {
+    errno = EMO_EMFILE;
+    return -1;
+  }
+  long answer = emo_pipe_bind(r, w);
+  if (answer < 0) {
+    errno = pipe_errno(answer);
+    return -1;
+  }
+  used[r] = 0;
+  used[w] = 0;
+  fd_kind[r] = EMO_KIND_PREAD;
+  fd_kind[w] = EMO_KIND_PWRITE;
+  fds[0] = r;
+  fds[1] = w;
+  return 0;
+}
+
+int dup(int fd) {
+  if (!fd_is_open(fd)) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  int nfd = free_fd();
+  if (nfd < 0) {
+    errno = EMO_EMFILE;
+    return -1;
+  }
+  return dup2(fd, nfd);
+}
+
+int dup2(int oldfd, int newfd) {
+  if (oldfd < 0 || oldfd >= EMO_MAX_FD || newfd < 0 || newfd >= EMO_MAX_FD) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  if (oldfd == newfd) {
+    if (!fd_is_open(oldfd)) {
+      errno = EMO_EBADF;
+      return -1;
+    }
+    return newfd;
+  }
+  int ok = fd_kind_of(oldfd);
+  if (!fd_is_open(oldfd)) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  fd_drop(newfd);
+  if (ok == EMO_KIND_PREAD || ok == EMO_KIND_PWRITE) {
+    long answer = emo_pipe_dup(oldfd, newfd);
+    if (answer < 0) {
+      errno = pipe_errno(answer);
+      return -1;
+    }
+    used[newfd] = 0;
+    fd_kind[newfd] = (char)ok;
+  } else if (ok == EMO_KIND_CIN || ok == EMO_KIND_COUT) {
+    used[newfd] = 0;
+    fd_kind[newfd] = (char)ok;
+  } else {
+    unsigned long k = 0;
+    while (k < fd_nlen[oldfd]) {
+      fd_name[newfd][k] = fd_name[oldfd][k];
+      k = k + 1;
+    }
+    fd_name[newfd][fd_nlen[oldfd]] = 0;
+    fd_nlen[newfd] = fd_nlen[oldfd];
+    fd_flags[newfd] = fd_flags[oldfd];
+    fd_off[newfd] = fd_off[oldfd];
+    used[newfd] = 1;
+    fd_kind[newfd] = EMO_KIND_FILE;
+  }
+  return newfd;
 }

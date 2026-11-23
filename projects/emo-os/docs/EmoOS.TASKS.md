@@ -190,8 +190,18 @@ consumer asks, but the order is the dependency order.
   `envp` is the caller's. The library's fd table and cwd are fresh
   after the replace, and the old page table and private page leak —
   the follow-ups the record names.
-- [ ] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
-  last writer's close.
+- [x] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
+  last writer's close. Verbs 55..60 (the bind, the read, the probe,
+  the write, the dup and the close), the process service's second arm:
+  the gate stages each request in the calling pid's record on
+  `.emo_pipe`'s request page and routes it; the service owns every
+  mutation, parks a reader on an empty ring a writer may still fill,
+  parks a writer on a full ring, and wakes a peer from the close's
+  last-holder counts — the last writer's close is EOF, the last
+  reader's the broken pipe. The library's `pipe`/`dup`/`dup2` and its
+  descriptor-kind cache (the probe once per fd) put the ends behind
+  POSIX calls; the ends copy across `fork` and the low three across
+  `execve`, so a shell's `cmd1 | cmd2` is two children and two `dup2`s.
 - [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
   `sigaction`/`sigprocmask`, the status encoding the shell reads.
 
@@ -507,6 +517,70 @@ preserve descriptors yet; the old page table and the private page leak
 the second), an old arena pinned by queued messages is not freed, and
 a message in the old mailbox is dropped without unpinning its sender.
 The environment's wire text cannot carry a space inside a value.
+
+### T1.5's record (2026-11-23)
+
+The pipes are the process service's second arm, on their own six
+pages (`.emo_pipe` at 0x87010000): the binding map (one byte per pid
+and fd — 0 no pipe, 0x10|id a read end, 0x20|id a write end), the
+per-pid request records the gate stages (op, fd, the second fd, the
+buffer, the length, the caller's space word), and eight 1024-byte pipe
+blocks (the two ends' counts, the ring's cursors, four parked readers,
+four parked writers, 768 bytes of ring). The verbs are 55..60: the
+bind, the read, the probe, the write, the dup and the close. The bind
+and the probe answer inside the gate; the other four route to the
+process service (ops 40..44, the family's `-(1000 + op)`), because
+every one of them can wake a parked peer and only a service's context
+may reply. The service is the one thread that mutates the tables — the
+gate only stages — so no two clients touch a count at once.
+
+A read of an empty ring parks its caller in gate-wait when a writer
+still holds the end, and answers 0 when none does; a write past the
+ring's room parks the writer, answers what the room took (POSIX's
+partial write), and answers the broken pipe once no reader is left.
+Every served request pumps the pipe's parked ends in bounded rounds,
+because a read frees a writer's room and a write fills a reader's
+ring. The counts follow the holders: `fork` copies every end to the
+child's pid (one more holder, so the parent's close is not yet the
+child's EOF), `execve` drops the fds 3..15 (the new image's fresh
+library table cannot name them) and keeps 0..2 (a pipeline's
+redirection), and the normal exit walks every end home. `dup2` moves
+a pipe binding through the kernel; a file's name, flags and offset
+through the library's own table; a console stream's number bestows
+the console. `lseek`/`fstat` on a pipe answer `ESPIPE`/a zero size.
+
+The library caches each descriptor's kind (0 unknown, console in/out,
+file, pipe read/write, closed) and asks verb 57 once per fd when the
+byte is unknown — so an exec'd image's first read or write of fd 0..2
+finds the pipe its predecessor left.
+
+Found on the way: the fork's child stack is mapped at its physical
+identity for the trap anchor, and the parent's virtual arena range
+(its run and the grown blocks past it, at the parent's addresses) can
+cover the block the freelist would hand out — one page, two
+translations, `space.map_page`'s loud end. The fix is `frames.take_outside`:
+the child's stack is taken from outside the parent's virtual range.
+
+The metal proof: `chello.elf` (40,208 bytes, one image block) answered
+`pipe ok` (the child's line through the ring and the parent's EOF at
+the last writer's close), `pipe dup ok` (the pipe's write end onto
+fd 1, the console saved by `dup` and restored by `dup2`), `pipe exec
+ok` (the child's fd 1 into a pipe, then `execve` — the low end
+survives and the new image's `write(1)` lands in the ring),
+`pipe big ok` (2,000 bytes past the 768-byte ring, both ends blocking
+and keeping the stream's order) and `pipe epipe ok` (the last
+reader's close is the writer's EPIPE), after every earlier beat. The
+machine's exit route was clean.
+
+Gaps: a process that dies by fault or by the heap's kill leaks its
+pipe ends — the fault path runs inside the trap and cannot wake a
+parked peer (its reply would set SIE mid-trap), so the drop waits for
+T1.6's signals, which will own the death path's wake. A pipe keeps
+eight blocks and four waiters an end; a fifth parked reader or writer
+is the service's loud end. The `pipe`/`dup`/`dup2` ends are not
+inherited as shared descriptions — the library's fd table owns them,
+and a file descriptor's offset still diverges after `fork` (T1.4b3a's
+approximation, unchanged).
 
 ### M2 — the C library (musl-derived)
 

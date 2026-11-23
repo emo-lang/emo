@@ -183,6 +183,16 @@ SECTIONS
   . = KOFF + 0x8700f000;
   .emo_grow (NOLOAD) : AT(ADDR(.emo_grow) - KOFF) { *(.emo_grow) } :tick
 
+  /* The pipes (EmoOS plan B, T1.5), six pages above the growth list:
+     the per-(pid, fd) binding map (one byte a descriptor), the
+     per-pid request records the gate stages, and the eight pipe
+     blocks (the two ends' counts, the ring's cursors, the parked
+     readers and writers, the bytes). The kernel's Emo (gate.emo,
+     pipe.emo, main.emo) reads and writes every word by its fixed
+     constants. NOLOAD — the pipes' whole state is live memory. */
+  . = KOFF + 0x87010000;
+  .emo_pipe (NOLOAD) : AT(ADDR(.emo_pipe) - KOFF) { *(.emo_pipe) } :tick
+
   /* The compositor's page (T8.6), a page above the filesystem's: the
      generation, the mode the display service answered at init, and the
      window stack (the position and focus the compositor's policy

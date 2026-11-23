@@ -292,6 +292,16 @@ const route_notify_take = -1028
 // 29 is the gate's, no service between — the board's RTC, two loads.
 const route_poweroff = -103
 const route_heap_gone = -104
+// The pipe family (EmoOS plan B, T1.5): the process service's second
+// arm — ops 40..44, the bind, read, write, dup and close, the process
+// service's because every one of them may wake a peer parked on the
+// pipe, and the reply that wakes it is a service's to give. The routes
+// are the family's `-(1000 + op)`, the op the service's record names.
+const route_pipe_bind = -1040
+const route_pipe_read = -1041
+const route_pipe_write = -1042
+const route_pipe_dup = -1043
+const route_pipe_close = -1044
 // The arena's per-pid cell (T1.3): the process and exec services park
 // the child's packed base/end there; arena_info answers the caller's.
 const arena_for = koff + 0x8700d800
@@ -1248,6 +1258,116 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     poke64(execargs_use, 2)
     poke64(exec_busy, 1)
     return route_process_exec
+  }
+  if n == 55 {
+    // pipe_bind(rfd, wfd) (EmoOS plan B, T1.5): two fresh ends of a
+    // new pipe, bound to the caller's fds — the library picked the
+    // numbers, and the pairs are its own allocation. The process
+    // service makes the pipe and drops whatever old bindings the two
+    // fds carried (an exec's stale high fd, a fork's inherited end
+    // the library has since reused).
+    if r0 < 0 || r0 > 15 || r1 < 0 || r1 > 15 || r0 == r1 {
+      return -reason_argument
+    }
+    var pme = peek64(handoff_caller)
+    if pme >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme, pipe.pipe_op_bind, r0, r1, 0, 0, 0)
+    return route_pipe_bind
+  }
+  if n == 56 {
+    // pipe_read(fd, buf, cap): the ring's bytes into the caller's
+    // buffer, blocking on an empty ring a writer may still fill, and
+    // answering 0 the moment no writer is left. The caller's own
+    // table walks the buffer, its space word staged with the request.
+    if r0 < 0 || r0 > 15 {
+      return -reason_argument
+    }
+    if r2 < 0 || r2 > stage_cap {
+      return -reason_argument
+    }
+    var vpr = check_write(r1, r2)
+    if vpr != 0 {
+      return -vpr
+    }
+    var pme2 = peek64(handoff_caller)
+    if pme2 >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme2, pipe.pipe_op_read, r0, 0, r1, r2,
+      peek64(caller_space_cell))
+    return route_pipe_read
+  }
+  if n == 57 {
+    // pipe_probe(fd): is this descriptor a pipe end? 0 no, 1 the read
+    // end, 2 the write end. The library asks once per fd and caches
+    // the answer — the fresh image after an exec asks about the low
+    // ends its predecessor redirected. The gate answers itself: one
+    // peek of the binding map, no service between.
+    if r0 < 0 || r0 > 15 {
+      return -reason_argument
+    }
+    var ppv = pipe.pipe_binding(peek64(handoff_caller), r0)
+    if (ppv & pipe.pipe_bind_mask) == 0 {
+      return 0
+    }
+    if (ppv & pipe.pipe_bind_mask) == pipe.pipe_bind_read {
+      return 1
+    }
+    return 2
+  }
+  if n == 58 {
+    // pipe_write(fd, buf, len): the caller's bytes into the ring, what
+    // its room takes this pass (the partial answer POSIX gives past a
+    // buffer), and the broken pipe once no reader is left. A full
+    // ring parks the writer; a read or a reader's close serves it.
+    if r0 < 0 || r0 > 15 {
+      return -reason_argument
+    }
+    if r2 < 0 || r2 > stage_cap {
+      return -reason_argument
+    }
+    var vpw = check_write(r1, r2)
+    if vpw != 0 {
+      return -vpw
+    }
+    var pme3 = peek64(handoff_caller)
+    if pme3 >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme3, pipe.pipe_op_write, r0, 0, r1, r2,
+      peek64(caller_space_cell))
+    return route_pipe_write
+  }
+  if n == 59 {
+    // pipe_dup(oldfd, newfd): the pipe end the old fd names, the new
+    // fd's — the old binding at newfd dropped first. The library has
+    // already dropped whatever file the new fd held; the pipe's own
+    // tables are the kernel's.
+    if r0 < 0 || r0 > 15 || r1 < 0 || r1 > 15 {
+      return -reason_argument
+    }
+    var pme4 = peek64(handoff_caller)
+    if pme4 >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme4, pipe.pipe_op_dup, r0, r1, 0, 0, 0)
+    return route_pipe_dup
+  }
+  if n == 60 {
+    // pipe_close(fd): one end's holder gone. The last writer's close
+    // is the readers' EOF, the last reader's the writers' broken
+    // pipe — the service wakes each.
+    if r0 < 0 || r0 > 15 {
+      return -reason_argument
+    }
+    var pme5 = peek64(handoff_caller)
+    if pme5 >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme5, pipe.pipe_op_close, r0, 0, 0, 0, 0)
+    return route_pipe_close
   }
   if n == 25 {
     // win_minimize(grant) (emo-desktop A16.3, EmoOS T10.3): the

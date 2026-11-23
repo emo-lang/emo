@@ -696,6 +696,11 @@ emo_os_trap_trampoline:
     addi t6, t6, -1000       # the op — for the filesystem's routes the
                              # request slot rides above it (slot << 4 | op,
                              # T7.2), and the whole value goes into the word
+    li t3, 40
+    bge t6, t3, .Lroute_pipe # ops 40..44, the pipes' (EmoOS plan B,
+                             # T1.5): the process service's second arm,
+                             # every one of them able to wake a peer
+                             # parked on the pipe
     li t3, 10
     bge t6, t3, .Lroute_desktop # ops 10..: the desktop segment (T8.3
                                 # landed verb 12, T8.4 verbs 10 and 11;
@@ -765,6 +770,11 @@ emo_os_trap_trampoline:
     j .Lroute_post
 .Lroute_proc:
     li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
+    j .Lroute_post
+.Lroute_pipe:
+    li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell: the
+                                  # pipes' arm rides beside spawn, wait
+                                  # and exec (T1.5)
     j .Lroute_post
 .Lroute_fs:
     li a0, EMO_KOFF + 0x87005000  # the filesystem service's pid cell
@@ -1471,6 +1481,22 @@ emo_os_frames_frame_free:
     .globl emo_os_frames_frame_split
 emo_os_frames_frame_split:
     .zero 8
+
+# The pipes (EmoOS plan B, T1.5): the binding map, the per-pid request
+# records, and the eight pipe blocks at the fixed addresses the
+# kernel's linker script gives the section. The kernel's Emo (gate.emo,
+# pipe.emo, main.emo) reads and writes every word by its fixed
+# constants; named here so the forensics can read them.
+    .section .emo_pipe, "aw", @nobits
+    .globl emo_os_pipe_map
+emo_os_pipe_map:
+    .zero 4096
+    .globl emo_os_pipe_reqs
+emo_os_pipe_reqs:
+    .zero 12288
+    .globl emo_os_pipe_blocks
+emo_os_pipe_blocks:
+    .zero 8192
 
 # The filesystem's pages (T7.2): three pages at the fixed address the
 # kernel's linker script gives the section — the service's pid cell

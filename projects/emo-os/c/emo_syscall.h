@@ -158,4 +158,34 @@ static inline long emo_execve(const void *name, unsigned long nlen,
                    (long)env, (long)elen);
 }
 
+// Verbs 55..60: the pipes (EmoOS plan B, T1.5). The ends are bound to
+// the library's own fd numbers; the read blocks on an empty ring a
+// writer may still fill and answers 0 at the last writer's close, the
+// write answers what the ring's room took (or the broken pipe). The
+// probe names a descriptor's end — the fresh image after an exec asks
+// it about 0..2 before its first read or write.
+static inline long emo_pipe_bind(long rfd, long wfd) {
+  return emo_ecall(55, rfd, wfd, 0, 0, 0, 0);
+}
+
+static inline long emo_pipe_read(long fd, void *buf, unsigned long n) {
+  return emo_ecall(56, fd, (long)buf, (long)n, 0, 0, 0);
+}
+
+static inline long emo_pipe_probe(long fd) {
+  return emo_ecall(57, fd, 0, 0, 0, 0, 0);
+}
+
+static inline long emo_pipe_write(long fd, const void *buf, unsigned long n) {
+  return emo_ecall(58, fd, (long)buf, (long)n, 0, 0, 0);
+}
+
+static inline long emo_pipe_dup(long oldfd, long newfd) {
+  return emo_ecall(59, oldfd, newfd, 0, 0, 0, 0);
+}
+
+static inline long emo_pipe_close(long fd) {
+  return emo_ecall(60, fd, 0, 0, 0, 0, 0);
+}
+
 #endif
