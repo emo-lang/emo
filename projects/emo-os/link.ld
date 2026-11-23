@@ -158,6 +158,14 @@ SECTIONS
   . = KOFF + 0x8700d000;
   .emo_proc (NOLOAD) : AT(ADDR(.emo_proc) - KOFF) { *(.emo_proc) } :tick
 
+  /* The open-file table (EmoOS plan B, T1.1k), a page above the
+     process page: the filesystem service's handles — per pid and fd,
+     the flag word, the offset and the size, the name. The service
+     owns the table; a restart drops it (abandon clears the page), the
+     bound the design states. */
+  . = KOFF + 0x8700e000;
+  .emo_vfs (NOLOAD) : AT(ADDR(.emo_vfs) - KOFF) { *(.emo_vfs) } :tick
+
   /* The compositor's page (T8.6), a page above the filesystem's: the
      generation, the mode the display service answered at init, and the
      window stack (the position and focus the compositor's policy

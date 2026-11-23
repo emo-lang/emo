@@ -81,6 +81,16 @@ undocumented ever acts.
 | 33 | `win_shape(grant, radius, softness)` | the surface's shape recorded on its row — the radius and the softness the compositor's mask and shadow wear, the toplevels' 10 and 16 the rows carry unset and zero the bare rectangle every other role wears. Zero the radius is the words' own meaning (a toplevel stripped, a panel shaped), and a softness of zero is the mask without the ring; a value past 255 is reason 4, and the shape binds at its declaration — the second call is reason 4, the format's own rule (emo-desktop M30, A30.2, below) |
 | 34 | `clip_set(buf, len)` | the `len` bytes at `buf` replace the clipboard whole (0 clears it). The writer must be the focused surface's owner — the app the stream's copy key reaches; a background caller is reason 3. `len` past the clipboard page's 4096 is reason 4, a buffer outside the caller's memory reason 2, one in a segment that is not writable reason 3; the gate copies inside the trap, so the clipboard never holds half a selection (emo-desktop M34, EmoOS T15.1, below) |
 | 35 | `clip_get(buf, cap)` | as many of the clipboard's bytes as fit land at `buf`, at most `cap`; answers the count copied. Reading is any process's: a paste is the focused app's by the stream's routing, and the bytes are no secret (emo-desktop M34, EmoOS T15.1, below) |
+| 36 | `fd_open(fd, name, name_len, flags)` | the open-file table's open (EmoOS plan B, T1.1k): the caller's fd 3..15 names the handle the filesystem service records — the flag word (0 read, 1 write, 2 read+write; `O_CREAT` 64, `O_TRUNC` 512, `O_APPEND` 1024), the offset and the size, the name. A read of a missing name is reason 6; a bad fd, name or flag reason 4; a full table reason 5 |
+| 37 | `fd_close(fd)` | the handle is gone; a fd this process does not hold is reason 4 |
+| 38 | `fd_read(fd, buf, cap)` | the file's bytes at the handle's offset land at `buf`, at most `cap`; answers the bytes copied (0 at the end). The offset advances by the answer; a handle that is not this process's is reason 4 |
+| 39 | `fd_write(fd, buf, len)` | the `len` bytes at `buf` (at most 2048, the gate's staging) land at the handle's offset; answers `len`. `O_APPEND` writes at the size; a read-only handle is reason 4; a full disk reason 5 |
+| 40 | `fd_lseek(fd, off, whence)` | the handle's offset becomes `base + off` — `base` 0, the current offset (1) or the size (2); answers the new offset. A negative result or a whence past 2 is reason 4 |
+| 41 | `fd_fstat(fd)` | the handle's size and flags packed: the size in the high 32 bits, the flag word in the low; a handle that is not this process's is reason 4 |
+
+The fd verbs share the filesystem's four request slots; the slot's
+`+88` marker selects the open-file table, the whole-file verbs' own
+path otherwise.
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their

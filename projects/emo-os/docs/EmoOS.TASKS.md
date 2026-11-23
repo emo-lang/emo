@@ -107,6 +107,31 @@ writes replace the file at close, and files fit 2048 bytes.
 `T1.1k` takes the table into the filesystem service for partial I/O
 and larger files.
 
+### T1.1k's record (2026-11-23)
+
+The filesystem service owns the open-file table now: a page of its
+own (`link.ld`'s `.emo_vfs` at `0x8700e000`), thirty-two 96-byte
+handles keyed by `(pid, fd)` — the flag word, the offset and size,
+the name. The gate grew verbs 36..41 (`fd_open`, `fd_close`,
+`fd_read`, `fd_write`, `fd_lseek`, `fd_fstat`); they ride the
+filesystem's existing 6..9 route family with the slot's `+88` marker
+naming the fd table, so the shim's routing did not grow. The service
+merges the old sectors under a partial write sector by sector and
+commits the name table after the bytes — the whole-file write's
+order, at an offset. `O_APPEND` starts at the size; `O_CREAT` and
+`O_TRUNC` are the empty write; a restart drops the table (`abandon`
+calls `handles_clear`). The C library shrank to the fd numbers and
+the writable bounces.
+
+Found on the way: the gate's buffer checks cover the image's
+segments, not the process's stack, so the library reads into a
+`.bss` bounce and copies out — the console path's own reason, now
+stated rather than stumbled on.
+
+The metal proof: `chello.elf` (10,336 bytes) answered `stat ok`,
+`read back: fd table on EmoOS`, `fd table cleaned`; the fresh boot
+said `installed chello.elf 10336`, `fs gen 2 files 7`, `fs ls 8`.
+
 ### M1 — the POSIX substrate (the kernel and the library)
 
 The layer every C program stands on. Tasks land only as their first
@@ -122,11 +147,11 @@ consumer asks, but the order is the dependency order.
   offset and buffer the library's, writes buffered and committed at
   close. The cut is stated: files fit the gate's 2048-byte staging,
   and a descriptor opened for writing replaces the file.
-- [ ] **T1.1k** — The filesystem service's open-file table: handles
+- [x] **T1.1k** — The filesystem service's open-file table: handles
   keyed by pid, the offset and the size owned by the service, partial
   reads and writes, append, files past the gate's 2048 bytes; the
-  handle area on the filesystem's page and the restart's `abandon`
-  clearing it.
+  handle area on its own page and the restart's `abandon` clearing
+  it.
 - [ ] **T1.2** — The VFS: a root, directories, path lookup, `cwd`,
   `mkdir`/`unlink`/`rename`; the volume's flat names grow the
   directory form, the golden's listing re-pinned.

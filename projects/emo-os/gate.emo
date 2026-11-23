@@ -411,6 +411,7 @@ def fs_slot_fill(k Int64, name Int64, nlen Int64, len Int64, buf Int64) Int64 {
   poke64(s + 24, len)
   poke64(s + 32, buf)
   poke64(s + 40, peek64(caller_space_cell))
+  poke64(s + 88, 0)
   copy_to(s + 64, name, nlen)
   return s
 }
@@ -487,6 +488,96 @@ def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     fs.stash_push((op << 32) | peek64(handoff_caller))
   }
   return -(1000 + op)
+}
+
+// The fd verbs (EmoOS plan B, T1.1k): open, close, read, write, lseek
+// and fstat, served by the filesystem's open-file table. The slot is
+// the filesystem's own; its layout for these verbs is fd at +16, the
+// first argument at +32, the second at +48, the flags at +56, the
+// name at +64, the write's bytes at +256. The op is 64 +
+// (verb-36)*4 + slot, apart from the whole-file verbs' n + 16*slot.
+def fs_fd_slot(k Int64) Int64 {
+  var s = fs_slots + k * fs_slot_size
+  poke64(s, 1)
+  poke64(s + 8, peek64(handoff_caller))
+  poke64(s + 16, 0)
+  poke64(s + 24, 0)
+  poke64(s + 32, 0)
+  poke64(s + 40, peek64(caller_space_cell))
+  poke64(s + 48, 0)
+  poke64(s + 56, 0)
+  poke64(s + 88, 1)
+  return s
+}
+
+def fs_fd_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
+  if r0 < 3 || r0 > 15 {
+    return -reason_argument
+  }
+  var k = fs_slot_pick()
+  if k < 0 {
+    return -reason_resource
+  }
+  var s = fs_fd_slot(k)
+  poke64(s + 16, r0)
+  poke64(s + 24, n)
+  if n == 36 {
+    if r2 < 1 || r2 > name_max {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    if (r3 & 3) > 2 {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    var vn = check_write(r1, r2)
+    if vn != 0 {
+      poke64(s, 0)
+      return -vn
+    }
+    copy_to(s + 64, r1, r2)
+    poke64(s + 48, r2)
+    poke64(s + 56, r3)
+  }
+  if n == 38 {
+    if r2 < 0 {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    var vb = check_write(r1, r2)
+    if vb != 0 {
+      poke64(s, 0)
+      return -vb
+    }
+    poke64(s + 32, r1)
+    poke64(s + 48, r2)
+  }
+  if n == 39 {
+    if r2 < 0 || r2 > stage_cap {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    var vb = check_write(r1, r2)
+    if vb != 0 {
+      poke64(s, 0)
+      return -vb
+    }
+    copy_to(s + 256, r1, r2)
+    poke64(s + 48, r2)
+  }
+  if n == 40 {
+    if r2 < 0 || r2 > 2 {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    poke64(s + 32, r1)
+    poke64(s + 48, r2)
+  }
+  if n < 36 || n > 41 {
+    poke64(s, 0)
+    return -reason_argument
+  }
+  return -(1000 + 6 + 16 * k)
 }
 
 // The notification verbs (emo-desktop M25, EmoOS Step 11): the
@@ -611,6 +702,9 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   }
   if n >= 6 && n <= 9 {
     return fs_dispatch(n, r0, r1, r2, r3)
+  }
+  if n >= 36 && n <= 41 {
+    return fs_fd_dispatch(n, r0, r1, r2, r3)
   }
   if n == 2 {
     return route_input_byte

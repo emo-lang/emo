@@ -77,6 +77,14 @@ trap 落进内核的 shim,它把动词与六个字拼装给门的分派器
 | 33 | `win_shape(grant, radius, softness)` | 表面的形状记入其行——合成器的掩模与阴影所穿的 radius 与 softness,行未声明时 toplevel 带缺省的 10 和 16,其余角色穿裸矩形。radius 为零是词自身的含义(剥掉 toplevel、给 panel 整形),softness 为零是只有掩模没有影环;过 255 的值为原因 4,形状在声明时绑定——第二次调用即原因 4,format 自家的规矩(emo-desktop M30,A30.2,见下) |
 | 34 | `clip_set(buf, len)` | `buf` 处的 `len` 字节整体替换剪贴板(0 表示清空)。写入者必须是当前焦点表面的属主——流里的复制键到达的那个应用;后台调用者是原因 3。`len` 超过剪贴板页的 4096 是原因 4,缓冲区落在调用者内存之外是原因 2,落在不可写段是原因 3;门在 trap 内完成拷贝,所以剪贴板永远不会只装半个选区(emo-desktop M34,EmoOS T15.1,见下) |
 | 35 | `clip_get(buf, cap)` | 剪贴板的字节尽可能多地落到 `buf`,至多 `cap`;应答拷贝的字节数。读取是任何进程的:粘贴按流的焦点路由本就属于焦点应用,而字节不是秘密(emo-desktop M34,EmoOS T15.1,见下) |
+| 36 | `fd_open(fd, name, name_len, flags)` | 打开文件表的 open(EmoOS B 方案,T1.1k):调用者的 fd 3..15 点名文件系统服务记下的句柄——标志字(0 读、1 写、2 读写;`O_CREAT` 64、`O_TRUNC` 512、`O_APPEND` 1024)、偏移与大小、名字。读一个不存在的名字是 reason 6;坏的 fd、名字或标志是 reason 4;表满 reason 5 |
+| 37 | `fd_close(fd)` | 句柄消失;不是本进程持有的 fd 是 reason 4 |
+| 38 | `fd_read(fd, buf, cap)` | 句柄偏移处的文件字节落到 `buf`,至多 `cap`;应答拷贝的字节数(末尾为 0)。偏移按应答前进;不属于本进程的句柄是 reason 4 |
+| 39 | `fd_write(fd, buf, len)` | `buf` 处的 `len` 字节(至多 2048,门的暂存上界)落到句柄的偏移处;应答 `len`。`O_APPEND` 写在大小处;只读句柄是 reason 4;盘满 reason 5 |
+| 40 | `fd_lseek(fd, off, whence)` | 句柄偏移变成 `base + off`——`base` 为 0、当前偏移(1)或大小(2);应答新偏移。结果为负或 whence 超过 2 是 reason 4 |
+| 41 | `fd_fstat(fd)` | 句柄的大小与标志打包:大小在高 32 位,标志字在低 32 位;不属于本进程的句柄是 reason 4 |
+
+fd 动词共用文件系统的四个请求槽;槽的 `+88` 标记选中打开文件表,否则走整文件动词自己的路。
 
 动词 10 到 16 **为桌面段预留**(门的编号规矩不变:预留号在它的动词落地前不携带含义,落地之日起冻结)——`present`、`output_info`、`input_read`、`win_new`、`win_close`、`win_focus`、`win_move`,见 [`docs/desktop-abi.zh-CN.md`](desktop-abi.zh-CN.md)。动词 10 到 16 已全部落地(T8.3、T8.4、T8.5、T8.6)——桌面段前七个动词,冻结。动词 17 和 18(T8.13,emo-desktop A9.1)按同一条规矩生长段——只在新的号下添加,绝不改写——而它们骑的路由号是邮箱的,不是动词的:窗口 present 投递的合成请求占 op 17(动词 10 的派生,T8.6),指针的通知占 op 18(T8.11),所以 win_role 的请求骑 −1019,input_info 的 op 18 落进输入服务的邮箱——那里原本只有 2 和 12 两个住客。动词 19 到 23(T8.15,emo-desktop A9.3)再次生长段——19 的绑定骑邮箱 op 20,22 的回调占 op 21,而 20、21、23 由门自己应答(协商的字段与版本是协议前门的事,不经服务之手)。
 

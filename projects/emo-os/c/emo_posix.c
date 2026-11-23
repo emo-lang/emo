@@ -1,66 +1,21 @@
-// The fd table (EmoOS plan B, T1.1): the first POSIX surface over the
-// gate. The gate's file verbs are whole-file and named; a descriptor
-// is the library's record of a name, a flag word, a byte buffer and
-// an offset. Reads are served from the buffer loaded at open; writes
-// land in it and commit at close. The cut is stated: files fit the
-// 2048-byte buffer (the gate's staging bound), and a descriptor
-// opened for writing replaces the file (O_TRUNC's meaning); partial
-// writes and larger files wait for the service-owned table, T1.1k.
+// The fd surface (EmoOS plan B, T1.1/T1.1k): the kernel's open-file
+// table does the work now — the filesystem service owns each handle's
+// offset and size, so reads and writes are partial, appends land at
+// the end, and the gate's 2048-byte staging bounds a single call, not
+// the file. This library keeps only the fd numbers: which of 3..15
+// are open, and the writable bounce the console's verb wants.
 
 #include "emo_syscall.h"
 #include "emo_posix.h"
 
-#define EMO_FILE_SLOTS 8
-#define EMO_FILE_MAX 2048
 #define EMO_NAME_MAX 24
-
-struct emo_file {
-  int used;
-  int flags;
-  int slot;
-  long offset;
-  long size;
-  int name_len;
-  char name[EMO_NAME_MAX];
-};
 
 int errno;
 
-static struct emo_file files[EMO_MAX_FD];
-static char slots[EMO_FILE_SLOTS][EMO_FILE_MAX];
-static char slot_used[EMO_FILE_SLOTS];
 static char name_buf[EMO_NAME_MAX];
-static char bounce[EMO_FILE_MAX];
-
-static int slot_take(void) {
-  int i = 0;
-  while (i < EMO_FILE_SLOTS) {
-    if (!slot_used[i]) {
-      slot_used[i] = 1;
-      return i;
-    }
-    i = i + 1;
-  }
-  return -1;
-}
-
-static void slot_give(int s) {
-  slot_used[s] = 0;
-}
-
-static int mode_of(int flags) {
-  return flags & 3;
-}
-
-static int emo_readable(int flags) {
-  int m = mode_of(flags);
-  return m == EMO_O_RDONLY || m == EMO_O_RDWR;
-}
-
-static int emo_writable(int flags) {
-  int m = mode_of(flags);
-  return m == EMO_O_WRONLY || m == EMO_O_RDWR;
-}
+static char bounce[2048];
+static char read_bounce[2048];
+static char used[EMO_MAX_FD];
 
 static int reason_errno(long answer) {
   if (answer == -6) {
@@ -79,6 +34,15 @@ static int reason_errno(long answer) {
     return EMO_EINVAL;
   }
   return EMO_EIO;
+}
+
+// A descriptor's answer: -4 from the service is a handle that is gone
+// or not this process's, the POSIX EBADF.
+static int fd_errno(long answer) {
+  if (answer == -4) {
+    return EMO_EBADF;
+  }
+  return reason_errno(answer);
 }
 
 static int name_of(const char *path, int *len) {
@@ -100,46 +64,24 @@ int open(const char *path, int flags) {
     return -1;
   }
   int fd = 3;
-  while (fd < EMO_MAX_FD && files[fd].used) {
+  while (fd < EMO_MAX_FD && used[fd]) {
     fd = fd + 1;
   }
   if (fd == EMO_MAX_FD) {
     errno = EMO_EMFILE;
     return -1;
   }
-  int s = slot_take();
-  if (s < 0) {
-    errno = EMO_EMFILE;
-    return -1;
-  }
   int i = 0;
   while (i < nlen) {
     name_buf[i] = path[i];
-    files[fd].name[i] = path[i];
     i = i + 1;
   }
-  long size = 0;
-  if (emo_readable(flags)) {
-    long answer = emo_file_read(name_buf, (unsigned long)nlen, slots[s],
-                                EMO_FILE_MAX);
-    if (answer < 0) {
-      slot_give(s);
-      errno = reason_errno(answer);
-      return -1;
-    }
-    if (answer > EMO_FILE_MAX) {
-      slot_give(s);
-      errno = EMO_ENOSPC;
-      return -1;
-    }
-    size = answer;
+  long answer = emo_fd_open(fd, name_buf, (unsigned long)nlen, flags);
+  if (answer < 0) {
+    errno = reason_errno(answer);
+    return -1;
   }
-  files[fd].used = 1;
-  files[fd].flags = flags;
-  files[fd].slot = s;
-  files[fd].offset = 0;
-  files[fd].size = size;
-  files[fd].name_len = nlen;
+  used[fd] = 1;
   return fd;
 }
 
@@ -147,23 +89,18 @@ int close(int fd) {
   if (fd == 0 || fd == 1 || fd == 2) {
     return 0;
   }
-  if (fd < 3 || fd >= EMO_MAX_FD || !files[fd].used) {
+  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
-  struct emo_file *f = &files[fd];
-  int failed = 0;
-  if (emo_writable(f->flags)) {
-    long answer = emo_file_write(f->name, (unsigned long)f->name_len,
-                                 slots[f->slot], (unsigned long)f->size);
-    if (answer < 0) {
-      errno = reason_errno(answer);
-      failed = 1;
-    }
+  long answer = emo_fd_close(fd);
+  if (answer < 0) {
+    errno = fd_errno(answer);
+    used[fd] = 0;
+    return -1;
   }
-  slot_give(f->slot);
-  f->used = 0;
-  return failed ? -1 : 0;
+  used[fd] = 0;
+  return 0;
 }
 
 long read(int fd, void *buf, unsigned long n) {
@@ -173,42 +110,49 @@ long read(int fd, void *buf, unsigned long n) {
       errno = EMO_EIO;
       return -1;
     }
+    if (n == 0) {
+      return 0;
+    }
     ((char *)buf)[0] = (char)b;
     return 1;
   }
-  if (fd < 3 || fd >= EMO_MAX_FD || !files[fd].used) {
+  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
-  struct emo_file *f = &files[fd];
-  if (!emo_readable(f->flags)) {
-    errno = EMO_EBADF;
-    return -1;
-  }
-  long avail = f->size - f->offset;
-  if (avail <= 0) {
+  if (n == 0) {
     return 0;
   }
-  unsigned long k = n;
-  if ((long)k > avail) {
-    k = (unsigned long)avail;
+  // The gate's buffer checks cover the image's segments, not the
+  // process stack; the service reads into this .bss bounce and the
+  // caller's bytes are copied after, the console path's own reason.
+  unsigned long cap = n;
+  if (cap > sizeof(read_bounce)) {
+    cap = sizeof(read_bounce);
+  }
+  long answer = emo_fd_read(fd, read_bounce, cap);
+  if (answer < 0) {
+    errno = fd_errno(answer);
+    return -1;
   }
   unsigned long i = 0;
-  while (i < k) {
-    ((char *)buf)[i] = slots[f->slot][f->offset + (long)i];
+  while (i < (unsigned long)answer) {
+    ((char *)buf)[i] = read_bounce[i];
     i = i + 1;
   }
-  f->offset = f->offset + (long)k;
-  return (long)k;
+  return answer;
 }
 
 long write(int fd, const void *buf, unsigned long n) {
+  if (n == 0) {
+    return 0;
+  }
   if (fd == 1 || fd == 2) {
     unsigned long done = 0;
     while (done < n) {
       unsigned long chunk = n - done;
-      if (chunk > EMO_FILE_MAX) {
-        chunk = EMO_FILE_MAX;
+      if (chunk > sizeof(bounce)) {
+        chunk = sizeof(bounce);
       }
       unsigned long i = 0;
       while (i < chunk) {
@@ -224,63 +168,56 @@ long write(int fd, const void *buf, unsigned long n) {
     }
     return (long)n;
   }
-  if (fd < 3 || fd >= EMO_MAX_FD || !files[fd].used) {
+  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
-  struct emo_file *f = &files[fd];
-  if (!emo_writable(f->flags)) {
-    errno = EMO_EBADF;
-    return -1;
+  unsigned long done = 0;
+  while (done < n) {
+    unsigned long chunk = n - done;
+    if (chunk > sizeof(bounce)) {
+      chunk = sizeof(bounce);
+    }
+    unsigned long i = 0;
+    while (i < chunk) {
+      bounce[i] = ((const char *)buf)[done + i];
+      i = i + 1;
+    }
+    long answer = emo_fd_write(fd, bounce, chunk);
+    if (answer < 0) {
+      errno = fd_errno(answer);
+      return done == 0 ? -1 : (long)done;
+    }
+    done = done + chunk;
   }
-  if (f->size + (long)n > EMO_FILE_MAX) {
-    errno = EMO_ENOSPC;
-    return -1;
-  }
-  unsigned long i = 0;
-  while (i < n) {
-    slots[f->slot][f->size + (long)i] = ((const char *)buf)[i];
-    i = i + 1;
-  }
-  f->size = f->size + (long)n;
-  f->offset = f->size;
   return (long)n;
 }
 
 long lseek(int fd, long off, int whence) {
-  if (fd < 3 || fd >= EMO_MAX_FD || !files[fd].used) {
+  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
-  struct emo_file *f = &files[fd];
-  long base = 0;
-  if (whence == EMO_SEEK_CUR) {
-    base = f->offset;
-  }
-  if (whence == EMO_SEEK_END) {
-    base = f->size;
-  }
-  if (whence != EMO_SEEK_SET && whence != EMO_SEEK_CUR &&
-      whence != EMO_SEEK_END) {
-    errno = EMO_EINVAL;
+  long answer = emo_fd_seek(fd, off, whence);
+  if (answer < 0) {
+    errno = fd_errno(answer);
     return -1;
   }
-  long next = base + off;
-  if (next < 0) {
-    errno = EMO_EINVAL;
-    return -1;
-  }
-  f->offset = next;
-  return next;
+  return answer;
 }
 
 int fstat(int fd, struct emo_stat *st) {
-  if (fd < 3 || fd >= EMO_MAX_FD || !files[fd].used) {
+  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd]) {
     errno = EMO_EBADF;
     return -1;
   }
-  st->size = files[fd].size;
-  st->flags = files[fd].flags;
+  long answer = emo_fd_stat(fd);
+  if (answer < 0) {
+    errno = fd_errno(answer);
+    return -1;
+  }
+  st->size = answer >> 32;
+  st->flags = (int)(answer & 4294967295);
   return 0;
 }
 

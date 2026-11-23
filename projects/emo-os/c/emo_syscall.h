@@ -58,4 +58,34 @@ static inline long emo_file_remove(const void *name, unsigned long nlen) {
   return emo_ecall(9, (long)name, (long)nlen, 0, 0, 0, 0);
 }
 
+// Verbs 36..41: the open-file table (T1.1k). The fd numbers are the
+// caller's; the filesystem service owns each handle's offset and
+// size. The write's source and the open's name must be writable
+// segments' (the gate stages both), and one write carries at most the
+// gate's 2048 bytes.
+static inline long emo_fd_open(long fd, const void *name, unsigned long nlen,
+                               long flags) {
+  return emo_ecall(36, fd, (long)name, (long)nlen, flags, 0, 0);
+}
+
+static inline long emo_fd_close(long fd) {
+  return emo_ecall(37, fd, 0, 0, 0, 0, 0);
+}
+
+static inline long emo_fd_read(long fd, void *buf, unsigned long n) {
+  return emo_ecall(38, fd, (long)buf, (long)n, 0, 0, 0);
+}
+
+static inline long emo_fd_write(long fd, const void *buf, unsigned long n) {
+  return emo_ecall(39, fd, (long)buf, (long)n, 0, 0, 0);
+}
+
+static inline long emo_fd_seek(long fd, long off, long whence) {
+  return emo_ecall(40, fd, off, whence, 0, 0, 0);
+}
+
+static inline long emo_fd_stat(long fd) {
+  return emo_ecall(41, fd, 0, 0, 0, 0, 0);
+}
+
 #endif

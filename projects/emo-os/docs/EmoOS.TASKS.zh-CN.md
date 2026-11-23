@@ -38,13 +38,21 @@
 
 C 库的 fd 表是 `c/emo_posix.c`:16 个描述符、8 个 2048 字节的文件槽,fd 0 走动词 2,fd 1/2 走动词 1(可写 bounce),文件读在 open 时经动词 7 整份装入,写在 close 时经动词 6 提交,`unlink` 走动词 9。`errno` 映射门的理由(6→ENOENT、3→EACCES、2→EFAULT、5→ENOSPC、4→EINVAL)。真机证明:`chello.elf`(10,384 字节)打开 `fd.txt`、写、关、重开,`fstat` 答 `stat ok`,读答 `read back: fd table on EmoOS`,`unlink` 答 `fd table cleaned`;之后卷上没有 `fd.txt`。切法是库的:偏移与缓冲每进程一份,写在 close 时替换文件,文件装进 2048 字节。`T1.1k` 把表搬进文件系统服务,换部分 I/O 与更大的文件。
 
+### T1.1k 的记录(2026-11-23)
+
+文件系统服务现在拥有打开文件表:自己的一页(`link.ld` 的 `.emo_vfs`,在 `0x8700e000`),三十二个 96 字节的句柄,按 `(pid, fd)` 归属——标志字、偏移与大小、名字。门长出动词 36..41(`fd_open`、`fd_close`、`fd_read`、`fd_write`、`fd_lseek`、`fd_fstat`);它们搭文件系统原有 6..9 的路由族,用槽里 `+88` 的标记点名 fd 表,所以 shim 的路由没有增长。服务在部分写时逐扇区合并旧数据,字节之后提交名字表——整文件写的顺序,在偏移上。`O_APPEND` 从大小处开始;`O_CREAT` 与 `O_TRUNC` 是空写;重启丢掉整张表(`abandon` 调 `handles_clear`)。C 库缩成 fd 编号与可写 bounce。
+
+路上发现:门的缓冲检查覆盖镜像的段,不覆盖进程栈,所以库读进 `.bss` 的 bounce 再拷出——这是控制台路径本来就有的理由,现在写明,而不是撞上。
+
+真机证明:`chello.elf`(10,336 字节)答 `stat ok`、`read back: fd table on EmoOS`、`fd table cleaned`;首启线上是 `installed chello.elf 10336`、`fs gen 2 files 7`、`fs ls 8`。
+
 ### M1——POSIX 底座(内核与库)
 
 每个 C 程序站立的那一层。任务只在第一个消费者提出时落地,但顺序就是依赖顺序。
 
 - [ ] **T1.0**——门的 write 规则:可读的源段就应当服务 `write`,让 libc 的 bounce 拷贝退休。引导证明和金测随之重新钉住——`gate 500500 r3 r2` 的第一个拒绝不再点名 text 段,它变成一次成功。
 - [x] **T1.1**——C 库里的 fd 表:0/1/2 接控制台;按名字的文件上的 `open`/`close`/`read`/`write`/`lseek`/`fstat`,走门的整文件动词;每进程一张表,偏移与缓冲归库,写缓冲到 close 才提交。切法写明:文件装进门的 2048 字节暂存,写打开的描述符替换整个文件。
-- [ ] **T1.1k**——文件系统服务的打开文件表:句柄按 pid 归属,偏移与大小归服务,部分读写、追加、超过门 2048 字节的文件;句柄区放在文件系统页上,重启的 `abandon` 清掉它。
+- [x] **T1.1k**——文件系统服务的打开文件表:句柄按 pid 归属,偏移与大小归服务,部分读写、追加、超过门 2048 字节的文件;句柄区放在自己的一页上,重启的 `abandon` 清掉它。
 - [ ] **T1.2**——VFS:根、目录、路径查找、`cwd`、`mkdir`/`unlink`/`rename`;卷的平铺名字长出目录形态,金测的列表重新钉住。
 - [ ] **T1.3**——内存:进程 arena 上的 `brk` 与匿名私有 `mmap`/`munmap`/`mprotect`;越界访问仍是今天的击杀。
 - [ ] **T1.4**——进程:`exec` 时的 `argv`/`envp`,`fork`(复制地址空间;COW 是后续优化)、`execve`、`wait4` 状态字、进程组。

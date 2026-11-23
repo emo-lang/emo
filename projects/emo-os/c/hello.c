@@ -39,6 +39,10 @@ int main(void) {
   read(fd, head, sizeof(head));
   lseek(fd, 0, EMO_SEEK_SET);
   long n = read(fd, buf, sizeof(buf));
+  if (n < 0 || n > (long)sizeof(buf)) {
+    write(2, "read size bad\n", 14);
+    return 4;
+  }
   close(fd);
 
   write(1, second, sizeof(second) - 1);
