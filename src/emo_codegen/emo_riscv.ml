@@ -1540,10 +1540,8 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         box_result env "emo_box_i64"
       end
   | Builtin
-      {
-        name = "user_replace";
-        args = [ pid; entry; stack; arena; arena_end ];
-      } ->
+      { name = "user_replace"; args = [ pid; entry; stack; arena; arena_end ] }
+    ->
       (* T1.4b3b: the in-place exec — the process service reaps the
          calling slot and dresses it with the new image's entry, stack
          and arena; the same pid runs on. Native only; the interpreter

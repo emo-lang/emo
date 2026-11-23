@@ -169,8 +169,7 @@ let is_builtin = function
   | "expect_true" | "expect_false" | "expect_fail" | "peek8" | "poke8"
   | "peek64" | "poke64" | "peek32" | "poke32" | "device_wait" | "device_wake"
   | "ecall" | "user_spawn" | "user_replace" | "gate_reply" | "gate_post"
-  | "pid_num" | "pid_at"
-  | "sfence"
+  | "pid_num" | "pid_at" | "sfence"
   (* the GC heap's doors (docs/gc-heap.md): the admitting targets
      lower their calls through the IR, the refusing ones never reach
      the lowering — the checker's E4032 is upstream *)

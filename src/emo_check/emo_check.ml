@@ -1440,8 +1440,7 @@ let empty_env =
           {
             vtype =
               FuncType
-                ( [ ("fd", Int64) ],
-                  TupleType [ EnumType "R"; ArrayType Int64 ] );
+                ([ ("fd", Int64) ], TupleType [ EnumType "R"; ArrayType Int64 ]);
             is_var = false;
             depth = 0;
             span = Emo_support.Span.zero;
@@ -2139,8 +2138,7 @@ let gc_heap_builtin = function
 let raw_mem_builtin = function
   | "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
   | "device_wait" | "device_wake" | "ecall" | "user_spawn" | "user_replace"
-  | "gate_reply"
-  | "gate_post" | "pid_num" | "pid_at" | "sfence" ->
+  | "gate_reply" | "gate_post" | "pid_num" | "pid_at" | "sfence" ->
       true
   | _ -> false
 

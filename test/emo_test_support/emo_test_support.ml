@@ -32,6 +32,16 @@ let run_cmd ?(timeout = deadline) cmd =
         Unix.close out_w;
         Unix.close err_w;
         Unix.close devnull;
+        (* Every other inherited descriptor goes: the test process's own
+           files and logs must not reach the program under test — a
+           shell fixture naming fd 11 must see it closed, whatever the
+           runner happens to hold. *)
+        let fd = ref 3 in
+        while !fd < 256 do
+          (try Unix.close (Obj.magic !fd : Unix.file_descr)
+           with Unix.Unix_error _ -> ());
+          incr fd
+        done;
         (try Unix.execvp "/bin/sh" [| "/bin/sh"; "-c"; cmd |] with _ -> ());
         Unix._exit 127
     | pid ->

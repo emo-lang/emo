@@ -2043,8 +2043,10 @@ external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
 external emo_stub_waitpid_nohang : int -> int * int = "emo_stub_waitpid_nohang"
 external emo_stub_tty_raw : int -> int64 array = "emo_stub_tty_raw"
+
 external emo_stub_tty_restore : int -> int64 array -> unit
   = "emo_stub_tty_restore"
+
 external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
 
 external emo_stub_sendmsg_fd : int -> string -> int -> int
@@ -4429,9 +4431,8 @@ and apply_builtin span name args =
         error span "E4028"
           "`ecall` reaches the machine's gate: only the `riscv64` target \
            admits it, not the interpreter"
-    | ( (("user_spawn" | "user_replace" | "gate_reply" | "gate_post"
-         | "pid_num" | "pid_at") as
-         name),
+    | ( (( "user_spawn" | "user_replace" | "gate_reply" | "gate_post"
+         | "pid_num" | "pid_at" ) as name),
         _ ) ->
         error span "E4028"
           (Printf.sprintf
@@ -4685,7 +4686,9 @@ and apply_runtime_impl span name args =
                reason os_result spells byte-identically with the c
                runtime's emo_os_fail. *)
             Array
-              (Array.map (fun w -> Int64 w) (emo_stub_tty_raw (Int64.to_int fd))))
+              (Array.map
+                 (fun w -> Int64 w)
+                 (emo_stub_tty_raw (Int64.to_int fd))))
     | "os_tty_raw", vs ->
         error span "E3007"
           (Printf.sprintf "`os_tty_raw` expects (fd Int64), got %d"
@@ -4695,16 +4698,13 @@ and apply_runtime_impl span name args =
             (* The words go back opaque: the same runtime that saved
                them unpacks them, the blob's shape never read outside
                the pair. *)
-            let ints =
-              Array.map
-                (function Int64 w -> w | _ -> 0L)
-                words
-            in
+            let ints = Array.map (function Int64 w -> w | _ -> 0L) words in
             emo_stub_tty_restore (Int64.to_int fd) ints;
             Int64 0L)
     | "os_tty_restore", vs ->
         error span "E3007"
-          (Printf.sprintf "`os_tty_restore` expects (fd Int64, saved Array Int64), got %d"
+          (Printf.sprintf
+             "`os_tty_restore` expects (fd Int64, saved Array Int64), got %d"
              (List.length vs))
     | "os_kill", [ Int64 pid; Int64 sig_no ] ->
         (* The classic range rides ahead of the call, the signal_*

@@ -190,8 +190,7 @@ cat %s
 let smoke_tests =
   [
     tc "the kernel's run.sh smoke passes" (fun () ->
-        if
-          not (Lazy.force riscv64_available && Lazy.force c_compiler_available)
+        if not (Lazy.force riscv64_available && Lazy.force c_compiler_available)
         then Alcotest.skip ();
         let scratch =
           Filename.concat (Filename.get_temp_dir_name ()) "emo-os-kernel-smoke"
@@ -582,8 +581,7 @@ let gc_metal_tests =
           (read_file (Filename.concat gc_examples_dir "gc_demo/main.emo"))
           (read_file (Filename.concat gc_examples_dir "gc_metal/main.emo")));
     tc "the demo's 24 gold lines walk the kernel's metal" (fun () ->
-        if
-          not (Lazy.force riscv64_available && Lazy.force c_compiler_available)
+        if not (Lazy.force riscv64_available && Lazy.force c_compiler_available)
         then Alcotest.skip ();
         let expected =
           read_file (Filename.concat gc_examples_dir "gc_demo/expected.txt")
