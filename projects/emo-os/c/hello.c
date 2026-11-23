@@ -18,6 +18,8 @@ static char rename_ok[] = "rename ok\n";
 static char vfs_clean[] = "vfs cleaned\n";
 static char heap_ok[] = "heap ok\n";
 static char mmap_ok[] = "mmap ok\n";
+static char reuse_ok[] = "reuse ok\n";
+static char mmap_reuse_ok[] = "mmap reuse ok\n";
 
 static int streq(const char *a, const char *b) {
   int i = 0;
@@ -148,5 +150,15 @@ int main(void) {
   write(1, mmap_ok, sizeof(mmap_ok) - 1);
   free(hp);
   munmap(mp, 4096);
+  void *hp2 = malloc(1000);
+  void *mp2 = mmap(0, 4096, 0, 0, -1, 0);
+  if (hp2 != hp || mp2 != mp) {
+    write(2, "reuse failed\n", 13);
+    return 18;
+  }
+  write(1, reuse_ok, sizeof(reuse_ok) - 1);
+  write(1, mmap_reuse_ok, sizeof(mmap_reuse_ok) - 1);
+  free(hp2);
+  munmap(mp2, 4096);
   return 0;
 }

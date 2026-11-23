@@ -34,6 +34,23 @@
 
 第一份镜像是 `chello.elf`:9,288 字节,入口 `0x87100000`,两个 `PT_LOAD` 段(text RX 在 `0x87100000`,data RW 在 `0x87101000`),消息放在 `.data`,因为门的 write 动词从可写段拷贝。真机证明:桌面的 `exec chello.elf` 打出 `hello from C on EmoOS`,提示符回来;首启的线上说 `installed chello.elf 9288`。路上发现并修掉两处碰撞:Emo 包树会汇编 `projects/emo-os` 下的每个 `.S`,所以 C 的桩叫 `crt0.s`;树里按 basename 只能有一个 `link.ld`,所以 C 的脚本叫 `c/chello.ld`。金测会装上这份镜像,文件计数随之移动(首启重启后挂载 7 个,第二脚挂载 8 个,`fs ls 8`);exec 的那一拍等一次重新钉住 frame 账目的金测运行。
 
+### M1——POSIX 底座(内核与库)
+
+每个 C 程序站立的那一层。任务只在第一个消费者提出时落地,但顺序就是依赖顺序。
+
+- [ ] **T1.0**——门的 write 规则:可读的源段就应当服务 `write`,让 libc 的 bounce 拷贝退休。引导证明和金测随之重新钉住——`gate 500500 r3 r2` 的第一个拒绝不再点名 text 段,它变成一次成功。
+- [x] **T1.1**——C 库里的 fd 表:0/1/2 接控制台;按名字的文件上的 `open`/`close`/`read`/`write`/`lseek`/`fstat`,走门的整文件动词;每进程一张表,偏移与缓冲归库,写缓冲到 close 才提交。切法写明:文件装进门的 2048 字节暂存,写打开的描述符替换整个文件。
+- [x] **T1.1k**——文件系统服务的打开文件表:句柄按 pid 归属,偏移与大小归服务,部分读写、追加、超过门 2048 字节的文件;句柄区放在自己的一页上,重启的 `abandon` 清掉它。
+- [x] **T1.2**——C 库的路径层:根、相对与绝对路径、`.` 与 `..`、进程的 `cwd`、`mkdir`/`rmdir`/`stat`/`rename`、`opendir`/`readdir`/`closedir`,都建在卷的平铺名字上。目录就是标记名 `dir/` 与它前缀下的名字;24 字节的平铺名上界就是切法,更长的路径答 `ENAMETOOLONG`。
+- [x] **T1.2k**——服务里的真目录条目:名字条目 `+56` 的类型字(0 文件、1 目录)、`path_type`/`mkdir`/`rmdir` 作为动词 42..44,C 库改用它们。隐式目录——前缀下的名字——仍答为目录,所以平铺年代的卷继续可用。
+- [x] **T1.2d**——桌面的类型化列举:动词 45 `list_dir` 带类型字节,图标与文件夹视图读它,`desk_view_build` 的前缀分组退休。启动器 `.elf` 目录仍读平铺列表。金测自己的运行是剩下的引脚;启动壁纸与两个写节拍的 frame 摘要已手动对上。
+- [x] **T1.3**——内存:进程 arena 上的 `brk`/`sbrk` 与匿名私有 `mmap`/`munmap`/`mprotect`——用户运行的十六个 64 KiB 块,1 MiB。动词 46 以页号暴露 base/end;C 库的 bump 分配器拥有 break,越过 arena 的写仍是原来的缺页。
+- [x] **T1.3k**——分配器的复用:`malloc` 的 first-fit 空闲表与 `mmap` 的页空闲表——`free` 与 `munmap` 交还块,`malloc` 与 `mmap` 复用它们,`realloc` 拷贝;1 MiB 的 arena 是边界。
+- [ ] **T1.3v**——arena 长过 1 MiB 的运行:`brk`/`mmap` 向内核要帧、页表增加映射、死亡回收把它们走回家;固定运行是这一刀的边界。
+- [ ] **T1.4**——进程:`exec` 时的 `argv`/`envp`,`fork`(复制地址空间;COW 是后续优化)、`execve`、`wait4` 状态字、进程组。
+- [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
+- [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。
+
 ### T1.1 的记录(2026-11-23)
 
 C 库的 fd 表是 `c/emo_posix.c`:16 个描述符、8 个 2048 字节的文件槽,fd 0 走动词 2,fd 1/2 走动词 1(可写 bounce),文件读在 open 时经动词 7 整份装入,写在 close 时经动词 6 提交,`unlink` 走动词 9。`errno` 映射门的理由(6→ENOENT、3→EACCES、2→EFAULT、5→ENOSPC、4→EINVAL)。真机证明:`chello.elf`(10,384 字节)打开 `fd.txt`、写、关、重开,`fstat` 答 `stat ok`,读答 `read back: fd table on EmoOS`,`unlink` 答 `fd table cleaned`;之后卷上没有 `fd.txt`。切法是库的:偏移与缓冲每进程一份,写在 close 时替换文件,文件装进 2048 字节。`T1.1k` 把表搬进文件系统服务,换部分 I/O 与更大的文件。
@@ -66,27 +83,17 @@ C 程序里的 `dir` 是真类型条目;shell 与桌面一直在写的 `a/one.tx
 
 ### T1.3 的记录(2026-11-23)
 
-arena 是进程的 64 KiB 运行,由 `space.build` 映射在它的物理身份上;build 知道子进程的 pid,直接把它按 pid 的单元(proc 页的后半,`0x8700d800`)写成 base/end 的页号——没有服务拷贝,也没有共享单元可赛跑。动词 46 `arena_info` 答调用者的单元。C 库的 `mem_init` 解页号;`brk`/`sbrk`/`malloc`/`free`/`realloc`/`mmap`/`munmap`/`mprotect` 都建在它的 bump 分配器上;`munmap` 与 `mprotect` 是 arena 的空操作,越过末尾的写仍是原来的缺页。
+arena 是用户运行的十六个 64 KiB 块——1 MiB,不是初稿写的 64 KiB——由 `space.build` 映射在它的物理身份上;build 知道子进程的 pid,直接把它按 pid 的单元(proc 页的后半,`0x8700d800`)写成 base/end 的页号——没有服务拷贝,也没有共享单元可赛跑。动词 46 `arena_info` 答调用者的单元。C 库的 `mem_init` 解页号;`brk`/`sbrk`/`malloc`/`free`/`realloc`/`mmap`/`munmap`/`mprotect` 都建在它的 bump 分配器上;这一刀里 `munmap` 与 `mprotect` 是 arena 的空操作(T1.3k 让 `munmap` 交还页),越过末尾的写仍是原来的缺页。
 
 路上发现:最初的打包把物理地址放进各自的一半——arena 的第 31 位让 ecall 的应答变成负数,shim 把它读成路由,合成器说 `the verb is nobody's (24)`。现在打包的是页号(base 高 20 位,end 低 20 位)。
 
 真机证明:`chello.elf`(20,376 字节)在 `stat ok`、`read back: fd table on EmoOS`、`fd table cleaned`、`path ok`、`dir listing ok`、`rename ok`、`vfs cleaned` 之后答 `heap ok` 与 `mmap ok`;调试运行的 arena base 是 `0x84550000`,`sbrk(0)` 答它。
 
-### M1——POSIX 底座(内核与库)
+### T1.3k 的记录(2026-11-23)
 
-每个 C 程序站立的那一层。任务只在第一个消费者提出时落地,但顺序就是依赖顺序。
+初始 arena 是 1 MiB(用户运行的十六个 64 KiB 块);初稿的“64 KiB”是运行里每个块的单位。库的分配器现在有两张 first-fit 空闲表:`malloc` 的 16 字节头块(`free` 交还,`malloc` 复用并拆掉剩余)与 `mmap` 的页块(`munmap` 把节点写回,`mmap` first-fit 它),`realloc` 拷贝后释放。固定运行是边界;长过它是 T1.3v(帧、页表新增映射、死亡回收)。
 
-- [ ] **T1.0**——门的 write 规则:可读的源段就应当服务 `write`,让 libc 的 bounce 拷贝退休。引导证明和金测随之重新钉住——`gate 500500 r3 r2` 的第一个拒绝不再点名 text 段,它变成一次成功。
-- [x] **T1.1**——C 库里的 fd 表:0/1/2 接控制台;按名字的文件上的 `open`/`close`/`read`/`write`/`lseek`/`fstat`,走门的整文件动词;每进程一张表,偏移与缓冲归库,写缓冲到 close 才提交。切法写明:文件装进门的 2048 字节暂存,写打开的描述符替换整个文件。
-- [x] **T1.1k**——文件系统服务的打开文件表:句柄按 pid 归属,偏移与大小归服务,部分读写、追加、超过门 2048 字节的文件;句柄区放在自己的一页上,重启的 `abandon` 清掉它。
-- [x] **T1.2**——C 库的路径层:根、相对与绝对路径、`.` 与 `..`、进程的 `cwd`、`mkdir`/`rmdir`/`stat`/`rename`、`opendir`/`readdir`/`closedir`,都建在卷的平铺名字上。目录就是标记名 `dir/` 与它前缀下的名字;24 字节的平铺名上界就是切法,更长的路径答 `ENAMETOOLONG`。
-- [x] **T1.2k**——服务里的真目录条目:名字条目 `+56` 的类型字(0 文件、1 目录)、`path_type`/`mkdir`/`rmdir` 作为动词 42..44,C 库改用它们。隐式目录——前缀下的名字——仍答为目录,所以平铺年代的卷继续可用。
-- [x] **T1.2d**——桌面的类型化列举:动词 45 `list_dir` 带类型字节,图标与文件夹视图读它,`desk_view_build` 的前缀分组退休。启动器 `.elf` 目录仍读平铺列表。金测自己的运行是剩下的引脚;启动壁纸与两个写节拍的 frame 摘要已手动对上。
-- [x] **T1.3**——内存:进程 64 KiB arena 上的 `brk`/`sbrk` 与匿名私有 `mmap`/`munmap`/`mprotect`。动词 46 以页号暴露 arena 的 base/end;C 库的 bump 分配器拥有 break,`munmap` 与 `mprotect` 是 arena 的空操作,越过 arena 的写仍是原来的缺页。
-- [ ] **T1.3k**——arena 的增长:超过 64 KiB 的 `brk`/`mmap` 向内核要帧并扩展进程的表;固定 arena 是这一刀的边界。
-- [ ] **T1.4**——进程:`exec` 时的 `argv`/`envp`,`fork`(复制地址空间;COW 是后续优化)、`execve`、`wait4` 状态字、进程组。
-- [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
-- [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。
+真机证明:`chello.elf`(20,536 字节)答 `heap ok`、`mmap ok`、`reuse ok`、`mmap reuse ok`。
 
 ### M2——C 库(源自 musl)
 

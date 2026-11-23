@@ -91,6 +91,64 @@ counts moved with it (the first boot's restart mounts 7, the second
 boot's mounts 8, `fs ls 8`); the exec beat waits for a golden run
 that re-pins the frame ledger.
 
+### M1 — the POSIX substrate (the kernel and the library)
+
+The layer every C program stands on. Tasks land only as their first
+consumer asks, but the order is the dependency order.
+
+- [ ] **T1.0** — The gate's write rule: a readable source segment
+  should serve `write`, retiring the libc's bounce copy. The boot
+  proof and the golden re-pin with it — `gate 500500 r3 r2`'s first
+  refusal no longer names the text segment, which becomes a success.
+- [x] **T1.1** — The fd table in the C library: 0/1/2 on the
+  console; `open`/`close`/`read`/`write`/`lseek`/`fstat` on named
+  files over the gate's whole-file verbs; a per-process table, the
+  offset and buffer the library's, writes buffered and committed at
+  close. The cut is stated: files fit the gate's 2048-byte staging,
+  and a descriptor opened for writing replaces the file.
+- [x] **T1.1k** — The filesystem service's open-file table: handles
+  keyed by pid, the offset and the size owned by the service, partial
+  reads and writes, append, files past the gate's 2048 bytes; the
+  handle area on its own page and the restart's `abandon` clearing
+  it.
+- [x] **T1.2** — The C library's path layer: a root, relative and
+  absolute paths, `.` and `..`, the process's `cwd`, `mkdir`/`rmdir`/
+  `stat`/`rename`, `opendir`/`readdir`/`closedir` over the volume's
+  flat names. A directory is the marker `dir/` and the names under its
+  prefix; the 24-byte flat name bound is the cut, a longer path
+  answering `ENAMETOOLONG`.
+- [x] **T1.2k** — The service's real directory entries: a type word
+  at the name entry's `+56` (0 file, 1 directory), `path_type`,
+  `mkdir` and `rmdir` as verbs 42..44, and the C library switched to
+  them. An implicit directory — names under a prefix — still answers
+  as a directory, so the flat years' volumes keep working.
+- [x] **T1.2d** — The desktop's typed listing: verb 45 `list_dir`
+  carries the type byte, the icons and the folder view read it, and
+  the prefix grouping retired from `desk_view_build`. The launcher's
+  `.elf` catalog still reads the flat list. The golden's own run is
+  the remaining pin; the boot's wallpaper and both write beats'
+  frame digests matched by hand.
+- [x] **T1.3** — Memory: `brk`/`sbrk` and anonymous private `mmap`/
+  `munmap`/`mprotect` over the process's arena — the user run's
+  sixteen 64 KiB blocks, 1 MiB. Verb 46 exposes the base/end as page
+  numbers; the C library's bump allocator owns the break, and a write
+  past the arena is the page fault it always was.
+- [x] **T1.3k** — The allocator's reuse: `malloc`'s first-fit free
+  list and `mmap`'s page free list — `free` and `munmap` hand blocks
+  back, `malloc` and `mmap` reuse them, `realloc` copies; the 1 MiB
+  arena is the bound.
+- [ ] **T1.3v** — The arena's growth past its 1 MiB run: `brk`/`mmap`
+  ask the kernel for frames, the page table gains the mappings, and
+  the death reclaim walks them home; the fixed run is this cut's
+  bound.
+- [ ] **T1.4** — Process: `argv`/`envp` at `exec`, `fork` (copy the
+  address space; COW is a later optimization), `execve`, `wait4`
+  status words, process groups.
+- [ ] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
+  last writer's close.
+- [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
+  `sigaction`/`sigprocmask`, the status encoding the shell reads.
+
 ### T1.1's record (2026-11-23)
 
 The C library's fd table is `c/emo_posix.c`: 16 descriptors, 8 file
@@ -193,15 +251,17 @@ run here).
 
 ### T1.3's record (2026-11-23)
 
-The arena is the process's 64 KiB run, mapped at its physical identity
-by `space.build`; the build writes the child's per-pid cell (the proc
+The arena is the user run's sixteen 64 KiB blocks — 1 MiB, not the
+64 KiB the first draft said — mapped at the physical identity by
+`space.build`; the build writes the child's per-pid cell (the proc
 page's second half, `0x8700d800`) with the base/end page numbers —
 the build knows the child's pid, so no service copies it and no
 shared cell races. Verb 46 `arena_info` answers the caller's cell.
 The C library's `mem_init` decodes the page numbers;
 `brk`/`sbrk`/`malloc`/`free`/`realloc`/`mmap`/`munmap`/`mprotect` live
-on its bump allocator; `munmap` and `mprotect` are the arena's
-no-ops, and a write past the end is the page fault it always was.
+on its bump allocator; in this cut `munmap` and `mprotect` were the
+arena's no-ops (T1.3k makes `munmap` hand its pages back), and a
+write past the end is the page fault it always was.
 
 Found on the way: the first pack put the physical addresses in their
 own halves — the arena's bit 31 made the ecall answer negative, the
@@ -215,58 +275,19 @@ cleaned`, `path ok`, `dir listing ok`, `rename ok`, `vfs cleaned`;
 the debug run's arena base was `0x84550000` and `sbrk(0)` answered
 it.
 
-### M1 — the POSIX substrate (the kernel and the library)
+### T1.3k's record (2026-11-23)
 
-The layer every C program stands on. Tasks land only as their first
-consumer asks, but the order is the dependency order.
+The initial arena is 1 MiB (the user run's sixteen 64 KiB blocks);
+the first draft's "64 KiB" was the run's per-block unit. The library's
+allocator now has two first-fit free lists: malloc's 16-byte-header
+blocks (`free` hands one back, `malloc` reuses it and splits the
+remainder) and mmap's page blocks (`munmap` writes the node back,
+`mmap` first-fits it), with `realloc` copying and freeing. The fixed
+run is the bound; growing past it is T1.3v (frames, the page table's
+new mappings, the death reclaim).
 
-- [ ] **T1.0** — The gate's write rule: a readable source segment
-  should serve `write`, retiring the libc's bounce copy. The boot
-  proof and the golden re-pin with it — `gate 500500 r3 r2`'s first
-  refusal no longer names the text segment, which becomes a success.
-- [x] **T1.1** — The fd table in the C library: 0/1/2 on the
-  console; `open`/`close`/`read`/`write`/`lseek`/`fstat` on named
-  files over the gate's whole-file verbs; a per-process table, the
-  offset and buffer the library's, writes buffered and committed at
-  close. The cut is stated: files fit the gate's 2048-byte staging,
-  and a descriptor opened for writing replaces the file.
-- [x] **T1.1k** — The filesystem service's open-file table: handles
-  keyed by pid, the offset and the size owned by the service, partial
-  reads and writes, append, files past the gate's 2048 bytes; the
-  handle area on its own page and the restart's `abandon` clearing
-  it.
-- [x] **T1.2** — The C library's path layer: a root, relative and
-  absolute paths, `.` and `..`, the process's `cwd`, `mkdir`/`rmdir`/
-  `stat`/`rename`, `opendir`/`readdir`/`closedir` over the volume's
-  flat names. A directory is the marker `dir/` and the names under its
-  prefix; the 24-byte flat name bound is the cut, a longer path
-  answering `ENAMETOOLONG`.
-- [x] **T1.2k** — The service's real directory entries: a type word
-  at the name entry's `+56` (0 file, 1 directory), `path_type`,
-  `mkdir` and `rmdir` as verbs 42..44, and the C library switched to
-  them. An implicit directory — names under a prefix — still answers
-  as a directory, so the flat years' volumes keep working.
-- [x] **T1.2d** — The desktop's typed listing: verb 45 `list_dir`
-  carries the type byte, the icons and the folder view read it, and
-  the prefix grouping retired from `desk_view_build`. The launcher's
-  `.elf` catalog still reads the flat list. The golden's own run is
-  the remaining pin; the boot's wallpaper and both write beats'
-  frame digests matched by hand.
-- [x] **T1.3** — Memory: `brk`/`sbrk` and anonymous private `mmap`/
-  `munmap`/`mprotect` over the process's 64 KiB arena. Verb 46
-  exposes the arena's base/end as page numbers; the C library's bump
-  allocator owns the break, `munmap` and `mprotect` are the arena's
-  no-ops, and a write past the arena is the page fault it always was.
-- [ ] **T1.3k** — The arena's growth: `brk`/`mmap` past the 64 KiB ask
-  the kernel for frames and extend the process's table; the fixed
-  arena is this cut's bound.
-- [ ] **T1.4** — Process: `argv`/`envp` at `exec`, `fork` (copy the
-  address space; COW is a later optimization), `execve`, `wait4`
-  status words, process groups.
-- [ ] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
-  last writer's close.
-- [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
-  `sigaction`/`sigprocmask`, the status encoding the shell reads.
+The metal proof: `chello.elf` (20,536 bytes) answered `heap ok`,
+`mmap ok`, `reuse ok`, `mmap reuse ok`.
 
 ### M2 — the C library (musl-derived)
 

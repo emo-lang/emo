@@ -755,7 +755,22 @@ int closedir(EMO_DIR *d) {
   return 0;
 }
 
-// ---- the arena's memory (EmoOS plan B, T1.3) ----
+// ---- the arena's memory (EmoOS plan B, T1.3/T1.3k) ----
+//
+// The arena is the user pass's run — sixteen 64 KiB blocks, 1 MiB —
+// mapped by the kernel at its physical identity. The allocator is a
+// bump for new bytes and first-fit free lists for the bytes handed
+// back: malloc's freed blocks and mmap's unmapped pages are reused,
+// the T1.3k cut. Growing the arena past its run is T1.3v (frames,
+// page-table extension, the death reclaim).
+
+struct emo_heap_block {
+  unsigned long size;
+  struct emo_heap_block *next;
+};
+
+static struct emo_heap_block *free_list;
+static struct emo_heap_block *page_free;
 
 static void mem_init(void) {
   if (heap_ready) {
@@ -814,19 +829,51 @@ void *malloc(unsigned long n) {
     errno = EMO_ENOMEM;
     return 0;
   }
-  unsigned long need = (n + 16 + 15) & ~15UL;
-  if (heap_cur + need > heap_end) {
+  unsigned long need = (n + 15) & ~15UL;
+  struct emo_heap_block *prev = 0;
+  struct emo_heap_block *b = free_list;
+  while (b != 0) {
+    if (b->size >= need) {
+      if (prev == 0) {
+        free_list = b->next;
+      } else {
+        prev->next = b->next;
+      }
+      if (b->size >= need + 32) {
+        struct emo_heap_block *r =
+            (struct emo_heap_block *)((char *)b + 16 + need);
+        r->size = b->size - need - 16;
+        r->next = free_list;
+        free_list = r;
+        b->size = need;
+      }
+      b->next = 0;
+      return (char *)b + 16;
+    }
+    prev = b;
+    b = b->next;
+  }
+  if (heap_cur + 16 + need > heap_end) {
     errno = EMO_ENOMEM;
     return 0;
   }
-  char *p = heap_cur;
-  heap_cur = heap_cur + need;
-  ((long *)p)[0] = (long)n;
-  return p + 16;
+  b = (struct emo_heap_block *)heap_cur;
+  heap_cur = heap_cur + 16 + need;
+  b->size = need;
+  b->next = 0;
+  return (char *)b + 16;
 }
 
 void free(void *p) {
-  (void)p;
+  if (p == 0) {
+    return;
+  }
+  struct emo_heap_block *b = (struct emo_heap_block *)((char *)p - 16);
+  if ((char *)b < heap_base || (char *)b >= heap_end) {
+    return;
+  }
+  b->next = free_list;
+  free_list = b;
 }
 
 void *realloc(void *p, unsigned long n) {
@@ -837,12 +884,13 @@ void *realloc(void *p, unsigned long n) {
     free(p);
     return 0;
   }
-  long old = ((long *)p)[-2];
+  struct emo_heap_block *b = (struct emo_heap_block *)((char *)p - 16);
+  unsigned long old = b->size;
   char *q = malloc(n);
   if (q == 0) {
     return 0;
   }
-  unsigned long k = (unsigned long)old;
+  unsigned long k = old;
   if (k > n) {
     k = n;
   }
@@ -851,6 +899,7 @@ void *realloc(void *p, unsigned long n) {
     q[i] = ((char *)p)[i];
     i = i + 1;
   }
+  free(p);
   return q;
 }
 
@@ -866,15 +915,43 @@ void *mmap(void *addr, unsigned long len, int prot, int flags, int fd,
     errno = EMO_EINVAL;
     return (void *)-1;
   }
+  unsigned long need = (len + 4095) & ~4095UL;
+  struct emo_heap_block *prev = 0;
+  struct emo_heap_block *b = page_free;
+  while (b != 0) {
+    if (b->size >= need) {
+      if (prev == 0) {
+        page_free = b->next;
+      } else {
+        prev->next = b->next;
+      }
+      if (b->size >= need + 4096) {
+        struct emo_heap_block *r =
+            (struct emo_heap_block *)((char *)b + need);
+        r->size = b->size - need;
+        r->next = page_free;
+        page_free = r;
+      }
+      char *p = (char *)b;
+      unsigned long i = 0;
+      while (i < need) {
+        p[i] = 0;
+        i = i + 1;
+      }
+      return p;
+    }
+    prev = b;
+    b = b->next;
+  }
   unsigned long cur = ((unsigned long)heap_cur + 4095) & ~4095UL;
-  if (cur + len > (unsigned long)heap_end) {
+  if (cur + need > (unsigned long)heap_end) {
     errno = EMO_ENOMEM;
     return (void *)-1;
   }
   char *p = (char *)cur;
-  heap_cur = p + len;
+  heap_cur = p + need;
   unsigned long i = 0;
-  while (i < len) {
+  while (i < need) {
     p[i] = 0;
     i = i + 1;
   }
@@ -882,8 +959,14 @@ void *mmap(void *addr, unsigned long len, int prot, int flags, int fd,
 }
 
 int munmap(void *addr, unsigned long len) {
-  (void)addr;
-  (void)len;
+  if (addr == 0 || len == 0) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  struct emo_heap_block *b = (struct emo_heap_block *)addr;
+  b->size = (len + 4095) & ~4095UL;
+  b->next = page_free;
+  page_free = b;
   return 0;
 }
 
