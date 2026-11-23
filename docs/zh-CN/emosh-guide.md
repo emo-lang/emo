@@ -120,7 +120,7 @@ first
 second
 $ nosuch-cmd 2> err.txt
 $ cat err.txt
-emosh: nosuch-cmd: os: execvp: No such file or directory
+emosh: nosuch-cmd: command not found
 ```
 
 ## 连接符与状态
@@ -154,10 +154,26 @@ hello shell
 
 - `const NAME = WORD` 绑定一个变量;重声明已冻结的名字——用
   `const`、`var` 或 `unset`——会拒绝(`NAME: is a constant`)。
-  `var NAME = WORD` 同样绑定;再 `var` 覆盖值。带引号的值绑定其扩展后的
-  文本(`const g = "hello"`);裸的一串按整数表达式求值
-  (`var acc = acc + i`),单个裸词复制它所指的变量。
+  `var NAME = WORD` 同样绑定;再 `var` 覆盖值。值的读法有两种:带引号
+  的部分绑定其扩展文本拼成的一个词(`$x` 会长;glob 不动:声明的值
+  不做 glob);裸的一串按整数表达式求值(`var acc = acc + i`)。
   `$NAME` 先读声明的绑定再读环境,`unset` 两者都除。
+- `NAME = EXPR` 重赋已声明的绑定——循环体里的 `n = n - 1`、`for`
+  body 里的 `acc = acc + i`。值的读法与声明相同。未声明的名字拒绝
+  (`NAME: is not declared`——绑定只经 `var` 与 `const` 打开),
+  已冻结的拒绝重赋(`NAME: is a constant`)。
+- 命令位的裸词与比较符串,当头部指已声明的绑定、以数字开头、或
+  是开括号时,就是表达式语句——shell 对 emo repl 的自己的读法:
+  `var s = 0` 之后的 `s + 1` 打印 `1`,`2 * 3` 打印 `6`,
+  `( 2 + 3 ) * 2` 打印 `10`,比较式答 1 或 0;整数字面量与绑定的值
+  都可带前导负号(`-5`,沉过零的计数器)。单独一个名字原样答
+  它绑定的值,字符串或数字 alike——`const c = "foo"` 之后的 `c`
+  打印 foo;只有更长的串才要求数字。内建与函数的名字
+  保持命令(`echo hi` 永不求值),引号头部强制命令读法
+  (`'git' status`);比较符在普通命令里作普通词骑行
+  (`grep == hi` 真跑 grep,`echo a == b` 原样打印)。会话自己的
+  名字压过 PATH 的命令,管道的一段也可以是值的生产者
+  (`g | tr a-z A-Z`)。
 - `if LIST { LIST } else { LIST }` 与 `while LIST { LIST }`——条件
   有两种形态。**命令列表**:以其最后命令的退出状态决定(0 继续)。
   **数值比较**:`if s > 5 { … }`、`if s == 3 && s < 10 { … }`——当
@@ -187,6 +203,15 @@ $ for var i = 1; i <= 3; i = i + 1 {
 tick 1
 tick 2
 tick 3
+$ var n = 2
+$ while n > 0 {
+  echo n=$n
+  n = n - 1
+}
+n=2
+n=1
+$ echo final=$n
+0
 ```
 
 块可以在一行打开、数行之后闭合——shell 以 `>` 要下一行,直到大
@@ -251,9 +276,9 @@ $ echo status=$?
 
 ```console
 $ no-such-command
-emosh: no-such-command: os: execvp: No such file or directory   (状态 127)
+emosh: no-such-command: command not found   (状态 127)
 $ ./nonexec-script
-emosh: ./nonexec-script: os: execvp: Permission denied   (状态 127)
+emosh: ./nonexec-script: os: execvp: Permission denied   (状态 126)
 $ echo x > /no/such/dir/f
 emosh: os: open /no/such/dir/f: No such file or directory   (状态 1)
 $ echo dangling |
@@ -283,7 +308,7 @@ cooked 模式下,Ctrl-C 之后要等下一行完成才会再见到提示符;行�
 - 没有 `case`、`until`、`select`、`[[`,for 头之外没有算术括号;
 - 复合命令不进管道(`if … } | cat` 拒绝),也没有词表迭代
   (`for x in words`——for 只有数值形);函数调用不带重定向;
-- 位置参数到头就到头:只有 `$1` … `$9`、`${N}`、`$#` 与 `$@`——无 `shift`,无 `$*`;声明的值是一个词(算术表达式只在 for 头);
+- 位置参数到头就到头:只有 `$1` … `$9`、`${N}`、`$#` 与 `$@`——无 `shift`,无 `$*`;声明与赋值的值都是一个词;
 - 后台任务有了,但终端不谈判:`fg` 只是等,Ctrl-C 够不到它带回来的作业(终端交接调用——`tcsetpgrp`——是等着落地的 os 半边);这里没有任何东西会停作业,`bg` 恒答 `already in background`;后台作业的 stdin 仍是 shell 的;
 - 无行编辑器——终端自己的 cooked 模式读入;无历史,无补全;
 - 扩展后无 IFS 字段切分;

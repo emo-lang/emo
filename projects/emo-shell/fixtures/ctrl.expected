@@ -37,5 +37,26 @@ final=0
 math
 sum=10
 phrase=[ab]
+phrase=[newwords]
+emosh: ghost: is not declared
+ghost-refused=1
+emosh: locked: is a constant
+locked-refused=1
+locked=9
+unlocked=42
+41
+bare-name=0
+4
+plus=0
+2
+1
+foo
+const-bare=0
+quoted-runs
+emosh: s: the expression has trailing tokens
+trailing=1
+-5
+literal=0
+neg=-1
 emosh: return: only in a function
 never-after

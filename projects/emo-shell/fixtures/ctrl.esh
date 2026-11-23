@@ -81,7 +81,7 @@ if s == 3 {
 var n = 3
 while n > 0 {
   echo down $n
-  var n = n - 1
+  n = n - 1
 }
 echo final=$n
 if 1 + 1 == 2 {
@@ -89,10 +89,41 @@ if 1 + 1 == 2 {
 }
 var acc = 0
 for var i = 1; i <= 4; i = i + 1 {
-  var acc = acc + i
+  acc = acc + i
 }
 echo sum=$acc
 var phrase = "a" "b"
 echo phrase=[$phrase]
+phrase = "new" "words"
+echo phrase=[$phrase]
+ghost = 5
+echo ghost-refused=$?
+const locked = 9
+locked = 8
+echo locked-refused=$?
+echo locked=$locked
+var unlocked = 1
+unlocked = unlocked + 41
+echo unlocked=$unlocked
+var shown = 41
+shown
+echo bare-name=$?
+s + 1
+echo plus=$?
+1 + 1
+s < 5
+const c = "foo"
+c
+echo const-bare=$?
+'echo' quoted-runs
+s foo
+echo trailing=$?
+-5
+echo literal=$?
+var neg = 2
+while neg > 0 {
+  neg = neg - 3
+}
+echo neg=$neg
 return 4
 echo never-after

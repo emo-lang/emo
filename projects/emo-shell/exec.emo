@@ -183,9 +183,10 @@ def gather(sh shell.Shell, first String) (R, String) {
 // One logical line, lexed, parsed, and run — and when the parse comes
 // back incomplete (a block still open), the next line is read and the
 // whole line re-parsed, `> ` asking for it interactively. A `def`
-// binds its function, a declaration binds its variable, and a
-// leftover break or continue — the walker's signals nobody consumed —
-// refuses with the classic complaint.
+// binds its function, a declaration binds its variable, an
+// assignment rebinds one, and a leftover break or continue — the
+// walker's signals nobody consumed — refuses with the classic
+// complaint.
 def drive_line(sh shell.Shell, line String) Void {
   if line != "" {
     case lex.tokenize(line) {
@@ -273,35 +274,44 @@ def refuse(sh shell.Shell, why String) Void {
 // The item walk: run what the connectors allow, carry the status
 // forward. A `&` item spawns instead of waiting — its status is the
 // spawn's — and the walk goes on the way `;` would. A declaration
-// binds, a compound walks its own shape.
+// binds, an assignment rebinds, a compound walks its own shape.
 def run_items(sh shell.Shell, items Array[parse.Item], source String) Void {
   var status = sh.status()
   var run = true
   for var i = 0; i < items.length(); i = i + 1 {
     const item = items[i]
     if run {
-      if item.decls.length() > 0 {
-        status = bind_decl(sh, item.decls[0])
+      if item.assigns.length() > 0 {
+        status = run_assign(sh, item.assigns[0])
         sh.set_status(status)
       } else {
-        if item.compounds.length() > 0 {
-          if item.bg {
-            status = run_compound_background(sh, item.compounds[0], source)
-          } else {
-            status = run_compound(sh, item.compounds[0], source)
-          }
+        if item.decls.length() > 0 {
+          status = bind_decl(sh, item.decls[0])
+          sh.set_status(status)
         } else {
-          if item.bg {
-            status = run_background(sh, item.pipeline)
+          if item.compounds.length() > 0 {
+            if item.bg {
+              status = run_compound_background(sh, item.compounds[0], source)
+            } else {
+              status = run_compound(sh, item.compounds[0], source)
+            }
           } else {
-            status = run_pipeline(sh, item.pipeline, source)
+            if !item.bg && item.expr_tok.length() > 0 {
+              status = run_expr_item(sh, item, source)
+            } else {
+              if item.bg {
+                status = run_background(sh, item.pipeline)
+              } else {
+                status = run_pipeline(sh, item.pipeline, source)
+              }
+            }
           }
-        }
-        sh.set_status(status)
-        // a walker's signal — break, continue, return — ends this
-        // list where it stands; the loop or the call consumes it
-        if sh.read_signal() != 0 {
-          run = false
+          sh.set_status(status)
+          // a walker's signal — break, continue, return — ends this
+          // list where it stands; the loop or the call consumes it
+          if sh.read_signal() != 0 {
+            run = false
+          }
         }
       }
     }
@@ -527,18 +537,64 @@ def for_restore(sh shell.Shell, name String, had Bool, old_value String) Void {
 }
 
 // One declaration bound: the const flag refusing any redeclaration
-// of a frozen name. A quoted value binds its expanded text as a
-// string; a bare run evaluates as an integer expression (one bare
-// word copies the variable it names, Emo's own reading).
+// of a frozen name, the value read the shared dual way.
 def bind_decl(sh shell.Shell, d parse.Decl) Int64 {
   if sh.var_is_const(d.name) {
     sh.err("emosh: " + d.name + ": is a constant")
     return 1
   }
-  var value = ""
+  case decl_value(sh, d.value_tok) {
+    (R.error, why) then {
+      sh.err("emosh: " + d.name + ": " + why)
+      return 1
+    }
+    (R.ok, value) then {
+      if d.constant {
+        sh.var_declare_const(d.name, value)
+      } else {
+        sh.var_set(d.name, value)
+      }
+      sh.set_status(0)
+      return 0
+    }
+  }
+}
+
+// One assignment run: the name must already be declared — `var`,
+// `const`, a for's variable — the declaration the only door a binding
+// opens through, so an undeclared name refuses; a frozen one refuses
+// its reassignment. The value reads the declaration's own dual way.
+def run_assign(sh shell.Shell, a parse.Assign) Int64 {
+  if !sh.var_bound(a.name) {
+    sh.err("emosh: " + a.name + ": is not declared")
+    return 1
+  }
+  if sh.var_is_const(a.name) {
+    sh.err("emosh: " + a.name + ": is a constant")
+    return 1
+  }
+  case decl_value(sh, a.value_tok) {
+    (R.error, why) then {
+      sh.err("emosh: " + a.name + ": " + why)
+      return 1
+    }
+    (R.ok, value) then {
+      sh.var_set(a.name, value)
+      sh.set_status(0)
+      return 0
+    }
+  }
+}
+
+// The value a declaration or an assignment binds, the dual reading:
+// any quoted or literal part binds every part's expanded text joined
+// as one string; an all-bare run evaluates as an integer expression,
+// full consumption demanded. The error answer is the raw reason —
+// the caller prefixes the name.
+def decl_value(sh shell.Shell, value_tok Array[lex.Tok]) (R, String) {
   var stringy = false
-  for var k = 0; k < d.value_tok.length(); k = k + 1 {
-    const parts = d.value_tok[k].parts
+  for var k = 0; k < value_tok.length(); k = k + 1 {
+    const parts = value_tok[k].parts
     for var q = 0; q < parts.length(); q = q + 1 {
       if parts[q].lit || parts[q].quoted {
         stringy = true
@@ -547,34 +603,22 @@ def bind_decl(sh shell.Shell, d parse.Decl) Int64 {
   }
   if stringy {
     const parts_all = ArrayBuilder.new()
-    for var k = 0; k < d.value_tok.length(); k = k + 1 {
-      for var q = 0; q < d.value_tok[k].parts.length(); q = q + 1 {
-        parts_all.push(d.value_tok[k].parts[q])
+    for var k = 0; k < value_tok.length(); k = k + 1 {
+      for var q = 0; q < value_tok[k].parts.length(); q = q + 1 {
+        parts_all.push(value_tok[k].parts[q])
       }
     }
-    value = expand.word(parts_all.to_array(), sh.status(), sh.name, sh.current_args(), sh.pid, sh.last_bg.read(), sh.vars_list())
-  } else {
-    case eval_expr(d.value_tok, sh, 0) {
-      (R.error, why) then {
-        sh.err("emosh: " + d.name + ": " + why)
-        return 1
+    return (R.ok, expand.word(parts_all.to_array(), sh.status(), sh.name, sh.current_args(), sh.pid, sh.last_bg.read(), sh.vars_list()))
+  }
+  case eval_expr(value_tok, sh, 0) {
+    (R.error, why) then { return (R.error, why) }
+    (R.ok, got) then {
+      if got[1] != value_tok.length() {
+        return (R.error, "the value has trailing tokens")
       }
-      (R.ok, got) then {
-        if got[1] != d.value_tok.length() {
-          sh.err("emosh: " + d.name + ": the value has trailing tokens")
-          return 1
-        }
-        value = got[0].to_string()
-      }
+      return (R.ok, got[0].to_string())
     }
   }
-  if d.constant {
-    sh.var_declare_const(d.name, value)
-  } else {
-    sh.var_set(d.name, value)
-  }
-  sh.set_status(0)
-  return 0
 }
 
 // One assignment step, `name = expr`: the name a bare word, the = its
@@ -810,8 +854,30 @@ def eval_mul(toks Array[lex.Tok], sh shell.Shell, pos Int64) (R, (Int64, Int64))
   }
 }
 
-// The factor: an integer, `$#`, a declared or environment variable
-// whose value is a number, or a parenthesized expression.
+// The integer the text names: an optional minus riding ahead of the
+// digits — the expression reader's own reading, wider than
+// is_digits (a descriptor or a glob segment may never go negative,
+// a counter can).
+def signed_int(text String) (R, Int64) {
+  var digits = text
+  var negative = false
+  if text != "" && text.substring(0, 1) == "-" {
+    negative = true
+    digits = text.substring(1, text.length() - 1)
+  }
+  if !expand.is_digits(digits) {
+    return (R.error, "")
+  }
+  var value = digits.to_int64()
+  if negative {
+    value = 0 - value
+  }
+  return (R.ok, value)
+}
+
+// The factor: an integer (a leading minus counts), `$#`, a declared
+// or environment variable whose value is a number, or a
+// parenthesized expression.
 def eval_factor(toks Array[lex.Tok], sh shell.Shell, pos Int64) (R, (Int64, Int64)) {
   if pos >= toks.length() {
     return (R.error, "expected a value")
@@ -820,8 +886,9 @@ def eval_factor(toks Array[lex.Tok], sh shell.Shell, pos Int64) (R, (Int64, Int6
   case parse.word_text_of(toks, pos) {
     (R.error, _) then { return (R.error, "the header reads bare words, quoted ones stay literal") }
     (R.ok, text) then {
-      if expand.is_digits(text) {
-        return (R.ok, (text.to_int64(), pos + 1))
+      case signed_int(text) {
+        (R.ok, value) then { return (R.ok, (value, pos + 1)) }
+        (R.error, _) then {}
       }
       if text == "$#" {
         return (R.ok, (sh.current_args().length(), pos + 1))
@@ -840,20 +907,20 @@ def eval_factor(toks Array[lex.Tok], sh shell.Shell, pos Int64) (R, (Int64, Int6
       if text.substring(0, 1) == "$" {
         // a $-form read for its numeric value: $i, ${i}, $1, $#
         const value = expand.word(tok.parts, sh.status(), sh.name, sh.current_args(), sh.pid, sh.last_bg.read(), sh.vars_list())
-        if !expand.is_digits(value) {
-          return (R.error, text + ": is not a number")
+        case signed_int(value) {
+          (R.error, _) then { return (R.error, text + ": is not a number") }
+          (R.ok, num) then { return (R.ok, (num, pos + 1)) }
         }
-        return (R.ok, (value.to_int64(), pos + 1))
       }
       if expand.is_name(text) {
         case sh.var_lookup(text) {
           (R.error, _) then {
             case os.getenv(text) {
               (R.ok, value) then {
-                if !expand.is_digits(value) {
-                  return (R.error, text + ": is not a number")
+                case signed_int(value) {
+                  (R.error, _) then { return (R.error, text + ": is not a number") }
+                  (R.ok, num) then { return (R.ok, (num, pos + 1)) }
                 }
-                return (R.ok, (value.to_int64(), pos + 1))
               }
               (R.error, _) then {
                 return (R.error, text + ": is not set")
@@ -861,16 +928,76 @@ def eval_factor(toks Array[lex.Tok], sh shell.Shell, pos Int64) (R, (Int64, Int6
             }
           }
           (R.ok, value) then {
-            if !expand.is_digits(value) {
-              return (R.error, text + ": is not a number")
+            case signed_int(value) {
+              (R.error, _) then { return (R.error, text + ": is not a number") }
+              (R.ok, num) then { return (R.ok, (num, pos + 1)) }
             }
-            return (R.ok, (value.to_int64(), pos + 1))
           }
         }
       }
       return (R.error, "unexpected " + text)
     }
   }
+}
+
+// One expression statement: a command-shaped run whose every token
+// reads as an expression. The session's names choose the reading — a
+// builtin's or a function's name keeps its command, a declared
+// binding's name, a digit opening, or an open parenthesis evaluates
+// the whole run and prints the value (`s + 1` after `var s = 0`
+// answers 1), and anything else runs as the command it always was.
+def run_expr_item(sh shell.Shell, item parse.Item, source String) Int64 {
+  const stage = item.pipeline[0]
+  if stage.words.length() == 0 {
+    return run_pipeline(sh, item.pipeline, source)
+  }
+  const head = expand.word(stage.words[0], sh.status(), sh.name, sh.current_args(), sh.pid, sh.last_bg.read(), sh.vars_list())
+  var command = false
+  if builtin.is_builtin(head) {
+    command = true
+  } else {
+    case sh.func_find(head) {
+      (R.ok, _) then { command = true }
+      (R.error, _) then {}
+    }
+  }
+  if command {
+    return run_pipeline(sh, item.pipeline, source)
+  }
+  var numeric = false
+  case signed_int(head) {
+    (R.ok, _) then { numeric = true }
+    (R.error, _) then {}
+  }
+  if numeric || head == "(" || (expand.is_name(head) && sh.var_bound(head)) {
+    if item.expr_tok.length() == 1 {
+      // a lone declared name answers the value it binds, string or
+      // number alike — `c` after `const c = "foo"` prints foo; only
+      // a longer run demands numbers (strings do not add)
+      case sh.var_lookup(head) {
+        (R.error, _) then {}
+        (R.ok, value) then {
+          sh.line(value)
+          return 0
+        }
+      }
+    }
+    case eval_expr(item.expr_tok, sh, 0) {
+      (R.error, why) then {
+        sh.err("emosh: " + head + ": " + why)
+        return 1
+      }
+      (R.ok, got) then {
+        if got[1] != item.expr_tok.length() {
+          sh.err("emosh: " + head + ": the expression has trailing tokens")
+          return 1
+        }
+        sh.line(got[0].to_string())
+        return 0
+      }
+    }
+  }
+  return run_pipeline(sh, item.pipeline, source)
 }
 
 // One pipeline: the fork-and-wire path when there is more than one
@@ -1058,7 +1185,10 @@ def expand_words(sh shell.Shell, words Array[Array[expand.Part]]) (R, Array[Stri
 // A single command: a builtin with no redirections stays in this
 // process, a declared function runs its body here (the caller's
 // positionals restored after), and everything else is the one-child
-// pipeline, the expanded words handed down so they expand once.
+// pipeline, the expanded words handed down so they expand once. The
+// expression statement never reaches here — run_items probes the
+// reading first; a pipeline stage's child answers a bare declared
+// name through child_run_argv.
 def run_simple(sh shell.Shell, cmd parse.Cmd, source String) Int64 {
   case expand_words(sh, cmd.words) {
     (R.error, why) then {
@@ -1135,9 +1265,11 @@ def child_run(sh shell.Shell, cmd parse.Cmd) Int64 {
 }
 
 // The child's body once the words are final: a builtin's status, a
-// declared function's body, or an execvp — which never returns on
-// success, and answers the errno reason on failure, the permission
-// denial no longer dressed up as a missing command.
+// declared function's body, a bare declared name printing the value
+// it binds (a pipeline stage can be a value's producer), or an
+// execvp — which never returns on success, and answers the errno
+// reason on failure, the permission denial no longer dressed up as a
+// missing command.
 def child_run_argv(sh shell.Shell, argv Array[String], source String) Int64 {
   if argv.length() == 0 {
     // a command of redirections alone: the files were opened already,
@@ -1164,10 +1296,31 @@ def child_run_argv(sh shell.Shell, argv Array[String], source String) Int64 {
     }
     (R.error, _) then {}
   }
+  if argv.length() == 1 {
+    if sh.var_bound(argv[0]) {
+      case sh.var_lookup(argv[0]) {
+        (R.error, _) then {}
+        (R.ok, value) then {
+          sh.line(value)
+          return 0
+        }
+      }
+    }
+  }
   case os.execvp(argv[0], argv) {
     (R.error, why) then {
+      // the shell's own face on the exec's failure, the classics':
+      // a command the PATH search never found is `command not found`
+      // with 127 — the ENOENT tail the os reason carries is the
+      // contract both runtimes pin byte for byte, the channel the two
+      // statuses classify through; anything else is a command that
+      // was found but would not run — the os reason verbatim and 126
+      if why.index_of("No such file or directory") >= 0 {
+        sh.err("emosh: " + argv[0] + ": command not found")
+        return 127
+      }
       sh.err("emosh: " + argv[0] + ": " + why)
-      return 127
+      return 126
     }
     (R.ok, _) then { return 0 }
   }

@@ -3,7 +3,7 @@
 //
 //   line     := item ( ";" item )* ";"?        (a trailing `;` is fine)
 //   and_or   := item ( "&&" | "||" item )*
-//   item     := pipeline | compound | declaration
+//   item     := pipeline | compound | declaration | assignment
 //   pipeline := command ( "|" command )*
 //   command  := ( word | redirection )*
 //   redirection := "<" | ">" | ">>" word | "N<" | "N>" | "N>>" word
@@ -13,6 +13,7 @@
 //             | "for" "var" name "=" expr ";" expr ";" expr "{" list "}"
 //             | "def" name "(" ")" "{" list "}"
 //   declaration := ("const" | "var") name "=" word
+//   assignment := name "=" value-tokens
 //
 // A `&` after an item marks it background — `a | b &` is one job,
 // `while … } &` another. An `&` that is not `&&` is its own operator.
@@ -88,15 +89,35 @@ class Decl {
   }
 }
 
-// One item of a line: a pipeline, a compound, or a declaration —
-// exactly one of the three, the other two arrays empty — plus the
-// connector that follows it and whether `&` sent it to the
-// background.
+// One assignment: `name = value` — the rebinding a loop body lives
+// on, the name already declared, the value the same token slice a
+// declaration's takes.
+class Assign {
+  def init(name String, value_tok Array[lex.Tok]) {
+    self.name = name
+    self.value_tok = value_tok
+  }
+}
+
+// The empty assignment sentinel, parse_assign's error answer.
+def empty_assign() Assign {
+  return Assign.new(name: "", value_tok: [])
+}
+
+// One item of a line: a pipeline, a compound, a declaration, or an
+// assignment — exactly one of the four, the other three arrays
+// empty — plus the connector that follows it and whether `&` sent it
+// to the background. A pipeline may carry expr_tok beside it: the
+// expression reading of a command-shaped run, recorded whenever every
+// token allows the question — the executor chooses between the
+// readings by the session's own names.
 class Item {
-  def init(pipeline Array[Cmd], compounds Array[Compound], decls Array[Decl], conn String, bg Bool) {
+  def init(pipeline Array[Cmd], compounds Array[Compound], decls Array[Decl], assigns Array[Assign], expr_tok Array[lex.Tok], conn String, bg Bool) {
     self.pipeline = pipeline
     self.compounds = compounds
     self.decls = decls
+    self.assigns = assigns
+    self.expr_tok = expr_tok
     self.conn = conn
     self.bg = bg
   }
@@ -104,10 +125,10 @@ class Item {
 
 // The all-empty item: what an incomplete parse answers while the
 // driver goes looking for the next line — a real item always carries
-// a command, a compound, or a declaration, so the emptiness is the
-// sentinel.
+// a command, a compound, a declaration, or an assignment, so the
+// emptiness is the sentinel.
 def empty_item() Item {
-  return Item.new(pipeline: [], compounds: [], decls: [], conn: "", bg: false)
+  return Item.new(pipeline: [], compounds: [], decls: [], assigns: [], expr_tok: [], conn: "", bg: false)
 }
 
 // The empty compound, the same sentinel for the compound walkers.
@@ -245,8 +266,8 @@ def parse(tokens Array[lex.Tok]) (R, Array[Item], String) {
   }
 }
 
-// One item — pipeline, compound, or declaration — with the index just
-// past it and the status.
+// One item — pipeline, compound, declaration, or assignment — with
+// the index just past it and the status.
 def parse_item(tokens Array[lex.Tok], i Int64) (R, Item, Int64, String) {
   const kw = reserved_word(tokens[i])
   if kw == "if" || kw == "while" || kw == "for" || kw == "def" {
@@ -258,7 +279,7 @@ def parse_item(tokens Array[lex.Tok], i Int64) (R, Item, Int64, String) {
         }
         const compounds = ArrayBuilder.new()
         compounds.push(c)
-        return (R.ok, Item.new(pipeline: [], compounds: compounds.to_array(), decls: [], conn: "", bg: false), next, "")
+        return (R.ok, Item.new(pipeline: [], compounds: compounds.to_array(), decls: [], assigns: [], expr_tok: [], conn: "", bg: false), next, "")
       }
     }
   }
@@ -268,14 +289,24 @@ def parse_item(tokens Array[lex.Tok], i Int64) (R, Item, Int64, String) {
       (R.ok, d, next, status) then {
         const decls = ArrayBuilder.new()
         decls.push(d)
-        return (R.ok, Item.new(pipeline: [], compounds: [], decls: decls.to_array(), conn: "", bg: false), next, status)
+        return (R.ok, Item.new(pipeline: [], compounds: [], decls: decls.to_array(), assigns: [], expr_tok: [], conn: "", bg: false), next, status)
+      }
+    }
+  }
+  if assign_starts(tokens, i) {
+    case parse_assign(tokens, i) {
+      (R.error, _, _, why) then { return (R.error, empty_item(), -1, why) }
+      (R.ok, a, next, status) then {
+        const assigns = ArrayBuilder.new()
+        assigns.push(a)
+        return (R.ok, Item.new(pipeline: [], compounds: [], decls: [], assigns: assigns.to_array(), expr_tok: [], conn: "", bg: false), next, status)
       }
     }
   }
   case parse_pipeline(tokens, i) {
     (R.error, why) then { return (R.error, empty_item(), -1, why) }
     (R.ok, got) then {
-      return (R.ok, Item.new(pipeline: got[0], compounds: [], decls: [], conn: "", bg: false), got[1], "")
+      return (R.ok, Item.new(pipeline: got[0], compounds: [], decls: [], assigns: [], expr_tok: expr_statement_slice(tokens, i, got[1]), conn: "", bg: false), got[1], "")
     }
   }
 }
@@ -340,7 +371,7 @@ def parse_item_list(tokens Array[lex.Tok], i Int64, closer String) (R, Array[Ite
                     // the loop top's closer check takes over
                     conn = ""
                   } else {
-                    if !bg && item.compounds.length() == 0 && item.decls.length() == 0 {
+                    if !bg && item.compounds.length() == 0 && item.decls.length() == 0 && item.assigns.length() == 0 {
                       sane = false
                     } else {
                       // the spawn of a background item and the close
@@ -353,12 +384,12 @@ def parse_item_list(tokens Array[lex.Tok], i Int64, closer String) (R, Array[Ite
               if !sane {
                 return (R.error, no_items(), -1, "unexpected " + tokens[j2].kind)
               }
-              items.push(Item.new(pipeline: item.pipeline, compounds: item.compounds, decls: item.decls, conn: conn, bg: bg))
+              items.push(Item.new(pipeline: item.pipeline, compounds: item.compounds, decls: item.decls, assigns: item.assigns, expr_tok: item.expr_tok, conn: conn, bg: bg))
               j = j2
             } else {
               // a background item's spawn at the very end: still one
               // item, the line complete
-              items.push(Item.new(pipeline: item.pipeline, compounds: item.compounds, decls: item.decls, conn: "", bg: bg))
+              items.push(Item.new(pipeline: item.pipeline, compounds: item.compounds, decls: item.decls, assigns: item.assigns, expr_tok: item.expr_tok, conn: "", bg: bg))
               j = j2
             }
           }
@@ -416,19 +447,30 @@ def parse_command(tokens Array[lex.Tok], start Int64) (R, (Cmd, Int64)) {
         i = i + 1
       }
     } else {
-      case redir_of(tok.kind) {
-        (R.error, _) then { in_command = false }
-        (R.ok, shape) then {
-          if shape[1] == ">&" || shape[1] == "<&" {
-            // the dup forms: one token, no file follows
-            redirs.push(Redir.new(op: shape[1], fd: shape[0], dup: shape[2], word: []))
-            i = i + 1
-          } else {
-            if i + 1 >= tokens.length() || tokens[i + 1].kind != "word" {
-              return (R.error, "" + tok.kind + " needs a file name")
+      if tok.kind == "==" || tok.kind == "!=" || tok.kind == "<=" || tok.kind == ">=" {
+        // the comparison operators ride in a command as ordinary
+        // words — `grep == hi` runs grep, `echo a == b` prints —
+        // while the expression reading picks them up as operators
+        // (`s == 3` compares); the executor's head probe chooses
+        const parts = ArrayBuilder.new()
+        parts.push(expand.Part.new(text: tok.kind, lit: false, quoted: false))
+        words.push(parts.to_array())
+        i = i + 1
+      } else {
+        case redir_of(tok.kind) {
+          (R.error, _) then { in_command = false }
+          (R.ok, shape) then {
+            if shape[1] == ">&" || shape[1] == "<&" {
+              // the dup forms: one token, no file follows
+              redirs.push(Redir.new(op: shape[1], fd: shape[0], dup: shape[2], word: []))
+              i = i + 1
+            } else {
+              if i + 1 >= tokens.length() || tokens[i + 1].kind != "word" {
+                return (R.error, "" + tok.kind + " needs a file name")
+              }
+              redirs.push(Redir.new(op: shape[1], fd: shape[0], dup: 0 - 1, word: tokens[i + 1].parts))
+              i = i + 2
             }
-            redirs.push(Redir.new(op: shape[1], fd: shape[0], dup: 0 - 1, word: tokens[i + 1].parts))
-            i = i + 2
           }
         }
       }
@@ -601,7 +643,7 @@ def parse_compound(kind String, tokens Array[lex.Tok], i Int64) (R, Compound, In
                     return (R.ok, empty_compound(kind), nested_after, status)
                   }
                   const wrapper = ArrayBuilder.new()
-                  wrapper.push(Item.new(pipeline: [], compounds: [nested], decls: [], conn: "", bg: false))
+                  wrapper.push(Item.new(pipeline: [], compounds: [nested], decls: [], assigns: [], expr_tok: [], conn: "", bg: false))
                   else_body = wrapper.to_array()
                   after = nested_after
                 }
@@ -747,18 +789,110 @@ def parse_decl(kw String, tokens Array[lex.Tok], i Int64) (R, Decl, Int64, Strin
   }
 }
 
-// Whether the token rides in a declaration's value expression: bare
-// words and the comparison/boolean operators do, every separator
-// (semicolon, pipe, ampersand, brace) ends it.
+// Whether an assignment opens here: a bare word naming a valid
+// variable, followed by the bare `=` — `n = n - 1`, the rebinding a
+// loop body lives on. `==` is its own token and never trips this; a
+// quoted word is an argument like any other; a command that genuinely
+// wants a bare `=` argument quotes something.
+def assign_starts(tokens Array[lex.Tok], i Int64) Bool {
+  if i + 1 >= tokens.length() {
+    return false
+  }
+  if !is_word(tokens[i + 1], "=") {
+    return false
+  }
+  const tok = tokens[i]
+  if tok.kind != "word" {
+    return false
+  }
+  const parts = tok.parts
+  if parts.length() != 1 || parts[0].lit || parts[0].quoted {
+    return false
+  }
+  return expand.is_name(parts[0].text)
+}
+
+// One assignment: the name (the probe has checked its shape), then =
+// and the value tokens — the same slice a declaration's value takes,
+// every separator ending it. No value refuses.
+def parse_assign(tokens Array[lex.Tok], i Int64) (R, Assign, Int64, String) {
+  const name = tokens[i].parts[0].text
+  var vend = i + 2
+  while vend < tokens.length() && decl_value_token(tokens[vend]) {
+    vend = vend + 1
+  }
+  if vend == i + 2 {
+    return (R.error, empty_assign(), -1, "the assignment wants a value")
+  }
+  return (R.ok, Assign.new(name: name, value_tok: header_slice_tokens(tokens, i + 2, vend)), vend, "")
+}
+
+// Whether the token rides in a declaration's or assignment's value
+// expression: bare words and the comparison/boolean operators do,
+// every separator (semicolon, pipe, ampersand) ends it — and so does
+// a reserved standalone brace, `{` opening a block the value would
+// otherwise swallow and `}` closing the one the value stands in (a
+// one-line `if true { var x = 1 }` was the shape the first cut broke:
+// the closing brace rode into the value and the block never closed).
+// A quoted brace is a word like any other and rides in.
 def decl_value_token(tok lex.Tok) Bool {
   const kind = tok.kind
   if kind == "word" {
+    const parts = tok.parts
+    if parts.length() == 1 && !parts[0].lit && !parts[0].quoted {
+      const text = parts[0].text
+      if text == "{" || text == "}" {
+        return false
+      }
+    }
     return true
   }
   if kind == "<" || kind == ">" || kind == "<=" || kind == ">=" || kind == "==" || kind == "!=" || kind == "&&" || kind == "||" {
     return true
   }
   return false
+}
+
+// Whether the token rides in an expression statement's run: a bare
+// single-part word — the arithmetic operators and parentheses are
+// words like any other — or one of the comparison operators. The
+// boolean connectors are item boundaries here, not operators: `s + 1
+// && echo ok` is the expression, then the connector, then the next
+// item.
+def expr_token(tok lex.Tok) Bool {
+  const kind = tok.kind
+  if kind == "<" || kind == ">" || kind == "<=" || kind == ">=" || kind == "==" || kind == "!=" {
+    return true
+  }
+  if kind == "word" {
+    const parts = tok.parts
+    return parts.length() == 1 && !parts[0].lit && !parts[0].quoted
+  }
+  return false
+}
+
+// The expression reading of the command run from i up to end — the
+// whole run when every token rides, [] the moment any token breaks
+// the shape (a quoted part, a multi-part word, a connector, anything
+// else). The parse only records that the shape allows the question;
+// the executor chooses between the readings by the session's own
+// names.
+def expr_statement_slice(tokens Array[lex.Tok], i Int64, end Int64) Array[lex.Tok] {
+  const out = ArrayBuilder.new()
+  var j = i
+  var all = true
+  while j < end {
+    if expr_token(tokens[j]) {
+      out.push(tokens[j])
+    } else {
+      all = false
+    }
+    j = j + 1
+  }
+  if all {
+    return out.to_array()
+  }
+  return []
 }
 
 // The tokens from i up to — not including — end: a plain slice with

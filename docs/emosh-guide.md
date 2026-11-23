@@ -201,7 +201,7 @@ first
 second
 $ nosuch-cmd 2> err.txt
 $ cat err.txt
-emosh: nosuch-cmd: os: execvp: No such file or directory
+emosh: nosuch-cmd: command not found
 ```
 
 ## Connectors and status
@@ -245,10 +245,33 @@ hello shell
 - `const NAME = WORD` binds a variable; redeclaring a frozen name —
   by `const`, `var`, or `unset` — refuses (`NAME: is a constant`).
   `var NAME = WORD` binds too; a later `var` replaces the value. The
-  value is one word — quote it for a phrase — and the word expands
-  (`$x` grows; globs stay put: a declaration's value does not glob).
-  `$NAME` reads a declared binding before the environment, and
-  `unset` removes both.
+  value reads two ways: quoted parts bind their expanded text joined
+  into one word (`$x` grows; globs stay put: a declaration's value
+  does not glob), and a bare run evaluates as an integer expression
+  (`var acc = acc + i`). `$NAME` reads a declared binding before the
+  environment, and `unset` removes both.
+- `NAME = EXPR` reassigns a declared binding — `n = n - 1` inside a
+  loop, `acc = acc + i` in a `for` body. The value reads the
+  declaration's own two ways. An undeclared name refuses
+  (`NAME: is not declared` — `var` and `const` are the only doors a
+  binding opens through), and a frozen one refuses its reassignment
+  (`NAME: is a constant`).
+- A run of bare words and comparisons at a command position is the
+  expression statement when its head names a declared binding,
+  opens with digits, or is an open parenthesis — the shell's own
+  reading of the Emo repl: `s + 1` after `var s = 0` prints `1`,
+  `2 * 3` prints `6`, `( 2 + 3 ) * 2` prints `10`, comparisons
+  answer 1 or 0; integer literals and bound values read with an
+  optional leading minus (`-5`, a counter sinking past zero). A lone
+  name answers the value it binds, string or
+  number alike — `c` after `const c = "foo"` prints foo; only a
+  longer run demands numbers. A builtin's or a function's name keeps
+  its command (`echo hi` never evaluates), and quoting the head
+  forces the command reading (`'git' status`); the comparison operators ride
+  ordinary commands as plain words (`grep == hi` runs grep, `echo a
+  == b` prints). The session's own names outrank the PATH's
+  commands, and a pipeline stage can be the value's producer
+  (`g | tr a-z A-Z`).
 - `if LIST { LIST } else { LIST }` and
   `while LIST { LIST }` — the condition has two shapes. A **command
   list**: its last command's exit status chooses (0 continues).
@@ -281,6 +304,15 @@ $ for var i = 1; i <= 3; i = i + 1 {
 tick 1
 tick 2
 tick 3
+$ var n = 2
+$ while n > 0 {
+  echo n=$n
+  n = n - 1
+}
+n=2
+n=1
+$ echo final=$n
+0
 ```
 
 A block may open on one line and close lines later — the shell asks
@@ -364,9 +396,9 @@ classic shape:
 
 ```console
 $ no-such-command
-emosh: no-such-command: os: execvp: No such file or directory   (status 127)
+emosh: no-such-command: command not found   (status 127)
 $ ./nonexec-script
-emosh: ./nonexec-script: os: execvp: Permission denied   (status 127)
+emosh: ./nonexec-script: os: execvp: Permission denied   (status 126)
 $ echo x > /no/such/dir/f
 emosh: os: open /no/such/dir/f: No such file or directory   (status 1)
 $ echo dangling |
@@ -408,8 +440,8 @@ The contract, stated so you never have to guess:
   word-list iteration (`for x in words` — the for is the numeric
   form); a function call takes no redirections;
 - the positionals end where they end: `$1` … `$9`, `${N}`, `$#` and
-  `$@` only — no `shift`, no `$*`; a declaration's value is one word
-  (arithmetic expressions live in the for header);
+  `$@` only — no `shift`, no `$*`; a declaration's or assignment's
+  value is one word;
 - background jobs exist but the terminal does not negotiate: `fg`
   waits, and a Ctrl-C cannot reach a job it brought back (the
   terminal-handoff call — `tcsetpgrp` — is the os half waiting to
