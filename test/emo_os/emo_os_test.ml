@@ -236,6 +236,8 @@ let smoke_tests =
             "c/crt0.s";
             "c/fork.s";
             "c/emo_syscall.h";
+            "c/emo_syscall.c";
+            "c/arch/riscv64/syscall_arch.h";
             "c/emo_posix.c";
             "c/emo_posix.h";
             "c/hello.c";
@@ -794,6 +796,8 @@ let gc_metal_tests =
             "c/crt0.s";
             "c/fork.s";
             "c/emo_syscall.h";
+            "c/emo_syscall.c";
+            "c/arch/riscv64/syscall_arch.h";
             "c/emo_posix.c";
             "c/emo_posix.h";
             "c/hello.c";

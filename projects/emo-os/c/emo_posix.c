@@ -564,7 +564,7 @@ long read(int fd, void *buf, unsigned long n) {
     return -1;
   }
   if (k == EMO_KIND_CIN) {
-    long b = emo_ecall(2, 0, 0, 0, 0, 0, 0);
+    long b = emo_console_read();
     if (b < 0) {
       errno = EMO_EIO;
       return -1;

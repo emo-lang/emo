@@ -752,7 +752,7 @@ not share).
 
 ### M2 — the C library (musl-derived)
 
-- [ ] **T2.1** — The syscall layer: musl's `arch/riscv64` stubs over
+- [x] **T2.1** — The syscall layer: musl's `arch/riscv64` stubs over
   the gate, one function per documented verb.
 - [ ] **T2.2** — `crt`, TLS, `malloc`, `stdio`, `string`, `errno`;
   static `hello`, `printf`, `malloc`, `getenv`.
@@ -761,6 +761,28 @@ not share).
 - [ ] **T2.4** — The conformance probe: a small C suite pinning the
   calls the milestone carries, byte-identical on the metal and the
   host interpreter where both apply.
+
+### T2.1's record (2026-11-24)
+
+The C library's crossing is one file: `c/arch/riscv64/syscall_arch.h`,
+the musl 1.2.6 `arch/riscv64` stubs (MIT; the notice rides
+`c/arch/riscv64/COPYRIGHT`) with the gate's verb in a7 and the six
+words in a0..a5. `c/emo_syscall.c` carries the typed wrappers — one
+per documented verb the library speaks (0..4, 6..9, 36..52, 54..65) —
+and the generic `emo_syscall` entry; `c/emo_syscall.h` names the verb
+numbers and the API. The desktop and notification families (10..35)
+stay the Emo side's until a C program needs them, and verb 5 (the
+allocator's death) stays the runtime's: the contract's "by need" cut.
+`c/emo_posix.c` lost its last raw `emo_ecall` (the console read is
+`emo_console_read`), so every gate call in the library crosses the one
+stub file.
+
+The metal proof: `chello.elf` (41,696 bytes) printed `syscall layer
+ok` right after `rodata ok`, then every earlier T1 line through
+`signal kill ok`; the machine exited clean. The C app builds in the
+`@emo_os` scratch tree too (`c/emo_syscall.c` and the arch header ride
+the file list), and the leg stayed green. The musl body — `crt`, TLS,
+`malloc`, `stdio`, `string`, `errno` — is T2.2.
 
 ### M3 — emosh as the default shell
 

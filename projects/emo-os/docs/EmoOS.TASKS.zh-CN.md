@@ -197,10 +197,16 @@ C 库的 `execve` 复制路径(没有路径层——卷的平面名字),把 `arg
 
 ### M2——C 库(源自 musl)
 
-- [ ] **T2.1**——syscall 层:musl 的 `arch/riscv64` 桩接到门上,每个函数对一个已记录的动词。
+- [x] **T2.1**——syscall 层:musl 的 `arch/riscv64` 桩接到门上,每个函数对一个已记录的动词。
 - [ ] **T2.2**——`crt`、TLS、`malloc`、`stdio`、`string`、`errno`;静态 `hello`、`printf`、`malloc`、`getenv`。
 - [ ] **T2.3**——sysroot 与编译器包装器:`libc.a`、头文件、链接脚本;`riscv64-emos-gcc`。
 - [ ] **T2.4**——一致性探针:一小套 C 测试钉住本里程碑的调用,在金属和宿主解释器上(都适用时)逐字节相同。
+
+### T2.1 的记录(2026-11-24)
+
+C 库的越界只剩一处:`c/arch/riscv64/syscall_arch.h`——musl 1.2.6 的 `arch/riscv64` 桩(MIT;声明在 `c/arch/riscv64/COPYRIGHT`),verb 在 a7、六个字在 a0..a5。`c/emo_syscall.c` 载着类型化包装——库说的每个已记录动词一个(0..4、6..9、36..52、54..65)——以及通用的 `emo_syscall` 入口;`c/emo_syscall.h` 命名动词编号与 API。桌面与通知家族(10..35)留给 Emo 一侧,直到某个 C 程序需要;动词 5(分配器的死亡)留给运行时,这是契约的「按需」切法。`c/emo_posix.c` 最后一个裸 `emo_ecall`(控制台读)换成了 `emo_console_read`,库里的每次门调用都走那一个桩文件。
+
+金属证明:`chello.elf`(41,696 字节)在 `rodata ok` 之后立刻打出 `syscall layer ok`,然后打出此前每一行 T1 结果直到 `signal kill ok`;机器干净退出。C 应用也能在 `@emo_os` 的临时树里构建(`c/emo_syscall.c` 与 arch 头进了文件清单),那条腿保持全绿。musl 的主体——`crt`、TLS、`malloc`、`stdio`、`string`、`errno`——是 T2.2。
 
 ### M3——emosh 作为默认 shell
 

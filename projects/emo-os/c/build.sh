@@ -12,6 +12,7 @@ fi
 "$emos_cc" -march=rv64gc -mabi=lp64d -mcmodel=medany -mno-relax \
   -msmall-data-limit=0 -ffreestanding -fno-builtin -fno-pic \
   -fno-stack-protector -nostdlib -Wl,--build-id=none \
-  -T chello.ld -o ../chello.elf crt0.s fork.s hello.c emo_posix.c
+  -T chello.ld -o ../chello.elf crt0.s fork.s hello.c emo_posix.c \
+  emo_syscall.c
 
 echo "built ../chello.elf"

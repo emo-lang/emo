@@ -5,6 +5,7 @@
 // open, fstat, lseek, read, close, unlink.
 
 #include "emo_posix.h"
+#include "emo_syscall.h"
 
 static char first[] = "fd table on EmoOS\n";
 static char second[] = "read back: ";
@@ -16,6 +17,8 @@ static char dir_ok[] = "dir listing ok\n";
 static char dir_bad[] = "dir listing bad\n";
 static char rename_ok[] = "rename ok\n";
 static char vfs_clean[] = "vfs cleaned\n";
+static char layer_ok[] = "syscall layer ok\n";
+static char layer_bad[] = "syscall layer bad\n";
 static char heap_ok[] = "heap ok\n";
 static char mmap_ok[] = "mmap ok\n";
 static char reuse_ok[] = "reuse ok\n";
@@ -163,6 +166,15 @@ int main(int argc, char **argv, char **envp) {
   // read-only text segment, and the gate lifts it there — no bounce
   // copy on this one.
   write(1, "rodata ok\n", 10);
+
+  // ---- the syscall layer (T2.1): the generic entry, the same ecall
+  // crossing the typed wrappers use.
+  long layer = emo_syscall(EMO_SYS_WRITE, (long)layer_ok,
+                           (long)(sizeof(layer_ok) - 1), 0, 0, 0, 0);
+  if (layer != (long)(sizeof(layer_ok) - 1)) {
+    write(2, layer_bad, sizeof(layer_bad) - 1);
+    return 70;
+  }
 
   // ---- the path layer (T1.2): a directory, a relative open, the
   // cwd, the listing, a rename, and the clean-up.
