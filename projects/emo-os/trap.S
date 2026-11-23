@@ -714,10 +714,21 @@ emo_os_trap_trampoline:
                              # request slot rides above it (slot << 4 | op,
                              # T7.2), and the whole value goes into the word
     li t3, 40
-    bge t6, t3, .Lroute_pipe # ops 40..44, the pipes' (EmoOS plan B,
+    blt t6, t3, .Lroute_skip_pipe
+    li t3, 44
+    bgt t6, t3, .Lroute_skip_pipe
+    j .Lroute_pipe           # ops 40..44, the pipes' (EmoOS plan B,
                              # T1.5): the process service's second arm,
                              # every one of them able to wake a peer
-                             # parked on the pipe
+                             # parked on the pipe. The bound is the
+                             # family's own: the compositor's seat ops
+                             # (16 + 32*slot) and the notification
+                             # family's (27 + 32*slot) pass 44 and are
+                             # no pipe's — an open-ended `>= 40` here
+                             # swallowed them into the process
+                             # service, which drops an op it does not
+                             # know and leaves the caller parked.
+.Lroute_skip_pipe:
     li t3, 10
     bge t6, t3, .Lroute_desktop # ops 10..: the desktop segment (T8.3
                                 # landed verb 12, T8.4 verbs 10 and 11;

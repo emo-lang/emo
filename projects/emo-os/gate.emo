@@ -74,10 +74,13 @@ const exec_name = koff + 0x8700c000 + 3920
 const exec_nlen = koff + 0x8700c000 + 3944
 // The fork door (T1.4b2): the same busy cell as the execs, and the
 // context and resume entry the process service's pickup reads. The
-// page's tail past the request stash.
-const fork_use_cell = koff + 0x8700c000 + 4024
-const fork_sp_cell = koff + 0x8700c000 + 4032
-const fork_entry_cell = koff + 0x8700c000 + 4040
+// cells sit past the exec's name buffer (4024..4048) and under the
+// screen pass's pair at 4072 — the first cut's 4024..4040 lay inside
+// the name buffer, so a plain exec's name copy left the use cell
+// non-zero and the next exec was taken for a fork.
+const fork_use_cell = koff + 0x8700c000 + 4048
+const fork_sp_cell = koff + 0x8700c000 + 4056
+const fork_entry_cell = koff + 0x8700c000 + 4064
 // The exec's arguments page (T1.4a): the args door's own staging.
 const execargs_page = koff + 0x8700f000 + 3208
 const execargs_name = execargs_page

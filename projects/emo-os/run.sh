@@ -2864,11 +2864,13 @@ PYLOCK
     exit 1
   fi
   # the disk ELFs in the shell's list (emo-desktop A11.1): the volume's
-  # four images named beside the boot file and hello's — and the
-  # wallpaper's art between them (emo-desktop M31, A31.1, the install
-  # train's own order) — the ls's own order, whole lines
-  for f in files.elf editor.elf spin.elf wallpaper.rle boot.txt hello.txt; do
-    if ! grep -A6 '^counter.elf$' "$log" | grep -q "^$f\$"; then
+  # five images named beside the boot file and hello's — the C door's
+  # first program among them — and the wallpaper's art between them
+  # (emo-desktop M31, A31.1, the install train's own order) — the ls's
+  # own order, whole lines
+  for f in files.elf editor.elf spin.elf chello.elf wallpaper.rle \
+    boot.txt hello.txt; do
+    if ! grep -A7 '^counter.elf$' "$log" | grep -q "^$f\$"; then
       echo "run.sh: the shell's list never named $f beside counter.elf" >&2
       exit 1
     fi

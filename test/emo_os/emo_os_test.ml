@@ -226,12 +226,15 @@ let smoke_tests =
             "space.emo";
             "fs.emo";
             "exec.emo";
+            "pipe.emo";
+            "sig.emo";
             "hello/package.emo";
             "hello/package.lock";
             "hello/main.emo";
             "hello/shell.emo";
             "hello/console_ui.emo";
             "c/crt0.s";
+            "c/fork.s";
             "c/emo_syscall.h";
             "c/emo_posix.c";
             "c/emo_posix.h";
@@ -398,12 +401,20 @@ let smoke_tests =
            the volume's art the assembler reads beside the sources — the
            fixture mints it the way start.sh does, from the generator
            the desktop package ships. *)
+        (* The generator also writes its golden fixture module; that
+           one is the fb gate's, and it must land outside this tree —
+           the build compiles every .emo here, and the fixture needs
+           the desktop's packages. *)
         ignore
           (Sys.command
-             (Printf.sprintf "python3 %s --out %s"
+             (Printf.sprintf "python3 %s --out %s --fixture %s"
                 (Filename.quote
                    "../../projects/emo-desktop/fb/desktop/gen-wallpaper.py")
-                (Filename.quote (Filename.concat scratch "wallpaper.rle"))));
+                (Filename.quote (Filename.concat scratch "wallpaper.rle"))
+                (Filename.quote
+                   (Filename.concat
+                      (Filename.get_temp_dir_name ())
+                      "emo-os-smoke-wall_rle.emo"))));
         let exit_code =
           in_dir scratch (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:"main.elf"
@@ -644,6 +655,8 @@ let gc_metal_tests =
             "space.emo";
             "fs.emo";
             "exec.emo";
+            "pipe.emo";
+            "sig.emo";
             "runtime.S";
             "trap.S";
             "sv39.S";
@@ -656,10 +669,11 @@ let gc_metal_tests =
            the desktop package ships. *)
         ignore
           (Sys.command
-             (Printf.sprintf "python3 %s --out %s"
+             (Printf.sprintf "python3 %s --out %s --fixture %s"
                 (Filename.quote
                    "../../projects/emo-desktop/fb/desktop/gen-wallpaper.py")
-                (Filename.quote (Filename.concat kernel "wallpaper.rle"))));
+                (Filename.quote (Filename.concat kernel "wallpaper.rle"))
+                (Filename.quote (Filename.concat root "wall_rle.emo"))));
         ignore
           (Sys.command
              (Printf.sprintf "cp %s %s" (Filename.quote demo_elf)
@@ -778,6 +792,7 @@ let gc_metal_tests =
             close_out oc)
           [
             "c/crt0.s";
+            "c/fork.s";
             "c/emo_syscall.h";
             "c/emo_posix.c";
             "c/emo_posix.h";

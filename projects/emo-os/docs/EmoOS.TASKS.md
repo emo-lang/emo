@@ -72,10 +72,9 @@ toolchain contract before any libc work.
 - [x] **T0.3** — The metal proof: `exec chello.elf` from the
   desktop prints the line and exits 0; the exit event drains
   silently (a foreign image has no launcher slot).
-- [ ] **T0.4** — The dune smoke: the scratch tree carries `c/` and
+- [x] **T0.4** — The dune smoke: the scratch tree carries `c/` and
   builds the C app before the kernel; the suite's gate grows the
-  cross compiler's own probe. (The code is wired; the `@emo_os`
-  leg's own run is the remaining pin.)
+  cross compiler's own probe.
 
 ### M0's record (2026-11-23)
 
@@ -92,6 +91,40 @@ script is `c/chello.ld`. The golden installs the image and its file
 counts moved with it (the first boot's restart mounts 7, the second
 boot's mounts 8, `fs ls 8`); the exec beat waits for a golden run
 that re-pins the frame ledger.
+
+### T0.4's record (2026-11-23)
+
+The smoke leg's scratch tree now carries `c/` — the stub, `fork.s`,
+the headers, `hello.c`, `chello.ld`, `build.sh` — `pipe.emo` and
+`sig.emo`; `c/build.sh` builds `chello.elf` before the kernel's
+`main.elf`, so the embedded C app is the one the door's tests expect.
+The leg skips when `EMO_CC`'s compiler or the QEMU/binutils probe is
+absent, the suite's own gate. The wallpaper generator's second output
+(`--fixture`) lands outside the built trees: the project builds every
+`.emo` it finds, the fixture needs the desktop's packages, and the
+kernel's scratch stages none of them.
+
+The leg's own run found three latent defects. T1.5's route bound was
+open-ended (`op >= 40`), so the pipe check swallowed every later op —
+the compositor's seat variants (`16 + 32*slot`) and the notification
+family's (`27 + 32*slot`) went to the process service, which drops an
+op it does not know; a client in the second seat parked forever, and
+the counter's rise stopped at `comp 768 494`. The bound is the
+family's own, 40..44. T1.4b2's fork cells (4024..4040) lay inside the
+exec name buffer (4024..4048), so a plain exec's name copy left
+`fork_use_cell` non-zero and the next exec was taken for a fork; the
+desktop answered `bad argument`. The cells moved to 4048..4064,
+between the name buffer and the screen pass's pair. The launcher's
+hosted golden still catalogued four apps while T0.2 installs
+`chello.elf` as the fifth; its whole-catalog panel folded to
+`3690392675` where the corpus had `4244428722`. The fixture's catalog
+gained the C app, its `launch`/`launchr` pins moved, and the shell
+list's check grew the fifth image and its `-A7` window.
+
+The metal run is green through both boots and the whole desktop
+choreography; `frames 1918 1674` is the last line, the ledger the
+earlier pin named. The `@emo_os` leg's own run builds the C app in
+its scratch tree and passes.
 
 ### M1 — the POSIX substrate (the kernel and the library)
 

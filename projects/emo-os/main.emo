@@ -116,12 +116,13 @@ const app_blob_x_end = koff + 0x87002228
 const svc_screen_pid = koff + 0x8700c000 + 4072
 const svc_screen_base = koff + 0x8700c000 + 4080
 // The fork door's cells (T1.4b2), on the exec page's tail before the
-// screen pass's pair: the same busy cell as the execs, the saved
-// context and resume entry. The gate stages; the service's pickup
-// copies them into locals and holds the busy cell through the spawn.
-const fork_use_cell = koff + 0x8700c000 + 4024
-const fork_sp_cell = koff + 0x8700c000 + 4032
-const fork_entry_cell = koff + 0x8700c000 + 4040
+// screen pass's pair and past the exec's name buffer: the same busy
+// cell as the execs, the saved context and resume entry. The gate
+// stages; the service's pickup copies them into locals and holds the
+// busy cell through the spawn.
+const fork_use_cell = koff + 0x8700c000 + 4048
+const fork_sp_cell = koff + 0x8700c000 + 4056
+const fork_entry_cell = koff + 0x8700c000 + 4064
 const exec_busy_cell = koff + 0x8700c000 + 3912
 const exec_pending_cell = koff + 0x8700c000 + 3904
 const pgid_base = koff + 0x8700f000 + 3784
