@@ -900,6 +900,29 @@ def desk_line(word Int64) Void {
   gate_line(p)
 }
 
+// The shortcut's line (emo-desktop M36, EmoOS T16.2): `shortcut desk
+// <n>` — the chord layer's answer said before the switch, the run's
+// own provenance for a key that never crossed the serial line.
+def shortcut_line(n Int64) Void {
+  var p = byte_at(0, 115) // s
+  p = byte_at(p, 104) // h
+  p = byte_at(p, 111) // o
+  p = byte_at(p, 114) // r
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 99) // c
+  p = byte_at(p, 117) // u
+  p = byte_at(p, 116) // t
+  p = byte_at(p, 32)
+  p = byte_at(p, 100) // d
+  p = byte_at(p, 101) // e
+  p = byte_at(p, 115) // s
+  p = byte_at(p, 107) // k
+  p = byte_at(p, 32)
+  p = num_at(n, p)
+  p = byte_at(p, 10)
+  gate_line(p)
+}
+
 // The assignment's line (emo-desktop M27, EmoOS T13.2): `desk assign
 // <letter> <desk>` — the owner's verb said on the wire, the window and
 // the desk it now carries.
@@ -2738,6 +2761,12 @@ case desk_spawned {
 // keyboards and tablets carry can never name it. The code field is
 // the child's pid, the value the exit code.
 const ev_exit = 0x4558
+
+// The shortcut's type (emo-desktop M36, EmoOS T16.1): 0x5343 ("SC"),
+// the family's third member — the input service's chord layer hands
+// the shell the value whatever window holds the focus; the code field
+// is zero, the value the chord's id (0..3 the desks).
+const ev_shortcut = 0x5343
 
 // The launcher's scratch (emo-desktop A12.1): the three app slots
 // above the shell's texts, buf-offsets — the file names the exec verb
@@ -5144,6 +5173,23 @@ def desktop() Void {
             shell.prompt()
           }
         }
+      }
+    }
+    // The global shortcut (emo-desktop M36, EmoOS T16.1): the input
+    // service's chord layer — Alt+1..4, the value the desk — hands the
+    // shell the switch whatever window holds the focus; the show verb
+    // is the shell's (the panel authority), and the chrome's repaint is
+    // the new active cell's news. The lock is the session's: a chord
+    // under the face is nobody's.
+    if t == ev_shortcut {
+      if peek64(buf + lock_grant) == 0 {
+        const desk = ev_value(ev)
+        shortcut_line(desk)
+        case syscall.desk_show(desk) {
+          (R.error, _) then { mark() }
+          (R.ok, _) then {}
+        }
+        desk_chrome(f)
       }
     }
     if t == 3 {

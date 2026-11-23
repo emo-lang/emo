@@ -345,6 +345,16 @@ const input_irq_cell = koff + 0x870029f0
 const pointer_ring_prod = koff + 0x87001800
 const pointer_ring_cons = koff + 0x87001808
 const pointer_ring = koff + 0x87001810
+// The global shortcut layer (emo-desktop M36, EmoOS T16.1): the
+// input service parses the machine's chords without any app's help —
+// Alt is the layer's modifier, Ctrl and Shift the apps' — and the
+// shell hears the result whatever window holds the focus. The Alt
+// state and the one pending shortcut ride the input page's free tail
+// past the pointer's ring (which ends at +0x910); the page's end is
+// the handoff's.
+const input_alt_cell = koff + 0x87001920
+const input_shortcut_cell = koff + 0x87001928
+const ev_shortcut = 0x5343
 const pointer_x_cell = koff + 0x87002ec0
 const pointer_y_cell = koff + 0x87002ec8
 const pointer_max_x_cell = koff + 0x87002ed0
@@ -1838,7 +1848,9 @@ def input_take_head(dev Int64, q Int64, ty Int64) Int64 {
     return (0x454D << 48) | b
   }
   if eventq_pending(q) {
-    return eventq_take(dev, q)
+    var e = eventq_take(dev, q)
+    input_track(e)
+    return e
   }
   return pointer_ring_take()
 }
@@ -1958,6 +1970,32 @@ def input_entitled(pid Int64) Bool {
   return peek64(row + 8) == pid
 }
 
+// The pending shortcut, for the panel's owner alone (emo-desktop M36,
+// EmoOS T16.1): the shell hears every chord, whatever window holds the
+// focus — the layer's whole point. Answered from the held read the
+// shell always has parked, the cell cleared when served; a shortcut no
+// panel's owner waits on stays pending (the next chord replaces it, a
+// human-paced bound the layer accepts).
+def shortcut_take_for(pid Int64) Int64 {
+  const sc = peek64(input_shortcut_cell)
+  if sc == 0 {
+    return 0
+  }
+  var panel = peek64(comp_panel_cell)
+  if panel == 0 {
+    return 0
+  }
+  var prow = grant_row_of(panel)
+  if prow == 0 {
+    return 0
+  }
+  if peek64(prow + 8) != pid {
+    return 0
+  }
+  poke64(input_shortcut_cell, 0)
+  return sc
+}
+
 // The head's own verdict on a reader (emo-desktop A12.1, EmoOS T8.19):
 // a pointer's absolute report is no window's — the launcher tracks
 // the pointer the windows ignore, the press that names a tile riding
@@ -2074,6 +2112,63 @@ def input_peek_type(dev Int64, q Int64) Int64 {
   return -1
 }
 
+// The keyboard's head event, seen and not taken (emo-desktop M36): the
+// chord layer must read a key's code and value before the head is
+// consumed, and only the keyboard's queue is asked — the pointer's
+// type-1 events (the tablet's buttons) are no chord's. 0 when the
+// keyboard holds nothing.
+def input_peek_key(dev Int64, q Int64) Int64 {
+  if eventq_pending(q) {
+    var used = q + 0x2000
+    var handled = peek64(q + 0x3f00)
+    var entry = used + 4 + ((handled % 16) * 8)
+    var id = peek32(entry)
+    var buf = q + 0x3000 + (id * 8)
+    return (peek16r(buf) << 48) | (peek16r(buf + 2) << 32) | peek32(buf + 4)
+  }
+  return 0
+}
+
+// The modifiers the chord layer watches (emo-desktop M36, EmoOS
+// T16.1): Alt's press and release, and nothing else — the chord's own
+// key is judged when it arrives, and every other key is the apps'.
+def input_track(e Int64) Void {
+  if ((e >> 48) & 65535) == 1 {
+    const code = (e >> 32) & 65535
+    if code == 56 || code == 100 {
+      if (e & 4294967295) == 1 {
+        poke64(input_alt_cell, 1)
+      } else {
+        poke64(input_alt_cell, 0)
+      }
+    }
+  }
+}
+
+// A chord's own key, judged at the head before any reader sees it
+// (emo-desktop M36, EmoOS T16.1): Alt held and a press of the digits
+// 1..4 — the desks, the chord vocabulary's first row. The answer is
+// the shortcut's value, or -1 when the head is no chord. The layer
+// grows by rows here: a new chord is a code range and a value, and the
+// rest of the machine — the delivery, the shell's dispatch — is the
+// same.
+def input_chord(e Int64) Int64 {
+  if ((e >> 48) & 65535) != 1 {
+    return -1
+  }
+  if (e & 4294967295) != 1 {
+    return -1
+  }
+  if peek64(input_alt_cell) == 0 {
+    return -1
+  }
+  const code = (e >> 32) & 65535
+  if code >= 2 && code <= 5 {
+    return code - 2
+  }
+  return -1
+}
+
 // The held reads, judged and served (emo-desktop A11.2): a read the
 // focus does not name is held, not answered — the reader sleeps at
 // its gate-wait until the focus names it, or until its row dies with
@@ -2130,12 +2225,23 @@ def input_hold_serve(dev Int64, q Int64) Void {
             poke64(seat, 0)
             gate_reply(caller_of(w), e)
           } else {
-            if input_entitled_for(pid, input_peek_type(dev, q)) {
-                var w = peek64(seat + 8)
+            // the shortcut before the focus's judgment (T16.1): the
+            // panel's owner hears the chord whatever the focus names —
+            // the held read answered with the pending event, the focus
+            // no part of it
+            var sc = shortcut_take_for(pid)
+            if sc != 0 {
+              var w = peek64(seat + 8)
               poke64(seat, 0)
-              var r = input_serve_read(w, dev, q)
-              if r == 1 {
-                again = true
+              gate_reply(caller_of(w), sc)
+            } else {
+              if input_entitled_for(pid, input_peek_type(dev, q)) {
+                  var w = peek64(seat + 8)
+                poke64(seat, 0)
+                var r = input_serve_read(w, dev, q)
+                if r == 1 {
+                  again = true
+                }
               }
             }
           }
@@ -2182,6 +2288,23 @@ def input_serve_read(w Int64, dev Int64, q Int64) Int64 {
           }
         }
       } else {
+        // the global shortcut's chord (T16.1): a chord key is consumed
+        // whatever reader the head was meant for — the shell's event
+        // left pending — and the reader that asked goes back to the
+        // hold, whose judgment hands the panel's owner its news
+        var ch = 0 - 1
+        if ty == 1 {
+          ch = input_chord(input_peek_key(dev, q))
+        }
+        if ch >= 0 {
+          input_take_head(dev, q, ty)
+          poke64(input_shortcut_cell, (ev_shortcut << 48) | ch)
+          if !input_hold_put(caller_of(w), w) {
+            println("input: the hold overflowed")
+            halt()
+          }
+          return 1
+        }
         if !input_entitled_for(caller_of(w), ty) {
           if !input_hold_put(caller_of(w), w) {
             println("input: the hold overflowed")
@@ -5567,7 +5690,12 @@ var notify_svc = me
 do console_service(me)
 do process_service(me)
 do blk_service(me)
+// The display driver's own run (frames.emo): the desktop's per-frame
+// flush traffic is no driver's few-tuples budget — the spawn borrows
+// the user pass's bracket word with the display's length
+frames.arena_for_display()
 do gpu_service(me)
+frames.arena_for_service()
 // The input lines' mask is the two drivers' to fill, bit by bit (T8.11):
 // empty before either runs.
 poke64(input_irq_cell, 0)

@@ -2956,3 +2956,35 @@ arithmetic.
   editor and boot images build for riscv64, the wayland face
   type-checks beside them, and the locks the core's content moved
   re-pinned.
+
+## M36 — the global shortcut layer (opened 2026-11-23)
+
+Every key so far belongs to the focused window: the stream's routing
+is the focus's, and a chord that must work *from any window* has no
+place above the gate — each app would have to implement it, and a
+window that never reads would swallow it. The layer is therefore the
+input service's (EmoOS T16.1), below every app: Alt is the layer's
+modifier — Ctrl and Shift stay the apps' — and the service parses a
+small table of chords itself, consuming the chord's key at the head
+whatever reader it was meant for. The result is the stream's third
+machine type, 0x5343 ("SC"), and it answers the **panel owner's**
+held read: the shell hears the chord whatever window holds the focus,
+which is the layer's whole point. The first row is Alt+1..4, the
+desks; Alt-Tab's cycle (B8) and the overview (B7) are later rows,
+their consumers their own, the delivery shared.
+
+- [x] **A36.1** — The shell's dispatch and the beats: `hello/main.emo`
+  handles 0x5343 — `shortcut desk <n>` on the wire, `desk_show(n)`
+  (the shell's own panel authority), the chrome's repaint the new
+  active cell's news — with the lock's session guarded (a chord under
+  the face is nobody's); `run.sh` drives `sendkey alt-2` and `alt-1`
+  and folds the desk-one picture against the pager's own first
+  switch's. **Landed 2026-11-23** — the kernel's half is T16.1 (the
+  Alt state and pending cell, the chord table, the panel owner's
+  delivery); `run.sh` exit 0 on both transports, the `shortcut desk
+  1`/`shortcut desk 0` lines the ordered chain's. The same session's
+  QEMU run found the display driver's arena death and fixed it
+  (EmoOS T17.1): the driver's own 2 MiB run — the desktop no longer
+  freezes when a session outgrows the services' four blocks. The chord
+  layer carries the desk switches and the vocabulary's rows for
+  Alt-Tab and the overview, whose actions are B8's and B7's.

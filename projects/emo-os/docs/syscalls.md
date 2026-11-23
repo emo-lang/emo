@@ -324,6 +324,20 @@ events unchanged — a reader that wants the pointer reads it here, and
 the sprite on the display is the compositor's (T8.11, the desktop ABI's
 sprite memory).
 
+The stream's third machine type is the global shortcut (emo-desktop
+M36, EmoOS T16.1): 0x5343 ("SC"), the code 0, the value the chord's
+id. The input service parses the chords itself — Alt is the layer's
+modifier, Ctrl and Shift stay the applications' — and a chord's key is
+**consumed** at the head, whatever reader the head was meant for; the
+service's one pending shortcut cell then answers the **panel's owner's**
+held read, the shell hearing the chord whatever window holds the focus.
+The first row is Alt+1..4, the desks: the value is the desk (0..3). A
+shortcut no panel's owner waits on stays pending, and the next chord
+replaces it; a second chord before the shell reads is the one the
+layer drops. The vocabulary's growth is the table's: a new chord is a
+code range and a value, and the delivery — this event, the panel
+owner's read — is the same.
+
 The disk ELFs' verb (T8.16, emo-desktop A11.1, verb 24) is
 `exec(name, name_len)`: the program the filesystem names becomes a
 process of its own. The name is judged like the filesystem's — inside

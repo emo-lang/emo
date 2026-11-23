@@ -259,6 +259,22 @@ with the machine; a selection's format is not carried (text is the
 first cut's whole), and the corpus's seam (`Clipper` in
 `emo/ui_apps`) keeps the apps portable.
 
+## The global shortcut layer (emo-desktop M36, EmoOS T16.1)
+
+Tier A's event stream grows one type: **0x5343 ("SC")**, the code 0 and
+the value the chord's id — the machine's third marker beside the serial
+bytes' 0x454D and the exits' 0x4558. The parse is the input service's,
+below every app: Alt is the layer's modifier (Ctrl and Shift stay the
+apps'), a chord's key is consumed at the head before any reader sees
+it, and the event answers the **panel owner's** held read — the shell
+hears the chord whatever window holds the focus, which is the layer's
+whole point. The vocabulary is a table, not a syntax: the first row is
+Alt+1..4, the desks, the value 0..3; a later binding (Alt-Tab's cycle,
+the overview) is its own row and its own consumer, the delivery — the
+event, the panel owner's read — shared. The one pending cell is the
+layer's bound, honestly stated: a second chord before the shell reads
+replaces the first.
+
 ## The cursor plane's sprite memory (T8.11, emo-desktop A8.2)
 
 The pointer's sprite is the desktop's — a Wayland client's cursor is
