@@ -19,7 +19,6 @@ static char read_bounce[2048];
 static char used[EMO_MAX_FD];
 static char cwd[EMO_PATH_MAX + 1] = "/";
 static char list_buf[EMO_DIR_LIST];
-static long list_total;
 static struct emo_dirent dirent;
 static EMO_DIR dirs[2];
 
@@ -162,18 +161,39 @@ static int resolve(const char *path, char *out, unsigned long cap) {
   return 0;
 }
 
-static int list_load(void) {
-  long answer = emo_file_list(list_buf, sizeof(list_buf));
+static int put_name(const char *name, unsigned long nlen) {
+  if (nlen < 1 || nlen > EMO_NAME_MAX) {
+    errno = EMO_ENAMETOOLONG;
+    return -1;
+  }
+  unsigned long i = 0;
+  while (i < nlen) {
+    name_buf[i] = name[i];
+    i = i + 1;
+  }
+  return 0;
+}
+
+// The service's path kind (T1.2k): 1 a directory, 0 a file, -1 an
+// error (ENOENT included). The root is the library's own.
+static int path_kind(const char *full) {
+  unsigned long nlen = slen(full);
+  if (nlen == 0) {
+    return 1;
+  }
+  if (put_name(full, nlen) != 0) {
+    return -1;
+  }
+  long answer = emo_path_type(name_buf, nlen);
   if (answer < 0) {
     errno = reason_errno(answer);
     return -1;
   }
-  list_total = answer;
-  return 0;
+  return (int)answer;
 }
 
-// The line at list_buf[start..start+len): does it name `dir/...`? The
-// marker `dir/` itself matches; a plain file `dir` does not.
+// The line at line[0..len): does it name `dir/...`? The marker
+// `dir/` itself matches; a plain file `dir` does not.
 static int under(const char *line, unsigned long len, const char *dir,
                  unsigned long plen) {
   if (plen == 0) {
@@ -193,50 +213,15 @@ static int under(const char *line, unsigned long len, const char *dir,
 }
 
 static int dir_exists(const char *dir) {
-  unsigned long plen = slen(dir);
-  if (plen == 0) {
-    return 1;
-  }
-  if (list_load() != 0) {
-    return -1;
-  }
-  unsigned long pos = 0;
-  while (pos < (unsigned long)list_total) {
-    unsigned long start = pos;
-    while (pos < (unsigned long)list_total && list_buf[pos] != '\n') {
-      pos = pos + 1;
-    }
-    unsigned long len = pos - start;
-    if (pos < (unsigned long)list_total) {
-      pos = pos + 1;
-    }
-    if (under(list_buf + start, len, dir, plen)) {
-      return 1;
-    }
-  }
-  return 0;
+  return path_kind(dir) == 1;
 }
 
 static int file_exists(const char *name) {
-  unsigned long nlen = slen(name);
-  if (list_load() != 0) {
-    return -1;
-  }
-  unsigned long pos = 0;
-  while (pos < (unsigned long)list_total) {
-    unsigned long start = pos;
-    while (pos < (unsigned long)list_total && list_buf[pos] != '\n') {
-      pos = pos + 1;
-    }
-    unsigned long len = pos - start;
-    if (pos < (unsigned long)list_total) {
-      pos = pos + 1;
-    }
-    if (line_eq(list_buf + start, len, name, nlen)) {
-      return 1;
-    }
-  }
-  return 0;
+  return path_kind(name) == 0;
+}
+
+static int path_exists_guard(const char *full) {
+  return path_kind(full) >= 0;
 }
 
 static int parent_exists(const char *full) {
@@ -256,28 +241,7 @@ static int parent_exists(const char *full) {
     i = i + 1;
   }
   parent[plen] = 0;
-  return dir_exists(parent) > 0;
-}
-
-static int path_exists_guard(const char *full) {
-  int d = dir_exists(full);
-  if (d != 0) {
-    return 1;
-  }
-  return file_exists(full) != 0;
-}
-
-static int put_name(const char *name, unsigned long nlen) {
-  if (nlen < 1 || nlen > EMO_NAME_MAX) {
-    errno = EMO_ENAMETOOLONG;
-    return -1;
-  }
-  unsigned long i = 0;
-  while (i < nlen) {
-    name_buf[i] = name[i];
-    i = i + 1;
-  }
-  return 0;
+  return dir_exists(parent);
 }
 
 static int open_name(const char *full, int flags) {
@@ -545,15 +509,10 @@ int mkdir(const char *path, int mode) {
     return -1;
   }
   unsigned long nlen = slen(full);
-  if (nlen + 1 > EMO_NAME_MAX) {
-    errno = EMO_ENAMETOOLONG;
-    return -1;
-  }
   if (put_name(full, nlen) != 0) {
     return -1;
   }
-  name_buf[nlen] = '/';
-  long answer = emo_file_write(name_buf, nlen + 1, name_buf, 0);
+  long answer = emo_mkdir(name_buf, nlen);
   if (answer < 0) {
     errno = reason_errno(answer);
     return -1;
@@ -574,32 +533,11 @@ int rmdir(const char *path) {
     errno = EMO_ENOENT;
     return -1;
   }
-  if (list_load() != 0) {
-    return -1;
-  }
   unsigned long plen = slen(full);
-  unsigned long pos = 0;
-  while (pos < (unsigned long)list_total) {
-    unsigned long start = pos;
-    while (pos < (unsigned long)list_total && list_buf[pos] != '\n') {
-      pos = pos + 1;
-    }
-    unsigned long len = pos - start;
-    if (pos < (unsigned long)list_total) {
-      pos = pos + 1;
-    }
-    if (under(list_buf + start, len, full, plen)) {
-      if (len > plen + 1) {
-        errno = EMO_ENOTEMPTY;
-        return -1;
-      }
-    }
-  }
   if (put_name(full, plen) != 0) {
     return -1;
   }
-  name_buf[plen] = '/';
-  long answer = emo_file_remove(name_buf, plen + 1);
+  long answer = emo_rmdir(name_buf, plen);
   if (answer < 0) {
     errno = reason_errno(answer);
     return -1;

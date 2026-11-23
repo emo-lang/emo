@@ -85,6 +85,13 @@ const c_names = 512
 const c_map = 4608
 const c_data = 8192
 
+// The name entry's type word (EmoOS plan B, T1.2k): the entry's last
+// eight bytes — 0 a file, 1 a directory. The volumes before this
+// field carry zero there, the file it always meant; the service writes
+// the word on mkdir and reads it on every path question.
+const c_type = 56
+const type_dir = 1
+
 // The request word's parts. A gate word is positive; a heap pointer
 // (a kernel client's tuple, the driver's boxed reply) is negative —
 // the sign is the first decode.
@@ -396,6 +403,11 @@ def write_file(me Pid, blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, 
     return -4
   }
   var old = find(cache, name, nlen)
+  if old >= 0 {
+    if peek8(entry(cache, old) + c_type).to_int64() != 0 {
+      return -4
+    }
+  }
   var e = old
   if e < 0 {
     e = free_entry(cache)
@@ -567,11 +579,134 @@ def remove_file(me Pid, blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
     return -6
   }
   var a = entry(cache, e)
+  if peek8(a + c_type).to_int64() != 0 {
+    return -4
+  }
   var first = peek64(a + 32)
   var count = peek64(a + 40)
   zero(a, 64)
   commit_entry(me, blk, cache, e)
   map_run(cache, first, count, false)
+  return 0
+}
+
+// ---- the real directory entries (EmoOS plan B, T1.2k) ----
+
+// The path's kind: 1 a directory (an entry with the type word, or a
+// name under its prefix — the implicit directory the flat years left),
+// 0 a file, -6 no name at all.
+def path_type(cache Int64, name Int64, nlen Int64) Int64 {
+  if !valid_name(name, nlen) {
+    return -4
+  }
+  var e = find(cache, name, nlen)
+  if e >= 0 {
+    if peek8(entry(cache, e) + c_type).to_int64() != 0 {
+      return 1
+    }
+    return 0
+  }
+  var i = 0
+  while i < entries {
+    var a = entry(cache, i)
+    var n = name_len_at(a)
+    if n > nlen {
+      var same = true
+      var j = 0
+      while j < nlen {
+        if peek8(a + j).to_int64() != peek8(name + j).to_int64() {
+          same = false
+        }
+        j = j + 1
+      }
+      if same {
+        if peek8(a + nlen).to_int64() == 47 {
+          return 1
+        }
+      }
+    }
+    i = i + 1
+  }
+  return -6
+}
+
+// The explicit directory: the name's entry with the type word, the
+// parent a directory (the root for a bare name), a name already there
+// refused. The bytes and the name table are the format's own.
+def make_dir(me Pid, blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
+  if !valid_name(name, nlen) {
+    return -4
+  }
+  if find(cache, name, nlen) >= 0 {
+    return -4
+  }
+  if path_type(cache, name, nlen) == 1 {
+    return -4
+  }
+  var k = nlen
+  while k > 0 && peek8(name + k - 1).to_int64() != 47 {
+    k = k - 1
+  }
+  if k > 0 {
+    if path_type(cache, name, k - 1) != 1 {
+      return -6
+    }
+  }
+  var free = free_entry(cache)
+  if free < 0 {
+    return -5
+  }
+  var a = entry(cache, free)
+  zero(a, 64)
+  var i = 0
+  while i < nlen {
+    poke8(a + i, peek8(name + i))
+    i = i + 1
+  }
+  poke8(a + c_type, type_dir.to_byte())
+  poke64(a + 48, peek64(cache + c_super + 8))
+  commit_entry(me, blk, cache, free)
+  return 0
+}
+
+// The directory's removal: the entry must carry the type word and no
+// name may sit under its prefix — an empty explicit directory, the
+// mkdir's own.
+def remove_dir(me Pid, blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
+  if !valid_name(name, nlen) {
+    return -4
+  }
+  var e = find(cache, name, nlen)
+  if e < 0 {
+    return -4
+  }
+  var a = entry(cache, e)
+  if peek8(a + c_type).to_int64() == 0 {
+    return -4
+  }
+  var i = 0
+  while i < entries {
+    var b = entry(cache, i)
+    var n = name_len_at(b)
+    if n > nlen {
+      var same = true
+      var j = 0
+      while j < nlen {
+        if peek8(b + j).to_int64() != peek8(name + j).to_int64() {
+          same = false
+        }
+        j = j + 1
+      }
+      if same {
+        if peek8(b + nlen).to_int64() == 47 {
+          return -4
+        }
+      }
+    }
+    i = i + 1
+  }
+  zero(a, 64)
+  commit_entry(me, blk, cache, e)
   return 0
 }
 
@@ -689,6 +824,11 @@ def write_at(me Pid, blk Pid, cache Int64, name Int64, nlen Int64,
     return -4
   }
   var old = find(cache, name, nlen)
+  if old >= 0 {
+    if peek8(entry(cache, old) + c_type).to_int64() != 0 {
+      return -4
+    }
+  }
   var e = old
   if e < 0 {
     e = free_entry(cache)
@@ -930,6 +1070,15 @@ def handle_stat(pid Int64, fd Int64) Int64 {
 def serve_fd(me Pid, blk Pid, cache Int64, n Int64, s Int64) Int64 {
   var pid = peek64(s + 8)
   var fd = peek64(s + 16)
+  if n == 42 {
+    return path_type(cache, s + 64, peek64(s + 48))
+  }
+  if n == 43 {
+    return make_dir(me, blk, cache, s + 64, peek64(s + 48))
+  }
+  if n == 44 {
+    return remove_dir(me, blk, cache, s + 64, peek64(s + 48))
+  }
   if n == 36 {
     return handle_open(me, blk, cache, pid, fd, s + 64, peek64(s + 48),
       peek64(s + 56))

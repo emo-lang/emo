@@ -87,10 +87,13 @@ undocumented ever acts.
 | 39 | `fd_write(fd, buf, len)` | the `len` bytes at `buf` (at most 2048, the gate's staging) land at the handle's offset; answers `len`. `O_APPEND` writes at the size; a read-only handle is reason 4; a full disk reason 5 |
 | 40 | `fd_lseek(fd, off, whence)` | the handle's offset becomes `base + off` — `base` 0, the current offset (1) or the size (2); answers the new offset. A negative result or a whence past 2 is reason 4 |
 | 41 | `fd_fstat(fd)` | the handle's size and flags packed: the size in the high 32 bits, the flag word in the low; a handle that is not this process's is reason 4 |
+| 42 | `path_type(name, name_len)` | 1 a directory (a type entry or an implicit directory's prefix), 0 a file, reason 6 a missing name; a bad name reason 4 (EmoOS plan B, T1.2k) |
+| 43 | `mkdir(name, name_len)` | the name becomes an explicit directory — the type word at the entry's `+56`; the parent must be a directory, an existing name (file, directory or implicit prefix) is refused; answers 0 |
+| 44 | `rmdir(name, name_len)` | the explicit directory removed; it must be empty — a name under its prefix refuses; answers 0 |
 
-The fd verbs share the filesystem's four request slots; the slot's
-`+88` marker selects the open-file table, the whole-file verbs' own
-path otherwise.
+The fd and path verbs share the filesystem's four request slots; the
+slot's `+88` marker selects the open-file table and the path calls,
+the whole-file verbs' own path otherwise.
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their

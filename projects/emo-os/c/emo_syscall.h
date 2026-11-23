@@ -94,4 +94,19 @@ static inline long emo_fd_stat(long fd) {
   return emo_ecall(41, fd, 0, 0, 0, 0, 0);
 }
 
+// Verbs 42..44: the service's real directories (T1.2k) — the path's
+// kind (1 directory, 0 file, -6 missing), the explicit mkdir and the
+// empty rmdir. The name is the caller's, staged like the fd verbs'.
+static inline long emo_path_type(const void *name, unsigned long nlen) {
+  return emo_ecall(42, (long)name, (long)nlen, 0, 0, 0, 0);
+}
+
+static inline long emo_mkdir(const void *name, unsigned long nlen) {
+  return emo_ecall(43, (long)name, (long)nlen, 0, 0, 0, 0);
+}
+
+static inline long emo_rmdir(const void *name, unsigned long nlen) {
+  return emo_ecall(44, (long)name, (long)nlen, 0, 0, 0, 0);
+}
+
 #endif

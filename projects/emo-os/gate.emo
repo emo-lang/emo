@@ -511,6 +511,26 @@ def fs_fd_slot(k Int64) Int64 {
 }
 
 def fs_fd_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
+  // The path verbs (T1.2k): path_type, mkdir and rmdir carry the name
+  // in r0/r1 instead of a fd. They share the fd slot and its marker.
+  if n >= 42 {
+    if r1 < 1 || r1 > name_max {
+      return -reason_argument
+    }
+    var vn = check_write(r0, r1)
+    if vn != 0 {
+      return -vn
+    }
+    var pk = fs_slot_pick()
+    if pk < 0 {
+      return -reason_resource
+    }
+    var ps = fs_fd_slot(pk)
+    poke64(ps + 24, n)
+    copy_to(ps + 64, r0, r1)
+    poke64(ps + 48, r1)
+    return -(1000 + 6 + 16 * pk)
+  }
   if r0 < 3 || r0 > 15 {
     return -reason_argument
   }
@@ -703,7 +723,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   if n >= 6 && n <= 9 {
     return fs_dispatch(n, r0, r1, r2, r3)
   }
-  if n >= 36 && n <= 41 {
+  if n >= 36 && n <= 44 {
     return fs_fd_dispatch(n, r0, r1, r2, r3)
   }
   if n == 2 {

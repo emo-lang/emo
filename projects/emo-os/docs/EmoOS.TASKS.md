@@ -149,6 +149,26 @@ The metal proof: `chello.elf` (19,816 bytes) answered `stat ok`,
 `dir listing ok`, `rename ok`, `vfs cleaned`; the volume was back to
 its eight files after the run.
 
+### T1.2k's record (2026-11-23)
+
+The type word is `c_type` at the name entry's `+56` — 0 a file, 1 a
+directory; the volumes before it carry zero there, the file it
+always meant. The service answers `path_type` (verb 42: the type
+entry, or an implicit directory's prefix), `mkdir` (43: the explicit
+entry, the parent a directory, an existing name refused) and `rmdir`
+(44: the type entry, empty, removed); `write_file` and `remove_file`
+refuse a directory entry. The fd and path verbs share the request
+slot and its `+88` marker, so the shim's routing stays the 6..9
+family. The C library's existence checks now ask the service, and
+`mkdir`/`rmdir` are the service's own.
+
+The C app's `dir` is a real type entry; the implicit `a/one.txt`
+names the shell and the desktop have always written keep working as
+implicit directories. The desktop's prefix view is untouched — T1.2d
+takes its own typed listing. The metal proof: `chello.elf` (19,840
+bytes) answered `stat ok`, `read back: fd table on EmoOS`, `fd table
+cleaned`, `path ok`, `dir listing ok`, `rename ok`, `vfs cleaned`.
+
 ### M1 — the POSIX substrate (the kernel and the library)
 
 The layer every C program stands on. Tasks land only as their first
@@ -175,9 +195,15 @@ consumer asks, but the order is the dependency order.
   flat names. A directory is the marker `dir/` and the names under its
   prefix; the 24-byte flat name bound is the cut, a longer path
   answering `ENAMETOOLONG`.
-- [ ] **T1.2k** — The service's real directory entries: a type word in
-  the name table, listings per directory, the on-disk form and the
-  golden's listing re-pinned; the desktop's prefix grouping retires.
+- [x] **T1.2k** — The service's real directory entries: a type word
+  at the name entry's `+56` (0 file, 1 directory), `path_type`,
+  `mkdir` and `rmdir` as verbs 42..44, and the C library switched to
+  them. An implicit directory — names under a prefix — still answers
+  as a directory, so the flat years' volumes keep working.
+- [ ] **T1.2d** — The desktop's typed listing: a list verb that
+  carries the type, the icons and the folder view reading it, and the
+  prefix grouping retiring from `desk_view_build`; the golden's
+  screenshots re-pinned.
 - [ ] **T1.3** — Memory: `brk` and anonymous private `mmap`/`munmap`/
   `mprotect` over the process arena; a fault past the mapping is the
   kill it is today.
