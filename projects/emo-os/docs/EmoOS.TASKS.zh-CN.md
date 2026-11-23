@@ -53,7 +53,7 @@
 - [x] **T1.4b3a**——fork 的描述符:库的 fd 表现在在 `used` 旁携带名字、标志与偏移;孩子第一次访问继承来的 fd 时以自己的 pid 重开该名字并 seek 到复制的偏移(O_APPEND 保留服务的末尾,O_CREAT/O_TRUNC 丢弃)。描述的偏移与父进程分叉——在服务拥有共享描述之前,这是记录在案的近似。
 - [x] **T1.4b3b**——`execve`(原地换镜像):动词 54 停名字、argv 文本与 envp 文本;进程服务在新栈与新 arena 上装载新镜像,新的运行时 `user_replace(pid, entry, stack, arena, arena_end)` 回收调用者的旧镜像、栈、arena 与增长块,把同一个槽位打扮成新帧并调 build 钩子——同一个 pid 跑新程序,父/组单元不动,旧 fd 被丢弃(库自己的表是新的——记录里的缺口)。C 库的 `execve`/`execv` 把 `argv[1..]` 与 `envp` 摊成门的空格分隔文本(词里带空格是 EINVAL);新镜像的 `argv[0]` 是文件名,`envp` 是调用者的。替换后库的 fd 表与 cwd 是新的,旧页表与私有页泄漏——记录里点名的后续。
 - [x] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。动词 55..60(绑定、读、探测、写、复制、关闭),进程服务的第二条臂:门把每个请求停进调用 pid 在 `.emo_pipe` 请求页上的记录并路由;服务独占全部改动,环空而写者还在时把读者停泊,环满时把写者停泊,凭关闭时的最后持有者计数唤醒对端——最后一个写者的关闭是 EOF,最后一个读者的关闭是断管。库的 `pipe`/`dup`/`dup2` 与描述符种类缓存(每个 fd 探测一次)把两端藏在 POSIX 调用后面;端跨 `fork` 复制,低三个跨 `execve` 留下,所以 shell 的 `cmd1 | cmd2` 就是两个孩子与两次 `dup2`。
-- [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。
+- [x] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。动词 61..65(kill、处置、掩码、trampoline 的返回、待决字),门自己的——没有服务在中间。八个信号,默认/忽略/处理器三种处置;处理器靠重写 resume 将要恢复的 trap 帧运行,它的返回是 trampoline 页的 `sig_return` ecall,把被打断的帧与掩码放回。默认处置结束进程(SIGCHLD 的默认是忽略),wait 的状态字变成 POSIX 的(退出的 `code << 8`,信号致死是信号编号),孩子退出竖起 SIGCHLD,断管竖起 SIGPIPE。
 
 ### T1.1 的记录(2026-11-23)
 
@@ -160,6 +160,20 @@ C 库的 `execve` 复制路径(没有路径层——卷的平面名字),把 `arg
 真机证明:`chello.elf`(40,208 字节,一个镜像块)答出 `pipe ok`(孩子的行穿过环、父进程在最后一个写者关闭时读到 EOF)、`pipe dup ok`(管道的写端落到 fd 1,控制台先被 `dup` 存下、再被 `dup2` 恢复)、`pipe exec ok`(孩子的 fd 1 进管道再 `execve`——低端留下,新镜像的 `write(1)` 落进环)、`pipe big ok`(2,000 字节穿过 768 字节的环,两端都阻塞且保持流的顺序)与 `pipe epipe ok`(最后一个读者的关闭是写者的 EPIPE),在之前所有节拍之后。机器的 exit 路由干净。
 
 缺口:因 fault 或堆的击杀而死的进程会漏掉它的管道端——fault 路径跑在 trap 里,无法唤醒停泊的对端(它的应答会在 trap 中途置起 SIE),所以丢端要等 T1.6 的信号接管死亡路径的唤醒。一条管道保留八个块、每端四个停泊者;第五个停泊的读者或写者是服务的响亮终点。`pipe`/`dup`/`dup2` 的端不是按共享描述继承的——库的 fd 表拥有它们,文件描述符的偏移在 `fork` 后依旧分叉(T1.4b3a 的近似,未变)。
+
+### T1.6 的记录(2026-11-23)
+
+信号是门自己的,住在自己的页上(`.emo_sig`,0x87018000):每 pid 一个待决字与一个阻塞字,每 pid 每个信号槽一个字 disposition(0 默认,1 忽略,地址即处理器),每个进程槽一个活动标记与一个保存帧,外加 trap shim 每次 ecall 停放的两个单元(帧基址与槽索引)。词表是八个——SIGINT 2、SIGQUIT 3、SIGKILL 9、SIGUSR1 10、SIGSEGV 11、SIGPIPE 13、SIGTERM 15、SIGCHLD 17——掩码的位就是信号编号本身(位 2 是 SIGINT)。动词:61 `kill(pid, sig)`(一个进程、一个组、调用者自己的组;权限是调用者自身、它的孩子、或它携带的组;信号 0 是探针),62 `sig_action(sig, disp)`(SIGKILL 拒绝;处理器必须落在调用者可执行段内,fork 入口的检查),63 `sig_mask(how, set)`(阻塞、解除、替换;SIGKILL 的位与词表之外的位丢掉),64 `sig_return()`,65 `sig_pending()`。
+
+投递在 resume 上:`emo_os_trap_resume` 每次回到 U-mode 都先问 `emo_os_sig_deliver`,在 anchor 武装之前。最低的、未阻塞的、处置为处理器的信号把被打断的帧与它的 sp 槽复制进该槽的记录,阻塞所有信号,重写帧——`ra` 指向 0x87ffd000 的 trampoline 页(每张用户表以 RX 带 U 映射它),`a0` 放信号,`sepc` 放处理器。处理器跑在被打断的栈上,返回到 trampoline 的 `li a7, 64; ecall`;门的动词 64 把保存的帧与掩码放回并应答 shim 的特殊 -105,让帧原样恢复——不往 a0 写答案,不推进 sepc。trampoline 的第三个字是 `ebreak`,没有处理器却返回时的响亮终点。默认处置结束进程:shim 的死亡路径把信号写成退出的状态,把退出投给进程服务(记录、waiter、父进程的事件、管道端的走查),把槽标为 done 并回收。SIGKILL 的待决位无视掩码与正在运行的处理器——机器的击杀。
+
+状态编码改成 POSIX 的:门的 exit 往每 pid 单元写 `code << 8`,信号致死写信号编号,退出表与 wait 原样应答这个字,C 库把它当 wait 状态返回(`WIFEXITED`/`WEXITSTATUS`/`WIFSIGNALED`/`WTERMSIG`)。启动证明的 `wait 7` 自己把码移出来;`syscall` 包的注释改成状态字,五把锁重新钉过。孩子退出给父进程竖起 SIGCHLD,断管在 EPIPE 应答旁竖起 SIGPIPE。处置与掩码跨 `fork` 复制;`execve` 重置处置(那些地址属于旧镜像)而保留掩码。
+
+路上发现的:投递自己的调用帧写在了它即将恢复的那一帧上——typed def 的栈从 `sp` 往下长进 anchor 的字里,被写坏的 sepc/帧让机器无声地卡住。这个钩子现在跑在自己的 4 KiB 栈上(`emo_os_sig_stack`),调用前后切换 sp。还发现:trampoline 的指令必须相隔四字节——最初把每条写成双字,ebreak 的邻居被读成非法指令(`user fault ... cause 2 at 0x87ffd004`)。
+
+真机证明:`chello.elf`(41,016 字节,一个镜像块)答出 `signal ok`(SIGUSR1 的处理器在 raise 返回前跑过、SIGTERM 被忽略、SIGKILL 被拒)、`signal mask ok`(SIGUSR1 阻塞、raise、看到待决、解除时投递)、`signal kill ok`(孩子的默认 SIGTERM 死亡读成 `WIFSIGNALED`/`WTERMSIG`,父进程的 SIGCHLD 处理器跑过),`pipe epipe ok` 长出被阻塞 SIGPIPE 的待决检查——在之前所有节拍之后,`wait 7` 也在。机器的 exit 路由干净。
+
+缺口:在停泊进程上竖起的信号等它的停泊解开——`kill` 不打断一次阻塞的读(EINTR 是后续),所以睡在控制台上的孩子还够不着。处理器运行时所有信号都被阻塞:`sa_mask`、`sa_flags` 与嵌套处理器是库的 `sigaction` 结构体要长的东西。词表是八个——没有 SIGSTOP/SIGCONT/停止态,没有作业控制(T3 的 shell)。fault 路径仍不把孩子的死亡投给进程服务(信号死亡的路径不共享这个旧缺口)。
 
 ### M2——C 库(源自 musl)
 

@@ -193,6 +193,15 @@ emo_start:
     la t0, emo_exec__image_home
     la t1, emo_image_give_hook
     sd t0, 0(t1)
+    # the signal trampoline (EmoOS plan B, T1.6): the page every user
+    # table maps RX with U — a handler's return is this page's
+    # sig_return ecall, and the ebreak after it is the loud end of a
+    # return no handler entered.
+    li t0, EMO_KOFF + 0x87ffd000
+    li t1, 0x0000007304000893 # addi a7, x0, 64 then ecall — the
+    sd t1, 0(t0)              # sig_return verb, two words
+    li t1, 0x00100073        # ebreak — the loud end of a return no
+    sd t1, 8(t0)             # handler entered
     # the trap machinery (T3.6): the resume stub's address goes to the
     # runtime's hook, then the init probes the timer, sets stvec, and
     # arms the first deadline — all before the program runs

@@ -191,9 +191,17 @@ def map_page(root Int64, va Int64, pa Int64, flags Int64) Void {
 // (its stub's parks — the identity the kernel's low window reads), an
 // exec'd image's maps its private handoff page (image_base's, the
 // frame the record names).
+// The signal trampoline (T1.6): the one user-executable page under the
+// boot pass's trap page, mapped RX with U into every table — a
+// handler's return is its sig_return ecall. The boot stub writes its
+// three words.
+const sig_tramp = 0x87ffd000
+const tramp_rx = pte_r | pte_x | pte_u
+
 def base_common(root Int64) Void {
   sv39.map_kernel(root, false)
   map_page(root, boot_trap_page, boot_trap_page, rw)
+  map_page(root, sig_tramp, sig_tramp, tramp_rx)
 }
 
 // The boot image's segments: the global table the loader parked (the

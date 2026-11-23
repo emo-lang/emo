@@ -193,6 +193,16 @@ SECTIONS
   . = KOFF + 0x87010000;
   .emo_pipe (NOLOAD) : AT(ADDR(.emo_pipe) - KOFF) { *(.emo_pipe) } :tick
 
+  /* The signals (EmoOS plan B, T1.6), nineteen pages above the pipes:
+     the trap shim's two staged cells (the ecall's frame base and slot
+     index), the pending and blocked words (one per pid), the
+     dispositions (one word per pid and signal slot), the active marks
+     and the saved frames (one per process slot). The kernel's Emo
+     (sig.emo, gate.emo, main.emo) reads and writes every word by its
+     fixed constants. NOLOAD — live memory. */
+  . = KOFF + 0x87018000;
+  .emo_sig (NOLOAD) : AT(ADDR(.emo_sig) - KOFF) { *(.emo_sig) } :tick
+
   /* The compositor's page (T8.6), a page above the filesystem's: the
      generation, the mode the display service answered at init, and the
      window stack (the position and focus the compositor's policy

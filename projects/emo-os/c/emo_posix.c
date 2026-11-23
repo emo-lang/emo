@@ -1462,17 +1462,18 @@ long wait4(long pid, int *status, int options, void *rusage) {
     errno = EMO_ENOSYS;
     return -1;
   }
-  // The answer is packed: the child's pid above the exit code
-  // (T1.4b2) — the any-child wait cannot name the child otherwise.
+  // The answer is packed: the child's pid above its status word
+  // (T1.4b2, T1.6) — the any-child wait cannot name the child
+  // otherwise, and the status is POSIX's own: the exit code above the
+  // low byte for an exit, the signal's number for a signal death.
   long a = emo_wait(pid);
   if (a < 0) {
     errno = reason_errno(a);
     return -1;
   }
   long child = a >> 32;
-  int code = (int)(a & 0xffffffff);
   if (status != 0) {
-    *status = (code & 0xff) << 8;
+    *status = (int)(a & 0xffffffff);
   }
   return child;
 }
@@ -1690,4 +1691,119 @@ int dup2(int oldfd, int newfd) {
     fd_kind[newfd] = EMO_KIND_FILE;
   }
   return newfd;
+}
+
+// ---- the signals (T1.6) ----
+//
+// The kernel's vocabulary is the eight signals; the disposition's
+// word is 0 the default, 1 ignored, an address a handler. The mask
+// the kernel keeps uses the signal's number as the bit; this file
+// translates the POSIX `sigset_t`'s bit (signo - 1) at its boundary,
+// so a program's `1 << (sig - 1)` is what it expects.
+
+static int sig_known(int sig) {
+  if (sig == EMO_SIGINT || sig == EMO_SIGQUIT || sig == EMO_SIGUSR1 ||
+      sig == EMO_SIGSEGV || sig == EMO_SIGPIPE || sig == EMO_SIGTERM ||
+      sig == EMO_SIGCHLD) {
+    return 1;
+  }
+  return 0;
+}
+
+// The POSIX bit (signo - 1) word into the kernel's (bit signo).
+static unsigned long sig_to_kernel(const unsigned long *set) {
+  unsigned long k = 0;
+  int sig = 1;
+  while (sig <= 31) {
+    if ((*set & (1UL << (sig - 1))) != 0) {
+      k = k | (1UL << sig);
+    }
+    sig = sig + 1;
+  }
+  return k;
+}
+
+static void sig_from_kernel(unsigned long k, unsigned long *set) {
+  unsigned long p = 0;
+  int sig = 1;
+  while (sig <= 31) {
+    if ((k & (1UL << sig)) != 0) {
+      p = p | (1UL << (sig - 1));
+    }
+    sig = sig + 1;
+  }
+  *set = p;
+}
+
+emo_sighandler_t signal(int sig, emo_sighandler_t handler) {
+  if (sig <= 0 || sig >= 32) {
+    errno = EMO_EINVAL;
+    return EMO_SIG_ERR;
+  }
+  long disp = 0;
+  if (handler == EMO_SIG_IGN) {
+    disp = 1;
+  } else if (handler != EMO_SIG_DFL) {
+    disp = (long)handler;
+  }
+  long old = emo_sig_action(sig, disp);
+  if (old < 0) {
+    errno = reason_errno(old);
+    return EMO_SIG_ERR;
+  }
+  if (old == 0) {
+    return EMO_SIG_DFL;
+  }
+  if (old == 1) {
+    return EMO_SIG_IGN;
+  }
+  return (emo_sighandler_t)old;
+}
+
+int kill(long pid, int sig) {
+  if (sig < 0 || sig >= 32) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  if (sig != 0 && !sig_known(sig) && sig != EMO_SIGKILL) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  long a = emo_kill(pid, sig);
+  if (a < 0) {
+    errno = reason_errno(a);
+    return -1;
+  }
+  return 0;
+}
+
+int raise(int sig) {
+  return kill(getpid(), sig);
+}
+
+int sigprocmask(int how, const unsigned long *set, unsigned long *old) {
+  if (how != EMO_SIG_BLOCK && how != EMO_SIG_UNBLOCK &&
+      how != EMO_SIG_SETMASK) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  long kset = set == 0 ? 0 : (long)sig_to_kernel(set);
+  long a = emo_sig_mask(how, kset);
+  if (a < 0) {
+    errno = reason_errno(a);
+    return -1;
+  }
+  if (old != 0) {
+    sig_from_kernel((unsigned long)a, old);
+  }
+  return 0;
+}
+
+unsigned long sigpending(void) {
+  unsigned long set = 0;
+  long a = emo_sig_pending();
+  if (a > 0) {
+    sig_from_kernel((unsigned long)a, &set);
+  }
+  return set;
 }

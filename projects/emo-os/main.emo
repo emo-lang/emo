@@ -975,7 +975,8 @@ def process_serve_gate(w Int64) Void {
             // caller named; 0 or a negative one any child of the
             // caller's — the parent cell names the reader. A hit is
             // consumed (the table shifts down) and answered packed:
-            // the child's pid above its exit code. A miss parks.
+            // the child's pid above its status — the POSIX word the
+            // signal change made the wait's (T1.6). A miss parks.
             var n0 = peek64(exit_count)
             var target0 = peek64(wait_for + (caller_of(w) * 8))
             var i0 = 0
@@ -1001,7 +1002,7 @@ def process_serve_gate(w Int64) Void {
             }
             if hit >= 0 {
               var cpid = peek64(exit_pids + (hit * 8))
-              var ccode = peek64(exit_codes + (hit * 8))
+              var cstatus = peek64(exit_codes + (hit * 8))
               var j0 = hit
               while j0 + 1 < n0 {
                 poke64(exit_pids + (j0 * 8),
@@ -1012,7 +1013,7 @@ def process_serve_gate(w Int64) Void {
               }
               poke64(exit_count, n0 - 1)
               gate_reply(caller_of(w),
-                (cpid << 32) | (ccode & 4294967295))
+                (cpid << 32) | (cstatus & 4294967295))
             } else {
               poke64(pending_waiter, caller_of(w))
               poke64(pending_target, target0)
@@ -1104,6 +1105,7 @@ def process_serve_gate(w Int64) Void {
                           // more holder on its pipe, so the parent's
                           // close is not yet the child's EOF
                           pipe.pipe_clone_pid(fme, fchild)
+                          sig.clone_pid(fme, fchild)
                           poke64(exec_busy_cell, 0)
                           gate_reply(fme, fchild)
                         }
@@ -1181,6 +1183,7 @@ def process_serve_gate(w Int64) Void {
                         } else {
                           fs.drop_pid(rme)
                           pipe.pipe_keep_low(rme)
+                          sig.reset_pid(rme)
                           poke64(exec_pending_cell, rrec)
                           var rentry = exec.entry_of(rrec)
                           var rans = user_replace(rme, rentry,
@@ -1259,9 +1262,25 @@ def process_serve_gate(w Int64) Void {
           }
         } else {
           var pid = caller_of(w)
-          var code = 0
+          // the exit's status (T1.6): the POSIX word — the code above
+          // the low byte for an exit, the signal's number for a signal
+          // death. The wait table and the waiters carry it whole; the
+          // parent's event names the code a reader shows, the signal
+          // when the death was one.
+          var status = 0
           if pid < proc_bound {
-            code = peek64(exit_for + (pid * 8))
+            status = peek64(exit_for + (pid * 8))
+          }
+          var code = status >> 8
+          var slow = status & 127
+          if slow != 0 {
+            code = slow
+          }
+          if pid < parent_bound {
+            var sparent = peek64(parent_for + (pid * 8))
+            if sparent > 0 {
+              sig.sig_raise(sparent, sig.sig_chld)
+            }
           }
           // the arena's grown blocks go home (T1.3v): the normal
           // exit's half of the reclaim, the fault's in the shim
@@ -1270,6 +1289,7 @@ def process_serve_gate(w Int64) Void {
           // peer's EOF or broken pipe, answered here while the
           // service can still reply
           pipe.pipe_drop_pid(pid)
+          sig.drop_pid(pid)
           // The parked waiter's judgment first (T1.4b2): a hit is
           // answered here and never enters the exit table; a dead
           // waiter's pending is cleared and the exit is recorded like
@@ -1299,7 +1319,7 @@ def process_serve_gate(w Int64) Void {
             var n = peek64(exit_count)
             if n < 8 {
               poke64(exit_pids + (n * 8), pid)
-              poke64(exit_codes + (n * 8), code)
+              poke64(exit_codes + (n * 8), status)
               poke64(exit_count, n + 1)
             }
           }
@@ -1335,7 +1355,7 @@ def process_serve_gate(w Int64) Void {
           }
           if phit0 {
             poke64(pending_flag, 0)
-            gate_reply(pwaiter0, (pid << 32) | (code & 4294967295))
+            gate_reply(pwaiter0, (pid << 32) | (status & 4294967295))
           }
         }
       }

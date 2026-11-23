@@ -435,9 +435,11 @@ def exec_args(name Int64, name_len Int64, args Int64, args_len Int64) (R, Int64)
 
 // The exit of the child with that pid number, blocking until it
 // happens; 0 or a negative pid the first of the caller's children
-// (T1.4b2). The answer is (R.ok, the child's exit code) or
-// (R.error, why); the wire packs the child's pid above the code, so
-// the caller sees the code alone.
+// (T1.4b2). The answer is (R.ok, the child's status word) or
+// (R.error, why); the wire packs the child's pid above the status —
+// the exit code above the low byte for an exit, the signal's number
+// for a signal death (T1.6) — so a caller that wants the code shifts
+// it out itself.
 def wait(pid Int64) (R, Int64) {
   var answer = ecall(4, pid, 0, 0, 0, 0, 0)
   if answer >= 0 {

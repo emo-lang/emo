@@ -282,6 +282,10 @@ def pipe_do_write(p Int64, id Int64) Bool {
   var b = pipe_block(id)
   var r = pipe_reqs + p * pipe_req_stride
   if peek64(b + pipe_p_readers) == 0 {
+    // the broken pipe (T1.6): the writer's SIGPIPE rises beside the
+    // EPIPE answer, the standard's own pair — a handler or an ignored
+    // disposition sees the error, the default death ends it
+    sig.sig_raise(p, sig.sig_pipe)
     gate_reply(p, pipe_reason_epipe)
     return true
   }

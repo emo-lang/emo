@@ -2589,7 +2589,10 @@ case spawned {
         wp = byte_at(wp, 105) // i
         wp = byte_at(wp, 116) // t
         wp = byte_at(wp, 32) // space
-        wp = num_at(code, wp)
+        // the wait's status (EmoOS T1.6): the code above the low byte,
+        // the signal's number in it for a signal death — the proof
+        // prints the code
+        wp = num_at(code >> 8, wp)
         wp = byte_at(wp, 10)
         gate_line(wp)
       }

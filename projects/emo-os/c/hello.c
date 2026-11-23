@@ -42,6 +42,23 @@ static char pipe_big_ok[] = "pipe big ok\n";
 static char pipe_big_bad[] = "pipe big bad\n";
 static char pipe_epipe_ok[] = "pipe epipe ok\n";
 static char pipe_epipe_bad[] = "pipe epipe bad\n";
+static char sig_ok[] = "signal ok\n";
+static char sig_bad[] = "signal bad\n";
+static char sig_mask_ok[] = "signal mask ok\n";
+static char sig_mask_bad[] = "signal mask bad\n";
+static char sig_kill_ok[] = "signal kill ok\n";
+static char sig_kill_bad[] = "signal kill bad\n";
+
+static int sig_seen;
+static int sig_chld_seen;
+
+static void on_usr1(int s) {
+  sig_seen = s;
+}
+
+static void on_chld(int s) {
+  sig_chld_seen = s;
+}
 static char pipe_child_line[] = "pipe child line\n";
 static char pipe_greet[] = "pipe greeting\n";
 static char pipe_dup_line[] = "dup2 line\n";
@@ -554,14 +571,109 @@ int main(int argc, char **argv, char **envp) {
     return 46;
   }
   close(w[0]);
+  unsigned long pset = 1UL << (EMO_SIGPIPE - 1);
+  if (sigprocmask(EMO_SIG_BLOCK, &pset, 0) != 0) {
+    write(2, pipe_epipe_bad, sizeof(pipe_epipe_bad) - 1);
+    return 46;
+  }
   errno = 0;
   long wp = write(w[1], pipe_dup_line, sizeof(pipe_dup_line) - 1);
   int we = errno;
   close(w[1]);
-  if (wp != -1 || we != EMO_EPIPE) {
+  int ppend = (sigpending() & pset) != 0;
+  if (signal(EMO_SIGPIPE, EMO_SIG_IGN) == EMO_SIG_ERR ||
+      sigprocmask(EMO_SIG_UNBLOCK, &pset, 0) != 0) {
     write(2, pipe_epipe_bad, sizeof(pipe_epipe_bad) - 1);
     return 47;
   }
+  int pcleared = (sigpending() & pset) == 0;
+  if (wp != -1 || we != EMO_EPIPE || !ppend || !pcleared) {
+    write(2, pipe_epipe_bad, sizeof(pipe_epipe_bad) - 1);
+    return 48;
+  }
   write(1, pipe_epipe_ok, sizeof(pipe_epipe_ok) - 1);
+
+  // ---- the signals (T1.6): a handler run at the raise's own resume,
+  // a disposition ignored, SIGKILL refused, and the blocked mask.
+  sig_seen = 0;
+  if (signal(EMO_SIGUSR1, on_usr1) == EMO_SIG_ERR) {
+    write(2, sig_bad, sizeof(sig_bad) - 1);
+    return 49;
+  }
+  if (raise(EMO_SIGUSR1) != 0 || sig_seen != EMO_SIGUSR1) {
+    write(2, sig_bad, sizeof(sig_bad) - 1);
+    return 50;
+  }
+  if (signal(EMO_SIGTERM, EMO_SIG_IGN) == EMO_SIG_ERR) {
+    write(2, sig_bad, sizeof(sig_bad) - 1);
+    return 51;
+  }
+  if (raise(EMO_SIGTERM) != 0) {
+    write(2, sig_bad, sizeof(sig_bad) - 1);
+    return 52;
+  }
+  if (signal(EMO_SIGKILL, on_usr1) != EMO_SIG_ERR) {
+    write(2, sig_bad, sizeof(sig_bad) - 1);
+    return 53;
+  }
+  write(1, sig_ok, sizeof(sig_ok) - 1);
+
+  unsigned long uset = 1UL << (EMO_SIGUSR1 - 1);
+  unsigned long oldmask = 0;
+  sig_seen = 0;
+  if (signal(EMO_SIGUSR1, on_usr1) == EMO_SIG_ERR) {
+    write(2, sig_mask_bad, sizeof(sig_mask_bad) - 1);
+    return 54;
+  }
+  if (sigprocmask(EMO_SIG_BLOCK, &uset, &oldmask) != 0) {
+    write(2, sig_mask_bad, sizeof(sig_mask_bad) - 1);
+    return 55;
+  }
+  if (raise(EMO_SIGUSR1) != 0 || sig_seen != 0) {
+    write(2, sig_mask_bad, sizeof(sig_mask_bad) - 1);
+    return 56;
+  }
+  if ((sigpending() & uset) == 0) {
+    write(2, sig_mask_bad, sizeof(sig_mask_bad) - 1);
+    return 57;
+  }
+  if (sigprocmask(EMO_SIG_UNBLOCK, &uset, 0) != 0) {
+    write(2, sig_mask_bad, sizeof(sig_mask_bad) - 1);
+    return 58;
+  }
+  if (sig_seen != EMO_SIGUSR1) {
+    write(2, sig_mask_bad, sizeof(sig_mask_bad) - 1);
+    return 59;
+  }
+  write(1, sig_mask_ok, sizeof(sig_mask_ok) - 1);
+
+  // ---- a signal's default death (T1.6): the child raises SIGTERM on
+  // itself and the parent's wait reads the signal, not an exit code.
+  sig_chld_seen = 0;
+  if (signal(EMO_SIGCHLD, on_chld) == EMO_SIG_ERR) {
+    write(2, sig_kill_bad, sizeof(sig_kill_bad) - 1);
+    return 60;
+  }
+  long kp = fork();
+  if (kp == 0) {
+    signal(EMO_SIGTERM, EMO_SIG_DFL);
+    raise(EMO_SIGTERM);
+    _exit(0);
+  }
+  if (kp < 0) {
+    write(2, sig_kill_bad, sizeof(sig_kill_bad) - 1);
+    return 61;
+  }
+  int kst = 0;
+  long kw = waitpid(kp, &kst, 0);
+  if (kw != kp || !EMO_WIFSIGNALED(kst) || EMO_WTERMSIG(kst) != EMO_SIGTERM) {
+    write(2, sig_kill_bad, sizeof(sig_kill_bad) - 1);
+    return 62;
+  }
+  if (sig_chld_seen != EMO_SIGCHLD) {
+    write(2, sig_kill_bad, sizeof(sig_kill_bad) - 1);
+    return 63;
+  }
+  write(1, sig_kill_ok, sizeof(sig_kill_ok) - 1);
   return 0;
 }

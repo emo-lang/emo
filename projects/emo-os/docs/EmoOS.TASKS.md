@@ -202,8 +202,17 @@ consumer asks, but the order is the dependency order.
   descriptor-kind cache (the probe once per fd) put the ends behind
   POSIX calls; the ends copy across `fork` and the low three across
   `execve`, so a shell's `cmd1 | cmd2` is two children and two `dup2`s.
-- [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
+- [x] **T1.6** — Signals: the basic set, dispositions, `kill`,
   `sigaction`/`sigprocmask`, the status encoding the shell reads.
+  Verbs 61..65 (the kill, the disposition, the mask, the trampoline's
+  return and the pending word), the gate's own — no service between.
+  Eight signals with default/ignore/handler dispositions; the handler
+  runs by rewriting the trap frame the resume restores, its return the
+  trampoline page's `sig_return` ecall, which puts the interrupted
+  frame and mask back. The defaults end the process (SIGCHLD's is to
+  ignore), the wait's status word becomes POSIX's (`code << 8` for an
+  exit, the signal's number for a signal death), and a child's exit
+  raises SIGCHLD while a broken pipe raises SIGPIPE.
 
 ### T1.1's record (2026-11-23)
 
@@ -581,6 +590,82 @@ is the service's loud end. The `pipe`/`dup`/`dup2` ends are not
 inherited as shared descriptions — the library's fd table owns them,
 and a file descriptor's offset still diverges after `fork` (T1.4b3a's
 approximation, unchanged).
+
+### T1.6's record (2026-11-23)
+
+The signals are the gate's own, on their own pages (`.emo_sig` at
+0x87018000): one pending and one blocked word a pid, one disposition
+word a pid and signal slot (0 default, 1 ignored, an address a
+handler), one mark and one saved frame a process slot, and the two
+cells the trap shim stages at every ecall (the frame's base and the
+slot's index). The vocabulary is eight — SIGINT 2, SIGQUIT 3, SIGKILL
+9, SIGUSR1 10, SIGSEGV 11, SIGPIPE 13, SIGTERM 15, SIGCHLD 17 — and
+the mask's bits are the signal numbers themselves (bit 2 is SIGINT).
+The verbs: 61 `kill(pid, sig)` (a process, a group, the caller's own
+group; the authority the caller's body, its child, or a group it
+carries; signal 0 the probe), 62 `sig_action(sig, disp)` (SIGKILL
+refused; a handler must sit in one of the caller's executable
+segments, the fork entry's check), 63 `sig_mask(how, set)` (block,
+unblock, replace; SIGKILL's bit and the outsiders dropped), 64
+`sig_return()`, 65 `sig_pending()`.
+
+Delivery is the resume's: `emo_os_trap_resume` asks
+`emo_os_sig_deliver` on every return into U-mode, before the anchor is
+armed. The lowest unmasked signal whose disposition is a handler
+copies the interrupted frame and its sp slot to the slot's record,
+masks every signal, and rewrites the frame — `ra` to the trampoline
+page at 0x87ffd000 (every user table maps it RX with U), `a0` to the
+signal, `sepc` to the handler. The handler runs on the interrupted
+stack and returns to the trampoline's `li a7, 64; ecall`; the gate's
+verb 64 puts the saved frame and mask back and answers the shim's
+special -105, which resumes the frame as it stands — no answer into
+a0, no sepc bump. The trampoline's third word is an `ebreak`, the
+loud end of a return no handler entered. A default disposition ends
+the process: the shim's death path writes the signal as the exit's
+status, posts the exit to the process service (the record, the
+waiter, the parent's event, the pipe ends' walk), marks the slot done
+and reaps it. SIGKILL's pending bit ignores the mask and a running
+handler both — the machine's kill.
+
+The status encoding moved to POSIX's: the gate's exit writes
+`code << 8` into the per-pid cell, a signal death writes the signal's
+number, the exit table and the wait answer the word whole, and the C
+library returns it as the `wait` status (`WIFEXITED`/`WEXITSTATUS`/
+`WIFSIGNALED`/`WTERMSIG`). The boot proof's `wait 7` shifts the code
+out itself; the `syscall` package's comment says the status word and
+its five locks re-pinned. A child's exit raises SIGCHLD for its
+parent, and a broken pipe raises SIGPIPE beside the EPIPE answer. The
+dispositions and the mask copy across `fork`; `execve` resets the
+dispositions (their addresses belonged to the old image) and keeps the
+mask.
+
+Found on the way: the delivery's own call frames were written over the
+frame it was about to resume — the typed defs' stack grew down from
+`sp` into the anchor's words, and the corrupted sepc/frame hung the
+machine silently. The hook now runs on its own 4 KiB stack
+(`emo_os_sig_stack`), switching sp around the call. Also found: the
+trampoline's instructions must be four bytes apart — the first write
+stored each as a doubleword and the ebreak's neighbours read as
+illegal instructions (`user fault ... cause 2 at 0x87ffd004`).
+
+The metal proof: `chello.elf` (41,016 bytes, one image block) answered
+`signal ok` (a SIGUSR1 handler run before the raise returned, SIGTERM
+ignored, SIGKILL refused), `signal mask ok` (SIGUSR1 blocked, raised,
+seen pending, delivered at the unblock), `signal kill ok` (a child's
+default SIGTERM death read as `WIFSIGNALED`/`WTERMSIG`, the parent's
+SIGCHLD handler run), and `pipe epipe ok` grew the blocked SIGPIPE's
+pending check — after every earlier beat, `wait 7` included. The
+machine's exit route was clean.
+
+Gaps: a signal raised on a parked process waits for its park to
+resolve — `kill` does not interrupt a blocked read (EINTR is the
+follow-up), so a child asleep on the console is not reachable yet. A
+handler runs with every signal masked: `sa_mask`, `sa_flags` and
+nested handlers are the library's `sigaction` struct's to grow. The
+vocabulary is eight — no SIGSTOP/SIGCONT/stop states, no job control
+(T3's shell). The fault path still does not post a child's death to
+the process service (the pre-existing gap the signal death's path does
+not share).
 
 ### M2 — the C library (musl-derived)
 

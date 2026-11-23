@@ -137,7 +137,43 @@ int pipe(int fds[2]);
 int dup(int fd);
 int dup2(int oldfd, int newfd);
 
-#define EMO_WIFEXITED(s) (((s) & 0xff) == 0)
+// The signals (EmoOS plan B, T1.6): the vocabulary the kernel carries —
+// SIGINT, SIGQUIT, SIGKILL, SIGUSR1, SIGSEGV, SIGPIPE, SIGTERM and
+// SIGCHLD. `signal` sets a disposition and answers the old one, SIG_ERR
+// on a refusal (a signal outside the vocabulary, SIGKILL caught or
+// ignored, a handler outside the image's executable segments). A
+// handler runs on the interrupted stack with every signal masked; the
+// interrupted mask returns when it does. `sigprocmask` takes the usual
+// bit (signo - 1) word. A signal reaches a parked process only when its
+// wait resolves — kill does not interrupt a blocked read yet.
+typedef void (*emo_sighandler_t)(int);
+
+#define EMO_SIG_DFL ((emo_sighandler_t)0)
+#define EMO_SIG_IGN ((emo_sighandler_t)1)
+#define EMO_SIG_ERR ((emo_sighandler_t)-1)
+
+#define EMO_SIGINT 2
+#define EMO_SIGQUIT 3
+#define EMO_SIGKILL 9
+#define EMO_SIGUSR1 10
+#define EMO_SIGSEGV 11
+#define EMO_SIGPIPE 13
+#define EMO_SIGTERM 15
+#define EMO_SIGCHLD 17
+
+#define EMO_SIG_BLOCK 0
+#define EMO_SIG_UNBLOCK 1
+#define EMO_SIG_SETMASK 2
+
+emo_sighandler_t signal(int sig, emo_sighandler_t handler);
+int kill(long pid, int sig);
+int raise(int sig);
+int sigprocmask(int how, const unsigned long *set, unsigned long *old);
+unsigned long sigpending(void);
+
+#define EMO_WIFEXITED(s) (((s) & 0x7f) == 0)
 #define EMO_WEXITSTATUS(s) (((s) >> 8) & 0xff)
+#define EMO_WIFSIGNALED(s) (((s) & 0x7f) != 0 && ((s) & 0x7f) != 0x7f)
+#define EMO_WTERMSIG(s) ((s) & 0x7f)
 
 #endif

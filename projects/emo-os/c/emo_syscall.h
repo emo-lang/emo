@@ -188,4 +188,28 @@ static inline long emo_pipe_close(long fd) {
   return emo_ecall(60, fd, 0, 0, 0, 0, 0);
 }
 
+// Verbs 61..65: the signals (EmoOS plan B, T1.6). The disposition's
+// word is 0 the default, 1 ignored, an address a handler. The mask's
+// bits are the signal numbers themselves (bit 2 is SIGINT) — the
+// library translates the POSIX (signo - 1) set at its own boundary.
+static inline long emo_kill(long pid, long sig) {
+  return emo_ecall(61, pid, sig, 0, 0, 0, 0);
+}
+
+static inline long emo_sig_action(long sig, long disp) {
+  return emo_ecall(62, sig, disp, 0, 0, 0, 0);
+}
+
+static inline long emo_sig_mask(long how, long set) {
+  return emo_ecall(63, how, set, 0, 0, 0, 0);
+}
+
+static inline long emo_sig_return(void) {
+  return emo_ecall(64, 0, 0, 0, 0, 0, 0);
+}
+
+static inline long emo_sig_pending(void) {
+  return emo_ecall(65, 0, 0, 0, 0, 0, 0);
+}
+
 #endif

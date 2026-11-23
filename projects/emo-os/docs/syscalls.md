@@ -48,11 +48,11 @@ undocumented ever acts.
 
 | Verb | Spelling | Answer |
 | --- | --- | --- |
-| 0 | `exit(code)` | never returns — the root's exit ends the machine (the SBI poweroff); a spawned process's exit answers its parent's `wait` |
+| 0 | `exit(code)` | never returns — the root's exit ends the machine (the SBI poweroff); a spawned process's exit answers its parent's `wait` with the status word `code << 8` (T1.6) |
 | 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4 |
 | 2 | `read()` | the next input byte, blocking until one exists; answers it (0–255) — the input service's (T8.3), the serial console's bytes |
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
-| 4 | `wait(pid)` | the child's pid in the answer's high 32 bits and its exit code in the low, blocking; a positive pid names the child, 0 or a negative one any child of the caller's (the exit table's parent cells). A hit consumes the entry; a miss parks until the child exits (EmoOS plan B, T1.4b2) |
+| 4 | `wait(pid)` | the child's pid in the answer's high 32 bits and its status word in the low — the code above the low byte for an exit, the signal's number for a signal death (T1.6) — blocking; a positive pid names the child, 0 or a negative one any child of the caller's (the exit table's parent cells). A hit consumes the entry; a miss parks until the child exits (EmoOS plan B, T1.4b2) |
 | 5 | *(the allocator's)* | never returns for the caller — the arena exhaustion report |
 | 6 | `file_write(name, name_len, buf, len)` | the file named by the `name_len` bytes at `name` becomes the `len` bytes at `buf` (at most 2048); answers `len` |
 | 7 | `file_read(name, name_len, buf, cap)` | the file's bytes land at `buf`, at most `cap` of them; answers the file's size |
@@ -105,6 +105,11 @@ undocumented ever acts.
 | 58 | `pipe_write(fd, buf, len)` | the caller's bytes into the ring, what its room takes this pass (the partial answer POSIX gives past a buffer); a full ring parks the writer until a read or a close frees room, and no reader at all answers the broken pipe (EmoOS plan B, T1.5) |
 | 59 | `pipe_dup(oldfd, newfd)` | the pipe end the old fd names, the new fd's — the binding at `newfd` dropped first, the pipe's count one higher. The library's `dup2` has already dropped whatever file the new fd held; answers 0 or a reason (EmoOS plan B, T1.5) |
 | 60 | `pipe_close(fd)` | one end's holder gone: the last writer's close is the readers' EOF, the last reader's the writers' broken pipe, and both ends' the pipe's own end. A descriptor that is no pipe end is reason 4 (EmoOS plan B, T1.5) |
+| 61 | `kill(pid, sig)` | the signal's pending bit raised on the target: a positive pid one process, 0 the caller's own group, a negative one the group it names; the authority is the caller's own body, its child, or a group it carries. Signal 0 is the permission probe; a signal outside the vocabulary is reason 4 (EmoOS plan B, T1.6) |
+| 62 | `sig_action(sig, disp)` | the disposition recorded — 0 the default, 1 ignored, an address inside one of the caller's executable segments; answers the old one. SIGKILL cannot be caught or ignored: its number is reason 4 (EmoOS plan B, T1.6) |
+| 63 | `sig_mask(how, set)` | the blocked word: 0 blocks the set, 1 unblocks it, 2 replaces the mask whole; answers the old mask. The bits are the signal numbers themselves (bit 2 is SIGINT); SIGKILL's bit and the vocabulary's outsiders are dropped (EmoOS plan B, T1.6) |
+| 64 | `sig_return()` | the trampoline's verb: the process slot's saved frame goes back into the caller's own — the one the handler interrupted — and the mask with it; the answer is the shim's special -105, so the frame resumes as it stands, no answer into a0 and no sepc bump. Outside a handler there is nothing to return to: reason 4 (EmoOS plan B, T1.6) |
+| 65 | `sig_pending()` | the caller's pending word, the signals a mask or a running handler still holds back (EmoOS plan B, T1.6) |
 
 The fd and path verbs share the filesystem's four request slots; the
 slot's `+88` marker selects the open-file table and the path calls,
@@ -135,6 +140,29 @@ descriptor: 0 no pipe, `0x10 | id` a read end, `0x20 | id` a write
 end; eight pipe blocks carry the two ends' counts, the ring's cursors
 and 768 bytes, and the four parked readers and four parked writers a
 block keeps.
+
+The signals are the gate's own (T1.6): no service sits between, the
+state is the fixed pages' and the trap that carries the verb does the
+work. The vocabulary is eight signals — SIGINT 2, SIGQUIT 3, SIGKILL
+9, SIGUSR1 10, SIGSEGV 11, SIGPIPE 13, SIGTERM 15, SIGCHLD 17 — with
+one disposition word a pid and signal slot (0 default, 1 ignored, an
+address a handler), one pending and one blocked word a pid, and one
+saved frame a process slot.
+
+Every return into U-mode asks the pending word before the anchor is
+armed: the lowest unmasked signal whose disposition is a handler
+rewrites the frame the resume is about to restore — `ra` to the
+trampoline page at `0x87ffd000` (every user table maps it RX with U),
+`a0` to the signal, `sepc` to the handler — after copying the
+interrupted frame and its sp slot to the slot's saved record. The
+handler runs with every signal masked, and its return is the
+trampoline's `sig_return` ecall, which puts the saved frame and mask
+back. A default disposition ends the process with the signal's number
+as its status (SIGCHLD's default is to ignore), and that death goes
+through the process service as any exit's does — the wait's answer,
+the parent's event, the pipe ends' walk. A signal raised on a parked
+process waits for its park to resolve: `kill` does not interrupt a
+blocked read yet.
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -589,6 +617,13 @@ The filesystem's pages (T7.2, `.emo_fs`, three pages from
 supervisor's pid cell the runtime's death notice posts to, the stash,
 and the four request slots the gate fills; the layout is in
 [`docs/fs.md`](fs.md).
+
+The signals' pages (T1.6, `.emo_sig`, nineteen pages from
+`0x87018000`): the trap shim's two staged cells (the ecall's frame base
+and slot index), the pending and blocked words, the dispositions, the
+active marks, and the saved frames (576 bytes a process slot). The
+trampoline page is not a section of its own: the boot stub writes its
+three words at `0x87ffd000`, and every table maps it RX with U.
 
 The pipes' pages (T1.5, `.emo_pipe`, six pages from `0x87010000`):
 the binding map (one byte per pid and fd, 256 pids of sixteen), the
