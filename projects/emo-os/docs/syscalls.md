@@ -98,6 +98,7 @@ undocumented ever acts.
 | 50 | `setpgid(pid, pgid)` | the target 0 is the caller and the group 0 the target; only the caller or its child, the parent cell the authority; the group lives in the pid's byte on the growth page's tail; answers 0 (EmoOS plan B, T1.4b1) |
 | 51 | `getpgid(pid)` | the group the pid carries, its own pid when the byte is 0; the same authority as `setpgid`; answers the group (EmoOS plan B, T1.4b1) |
 | 52 | `fork(ctx, entry)` | the caller's saved context and resume entry; the child's image, stack, arena and grown blocks are copied and mapped at the caller's virtual bases, and the child returns from `fork` with 0 — the parent with the child's pid. Only an exec'd image may fork; the entry must sit in an executable segment (EmoOS plan B, T1.4b2) |
+| 54 | `execve(name, name_len, args, args_len, env, env_len)` | the caller's image replaced in place: the name and both texts (args at most 512 bytes, env at most 256, split at spaces) stage, the process service loads the new image on a fresh stack and arena, and the runtime reaps the old image, stack, arena and grown blocks and starts the same pid at the new entry. `argv[0]` is the name; the envp is the text's words. Never returns on success; a refusal is a reason (EmoOS plan B, T1.4b3b) |
 
 The fd and path verbs share the filesystem's four request slots; the
 slot's `+88` marker selects the open-file table and the path calls,
@@ -107,6 +108,12 @@ The process door's arguments ride per-pid cells on `.emo_procargs`
 (0x8700a000): the wait's target in the first half, the exit's code in
 the second (T1.4b2). A request staged behind another cannot overwrite
 its argument before the process service reads it.
+
+The exec doors' texts live on the execargs page's tail and the free
+tail at 0x8700b900: verb 48's args at the page's `+64` (512 bytes),
+verb 54's env at 0x8700b900 (256 bytes) — clear of the console's
+per-pid cells. The exec's use flag names the door: 0 plain, 1 args,
+2 replace.
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their

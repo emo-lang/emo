@@ -176,9 +176,20 @@ consumer asks, but the order is the dependency order.
   O_CREAT/O_TRUNC are dropped). The description's offset diverges
   from the parent's — the documented approximation until the service
   owns shared descriptions.
-- [ ] **T1.4b3b** — `execve` (the in-place image replace) and the
-  environment's handoff at `exec`, with the statuses that pair makes
-  meaningful.
+- [x] **T1.4b3b** — `execve` (the in-place image replace): verb 54
+  stages the name, the argv text and the envp text; the process
+  service loads the new image on a fresh stack and arena, and the new
+  runtime `user_replace(pid, entry, stack, arena, arena_end)` reaps the
+  caller's old image, stack, arena and grown blocks, dresses the same
+  slot with the new frame and calls the build hook — the same pid runs
+  the new program, the parent/pgid cells stay, and the old fds are
+  dropped (the library's own table is fresh — the record's gap).
+  The C library's `execve`/`execv` flatten `argv[1..]`
+  and `envp` into the door's space-separated texts (a word with a space
+  is EINVAL); the new image's `argv[0]` is the file name, and its
+  `envp` is the caller's. The library's fd table and cwd are fresh
+  after the replace, and the old page table and private page leak —
+  the follow-ups the record names.
 - [ ] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
   last writer's close.
 - [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
@@ -459,6 +470,43 @@ The metal proof: `chello.elf` (30,280 bytes, one image block) opened
 parent reaped it and answered `fd fork ok` — after the fd, VFS, heap,
 grow, args, proc, env, fork and wait beats, with the machine's exit
 route clean.
+
+### T1.4b3b's record (2026-11-23)
+
+`execve(path, argv[], envp[])` is verb 54: the gate stages the name
+and both texts (args at 512 bytes, env at 256 on the free tail at
+0x8700b900, clear of the console's per-pid cells), the use flag names
+the replace door, and the process service allocates the new stack and
+arena and loads the image through `exec.transaction_replace` — the
+loader's record, run and private page, the first stack carrying the
+argv and envp pointers and strings. The runtime builtin `user_replace`
+finds the caller's slot, marks it done and runs the death's reaps
+(image hook, stack and arena, grown rows), empties the mailbox, dresses
+the slot with the new stack and arena, builds the synthetic frame at
+the new stack's bottom, calls the space build hook to consume the
+staged record and install the new root, and queues the same pid. The
+caller was parked in gate-wait; the service answers nothing.
+
+The C library's `execve` copies the path (no path layer — the volume's
+flat name), flattens `argv[1..]` and `envp` into the space-separated
+wire texts (a word carrying a space is EINVAL; too long E2BIG), and
+never returns on success. `argv[0]` is the name the kernel starts; the
+envp is the caller's. `execv` passes `environ`.
+
+The metal proof: `chello.elf` (30,752 bytes, one image block) forked a
+child, the child execve'd the same file with argv `execchild <pid>`
+and env `EMO_EXEC=1`; the new image checked `getpid()` against the
+argv's pid and the env, answered `execve child ok` and exited 0; the
+parent's `waitpid` answered `execve ok`. All earlier beats stayed
+green and the machine's exit route was clean.
+
+Gaps: the library's fd table and cwd start fresh in the new image and
+the old handles are dropped (`fs.drop_pid`) — execution does not
+preserve descriptors yet; the old page table and the private page leak
+(the page tables' rule for the first, the exec's documented 4 KiB for
+the second), an old arena pinned by queued messages is not freed, and
+a message in the old mailbox is dropped without unpinning its sender.
+The environment's wire text cannot carry a space inside a value.
 
 ### M2 — the C library (musl-derived)
 

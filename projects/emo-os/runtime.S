@@ -246,3 +246,109 @@ emo_park:
     .balign 4096
 emo_os_boot_root:
     .zero 4096
+
+# emo_user_replace (EmoOS T1.4b3b): the in-place exec. a0 = the pid to
+# reuse, a1 = the new image's entry, a2 = the new stack's top (the
+# physical address the build maps at its identity), a3 = the new
+# arena's run base and a4 its end (kernel addresses). The slot's old
+# image, stack, arena and grown blocks go home; the slot is dressed
+# with the new stack and arena, its synthetic frame starts the new
+# entry, the build hook consumes the staged image record, and the same
+# pid is queued. a0 = the pid, or -1 when no slot carries it. Masked
+# throughout: the reaps and the build are kernel work, and no pick may
+# see the half-dressed slot.
+    .section .text
+    .globl emo_user_replace
+emo_user_replace:
+    csrci sstatus, 2
+    addi sp, sp, -64
+    sd ra, 0(sp)
+    sd a0, 8(sp)                # the pid, the answer
+    sd a1, 16(sp)               # the entry
+    sd a2, 24(sp)               # the stack top, physical
+    sd a3, 32(sp)               # the arena run's base, kernel
+    sd a4, 40(sp)               # its end, kernel
+    sd s0, 48(sp)
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lur_scan:
+    bgeu t1, t2, .Lur_fail
+    li t3, 888
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 8(t4)
+    beq t5, a0, .Lur_found
+    addi t1, t1, 1
+    j .Lur_scan
+.Lur_fail:
+    li a0, -1
+    j .Lur_out
+.Lur_found:
+    mv s0, t4
+    # The old world goes home: the image through the hook, the stack
+    # and the arena through the reaper (state 3 is the reaper's gate),
+    # the grown blocks through their own walk.
+    li t5, 3
+    sd t5, 16(s0)
+    mv a0, s0
+    call emo_arena_reap
+    ld a0, 8(sp)
+    call emo_space__grow_reap
+    # The new arena (T1.3/T8.9): the service's run, claimed, the
+    # freelist's head cleared at its end; the old mailbox is empty.
+    sd zero, 24(s0)
+    sd zero, 32(s0)
+    ld t0, 32(sp)
+    ld t1, 40(sp)
+    sd t0, 576(s0)
+    sd t1, 584(s0)
+    sd t0, 880(s0)
+    li t2, 1
+    sd t2, 600(s0)
+    sd zero, 592(s0)
+    sd zero, -8(t1)
+    sd t2, 16(s0)               # alive
+    # The synthetic frame at the new stack's bottom: the entry, the
+    # stack top, the user-exit return, the resume hook — the spawn's
+    # own shape.
+    ld t5, 24(sp)
+    li t6, 65536
+    sub t6, t5, t6
+    sd t6, 864(s0)
+    addi t4, t6, 552
+    mv a0, t4
+    addi a1, t4, 552
+.Lur_zero:
+    sd zero, 0(a0)
+    addi a0, a0, 8
+    blt a0, a1, .Lur_zero
+    sd t5, -8(t4)
+    la t1, emo_os_user_exit
+    sd t1, 0(t4)
+    ld t0, 16(sp)
+    li t1, 0x6020               # SPIE, SPP clear, FS dirty
+    sd t1, 144(t4)
+    sd t0, 152(t4)
+    ld t1, emo_trap_resume_hook
+    sd t1, 336(t4)
+    sd zero, 536(t4)
+    addi t4, t4, 336
+    sd t4, 0(s0)
+    # The child's table: the build hook consumes the staged record and
+    # writes the new root into the slot's space word.
+    la t4, emo_space_build_hook
+    ld t4, 0(t4)
+    beqz t4, .Lur_nospace
+    mv a0, s0
+    jalr t4
+.Lur_nospace:
+    mv a0, s0
+    call emo_runq_push
+    ld a0, 8(sp)
+.Lur_out:
+    ld s0, 48(sp)
+    ld ra, 0(sp)
+    addi sp, sp, 64
+    csrsi sstatus, 2
+    ret

@@ -1078,6 +1078,100 @@ def process_serve(w Int64) Void {
               }
             }
           } else {
+          var use0 = peek64(execargs_use_cell)
+          if use0 == 2 {
+            // execve (T1.4b3b): the caller's own image is replaced.
+            // The service loads the new image on a fresh stack and
+            // arena, then the runtime reaps the caller's slot and
+            // starts the same pid at the new entry — no reply, the
+            // parked caller is gone. A refusal frees the fresh
+            // resources and answers the caller's ecall.
+            var rme = caller_of(w)
+            if frames.spare() < 1 + frames.user_run() + 48 {
+              poke64(execargs_use_cell, 0)
+              exec.clear_busy()
+              gate_reply(rme, -5)
+            } else {
+              if frames.largest() < frames.user_run() {
+                poke64(execargs_use_cell, 0)
+                exec.clear_busy()
+                gate_reply(rme, -5)
+              } else {
+                var rstack = frames.take()
+                if rstack == 0 {
+                  poke64(execargs_use_cell, 0)
+                  exec.clear_busy()
+                  gate_reply(rme, -5)
+                } else {
+                  if frames.largest() < frames.user_run() {
+                    frames.give(rstack)
+                    poke64(execargs_use_cell, 0)
+                    exec.clear_busy()
+                    gate_reply(rme, -5)
+                  } else {
+                    var rarena = frames.take_run(frames.user_run())
+                    if rarena == 0 {
+                      frames.give(rstack)
+                      poke64(execargs_use_cell, 0)
+                      exec.clear_busy()
+                      gate_reply(rme, -5)
+                    } else {
+                      var rfs = peek64(fs_pid_cell)
+                      if rfs == 0 {
+                        frames.give(rstack)
+                        var rz0 = 0
+                        while rz0 < frames.user_run() {
+                          frames.give(rarena + (rz0 * block))
+                          rz0 = rz0 + 1
+                        }
+                        poke64(execargs_use_cell, 0)
+                        exec.clear_busy()
+                        gate_reply(rme, -5)
+                      } else {
+                        var rrec = exec.transaction_replace(pid_at(rfs),
+                          exec.args_name(), exec.args_nlen(),
+                          exec.args_args(), exec.args_alen(),
+                          exec.args_env(), exec.args_elen(), rstack)
+                        if rrec == -4 || rrec == -5 || rrec == -6 {
+                          frames.give(rstack)
+                          var rz1 = 0
+                          while rz1 < frames.user_run() {
+                            frames.give(rarena + (rz1 * block))
+                            rz1 = rz1 + 1
+                          }
+                          poke64(execargs_use_cell, 0)
+                          exec.clear_busy()
+                          gate_reply(rme, rrec)
+                        } else {
+                          fs.drop_pid(rme)
+                          poke64(exec_pending_cell, rrec)
+                          var rentry = exec.entry_of(rrec)
+                          var rans = user_replace(rme, rentry,
+                            sv39.pa_of(rstack) + block,
+                            rarena, rarena + frames.user_run() * block)
+                          if rans == rme {
+                            poke64(execargs_use_cell, 0)
+                            exec.clear_busy()
+                          } else {
+                            frames.give(rstack)
+                            var rz2 = 0
+                            while rz2 < frames.user_run() {
+                              frames.give(rarena + (rz2 * block))
+                              rz2 = rz2 + 1
+                            }
+                            exec.release_record(rrec)
+                            poke64(execargs_use_cell, 0)
+                            exec.clear_busy()
+                            gate_reply(rme, -4)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
           // exec (emo-desktop A11.1): the disk ELF the staged name
           // names. The count is the early refusal — the stack and a
           // user pass's run have to be there at all — and the exact
@@ -1103,7 +1197,8 @@ def process_serve(w Int64) Void {
                 // busy cell held, a second exec refused — and the
                 // child's first stack is the exec's to build.
                 ans = exec.transaction_args(pid_at(fsn), exec.args_name(),
-                  exec.args_nlen(), exec.args_args(), exec.args_alen())
+                  exec.args_nlen(), exec.args_args(), exec.args_alen(),
+                  exec.args_env(), exec.args_elen())
                 exec.clear_busy()
               } else {
                 exec.copy_name(exec.name_buf())
@@ -1122,6 +1217,7 @@ def process_serve(w Int64) Void {
               }
               gate_reply(caller_of(w), ans)
             }
+          }
           }
           }
         } else {

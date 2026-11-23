@@ -51,7 +51,7 @@
 - [x] **T1.4b1**——进程与环境的表面:`getpid`(动词 49)、`setpgid`/`getpgid`(50/51,增长页尾每 pid 一个组字节,0 表示 pid 自己的组)、`getenv`/`setenv`/`unsetenv` 与 `environ`(第一次使用时扫描 `main` 的 envp),以及库的 `wait4`/`waitpid` 走动词 4——退出状态 `code << 8`。任意子进程的 wait 随 T1.4b2;`exec` 的环境交接随 T1.4b3。
 - [x] **T1.4b2**——`fork`(动词 52):进程服务复制调用者的镜像运行、栈块、arena 运行与增长块,映射到新表里调用者的虚拟基址,复制私有 handoff 页(保存的上下文与父进程基址在页尾),从库的恢复 trampoline 启动孩子;孩子从 `fork` 返回 0,父进程返回孩子的 pid。wait 的目标与 exit 的码搬到每 pid 的单元(共享的一对会让后到的 exit 覆盖 wait 的参数);动词 4 答孩子的 pid 在其退出码之上,任意子进程的 wait 是按父单元扫退出表,或由第一个孩子的退出应答停泊的 wait。C 库长出 `fork`(汇编上下文保存)、`exit`/`_exit` 与 `wait4` 的打包应答。
 - [x] **T1.4b3a**——fork 的描述符:库的 fd 表现在在 `used` 旁携带名字、标志与偏移;孩子第一次访问继承来的 fd 时以自己的 pid 重开该名字并 seek 到复制的偏移(O_APPEND 保留服务的末尾,O_CREAT/O_TRUNC 丢弃)。描述的偏移与父进程分叉——在服务拥有共享描述之前,这是记录在案的近似。
-- [ ] **T1.4b3b**——`execve`(原地换镜像)与 `exec` 时的环境交接,以及这对原语使其有意义的状态。
+- [x] **T1.4b3b**——`execve`(原地换镜像):动词 54 停名字、argv 文本与 envp 文本;进程服务在新栈与新 arena 上装载新镜像,新的运行时 `user_replace(pid, entry, stack, arena, arena_end)` 回收调用者的旧镜像、栈、arena 与增长块,把同一个槽位打扮成新帧并调 build 钩子——同一个 pid 跑新程序,父/组单元不动,旧 fd 被丢弃(库自己的表是新的——记录里的缺口)。C 库的 `execve`/`execv` 把 `argv[1..]` 与 `envp` 摊成门的空格分隔文本(词里带空格是 EINVAL);新镜像的 `argv[0]` 是文件名,`envp` 是调用者的。替换后库的 fd 表与 cwd 是新的,旧页表与私有页泄漏——记录里点名的后续。
 - [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
 - [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。
 
@@ -136,6 +136,16 @@ wait 的目标与 exit 的码从共享的 `proc_arga`/`proc_argb` 搬到新的 `
 库的描述符表在 `used` 旁长出复制的名字(24 字节)、字节长度、打开标志与偏移。`open_name` 填它们;`read`/`write` 推进偏移,`lseek` 设定它。对一个在用的描述符,服务答 -4 表示这个 pid 没有句柄——fork 继承来的 fd——于是库以自己的 pid 重开存下的名字(丢弃 O_CREAT 与 O_TRUNC,O_APPEND 留给服务的末尾)并 seek 到复制的偏移。对这样的描述符 `close` 是只清掉孩子副本的成功。偏移在 fork 之后分叉——服务的句柄还不是共享描述,这是记录在案的近似。
 
 真机证明:`chello.elf`(30,280 字节,一个镜像块)打开 `forkfd.txt`,写 `fork fd`,seek 到 0 并 fork;孩子经重开的描述符读到 `fork `,关掉它并退出 0,父进程收尸后答 `fd fork ok`——在 fd、VFS、堆、增长、args、proc、env、fork、wait 节拍之后,机器的 exit 路由干净。
+
+### T1.4b3b 的记录(2026-11-23)
+
+`execve(path, argv[], envp[])` 是动词 54:门停名字与两段文本(args 至多 512 字节,env 至多 256,放在 `0x8700b900` 的自由尾巴上,避开控制台的每 pid 单元),use 标记点名替换门;进程服务分配新栈与新 arena,经 `exec.transaction_replace` 装载镜像——装载器的记录、运行与私有页,第一张栈带上 argv 与 envp 的指针和字符串。运行时原语 `user_replace` 找到调用者的槽位,标记为 done 并跑死亡的回收(镜像钩子、栈与 arena、增长行),清空邮箱,把槽位打扮成新栈与新 arena,在新栈底建合成帧,调 space 的 build 钩子消费停放的记录并装上新的根表,然后把同一个 pid 排队。调用者原本停在 gate-wait;服务不作应答。
+
+C 库的 `execve` 复制路径(没有路径层——卷的平面名字),把 `argv[1..]` 与 `envp` 摊成门的空格分隔文本(词里带空格是 EINVAL;超长 E2BIG),成功后永不返回。`argv[0]` 是内核启动的文件名;envp 是调用者的。`execv` 传 `environ`。
+
+真机证明:`chello.elf`(30,752 字节,一个镜像块)fork 一个孩子,孩子用 argv `execchild <pid>` 与 env `EMO_EXEC=1` execve 同一个文件;新镜像把 `getpid()` 与 argv 的 pid、env 对照,答 `execve child ok` 并退出 0;父进程的 `waitpid` 答 `execve ok`。此前的节拍全绿,机器的 exit 路由干净。
+
+缺口:新镜像的库 fd 表与 cwd 是新的,旧句柄被丢弃(`fs.drop_pid`)——execution 还不保留描述符;旧页表与私有页泄漏(前者是页表的规矩,后者是 exec 记录在案的 4 KiB);被排队消息钉住的旧 arena 不释放,旧邮箱里的消息被丢掉时没有解开其发送者的钉。环境的线上文本装不下值里的空格。
 
 ### M2——C 库(源自 musl)
 

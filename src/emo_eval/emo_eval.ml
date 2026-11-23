@@ -437,6 +437,8 @@ let global_env () =
     { bound = BuiltinFn "ecall"; mutable_ = false };
   Frame_tbl.replace env.frame "user_spawn"
     { bound = BuiltinFn "user_spawn"; mutable_ = false };
+  Frame_tbl.replace env.frame "user_replace"
+    { bound = BuiltinFn "user_replace"; mutable_ = false };
   Frame_tbl.replace env.frame "gate_reply"
     { bound = BuiltinFn "gate_reply"; mutable_ = false };
   Frame_tbl.replace env.frame "pid_num"
@@ -4427,7 +4429,8 @@ and apply_builtin span name args =
         error span "E4028"
           "`ecall` reaches the machine's gate: only the `riscv64` target \
            admits it, not the interpreter"
-    | ( (("user_spawn" | "gate_reply" | "gate_post" | "pid_num" | "pid_at") as
+    | ( (("user_spawn" | "user_replace" | "gate_reply" | "gate_post"
+         | "pid_num" | "pid_at") as
          name),
         _ ) ->
         error span "E4028"

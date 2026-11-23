@@ -84,8 +84,11 @@ const execargs_name = execargs_page
 const execargs_nlen = execargs_page + 24
 const execargs_alen = execargs_page + 32
 const execargs_use = execargs_page + 40
+const execargs_elen = execargs_page + 48
 const execargs_args = execargs_page + 64
 const execargs_cap = 512
+const execargs_env = koff + 0x8700b900
+const execargs_env_cap = 256
 
 // The write's staging page (T6.2): the gate copies the caller's buffer
 // here, inside the same trap that checked it, and the console service
@@ -1149,6 +1152,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     copy_to(exec_name, r0, r1)
     poke64(exec_nlen, r1)
     poke64(execargs_use, 0)
+    poke64(execargs_elen, 0)
     poke64(exec_busy, 1)
     return route_process_exec
   }
@@ -1185,7 +1189,63 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
       copy_to(execargs_args, r2, r3)
     }
     poke64(execargs_alen, r3)
+    poke64(execargs_elen, 0)
     poke64(execargs_use, 1)
+    poke64(exec_busy, 1)
+    return route_process_exec
+  }
+  if n == 54 {
+    // execve(name, nlen, args, alen, env, elen) (T1.4b3b): the
+    // in-place image replace. The name and both texts are staged like
+    // verb 48's; the use flag names the replace door, and the process
+    // service loads the image and calls the runtime's replace with the
+    // caller's own pid. The same busy cell serializes every exec door.
+    if r1 < 1 || r1 > name_max {
+      return -reason_argument
+    }
+    if r3 < 0 || r3 > execargs_cap {
+      return -reason_argument
+    }
+    if r5 < 0 || r5 > execargs_env_cap {
+      return -reason_argument
+    }
+    var vn3 = check_write(r0, r1)
+    if vn3 != 0 {
+      return -vn3
+    }
+    if r3 > 0 {
+      var va3 = check_write(r2, r3)
+      if va3 != 0 {
+        return -va3
+      }
+    }
+    if r5 > 0 {
+      var ve3 = check_write(r4, r5)
+      if ve3 != 0 {
+        return -ve3
+      }
+    }
+    var me6 = peek64(handoff_caller)
+    if me6 >= img_bound {
+      return -reason_resource
+    }
+    if peek64(img_for + (me6 * 8)) == 0 {
+      return -reason_argument
+    }
+    if peek64(exec_busy) != 0 {
+      return -reason_resource
+    }
+    copy_to(execargs_name, r0, r1)
+    poke64(execargs_nlen, r1)
+    if r3 > 0 {
+      copy_to(execargs_args, r2, r3)
+    }
+    poke64(execargs_alen, r3)
+    if r5 > 0 {
+      copy_to(execargs_env, r4, r5)
+    }
+    poke64(execargs_elen, r5)
+    poke64(execargs_use, 2)
     poke64(exec_busy, 1)
     return route_process_exec
   }

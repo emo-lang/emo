@@ -1539,6 +1539,38 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         call_runtime env "emo_user_spawn";
         box_result env "emo_box_i64"
       end
+  | Builtin
+      {
+        name = "user_replace";
+        args = [ pid; entry; stack; arena; arena_end ];
+      } ->
+      (* T1.4b3b: the in-place exec — the process service reaps the
+         calling slot and dresses it with the new image's entry, stack
+         and arena; the same pid runs on. Native only; the interpreter
+         refuses the name upstream. *)
+      if not env.native then
+        refuse "the `user_replace` builtin needs the native riscv64 profile"
+      else begin
+        let pid_slot = temp_offset env d in
+        let entry_slot = temp_offset env (d + 1) in
+        let stack_slot = temp_offset env (d + 2) in
+        let arena_slot = temp_offset env (d + 3) in
+        emit_expr env (d + 5) pid;
+        put env "    sd a0, %d(sp)\n" pid_slot;
+        emit_expr env (d + 5) entry;
+        put env "    sd a0, %d(sp)\n" entry_slot;
+        emit_expr env (d + 5) stack;
+        put env "    sd a0, %d(sp)\n" stack_slot;
+        emit_expr env (d + 5) arena;
+        put env "    sd a0, %d(sp)\n" arena_slot;
+        emit_expr env (d + 5) arena_end;
+        put env "    mv a4, a0\n";
+        put env "    ld a3, %d(sp)\n" arena_slot;
+        put env "    ld a2, %d(sp)\n" stack_slot;
+        put env "    ld a1, %d(sp)\n" entry_slot;
+        put env "    ld a0, %d(sp)\n" pid_slot;
+        call_runtime env "emo_user_replace"
+      end
   | Builtin { name = "gate_reply"; args = [ target; answer ] } ->
       (* T4.4: a service's answer to the gate's parked caller — the
          target's raw pid names the waiter, the raw answer lands in

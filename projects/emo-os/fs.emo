@@ -923,6 +923,25 @@ def handle_close(pid Int64, fd Int64) Int64 {
   return 0
 }
 
+// The exec's descriptor drop (EmoOS T1.4b3b): the calling pid's
+// handles go before its image is replaced — the new image's library
+// table is fresh and cannot name them, and a stale handle would block
+// the new image's own fd numbers. Execution closes every descriptor
+// the process had, the documented approximation until the service
+// hands a list to the new image.
+def drop_pid(pid Int64) Void {
+  var i = 0
+  while i < handle_count {
+    var h = handle_at(i)
+    if peek64(h + h_used) != 0 {
+      if peek64(h + h_pid) == pid {
+        poke64(h + h_used, 0)
+      }
+    }
+    i = i + 1
+  }
+}
+
 // A restart drops every handle: the fds the dead instance served are
 // nobody's, and the next instance must not inherit a half-written
 // offset. The supervisor calls this through abandon.

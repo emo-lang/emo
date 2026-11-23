@@ -30,6 +30,7 @@
 #define EMO_EACCES 13
 #define EMO_ENOSPC 28
 #define EMO_EIO 5
+#define EMO_E2BIG 7
 #define EMO_EAGAIN 11
 #define EMO_EEXIST 17
 #define EMO_ENOTDIR 20
@@ -117,6 +118,13 @@ long wait(int *status);
 long fork(void);
 void exit(int code) __attribute__((noreturn));
 void _exit(int code) __attribute__((noreturn));
+
+// execve (EmoOS plan B, T1.4b3b): the volume name (no path layer), the
+// argv[1..] and the envp's NAME=VALUE words. The spaces are the wire's
+// separators, so a word containing one is EINVAL; argv[0] is the name
+// the kernel starts. Success never returns.
+int execve(const char *path, char *const argv[], char *const envp[]);
+int execv(const char *path, char *const argv[]);
 
 #define EMO_WIFEXITED(s) (((s) & 0xff) == 0)
 #define EMO_WEXITSTATUS(s) (((s) >> 8) & 0xff)

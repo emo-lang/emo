@@ -29,6 +29,41 @@ static char fork_ok[] = "fork ok\n";
 static char wait_ok[] = "wait ok\n";
 static char fdfork_ok[] = "fd fork ok\n";
 static char fdfork_msg[] = "fork fd\n";
+static char execve_ok[] = "execve ok\n";
+static char execve_child_ok[] = "execve child ok\n";
+static char execve_child_bad[] = "execve child bad\n";
+
+static long parse_dec(const char *s) {
+  long n = 0;
+  int i = 0;
+  while (s[i] >= '0' && s[i] <= '9') {
+    n = n * 10 + (s[i] - '0');
+    i = i + 1;
+  }
+  return n;
+}
+
+static void fmt_dec(char *dst, long n) {
+  char tmp[24];
+  int i = 0;
+  if (n == 0) {
+    dst[0] = '0';
+    dst[1] = 0;
+    return;
+  }
+  while (n > 0) {
+    tmp[i] = (char)('0' + (n % 10));
+    i = i + 1;
+    n = n / 10;
+  }
+  int j = 0;
+  while (i > 0) {
+    i = i - 1;
+    dst[j] = tmp[i];
+    j = j + 1;
+  }
+  dst[j] = 0;
+}
 
 static int streq(const char *a, const char *b) {
   int i = 0;
@@ -42,6 +77,16 @@ static int streq(const char *a, const char *b) {
 }
 
 int main(int argc, char **argv, char **envp) {
+  if (argc >= 2 && streq(argv[1], "execchild")) {
+    const char *ev = getenv("EMO_EXEC");
+    long want = argc >= 3 ? parse_dec(argv[2]) : -1;
+    if (ev != 0 && streq(ev, "1") && want == getpid()) {
+      write(1, execve_child_ok, sizeof(execve_child_ok) - 1);
+      return 0;
+    }
+    write(2, execve_child_bad, sizeof(execve_child_bad) - 1);
+    return 1;
+  }
   (void)envp;
   char head[3];
   char buf[64];
@@ -275,5 +320,34 @@ int main(int argc, char **argv, char **envp) {
     return 30;
   }
   write(1, fdfork_ok, sizeof(fdfork_ok) - 1);
+
+  // ---- execve (T1.4b3b): the child's own image is replaced.
+  long ep = fork();
+  if (ep == 0) {
+    char pidbuf[24];
+    fmt_dec(pidbuf, getpid());
+    char *av[4];
+    av[0] = "chello.elf";
+    av[1] = "execchild";
+    av[2] = pidbuf;
+    av[3] = 0;
+    char *ev[2];
+    ev[0] = "EMO_EXEC=1";
+    ev[1] = 0;
+    execve("chello.elf", av, ev);
+    write(2, "execve failed\n", 14);
+    _exit(127);
+  }
+  if (ep < 0) {
+    write(2, "execve fork failed\n", 19);
+    return 31;
+  }
+  int est = 0;
+  long ew = waitpid(ep, &est, 0);
+  if (ew != ep || !EMO_WIFEXITED(est) || EMO_WEXITSTATUS(est) != 0) {
+    write(2, "execve wait failed\n", 19);
+    return 32;
+  }
+  write(1, execve_ok, sizeof(execve_ok) - 1);
   return 0;
 }

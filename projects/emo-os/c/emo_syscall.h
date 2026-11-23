@@ -148,4 +148,14 @@ static inline long emo_fork(long ctx, long entry) {
   return emo_ecall(52, ctx, entry, 0, 0, 0, 0);
 }
 
+// Verb 54: execve — the name and the argv/envp texts; the caller's
+// image is replaced in place and the call never returns on success
+// (EmoOS plan B, T1.4b3b).
+static inline long emo_execve(const void *name, unsigned long nlen,
+                              const void *args, unsigned long alen,
+                              const void *env, unsigned long elen) {
+  return emo_ecall(54, (long)name, (long)nlen, (long)args, (long)alen,
+                   (long)env, (long)elen);
+}
+
 #endif

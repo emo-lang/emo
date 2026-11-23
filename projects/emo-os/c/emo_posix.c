@@ -1281,3 +1281,96 @@ void exit(int code) {
 void _exit(int code) {
   emo_exit(code);
 }
+
+// ---- execve (T1.4b3b) ----
+//
+// The wire's texts are space-separated, so a word carrying a space is
+// refused rather than mangled; argv[0] is the name the kernel starts.
+// The name, the argv[1..] and every envp word are copied into the
+// library's own writable staging before the gate sees them.
+static char exec_name_buf[EMO_NAME_MAX];
+static char exec_args_buf[512];
+static char exec_env_buf[256];
+
+static int exec_word(char *dst, unsigned long cap, unsigned long *n,
+                     const char *s, int first) {
+  unsigned long l = slen(s);
+  if (l == 0) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  unsigned long i = 0;
+  while (i < l) {
+    if (s[i] == ' ') {
+      errno = EMO_EINVAL;
+      return -1;
+    }
+    i = i + 1;
+  }
+  unsigned long need = l + (first ? 0 : 1);
+  if (*n + need > cap) {
+    errno = EMO_E2BIG;
+    return -1;
+  }
+  if (!first) {
+    dst[*n] = ' ';
+    *n = *n + 1;
+  }
+  i = 0;
+  while (i < l) {
+    dst[*n] = s[i];
+    *n = *n + 1;
+    i = i + 1;
+  }
+  return 0;
+}
+
+int execve(const char *path, char *const argv[], char *const envp[]) {
+  unsigned long nlen = slen(path);
+  if (nlen < 1 || nlen > EMO_NAME_MAX) {
+    errno = EMO_ENAMETOOLONG;
+    return -1;
+  }
+  unsigned long i = 0;
+  while (i < nlen) {
+    exec_name_buf[i] = path[i];
+    i = i + 1;
+  }
+  unsigned long alen = 0;
+  int first = 1;
+  if (argv != 0) {
+    int k = 1;
+    while (argv[k] != 0) {
+      if (exec_word(exec_args_buf, sizeof(exec_args_buf), &alen, argv[k],
+                    first) != 0) {
+        return -1;
+      }
+      first = 0;
+      k = k + 1;
+    }
+  }
+  unsigned long elen = 0;
+  first = 1;
+  if (envp != 0) {
+    int k = 0;
+    while (envp[k] != 0) {
+      if (exec_word(exec_env_buf, sizeof(exec_env_buf), &elen, envp[k],
+                    first) != 0) {
+        return -1;
+      }
+      first = 0;
+      k = k + 1;
+    }
+  }
+  long answer = emo_execve(exec_name_buf, nlen, exec_args_buf, alen,
+                           exec_env_buf, elen);
+  if (answer < 0) {
+    errno = reason_errno(answer);
+    return -1;
+  }
+  _exit(127);
+}
+
+int execv(const char *path, char *const argv[]) {
+  return execve(path, argv, environ);
+}
