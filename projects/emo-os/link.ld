@@ -166,6 +166,13 @@ SECTIONS
   . = KOFF + 0x8700e000;
   .emo_vfs (NOLOAD) : AT(ADDR(.emo_vfs) - KOFF) { *(.emo_vfs) } :tick
 
+  /* The arena's growth list (EmoOS plan B, T1.3v), a page above the
+     open-file table: the (pid, block) rows the grow verb appends and
+     the death reclaim walks home. A page's 255 rows; the count at its
+     head. NOLOAD — the spawns and deaths fill and empty it. */
+  . = KOFF + 0x8700f000;
+  .emo_grow (NOLOAD) : AT(ADDR(.emo_grow) - KOFF) { *(.emo_grow) } :tick
+
   /* The compositor's page (T8.6), a page above the filesystem's: the
      generation, the mode the display service answered at init, and the
      window stack (the position and focus the compositor's policy

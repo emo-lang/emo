@@ -554,6 +554,10 @@ emo_os_trap_trampoline:
     call emo_arena_reap      # the stack block and the arena go home
                              # unless a queued message still pins the
                              # arena (T5.2/T5.3)
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld a0, 8(t0)
+    call emo_space__grow_reap # the arena's grown blocks (T1.3v)
     la t1, emo_cur_slot
     ld t1, 0(t1)
     ld t1, 8(t1)             # the dead pid
@@ -642,6 +646,10 @@ emo_os_trap_trampoline:
     call emo_arena_reap         # the stack block and the arena go home
                                 # unless a queued message still pins the
                                 # arena (T5.2/T5.3)
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld a0, 8(t0)
+    call emo_space__grow_reap   # the arena's grown blocks (T1.3v)
     la t1, emo_cur_slot
     ld t1, 0(t1)
     ld t1, 8(t1)             # the dead pid

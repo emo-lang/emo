@@ -46,7 +46,7 @@
 - [x] **T1.2d**——桌面的类型化列举:动词 45 `list_dir` 带类型字节,图标与文件夹视图读它,`desk_view_build` 的前缀分组退休。启动器 `.elf` 目录仍读平铺列表。金测自己的运行是剩下的引脚;启动壁纸与两个写节拍的 frame 摘要已手动对上。
 - [x] **T1.3**——内存:进程 arena 上的 `brk`/`sbrk` 与匿名私有 `mmap`/`munmap`/`mprotect`——用户运行的十六个 64 KiB 块,1 MiB。动词 46 以页号暴露 base/end;C 库的 bump 分配器拥有 break,越过 arena 的写仍是原来的缺页。
 - [x] **T1.3k**——分配器的复用:`malloc` 的 first-fit 空闲表与 `mmap` 的页空闲表——`free` 与 `munmap` 交还块,`malloc` 与 `mmap` 复用它们,`realloc` 拷贝;1 MiB 的 arena 是边界。
-- [ ] **T1.3v**——arena 长过 1 MiB 的运行:`brk`/`mmap` 向内核要帧、页表增加映射、死亡回收把它们走回家;固定运行是这一刀的边界。
+- [x] **T1.3v**——arena 长过 1 MiB 的运行:动词 47 `arena_grow(bytes)` 取整 64 KiB 块,映射在单元末尾之后的页上,增长表的行在死亡时走回家——shim 的 fault/heap 路径与进程服务的正常 exit。库的 `arena_extend` 跟随应答。
 - [ ] **T1.4**——进程:`exec` 时的 `argv`/`envp`,`fork`(复制地址空间;COW 是后续优化)、`execve`、`wait4` 状态字、进程组。
 - [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
 - [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。
@@ -94,6 +94,14 @@ arena 是用户运行的十六个 64 KiB 块——1 MiB,不是初稿写的 64 Ki
 初始 arena 是 1 MiB(用户运行的十六个 64 KiB 块);初稿的“64 KiB”是运行里每个块的单位。库的分配器现在有两张 first-fit 空闲表:`malloc` 的 16 字节头块(`free` 交还,`malloc` 复用并拆掉剩余)与 `mmap` 的页块(`munmap` 把节点写回,`mmap` first-fit 它),`realloc` 拷贝后释放。固定运行是边界;长过它是 T1.3v(帧、页表新增映射、死亡回收)。
 
 真机证明:`chello.elf`(20,536 字节)答 `heap ok`、`mmap ok`、`reuse ok`、`mmap reuse ok`。
+
+### T1.3v 的记录(2026-11-23)
+
+增长是动词 47 背后的 `space.grow`:字节数、帧分配器背书的块、单元末尾之后的页——每个块在它自己的物理身份上,虚拟页跟着长——行放在 `0x8700f000` 的 `.emo_grow` 页(255 个 `(pid, block)` 行,计数在页首)。`space.grow_reap` 把某 pid 的行走回家;shim 的 fault/heap 路径在 `emo_arena_reap` 之后调它,进程服务的 exit 为正常退出调它。库的 `arena_extend` 请求该动词,把应答的页并进 `heap_end`,`brk`/`sbrk`/`malloc`/`mmap` 在下一字节越界时调它。
+
+路上发现:长出来的块不在初始运行里,运行时的 `emo_arena_reap` 看不到它们;这些行与两个额外的回收点就是这一刀的实质。
+
+真机证明:`chello.elf`(24,752 字节)在 fd、VFS、复用节拍之后答 `grow ok`;3 MiB malloc 的首尾字节都成立,增长前后帧账目的持有数相同(232,行在 exit 时回了家)。
 
 ### M2——C 库(源自 musl)
 

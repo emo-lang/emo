@@ -137,10 +137,12 @@ consumer asks, but the order is the dependency order.
   list and `mmap`'s page free list — `free` and `munmap` hand blocks
   back, `malloc` and `mmap` reuse them, `realloc` copies; the 1 MiB
   arena is the bound.
-- [ ] **T1.3v** — The arena's growth past its 1 MiB run: `brk`/`mmap`
-  ask the kernel for frames, the page table gains the mappings, and
-  the death reclaim walks them home; the fixed run is this cut's
-  bound.
+- [x] **T1.3v** — The arena's growth past its 1 MiB run: verb 47
+  `arena_grow(bytes)` takes whole 64 KiB blocks, maps them at the
+  pages after the cell's end, and the growth list's rows go home at
+  the death — the shim's fault and heap paths and the process
+  service's normal exit. `arena_extend` in the library follows the
+  answer.
 - [ ] **T1.4** — Process: `argv`/`envp` at `exec`, `fork` (copy the
   address space; COW is a later optimization), `execve`, `wait4`
   status words, process groups.
@@ -288,6 +290,28 @@ new mappings, the death reclaim).
 
 The metal proof: `chello.elf` (20,536 bytes) answered `heap ok`,
 `mmap ok`, `reuse ok`, `mmap reuse ok`.
+
+### T1.3v's record (2026-11-23)
+
+The growth is `space.grow` behind verb 47: the bytes, the blocks the
+frame allocator backs, the pages after the cell's end — each block at
+its own physical identity, the virtual pages the suite's — and the
+rows in the `.emo_grow` page at `0x8700f000` (255 `(pid, block)` rows,
+the count at its head). `space.grow_reap` gives a pid's rows home; the
+shim's fault and heap paths call it after `emo_arena_reap`, and the
+process service's exit calls it for the normal exit. The library's
+`arena_extend` asks the verb, follows the answer's page into
+`heap_end`, and `brk`/`sbrk`/`malloc`/`mmap` call it when the next
+byte is past the end.
+
+Found on the way: the grown blocks are not the initial run, so the
+runtime's `emo_arena_reap` cannot see them; the rows and the two
+extra reclaim sites are the task's substance.
+
+The metal proof: `chello.elf` (24,752 bytes) answered `grow ok` after
+the fd, VFS and reuse beats; the 3 MiB malloc's first and last bytes
+held, and the frame ledger's held count was the same before and after
+the growth (232, the rows went home at the exit).
 
 ### M2 — the C library (musl-derived)
 

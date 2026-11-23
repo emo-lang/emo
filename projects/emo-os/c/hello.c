@@ -20,6 +20,7 @@ static char heap_ok[] = "heap ok\n";
 static char mmap_ok[] = "mmap ok\n";
 static char reuse_ok[] = "reuse ok\n";
 static char mmap_reuse_ok[] = "mmap reuse ok\n";
+static char grow_ok[] = "grow ok\n";
 
 static int streq(const char *a, const char *b) {
   int i = 0;
@@ -160,5 +161,16 @@ int main(void) {
   write(1, mmap_reuse_ok, sizeof(mmap_reuse_ok) - 1);
   free(hp2);
   munmap(mp2, 4096);
+
+  // ---- the arena's growth (T1.3v): a block past the 1 MiB run.
+  void *big = malloc(3 * 1024 * 1024);
+  if (big == 0) {
+    write(2, "grow failed\n", 12);
+    return 19;
+  }
+  ((char *)big)[0] = 'G';
+  ((char *)big)[3 * 1024 * 1024 - 1] = 'R';
+  write(1, grow_ok, sizeof(grow_ok) - 1);
+  free(big);
   return 0;
 }

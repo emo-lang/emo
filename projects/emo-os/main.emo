@@ -991,6 +991,9 @@ def process_serve(w Int64) Void {
         } else {
           var pid = peek64(proc_argb)
           var code = peek64(proc_arga)
+          // the arena's grown blocks go home (T1.3v): the normal
+          // exit's half of the reclaim, the fault's in the shim
+          space.grow_reap(pid)
           var n = peek64(exit_count)
           if n < 8 {
             poke64(exit_pids + (n * 8), pid)

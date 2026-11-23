@@ -116,4 +116,10 @@ static inline long emo_arena_info(void) {
   return emo_ecall(46, 0, 0, 0, 0, 0, 0);
 }
 
+// Verb 47: the arena grows by the given bytes; the answer is the new
+// end's page number, a negative the refusal (T1.3v).
+static inline long emo_arena_grow(long bytes) {
+  return emo_ecall(47, bytes, 0, 0, 0, 0, 0);
+}
+
 #endif

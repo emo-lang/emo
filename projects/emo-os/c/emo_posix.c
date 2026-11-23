@@ -789,6 +789,31 @@ static void mem_init(void) {
   heap_cur = heap_base;
 }
 
+// The arena's growth (T1.3v): the kernel extends past the run in whole
+// 64 KiB blocks and answers the new end's page number; the library's
+// heap end follows.
+static int arena_extend(unsigned long need_end) {
+  if (heap_base == 0) {
+    errno = EMO_ENOMEM;
+    return 0;
+  }
+  unsigned long end = (unsigned long)heap_end;
+  if (need_end <= end) {
+    return 1;
+  }
+  long answer = emo_arena_grow((long)(need_end - end));
+  if (answer <= 0) {
+    errno = EMO_ENOMEM;
+    return 0;
+  }
+  heap_end = (char *)(long)(answer << 12);
+  if ((unsigned long)heap_end < need_end) {
+    errno = EMO_ENOMEM;
+    return 0;
+  }
+  return 1;
+}
+
 void *sbrk(long n) {
   mem_init();
   if (heap_base == 0) {
@@ -799,9 +824,14 @@ void *sbrk(long n) {
     return heap_cur;
   }
   long next = (long)heap_cur + n;
-  if (next < (long)heap_base || next > (long)heap_end) {
+  if (next < (long)heap_base) {
     errno = EMO_ENOMEM;
     return (void *)-1;
+  }
+  if (next > (long)heap_end) {
+    if (!arena_extend((unsigned long)next)) {
+      return (void *)-1;
+    }
   }
   char *old = heap_cur;
   heap_cur = (char *)next;
@@ -815,9 +845,14 @@ int brk(void *addr) {
     return -1;
   }
   long a = (long)addr;
-  if (a < (long)heap_base || a > (long)heap_end) {
+  if (a < (long)heap_base) {
     errno = EMO_ENOMEM;
     return -1;
+  }
+  if (a > (long)heap_end) {
+    if (!arena_extend((unsigned long)a)) {
+      return -1;
+    }
   }
   heap_cur = (char *)a;
   return 0;
@@ -854,8 +889,9 @@ void *malloc(unsigned long n) {
     b = b->next;
   }
   if (heap_cur + 16 + need > heap_end) {
-    errno = EMO_ENOMEM;
-    return 0;
+    if (!arena_extend((unsigned long)(heap_cur + 16 + need))) {
+      return 0;
+    }
   }
   b = (struct emo_heap_block *)heap_cur;
   heap_cur = heap_cur + 16 + need;
@@ -945,8 +981,9 @@ void *mmap(void *addr, unsigned long len, int prot, int flags, int fd,
   }
   unsigned long cur = ((unsigned long)heap_cur + 4095) & ~4095UL;
   if (cur + need > (unsigned long)heap_end) {
-    errno = EMO_ENOMEM;
-    return (void *)-1;
+    if (!arena_extend(cur + need)) {
+      return (void *)-1;
+    }
   }
   char *p = (char *)cur;
   heap_cur = p + need;

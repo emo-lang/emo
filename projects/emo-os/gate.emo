@@ -1232,6 +1232,12 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     }
     return peek64(arena_for + (me2 * 8))
   }
+  if n == 47 {
+    // arena_grow(bytes) (T1.3v): the arena extends past its run — the
+    // blocks taken, mapped at the pages after the cell's end, the rows
+    // the death reclaim walks home; the answer is the new end's page.
+    return space.grow(peek64(handoff_caller), peek64(caller_space_cell), r0)
+  }
   if n == 4 {
     var me = peek64(handoff_caller)
     if r0 < 2 || r0 == me {
