@@ -1,0 +1,81 @@
+# EmoOS 与 Linux 生态——任务追踪
+
+开于 2026-11-23。这个 tracker 是生态计划自己的:EmoOS 作为 Linux 开源软件的编译目标。内核的历史仍留在 [`TASKS.md`](TASKS.md);本文件只记录这条线。
+
+英文原文:[`EmoOS.TASKS.md`](EmoOS.TASKS.md)。
+
+## 决定
+
+**B 方案——源码移植。** Linux 软件针对 EmoOS 重新编译,靠一套 EmoOS 的 C 库;不做 Linux syscall ABI,也不做预编译二进制兼容。A 方案——加载 Linux ELF、应答 Linux syscall 编号的 Linux personality——按决定排除。门自己的动词就是 ABI;C 库是唯一说这些动词的一层,生态靠重编到达,不靠模拟。
+
+理由就是这台 OS 建立时的理由:EmoOS 拥有一条窄而明确的边界。Linux personality 会用第二条大得多的边界(fd、`fork`、COW、信号、TLS、动态链接)替换它,微内核的隔离叙事会是第一个牺牲品。libc 移植保持一条 ABI,并按需要生长。
+
+## 契约
+
+- **工具链。** 第一阶段先在宿主机上交叉编译:`riscv64-elf-gcc`;之后是 `riscv64-emos` 的 sysroot 与包装器。自举编译是后期里程碑,不是前提。
+- **装载。** C 用户程序和 Emo 用户镜像用同一个窗口 `0x87100000` … `0x88000000`,以 `PT_LOAD` 段链接,入口在窗口内。内核的 exec 装载器已经在强制这一条(`exec.emo` 的 `measure`)。
+- **BSS。** exec 装载器只拷贝段的文件字节,尾部留给分配器给的零;程序自己的 `crt0` 清 `__bss_start` … `__bss_end`,与 Emo 入口桩的纪律一致。
+- **可写暂存。** 门动词 1(`write`)要求源段可写——引导证明的 `gate 500500 r3 r2` 钉住了它。所以 C 的 `write` 经一个可写 bounce buffer 拷贝;之后的某条任务可以让门接受只读源,但必须先把证明和金测重新钉住。
+- **不假设 libc。** 库说到的每个 syscall 都由内核实现,并随落地写进 [`syscalls.md`](syscalls.md);库绝不伪造成功。
+- **按需生长。** syscall 集合在程序需要时增加,不从 Linux 表整张抄。M4 的软件清单就是检验:它点名系统真正要跑什么。
+
+## 里程碑
+
+### M0——C 的门(进行中)
+
+最小的纵向切片:一个 C 程序、交叉编译器、现有的 exec 装载器、机器的控制台。它在任何 libc 工作之前先证明工具链契约。
+
+- [x] **T0.1**——C 骨架:`c/crt0.s`、`c/emo_syscall.h`、`c/hello.c`、`c/chello.ld`、`c/build.sh`(桩用 `.s` 而不是 `.S`:Emo 包树会汇编它找到的每个 `.S`);ELF 形状对着 `exec.emo` 的 `measure` 检查(入口与段都在窗口内、只有 `PT_LOAD`、`memsz ≥ filesz`)。
+- [x] **T0.2**——构建链:`start.sh` 在内核之前构建 `chello.elf`;`user.S` 嵌入它,`runtime.S` 停放它的边界,`main.emo` 把它作为 `chello.elf` 装到卷上,安装行加入金测清单。
+- [x] **T0.3**——真机证明:桌面的 `exec chello.elf` 打出那一行并以 0 退出;退出事件静默排空(外来镜像没有启动器槽位)。
+- [ ] **T0.4**——dune 冒烟:临时树带上 `c/` 并在内核之前构建 C 应用;测试套件的门加上交叉编译器自己的探测。(代码已接好;`@emo_os` 那条腿自己的运行是剩下的引脚。)
+
+### M0 的记录(2026-11-23)
+
+第一份镜像是 `chello.elf`:9,288 字节,入口 `0x87100000`,两个 `PT_LOAD` 段(text RX 在 `0x87100000`,data RW 在 `0x87101000`),消息放在 `.data`,因为门的 write 动词从可写段拷贝。真机证明:桌面的 `exec chello.elf` 打出 `hello from C on EmoOS`,提示符回来;首启的线上说 `installed chello.elf 9288`。路上发现并修掉两处碰撞:Emo 包树会汇编 `projects/emo-os` 下的每个 `.S`,所以 C 的桩叫 `crt0.s`;树里按 basename 只能有一个 `link.ld`,所以 C 的脚本叫 `c/chello.ld`。金测会装上这份镜像,文件计数随之移动(首启重启后挂载 7 个,第二脚挂载 8 个,`fs ls 8`);exec 的那一拍等一次重新钉住 frame 账目的金测运行。
+
+### T1.1 的记录(2026-11-23)
+
+C 库的 fd 表是 `c/emo_posix.c`:16 个描述符、8 个 2048 字节的文件槽,fd 0 走动词 2,fd 1/2 走动词 1(可写 bounce),文件读在 open 时经动词 7 整份装入,写在 close 时经动词 6 提交,`unlink` 走动词 9。`errno` 映射门的理由(6→ENOENT、3→EACCES、2→EFAULT、5→ENOSPC、4→EINVAL)。真机证明:`chello.elf`(10,384 字节)打开 `fd.txt`、写、关、重开,`fstat` 答 `stat ok`,读答 `read back: fd table on EmoOS`,`unlink` 答 `fd table cleaned`;之后卷上没有 `fd.txt`。切法是库的:偏移与缓冲每进程一份,写在 close 时替换文件,文件装进 2048 字节。`T1.1k` 把表搬进文件系统服务,换部分 I/O 与更大的文件。
+
+### M1——POSIX 底座(内核与库)
+
+每个 C 程序站立的那一层。任务只在第一个消费者提出时落地,但顺序就是依赖顺序。
+
+- [ ] **T1.0**——门的 write 规则:可读的源段就应当服务 `write`,让 libc 的 bounce 拷贝退休。引导证明和金测随之重新钉住——`gate 500500 r3 r2` 的第一个拒绝不再点名 text 段,它变成一次成功。
+- [x] **T1.1**——C 库里的 fd 表:0/1/2 接控制台;按名字的文件上的 `open`/`close`/`read`/`write`/`lseek`/`fstat`,走门的整文件动词;每进程一张表,偏移与缓冲归库,写缓冲到 close 才提交。切法写明:文件装进门的 2048 字节暂存,写打开的描述符替换整个文件。
+- [ ] **T1.1k**——文件系统服务的打开文件表:句柄按 pid 归属,偏移与大小归服务,部分读写、追加、超过门 2048 字节的文件;句柄区放在文件系统页上,重启的 `abandon` 清掉它。
+- [ ] **T1.2**——VFS:根、目录、路径查找、`cwd`、`mkdir`/`unlink`/`rename`;卷的平铺名字长出目录形态,金测的列表重新钉住。
+- [ ] **T1.3**——内存:进程 arena 上的 `brk` 与匿名私有 `mmap`/`munmap`/`mprotect`;越界访问仍是今天的击杀。
+- [ ] **T1.4**——进程:`exec` 时的 `argv`/`envp`,`fork`(复制地址空间;COW 是后续优化)、`execve`、`wait4` 状态字、进程组。
+- [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
+- [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。
+
+### M2——C 库(源自 musl)
+
+- [ ] **T2.1**——syscall 层:musl 的 `arch/riscv64` 桩接到门上,每个函数对一个已记录的动词。
+- [ ] **T2.2**——`crt`、TLS、`malloc`、`stdio`、`string`、`errno`;静态 `hello`、`printf`、`malloc`、`getenv`。
+- [ ] **T2.3**——sysroot 与编译器包装器:`libc.a`、头文件、链接脚本;`riscv64-emos-gcc`。
+- [ ] **T2.4**——一致性探针:一小套 C 测试钉住本里程碑的调用,在金属和宿主解释器上(都适用时)逐字节相同。
+
+### M3——emosh 作为默认 shell
+
+- [ ] **T3.1**——emosh 对着 sysroot 构建。移植被迫改的每一处源码都列出来;目标是零。
+- [ ] **T3.2**——emosh 成为启动前台——行编辑、历史、补全——替换 `hello/shell.emo` 作为机器的 shell。
+- [ ] **T3.3**——控制台交接:串口字节进 fd 0,写走 fd 1/2,`poweroff` 仍是引导自己拥有的 exit 路由。
+- [ ] **T3.4**——桌面的 `exec` 把 `argv`/`envp` 交给子进程;启动器与 shell 共用一扇门。
+
+### M4——生态
+
+- [ ] **T4.1**——busybox 或 dash:第一个真正的 POSIX 程序,shell 自己的验收。
+- [ ] **T4.2**——核心工具:第一套语料(文件、文本、进程),每个用金测钉住。
+- [ ] **T4.3**——构建系统:`make`,然后 autotools/CMake 与 `pkg-config`,让一个 Linux tarball 自己的构建能跑。
+- [ ] **T4.4**——软件语料与 CI:什么能构建、什么能跑、各自需要什么;清单就是这个 tracker 诚实的答案。
+- [ ] **T4.5**——自举编译:EmoOS 自己上的 GCC/Clang 与工具。放最后,因为它需要上面一切。
+
+## 边界
+
+- 不做 Linux syscall ABI、不做 Linux ELF 兼容、不跑预编译二进制、不碰 glibc。
+- 在静态语料挣到它之前不做动态链接;musl 静态是第一份契约。
+- 微内核仍是微内核:C 库是用户进程的库,不是第二个内核。
+- 每个新增先在这里成为任务,再成为代码;每个任务点名它的消费者。

@@ -100,6 +100,13 @@ emo_start:
     sd t0, 0(t1)
     la t0, emo_os_user_blob_w_end
     sd t0, 8(t1)
+    # the C door's first image (EmoOS plan B, M0): the cross-built
+    # program's bounds ride the handoff page's next free pair
+    la t0, emo_os_user_blob_x
+    li t1, 0xFFFFFFC087002220
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_x_end
+    sd t0, 8(t1)
     # the service handoff (T4.4): the service pids and the caller cell
     # start zeroed, filled by the kernel's own boot flow. The spawned
     # process's entry is the user image's own business — its stub parks

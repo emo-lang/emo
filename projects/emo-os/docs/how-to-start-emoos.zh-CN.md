@@ -8,6 +8,7 @@
 
 - **`qemu-system-riscv64`**——QEMU 的 RISC-V 系统模拟器。macOS 上 Homebrew 的 `qemu` formula 自带;Linux 上发行版的 `qemu-system-misc`(或等价包)提供。
 - **OCaml + dune**——构建编译器用一次。仓库钉住 opam switch `5.5.2`。
+- **`riscv64-elf-gcc`**——C 的门构建用的交叉 C 编译器(macOS:Homebrew 的 `riscv64-elf-gcc` formula;Linux:发行版的 `riscv64-unknown-elf-gcc` 或等价包)。Emo 的构建仍需要编译器本来就会探测的 RISC-V binutils。
 
 编译器是一个自包含的二进制。在仓库根目录:
 
@@ -36,11 +37,12 @@ $ (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY=<registry> \
 $ (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY=<registry> \
      ../../../../_build/default/src/emo_cli/emo.exe build main.emo \
      --target riscv64 --profile user -o "$OLDPWD/editor.elf")
+$ bash c/build.sh
 $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
      -o main.elf
 ```
 
-用户镜像先建:内核的构建要汇编 `user.S`,而它嵌入 `hello.elf` 与三个应用的 ELF(emo-desktop A11.1)——它们都得先于内核链接存在。改了 `hello/`、应用的树、内核自己的模块或 stage 进去的那些包之后,五个镜像都按这个顺序重建。
+用户镜像先建:内核的构建要汇编 `user.S`,而它嵌入 `hello.elf`、三个应用的 ELF(emo-desktop A11.1)和 C 的门的第一份程序(`chello.elf`,EmoOS B 方案、M0)——它们都得先于内核链接存在。改了 `hello/`、应用的树、`c/`、内核自己的模块或 stage 进去的那些包之后,所有镜像都按这个顺序重建。
 
 ## 金测一条龙
 
@@ -48,7 +50,7 @@ $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
 $ ./run.sh
 ```
 
-`run.sh` 是验证,不是 ride。它把盘镜像清零并启动机器两次——第一脚遇到空盘、格式化它,第二脚挂载第一脚留下的卷,所以两脚是一个故事——第一脚用 SBI `set_timer` 兜底驱动 tick,第二脚用 `stimecmp` 传输。每脚跑完整条串口链(启动、各证明、启动机器程序的 shell 对话、文件系统往返、exit 路由)并断言每行的存在与顺序;缺一行或乱序即失败。合成器移动后的拷贝落地时,监视器的 screendump 拿下显示器的 PPM,每个像素按合成历史的并集读回——金测不止有耳朵,还有眼睛(T8.8)。连续三轮逐字节相同,是追踪器里每个任务被要求的线。
+`run.sh` 是验证,不是 ride。它把盘镜像清零并启动机器两次——第一脚遇到空盘、格式化它,第二脚挂载第一脚留下的卷,所以两脚是一个故事——第一脚用 SBI `set_timer` 兜底驱动 tick,第二脚用 `stimecmp` 传输。每脚跑完整条串口链(启动、各证明、启动机器程序的 shell 对话、文件系统往返、C 的门的第一份交叉编译程序、exit 路由)并断言每行的存在与顺序;缺一行或乱序即失败。合成器移动后的拷贝落地时,监视器的 screendump 拿下显示器的 PPM,每个像素按合成历史的并集读回——金测不止有耳朵,还有眼睛(T8.8)。连续三轮逐字节相同,是追踪器里每个任务被要求的线。
 
 ## 手动驾驶
 

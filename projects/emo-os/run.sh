@@ -2275,6 +2275,10 @@ PYLOCK
   await 'exec: bad argument'
   feed 'exec bogus.elf'
   await 'desktop: no such file'
+  # The C door (EmoOS plan B, M0): its image arrives on the volume with
+  # the apps above (`installed chello.elf`), and the metal proof of its
+  # run is the tracker's own beat — the golden's frame ledger keeps
+  # the install alone until a run re-pins the exec's blocks.
   # The desktop's folders (emo-desktop A13): a prefixed name the view
   # shows as the folder it names — `a/one.txt` the folder `a` on the
   # cells' third place — entered by a press, left by the `..` cell's,
@@ -2632,7 +2636,7 @@ PYLOCK
   # beta window and the duo's counter both mounted where the old mode's
   # center put them ('comp 576 384' twice) — is two beats, each in its
   # era's place; A14.3's centered places split the pair.
-  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 7' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'shape 10 16 ok' 'shape r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 879805928' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 2015241062' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'comp 64 128' 'desk assign a 1' 'desk word 768' 'comp 0 0' 'desk word 769' 'comp 64 128' 'desk assign a 0' 'desk word 257' 'comp 0 0' 'desk word 256' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'clock ' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'shortcut desk 1' 'shortcut desk 0' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'desk 1' 'comp 0 0' 'desktop counter up' 'comp 0 1040' 'desk 513' 'comp 0 0' "frame $(app_line 1)" 'desk 514' 'comp 0 0' 'comp 768 476' 'desktop counter exit 0' 'comp 0 1040' 'desk 1' 'comp 0 0' 'desk 0' 'comp 0 0' 'comp 1636 32' 'comp 0 0' 'comp 0 0' 'commands: help echo ls cat write rm desktop counter exec passwd lock poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1918 1674'; do
+  for line in 'sv39 8 0x8' 'blk 8192 ready' 'gpu 1920x1080 ready' 'input ready' 'pointer ready' 'gpu flush ok' "$mount1" '0:97' '1:98' '2:99' '3:100' '4:101' "$mount2" 'fs restart ok' 'user: staged' 'U-MODE 500500' 'gate 500500 r3 r2' 'echo 88' 'fs rw ok' 'fs ls 8' 'doomed' 'user fault 20 cause 13' 'addr 0x80000000' 'greedy' 'user heap 21 gone' 'smash' 'user fault 22 cause 15' 'addr 0x40000000' 'reach' 'user fault 23 cause 15' 'addr 0xffffffc080200000' 'born' 'wait 7' 'output 1920x1080' 'present ok' 'byte 97' 'byte 98' 'byte 113' 'screen 0x86800000 ok' 'screen r5' 'keys?' 'key 1 16 1' 'byte 75' 'move 0 16384' 'move 1 16384' 'present r3' 'close r4' 'win 1' 'present r4' 'role toplevel r4' 'win ok' 'win sum 2803875840' 'format 0 ok' 'format 1 r4' 'scale 1 ok' 'scale 2 ok' 'scale 0 r4' 'shape 10 16 ok' 'shape r4' 'protocol 1' 'comp 0 0 765722774' 'win shown' 'comp 48 32 879805928' 'popup up' 'comp 400 32 4030835270' 'sub up' 'parent panel r4' 'comp 0 1048 3014083584' 'panel up' 'parent gone r4' 'win moved' 'comp 16 32 2015241062' 'win focused' 'popup closed' 'sub closed' 'panel closed' 'win closed' 'win 0' 'comp 96 320 168531364' 'client up 5' 'user fault 28 cause 15' 'addr 0x20000000' 'comp reclaim 28' 'comp 512 320 129906084' 'client up 6' 'client back' 'desk range 32767 32767' 'desk a 7' 'desk b 8' 'comp 64 128' 'comp 576 384' 'desk focus 7' 'desk key 7 1' 'desk focus 8' 'desk drag 8 96 160' 'desk drag 8 576 384' 'desk key 8 1' 'desk b 10' 'comp 64 128' 'desk assign a 1' 'desk word 768' 'comp 0 0' 'desk word 769' 'comp 64 128' 'desk assign a 0' 'desk word 257' 'comp 0 0' 'desk word 256' 'desk 0' ' _____                   ' $'\033[36m   ____     ____  ' 'emo-os>' 'clock ' 'comp 0 0 884125748' 'desktop icons 2' 'comp 0 0' 'comp 0 1040' 'desktop counter up' 'comp 0 1040' 'comp 0 0' 'comp 768 476' 'add 1' 'sub 0' 'desktop files up' 'comp 0 1040' 'comp 0 0' 'comp 374 238' 'sel files.emo' 'open files.emo' 'desktop editor up' 'comp 0 1040' 'comp 0 0' 'comp 374 476' 'put a' 'newline' 'put b' 'shortcut desk 1' 'shortcut desk 0' 'comp 868 590' 'comp 768 476' 'comp 772 500' 'comp 0 212' 'comp 4 236' 'comp 768 476' 'comp 772 500' 'comp 768 476' 'comp 768 476' 'comp 772 500' 'desktop counter exit 0' 'comp 0 1040' 'comp 0 0' 'desktop files exit 0' 'comp 0 1040' 'comp 0 0' 'desktop editor exit 0' 'comp 0 1040' 'comp 0 0' 'desk 1' 'comp 0 0' 'desktop counter up' 'comp 0 1040' 'desk 513' 'comp 0 0' "frame $(app_line 1)" 'desk 514' 'comp 0 0' 'comp 768 476' 'desktop counter exit 0' 'comp 0 1040' 'desk 1' 'comp 0 0' 'desk 0' 'comp 0 0' 'comp 1636 32' 'comp 0 0' 'comp 0 0' 'commands: help echo ls cat write rm desktop counter exec passwd lock poweroff' 'echo repl answers' 'hello.txt' 'comp 0 0' 'EmoOS boots from disk' 'comp 0 0' 'cat: no such file' 'bogus: unknown command' 'exec: bad argument' 'desktop: no such file' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'comp 0 0' 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel" "frame $notify_panel_dnd" 'desktop editor up' 'put a' 'save' 'desktop editor exit 0' "frame $notify_panel2" 'spin still' 'spin done' 'EmoUI on EmoOS' 'count 000' '[a plus]' 'count 001' 'dma 0xffffffc08' 'frames 1918 1674'; do
     pos=$(grep -aboF -- "$line" "$log" | cut -d: -f1 | awk -v p="$prev" '$1 > p { print; exit }' || true)
     if [ -z "$pos" ]; then
       echo "run.sh: the console never delivered '$line' after byte $prev; a reader's byte is lost" >&2
@@ -2640,8 +2644,9 @@ PYLOCK
     fi
     prev=$pos
   done
-  # The disk ELFs' install lines (emo-desktop A11.1): the four images
-  # and the wallpaper's art (emo-desktop M31, A31.1) named on the wire
+  # The disk ELFs' install lines (emo-desktop A11.1): the four images,
+  # the C door's first program (EmoOS plan B, M0) and the wallpaper's
+  # art (emo-desktop M31, A31.1) named on the wire
   # between the console deliveries and the restart's mount —
   # `installed <name> <size>` on the boot that formats (the machine
   # writes its own apps onto the blank volume), `kept <name>
@@ -2651,7 +2656,7 @@ PYLOCK
   local rstart rpos m2pos appname
   rstart=$(grep -aboF -- '4:101' "$log" | head -1 | cut -d: -f1)
   m2pos=$(grep -aboF -- "$mount2" "$log" | head -1 | cut -d: -f1)
-  for appname in counter.elf files.elf editor.elf spin.elf wallpaper.rle; do
+  for appname in counter.elf files.elf editor.elf spin.elf chello.elf wallpaper.rle; do
     rpos=$(grep -aboE -- "^$inst $appname [0-9]+$" "$log" | cut -d: -f1 | awk -v p="$rstart" '$1 > p { print; exit }' || true)
     if [ -z "$rpos" ]; then
       echo "run.sh: the install never said '$inst $appname <size>' after byte $rstart" >&2
@@ -2919,13 +2924,14 @@ PYLOCK
 
 # The SBI fallback drives the tick when the CPU has no Sstc to delegate.
 # The first boot meets the blank disk: the filesystem formats it, the
-# machine installs its apps, and its restarted instance counts the five
-# files (the four images and the boot file).
-boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 6' 1 installed
+# machine installs its apps, and its restarted instance counts the
+# seven files (the five images, the wallpaper's art and the boot file).
+boot 'rv64,sstc=false' legacy '.qemu.log' 'fs gen 1 files 0' 'fs gen 2 files 7' 1 installed
 echo "run.sh: legacy SBI set_timer ticks: greeting, sv39, proof, fs format, install, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, desktop, exits, spinner, frames, self-exit"
 # The stimecmp transport when it does. The second boot meets the volume
-# the first left — the six files the first boot wrote (the four
-# images, the boot file, and hello's own) — keeps the images (`kept`
-# naming each), and formats nothing: the mount table came off the disk.
-boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 7' 'fs gen 4 files 7' 0 kept
+# the first left — the eight files the first boot wrote (the five
+# images, the wallpaper's art, the boot file, and hello's own) — keeps
+# the images (`kept` naming each), and formats nothing: the mount table
+# came off the disk.
+boot 'rv64,sstc=true' sstc '.qemu-sstc.log' 'fs gen 3 files 8' 'fs gen 4 files 8' 0 kept
 echo "run.sh: sstc stimecmp ticks: greeting, sv39, proof, fs mount, install kept, console, gpu, input, pointer, fs restart, user, fs roundtrip, kill, screen, frame, keys, pointer plane, win, comp restart, desk, desktop, exits, spinner, frames, self-exit, 1 ecall"

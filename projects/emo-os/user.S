@@ -55,3 +55,13 @@ emo_os_user_blob_w:
     .globl emo_os_user_blob_w_end
 emo_os_user_blob_w_end:
 
+    # The C door's first image (EmoOS plan B, M0): a program built by
+    # the cross C compiler, linked in the Emo user image's window and
+    # installed on the volume like every other app. It proves the
+    # toolchain contract before the libc work begins.
+    .globl emo_os_user_blob_x
+emo_os_user_blob_x:
+    .incbin "chello.elf"
+    .globl emo_os_user_blob_x_end
+emo_os_user_blob_x_end:
+

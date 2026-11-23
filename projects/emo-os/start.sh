@@ -143,7 +143,8 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
    stale files.elf $files_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale spin.elf $spin_src ||
-   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf wallpaper.rle; then
+   stale chello.elf c/hello.c c/emo_syscall.h c/emo_posix.c c/emo_posix.h c/crt0.s c/chello.ld c/build.sh ||
+   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf wallpaper.rle; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
   else
@@ -173,6 +174,10 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
   (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/files.elf")
   (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/editor.elf")
   (cd ../emo-desktop/fb/apps/spin && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/spin.elf")
+  # The C door (EmoOS plan B, M0): the cross compiler builds the one
+  # program the kernel's own loader will start — the contract's first
+  # proof, built before the kernel embeds it.
+  bash c/build.sh
   "$emo" build main.emo --target riscv64 -o "$elf"
 fi
 

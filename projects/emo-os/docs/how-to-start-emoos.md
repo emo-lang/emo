@@ -15,6 +15,11 @@ Chinese translation: [`how-to-start-emoos.zh-CN.md`](how-to-start-emoos.zh-CN.md
   `qemu-system-misc` (or equivalent) does.
 - **OCaml + dune** — to build the compiler once. The repository pins
   the opam switch `5.5.2`.
+- **`riscv64-elf-gcc`** — the cross C compiler the C door builds
+  with (macOS: the Homebrew `riscv64-elf-gcc` formula; Linux: the
+  distribution's `riscv64-unknown-elf-gcc` or equivalent). The Emo
+  builds still need the RISC-V binutils the compiler already
+  probes for.
 
 The compiler is one self-contained binary. From the repository root:
 
@@ -54,15 +59,17 @@ $ (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY=<the registry> \
 $ (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY=<the registry> \
      ../../../_build/default/src/emo_cli/emo.exe build main.emo \
      --target riscv64 --profile user -o "$OLDPWD/editor.elf")
+$ bash c/build.sh
 $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
      -o main.elf
 ```
 
 The user image builds first: the kernel's build assembles `user.S`,
-which embeds `hello.elf` and the three apps' ELFs (emo-desktop A11.1)
-— they all have to exist before the kernel links. After any change
-to `hello/`, to the apps' trees, to the kernel's own modules, or to
-the staged packages, rebuild all five, in that order.
+which embeds `hello.elf`, the three apps' ELFs (emo-desktop A11.1),
+and the C door's first program (`chello.elf`, EmoOS plan B, M0) —
+they all have to exist before the kernel links. After any change to
+`hello/`, to the apps' trees, to `c/`, to the kernel's own modules,
+or to the staged packages, rebuild all of them, in that order.
 
 ## The golden smoke
 
@@ -76,9 +83,10 @@ formats it, the second mounts the volume the first left, so the two
 boots are one story — the first with the SBI `set_timer` fallback
 driving the tick, the second with the `stimecmp` transport. Each boot
 runs the whole serial chain (bring-up, the proofs, the shell exchange
-starting the machine's program, the filesystem roundtrip, the exit
-route) and asserts every line's presence and order; a missing or
-misordered line fails the run. Once the compositor's moved copy has
+starting the machine's program, the filesystem roundtrip, the C
+door's first cross-built program, the exit route) and asserts every
+line's presence and order; a missing or misordered line fails the
+run. Once the compositor's moved copy has
 landed, the monitor's screendump takes the display's PPM and every
 pixel is read back against the composition history's union — the
 golden has eyes as well as ears (T8.8). Three consecutive runs

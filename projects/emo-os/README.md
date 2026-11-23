@@ -99,6 +99,7 @@ Per-task checklists live in [`docs/TASKS.md`](docs/TASKS.md).
 - [`docs/sv39.md`](docs/sv39.md) — the kernel's high-half layout: the two halves, the kernel's table, the two aliases, the boot.
 - [`docs/fs.md`](docs/fs.md) — the filesystem service: the authoritative-versus-rebuildable split, the disk's layout, the commit points, the restart.
 - [`docs/shell.md`](docs/shell.md) — the shell REPL: the line, the seven commands, the strictness the surface carries, the bounds.
+- [`docs/EmoOS.TASKS.md`](docs/EmoOS.TASKS.md) — the Linux-ecosystem tracker: the C door, the POSIX substrate, the libc, emosh and the package corpus (plan B, the source port).
 - [`docs/ui.md`](docs/ui.md) — the console renderer: EmoUI's spine at the console's currency, the frame, the Elm loop, the counter demo, the bounds.
 - [`docs/syscalls.md`](docs/syscalls.md) — the gate's verb set: the ABI, the refusals' reasons, the checks, `exec` (verb 24) the disk ELFs' door.
 - [`docs/fs.md`](docs/fs.md) — the filesystem service: the authoritative-versus-rebuildable split, the disk's layout, the commit points, the restart.
