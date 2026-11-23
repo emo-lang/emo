@@ -87,6 +87,13 @@ Operand order is no longer a cross-target variable — the language states left
 to right and every target obeys it; the defect that made the two differ, and
 its fix, are in `CHECK.md` and `probe/eval_order`.
 
+`ui.run_raw` is the same loop without the table: the backend's tag is the
+message, handed to `update` as it arrives. It exists for applications whose
+messages are already integers — a text editor's keys, one per byte and one per
+editing op — where a hundred-entry table deduplicated per render would cost more
+than the frame paints on the metal. The view still receives a `Registry`, so
+both shapes share one application signature.
+
 The loop compiles and runs on all five hosted targets. A bare def name is the
 only expression that yields the `Block` value `ui.run` takes, and `c` had no
 def-as-value (`Global`); T48.8 gave it one — every def gets a dynamic thunk,

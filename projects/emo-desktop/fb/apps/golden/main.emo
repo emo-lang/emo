@@ -10,14 +10,12 @@ require "emo/ui_fb_win"
 // editor — the corpus packages required whole from `emo/ui_apps`,
 // never copied — each run through `ui.run`'s parts on a canvas the app
 // window's own size (384x128, the window shell's) with a script in the
-// input's seat: the tags the apps' registration order fixes, the
-// session the metal's passes run byte for byte. The launcher's order
+// input's seat: the tags the apps' registration order fixes — and, for
+// the editor, the raw loop's key numbers (A33.1) — the sessions the
+// metal's passes run byte for byte. The launcher's order
 // is the execs': the counter's tile first (its session whole), the
 // browser's tile second, the editor's the REPL's own `exec` command —
-// mount, keys, mount, keys, mount, keys. The editor's session (A33.1)
-// runs the editing kernel whole — type at the pen, walk it, cut with
-// it, and move the rows — the tags 0 through 9 the view's registration
-// fixes. Every frame's digest prints
+// mount, keys, mount, keys, mount, keys. Every frame's digest prints
 // as the backend presents it, beside the state transitions `update`
 // says, and the exits close the block in the quits' own order — the
 // deaths ride the stream to their parent now (`desktop <name> exit
@@ -118,9 +116,15 @@ def main() {
   fbackend.run()
   const e = Eye.new(canvas: ui_fb_canvas.canvas(384, 128))
   const che = ui_fb_win.chrome(e, f, "editor")
-  ui.run(ui_apps.editor.view, ui_apps.editor.update,
-    ui_apps.editor.initial(), ui_fb.backend(che,
-      ui_fb.script([0, 1, 4, 0, 8, 9, 5, 2, 1, 6, 7, 3]), f))
+  // The editor's session (A33.1): the raw loop's keys are the byte
+  // script's numbers — type a, Enter, type b, Left, Backspace (the
+  // join), End, type c, Home, Delete. The same numbers the metal's
+  // seat delivers; the save's chord belongs to the notification beats
+  // (M25), where the raise is the point.
+  ui.run_raw(ui_apps.editor.view, ui_apps.editor.update,
+    ui_apps.editor.initial(),
+    ui_fb.backend(che,
+      ui_fb.script([97, 10, 98, 1001, 8, 1006, 99, 1005, 127]), f))
   println("desktop counter exit 0")
   println("desktop files exit 0")
   println("desktop editor exit 0")

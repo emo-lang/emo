@@ -1,22 +1,27 @@
 require "emo/ui"
 
-// The third of the desktop's apps (emo-desktop A10.3), grown into the
-// keyboard's own editing kernel (A33.1): the cursor the model carries
-// is now a pen in the row it stands on, and the keys the seat speaks
-// move it, cut with it, and type at it. `put_a` and `put_b` insert at
-// the pen (the end-of-line typing they were), `left` and `right` walk
-// it, `up` and `down` carry it to the neighbouring row with the pen
-// held inside the row it lands on, `backspace` and `del` cut the
-// character the pen sits beside, and `newline` still moves it down.
-// The buffer stays the model's two rows — the terminal's real buffer
-// is this round's later item — so the kernel is the editing, not the
-// size.
+// The third of the desktop's apps (emo-desktop A10.3): the editor, a
+// corpus package of its own — the same discipline the counter and the
+// browser carry, portable defs and nothing platform-naming. The buffer
+// is the model's rows and a cursor of (row, column): a printable key
+// inserts at the cursor, Backspace and Delete remove the byte before
+// the caret or under it (joining the neighbouring row at either edge),
+// the arrows, Home and End move it, and Enter steps it to the next row
+// and stops at the buffer's last. Every edit is a new model — the
+// rows' value discipline, the before never touched — and the caret is
+// the view's: `|` inked between the row's bytes, never in the buffer.
+// `update` says each transition (`put a`, `back`, `del`, `left`,
+// `right`, `up`, `down`, `home`, `end`, `newline`, `save`) and hands
+// the save's buffer to the provider.
 //
 // The app dual-runs where hosted: the hosted families through
-// `apps/golden/`, the metal in a pass of its own (the seat's bytes map
-// onto the tags the view's registration order fixes, `q` the loop's
-// end). The tree is the panel, one text per row and the status — the
-// status now names the pen (`row r col c`), the cursor the frame shows.
+// `apps/golden/`, each key the script's own number; the metal in a
+// pass of its own, the seat's raw mode delivering the same numbers
+// (see `emo/ui`'s key vocabulary) and `Ctrl+Q` the loop's end. The
+// tree is the panel, one text per row and the status — the rows the
+// buffer has, at least one, at most the two it starts with — and the
+// session's keys leave the pass's arena green (A8.3's per-event
+// count).
 //
 // The save (emo-desktop M25, D14): the corpus stays portable — the
 // volume is the metal's — so the act leaves through a provider the
@@ -25,10 +30,22 @@ require "emo/ui"
 // gate's write and notify verbs. `update` says `save` and hands the
 // buffer over; what saving means is the provider's.
 
-enum Msg { put_a, put_b, newline, save, left, right, up, down, backspace, del }
+// The save's chord (`Ctrl+S`), the bytes a Ctrl chord produces: the
+// core's vocabulary carries the keys' meanings, and this one is the
+// app's.
+const key_save = 19
+
+// The buffer's one line bound: the window is 384 pixels wide at the
+// interface face's advance, and a row that outgrows it would clip at
+// the surface's edge — the bound is the frame's own arithmetic, kept
+// strict so a full row refuses the next byte rather than painting past
+// the glass.
+def line_cap() Int64 {
+  return 40
+}
 
 // Where the editor's words go on save. `rows` is the buffer as it
-// stands: the two rows the model holds.
+// stands: the rows the model holds.
 interface Saver {
   def save(rows Array[String]) Void
 }
@@ -78,170 +95,210 @@ def initial_with(saver Saver) Model {
   return Model.new(rows: ["", ""], row: 0, col: 0, saver: saver)
 }
 
-// ---- the kernel's string steps ----
-
-// `r` with `s` inserted at column `c`, the head carried, `s`, the tail
-// carried. `c` is held to the row's own extent, so a pen past the end
-// lands at the end, never past it.
-def insert_at(r String, c Int64, s String) String {
-  const len = r.length()
-  var cc = c
-  if cc < 0 {
-    cc = 0
+// The buffer's `at`th row replaced: a builder, because the rows array
+// grows and shrinks through the editing and an array's length never
+// changes.
+def rows_with(rows Array[String], at Int64, s String) Array[String] {
+  const out = ArrayBuilder.new()
+  var i = 0
+  while i < rows.length() {
+    if i == at {
+      out.push(s)
+    } else {
+      out.push(rows[i])
+    }
+    i = i + 1
   }
-  if cc > len {
-    cc = len
-  }
-  return r.substring(0, cc) + s + r.substring(cc, len - cc)
+  return out.to_array()
 }
 
-// `r` with the character at column `p` out, the two halves carried.
-def delete_at(r String, p Int64) String {
-  const len = r.length()
-  var pp = p
-  if pp < 0 {
-    pp = 0
+def rows_cut(rows Array[String], at Int64) Array[String] {
+  const out = ArrayBuilder.new()
+  var i = 0
+  while i < rows.length() {
+    if i != at {
+      out.push(rows[i])
+    }
+    i = i + 1
   }
-  if pp > len {
-    pp = len
-  }
-  return r.substring(0, pp) + r.substring(pp + 1, len - pp - 1)
+  return out.to_array()
 }
 
-// `col` held inside `row`'s extent: the clamp a row change or a step
-// asks of the pen.
-def hold(row String, col Int64) Int64 {
-  const len = row.length()
-  if col < 0 {
-    return 0
-  }
-  if col > len {
-    return len
-  }
-  return col
+// One printable byte as its one-character String: the byte buffer's
+// reinterpretation, the same path the notification feed reads its
+// strings through.
+def char_of(b Int64) String {
+  const one = Bytes.new(1)
+  one.set(0, b)
+  return one.to_string()
 }
 
-// The buffer with `s` typed into the cursor's row at the pen: a new
-// rows array, the cursor's row grown at the pen, the other row carried,
-// the pen advanced by what was typed.
-def typed(m Model, s String) Model {
-  const row = m.row()
-  const nr = insert_at(m.rows()[row], m.col(), s)
-  var rows = m.rows()
-  if row == 0 {
-    rows = [nr, m.rows()[1]]
-  } else {
-    rows = [m.rows()[0], nr]
+// A row with its caret: the current row's bytes either side of the
+// ink, every other row as it stands. The buffer never carries the
+// caret — a save writes what the user typed.
+def shown_row(m Model, i Int64) String {
+  const r = m.rows()[i]
+  if i != m.row() {
+    return r
   }
-  return Model.new(rows: rows, row: row, col: m.col() + s.length(),
-    saver: m.saver())
+  return r.substring(0, m.col()) + "|" +
+    r.substring(m.col(), r.length() - m.col())
 }
 
-// The cursor's row changed to `row`, held to the buffer's own rows,
-// the pen carried and held inside the row it lands on.
-def moved(m Model, row Int64) Model {
-  var r = row
-  if r < 0 {
-    r = 0
+// The insertion at the caret; a row already at the bound refuses it.
+def inserted(m Model, s String) Model {
+  const r = m.rows()[m.row()]
+  if r.length() + s.length() > line_cap() {
+    return m
   }
-  if r >= m.rows().length() {
-    r = m.rows().length() - 1
-  }
-  return Model.new(rows: m.rows(), row: r, col: hold(m.rows()[r], m.col()),
-    saver: m.saver())
+  const next = r.substring(0, m.col()) + s +
+    r.substring(m.col(), r.length() - m.col())
+  return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
+    col: m.col() + s.length(), saver: m.saver())
 }
 
-def update(msg Msg, m Model) Model {
-  if msg == Msg.put_a {
-    println("put a")
-    return typed(m, "a")
+// Backspace: the byte before the caret, or — at the row's head — the
+// join with the row above, the caret landing where the two met.
+def backspaced(m Model) Model {
+  const r = m.rows()[m.row()]
+  if m.col() > 0 {
+    const next = r.substring(0, m.col() - 1) +
+      r.substring(m.col(), r.length() - m.col())
+    return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
+      col: m.col() - 1, saver: m.saver())
   }
-  if msg == Msg.put_b {
-    println("put b")
-    return typed(m, "b")
+  if m.row() > 0 {
+    const prev = m.rows()[m.row() - 1]
+    const joined = rows_with(m.rows(), m.row() - 1, prev + r)
+    return Model.new(rows: rows_cut(joined, m.row()), row: m.row() - 1,
+      col: prev.length(), saver: m.saver())
   }
-  if msg == Msg.save {
+  return m
+}
+
+// Delete: the byte under the caret, or — at the row's end — the join
+// with the row below, the caret staying where it is.
+def deleted(m Model) Model {
+  const r = m.rows()[m.row()]
+  if m.col() < r.length() {
+    const next = r.substring(0, m.col()) +
+      r.substring(m.col() + 1, r.length() - m.col() - 1)
+    return Model.new(rows: rows_with(m.rows(), m.row(), next), row: m.row(),
+      col: m.col(), saver: m.saver())
+  }
+  if m.row() < m.rows().length() - 1 {
+    const joined = rows_with(m.rows(), m.row(), r + m.rows()[m.row() + 1])
+    return Model.new(rows: rows_cut(joined, m.row() + 1), row: m.row(),
+      col: m.col(), saver: m.saver())
+  }
+  return m
+}
+
+// The caret's moves: within the row, across the rows' seams for the
+// horizontal pair, and clamped to the target row's length for the
+// vertical pair (the caret keeps its column from row to row where it
+// can, the editor convention).
+def moved(m Model, row Int64, col Int64) Model {
+  var c = col
+  const len = m.rows()[row].length()
+  if c > len {
+    c = len
+  }
+  return Model.new(rows: m.rows(), row: row, col: c, saver: m.saver())
+}
+
+def left(m Model) Model {
+  if m.col() > 0 {
+    return moved(m, m.row(), m.col() - 1)
+  }
+  if m.row() > 0 {
+    return moved(m, m.row() - 1, m.rows()[m.row() - 1].length())
+  }
+  return m
+}
+
+def right(m Model) Model {
+  if m.col() < m.rows()[m.row()].length() {
+    return moved(m, m.row(), m.col() + 1)
+  }
+  if m.row() < m.rows().length() - 1 {
+    return moved(m, m.row() + 1, 0)
+  }
+  return m
+}
+
+def up(m Model) Model {
+  if m.row() > 0 {
+    return moved(m, m.row() - 1, m.col())
+  }
+  return m
+}
+
+def down(m Model) Model {
+  if m.row() < m.rows().length() - 1 {
+    return moved(m, m.row() + 1, m.col())
+  }
+  return m
+}
+
+def update(key Int64, m Model) Model {
+  if key == key_save {
     println("save")
     m.saver().save(m.rows())
     return m
   }
-  if msg == Msg.newline {
+  if key == ui.key_enter() {
     println("newline")
-    return moved(m, m.row() + 1)
+    return down(m)
   }
-  if msg == Msg.left {
-    println("left")
-    return Model.new(rows: m.rows(), row: m.row(),
-      col: hold(m.rows()[m.row()], m.col() - 1), saver: m.saver())
+  if key == ui.key_backspace() {
+    println("back")
+    return backspaced(m)
   }
-  if msg == Msg.right {
-    println("right")
-    return Model.new(rows: m.rows(), row: m.row(),
-      col: hold(m.rows()[m.row()], m.col() + 1), saver: m.saver())
-  }
-  if msg == Msg.up {
-    println("up")
-    return moved(m, m.row() - 1)
-  }
-  if msg == Msg.down {
-    println("down")
-    return moved(m, m.row() + 1)
-  }
-  if msg == Msg.backspace {
-    println("backspace")
-    const row = m.row()
-    const col = m.col()
-    if col > 0 {
-      const nr = delete_at(m.rows()[row], col - 1)
-      var rows = m.rows()
-      if row == 0 {
-        rows = [nr, m.rows()[1]]
-      } else {
-        rows = [m.rows()[0], nr]
-      }
-      return Model.new(rows: rows, row: row, col: col - 1,
-        saver: m.saver())
-    }
-    return m
-  }
-  if msg == Msg.del {
+  if key == ui.key_delete() {
     println("del")
-    const row = m.row()
-    const col = m.col()
-    if col < m.rows()[row].length() {
-      const nr = delete_at(m.rows()[row], col)
-      var rows = m.rows()
-      if row == 0 {
-        rows = [nr, m.rows()[1]]
-      } else {
-        rows = [m.rows()[0], nr]
-      }
-      return Model.new(rows: rows, row: row, col: col, saver: m.saver())
-    }
-    return m
+    return deleted(m)
+  }
+  if key == ui.key_left() {
+    println("left")
+    return left(m)
+  }
+  if key == ui.key_right() {
+    println("right")
+    return right(m)
+  }
+  if key == ui.key_up() {
+    println("up")
+    return up(m)
+  }
+  if key == ui.key_down() {
+    println("down")
+    return down(m)
+  }
+  if key == ui.key_home() {
+    println("home")
+    return moved(m, m.row(), 0)
+  }
+  if key == ui.key_end() {
+    println("end")
+    return moved(m, m.row(), m.rows()[m.row()].length())
+  }
+  if key >= 32 && key <= 126 {
+    const s = char_of(key)
+    println("put ${s}")
+    return inserted(m, s)
   }
   return m
 }
 
 def view(reg ui.Registry, m Model) ui.Node {
-  // The tags are taken in statements of their own: `on` is a side
-  // effect, and this registration order is what fixes put_a, put_b,
-  // newline, save, left, right, up, down, backspace and del at tags 0
-  // through 9 on every run — the order the seat's key table and the
-  // golden's script both ride.
-  const put_a = reg.on(Msg.put_a)
-  const put_b = reg.on(Msg.put_b)
-  const newline = reg.on(Msg.newline)
-  const save = reg.on(Msg.save)
-  const left = reg.on(Msg.left)
-  const right = reg.on(Msg.right)
-  const up = reg.on(Msg.up)
-  const down = reg.on(Msg.down)
-  const backspace = reg.on(Msg.backspace)
-  const del = reg.on(Msg.del)
-  return ui.column([
-    ui.text(m.rows()[0], ui.style()),
-    ui.text(m.rows()[1], ui.style()),
-    ui.text("row ${m.row()} col ${m.col()}", ui.style())
-  ], ui.style().with_padding(12.0).with_gap(8.0))
+  const kids = ArrayBuilder.new()
+  var i = 0
+  while i < m.rows().length() {
+    kids.push(ui.text(shown_row(m, i), ui.style()))
+    i = i + 1
+  }
+  kids.push(ui.text("row ${m.row()} col ${m.col()}", ui.style()))
+  return ui.column(kids.to_array(),
+    ui.style().with_padding(12.0).with_gap(8.0))
 }

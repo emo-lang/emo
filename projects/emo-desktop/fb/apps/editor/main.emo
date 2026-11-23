@@ -11,9 +11,11 @@ require "emo/ui_fb_winbuf"
 // run of its own, builds this process's table off its own segments,
 // and enters it here. The session is the one the boot image's pass ran
 // (A10.3): a window of its own, the loop over the window buffer's
-// surface, the puts typing into the cursor's row and the newline
-// moving it — the quit key ends the loop, the window closed behind it,
-// the exit answering the parent's wait (`app editor 0`).
+// surface, the printable keys inserting at the caret, Backspace and
+// Delete erasing beside it, the arrows and Home/End moving it, Enter
+// stepping the rows — `Ctrl+S` saves and `Ctrl+Q` ends the loop
+// (A33.1), the window closed behind it, the exit answering the
+// parent's wait (`app editor 0`).
 
 // The interface strike, built once at boot: the Inter face at 16
 // pixels — the window's bar and the app's own labels draw in it.
@@ -39,17 +41,25 @@ def poke_str(s String, at Int64) Int64 {
   return b.length()
 }
 
-// The save (emo-desktop M25): the buffer's two rows whole onto the
-// volume as editor.txt, then the raise that tells the shell. The write
-// is the condition (a refused volume raises nothing — absence visible,
-// D15); the notification's title names the app and its body the save's
-// own words.
-def editor_save(r0 String, r1 String) Void {
+// The save (emo-desktop M25): the buffer's rows whole onto the volume
+// as editor.txt, the rows' own line breaks between them, then the
+// raise that tells the shell. The write is the condition (a refused
+// volume raises nothing — absence visible, D15); the notification's
+// title names the app and its body the save's own words.
+def editor_save(rows Array[String]) Void {
   const nl = poke_str("editor.txt", buf + 4096)
   poke_str("editor", buf + 4128)
   poke_str("editor.txt saved", buf + 4160)
-  var n = poke_str(r0, buf + 4224)
-  n = n + poke_str(r1, buf + 4224 + n)
+  var n = 0
+  var i = 0
+  while i < rows.length() {
+    if i > 0 {
+      poke8(buf + 4224 + n, 10B)
+      n = n + 1
+    }
+    n = n + poke_str(rows[i], buf + 4224 + n)
+    i = i + 1
+  }
   case syscall.file_write(buf + 4096, nl, buf + 4224, n) {
     (R.error, _) then {}
     (R.ok, _) then {
@@ -65,7 +75,7 @@ def editor_save(r0 String, r1 String) Void {
 // consumer of the seam that speaks the gate.
 class EditorSaver {
   def save(rows Array[String]) Void {
-    editor_save(rows[0], rows[1])
+    editor_save(rows)
   }
 }
 
@@ -126,16 +136,12 @@ def main() {
   ui_fb.paint(ui_apps.editor.view(reg0, ui_apps.editor.initial()), ch, fs)
   we.present()
   we.rise(fx, fy)
-  // the seat's key table (A33.1): the letters the editor types, the
-  // newline, the save, and the editing keys the kernel moves and cuts
-  // with — the order the view's registration fixes at tags 0 through 9
-  ui.run(ui_apps.editor.view, ui_apps.editor.update,
+  // the raw seat's keys are the editor's messages (A33.1): a printable
+  // byte inserts, the arrows and the editing keys move and erase,
+  // `Ctrl+S` saves, `Ctrl+Q` ends the loop — no tag table between
+  ui.run_raw(ui_apps.editor.view, ui_apps.editor.update,
     ui_apps.editor.initial_with(editor_saver()),
-    ui_fb.backend(ch,
-      ui_fb_winbuf.keys([97, 98, 10, 115, ui_fb_winbuf.key_left,
-        ui_fb_winbuf.key_right, ui_fb_winbuf.key_up, ui_fb_winbuf.key_down,
-        ui_fb_winbuf.key_backspace, ui_fb_winbuf.key_del],
-        we, fs, fx, fy, mw, mh), fs))
+    ui_fb.backend(ch, ui_fb_winbuf.keys_raw(we, fs, fx, fy, mw, mh), fs))
   we.sink(fx, fy)
   case syscall.win_close(ge) {
     (R.error, _) then { ui_fb_winbuf.mark() }

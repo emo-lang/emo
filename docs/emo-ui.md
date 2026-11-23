@@ -599,6 +599,15 @@ README's "reactivity primitives live in the standard library" is
 satisfied by these, and the "compiler optimizes to targeted refreshes"
 promise is a later pass over exactly those reads, not a hidden graph.
 
+A second loop shape skips the table: `run_raw` hands the backend's tag
+to `update` as the message itself. The table earns its place when
+messages are a small, stable set of values to look up; an application
+whose messages are already integers — a text editor's keys, one per
+byte and one per editing op — has nothing to turn, and a hundred-entry
+table deduplicated linearly on every render is the metal's arena gone.
+The view still receives a `Registry`, so both shapes keep one
+application signature. **Landed as `ui.run_raw` (emo-desktop A33.1).**
+
 The facts that bound this layer are honest caveats, not design choices:
 
 - **Two event loops.** On AppKit/GTK, `ui_run()` blocks in the toolkit's

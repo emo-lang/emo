@@ -153,6 +153,32 @@ own keeps the registration order visible at the call site. Operand order
 is no longer a cross-target variable — the language states left to
 right and every target obeys it (`CHECK.md`, `probe/eval_order`).
 
+### The raw loop
+
+```emo
+class RawApp {
+  def init(view Block, update Block, model Block, backend Backend)
+  def deliver(tag Int64) Void
+  def root() Node
+}
+
+def run_raw(view Block, update Block, model Block, backend Backend) Void
+```
+
+`run_raw` is the loop without the tag table: the backend's tag is the
+message, handed to `update` as it arrives. It exists for applications
+whose messages are already integers — a text editor's keys, one per
+byte and one per editing op — where a table of a hundred entries
+deduplicated linearly on every render would cost more than the frame
+paints on the metal. `view` still receives a `Registry`, so both loop
+shapes keep one application signature; an application that adds a
+button under `run_raw` registers it as `run`'s does. The key
+vocabulary the raw loop's backends and applications share — the
+printable bytes, the control chords, and the arrows' numbers above 255
+— is the core's: `key_backspace`, `key_tab`, `key_enter`, `key_quit`,
+`key_delete`, `key_left`, `key_right`, `key_up`, `key_down`, `key_home`
+and `key_end`.
+
 `run` builds the `App`, hands the first tree and the loop's `Events`
 sink to `backend.mount`, and then calls `backend.run()`.
 

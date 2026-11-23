@@ -115,9 +115,10 @@ win_line() {
 # sessions the metal's passes run — the launcher's exec order now: the
 # counter's tile (its session whole), the browser's tile, the editor's
 # the REPL's own exec command — on the hosted canvas, one `frame
-# <digest>` line per present: ten lines, the counter's mount and keys,
-# the browser's mount and keys, the editor's four; the exits close the
-# block as the desktop hears them (`desktop <name> exit 0`). The
+# <digest>` line per present: sixteen lines, the counter's mount and
+# keys, the browser's mount and keys, the editor's mount and its nine
+# keys (a, Enter, b, Left, Backspace, End, c, Home, Delete); the exits
+# close the block as the desktop hears them (`desktop <name> exit 0`). The
 # assertions below read that file the way they read the windows': the
 # frames in the file's order and the folds over each app's rectangle
 # of the display's screendumps at the beats the pointer is parked
@@ -139,11 +140,11 @@ for d in $apps_digests; do
       ;;
   esac
 done
-if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 10 ]; then
-  echo "run.sh: $apps_expected must carry ten 'frame <digest>' lines — the" >&2
+if [ "$(echo "$apps_digests" | wc -w | tr -d ' ')" -ne 16 ]; then
+  echo "run.sh: $apps_expected must carry sixteen 'frame <digest>' lines — the" >&2
   echo "  launcher's session is the counter's mount and its keys (add, sub)," >&2
-  echo "  the browser's mount and keys (down, open), and the editor's" >&2
-  echo "  (put, newline, put)" >&2
+  echo "  the browser's mount and keys (down, open), and the editor's mount" >&2
+  echo "  and its nine keys (a, Enter, b, Left, Backspace, End, c, Home, Delete)" >&2
   exit 1
 fi
 app_line() {
@@ -1736,9 +1737,9 @@ PYLOCK
   # second, each exec answered by `desktop <name> up`, the mount's
   # frame, the window's composition; the sessions the keys, each to
   # the window its mount focused. The exits are the stream's (EmoOS
-  # T8.19): the click raises a window, the q ends its pass, and the
-  # death rides the ring to the parent's ear — the dot out, the dock
-  # repainted, `desktop <name> exit 0` on the wire. The REPL beats
+  # T8.19): the click raises a window, the Ctrl+Q byte ends its pass,
+  # and the death rides the ring to the parent's ear — the dot out, the
+  # dock repainted, `desktop <name> exit 0` on the wire. The REPL beats
   # ride the dock's gap: a press there is the panel's focus and the
   # serial's bytes are the shell's — the focus the gate they pass, an
   # application's when its window holds it. The pointer parks at
@@ -1856,6 +1857,29 @@ PYLOCK
   sleep 1
   hmp 'screendump .trio.ppm'
   apps_is .trio.ppm 768 476 "$(app_line 3)" 374 238 "$(app_line 6)" 374 476 "$(app_line 10)" 16 700 "$(dock_line 7)" 'three up' 'doc:boot.txt,doc:hello.txt' 3 ''
+  # The editing kernel (A33.1): the caret's moves and the erasures —
+  # Left to the row's seam, Backspace joining the rows there, End, an
+  # in-line insert, Home, Delete — each state the hosted twin pins.
+  # The arrows and Home/End are the monitor's sendkey (the device half
+  # of the merged stream); the byte keys are the serial's.
+  hmp 'sendkey left'
+  await 'left'
+  await "frame $(app_line 11)"
+  printf '\b' >&3
+  await 'back'
+  await "frame $(app_line 12)"
+  hmp 'sendkey end'
+  await 'end'
+  await "frame $(app_line 13)"
+  printf 'c' >&3
+  await 'put c'
+  await "frame $(app_line 14)"
+  hmp 'sendkey home'
+  await 'home'
+  await "frame $(app_line 15)"
+  printf '\177' >&3
+  await 'del'
+  await "frame $(app_line 16)"
   # The bar's own hand (emo-desktop A16.5): a press beside the button
   # arms the drag, and the move-at's steps move the window with the
   # pointer — the seat's own win_move per step, the even x the blit's
@@ -1919,8 +1943,8 @@ PYLOCK
   btn true
   btn false
   await 'comp 768 476'
-  # the menu's own Quit: the session's end the q byte spoke before it,
-  # the sink and the close behind it
+  # the menu's own Quit: the session's end the Ctrl+Q byte speaks in
+  # the seats, the sink and the close behind it
   abs 13346 14810
   btn true
   btn false
@@ -1940,14 +1964,14 @@ PYLOCK
   btn true
   btn false
   sleep 1
-  printf 'q' >&3
+  printf '\021' >&3
   await 'desktop files exit 0'
   await 'comp 0 0'
   abs 6827 15171
   btn true
   btn false
   sleep 1
-  printf 'q' >&3
+  printf '\021' >&3
   await 'desktop editor exit 0'
   await 'comp 0 0'
   abs 274 21239
@@ -1998,7 +2022,7 @@ PYLOCK
   btn true
   btn false
   sleep 1
-  printf 'q' >&3
+  printf '\021' >&3
   await_count 'desktop counter exit 0' 2
   sleep 1
   abs 1895 364
@@ -2114,7 +2138,7 @@ PYLOCK
   await_count 'sub 0' 2
   abs 274 21239
   sleep 1
-  printf 'q' >&3
+  printf '\021' >&3
   await_count 'desktop counter exit 0' 3
   # the lock's session: the face the whole display, the wrong secret
   # the line's clear, the right one the lift
@@ -2203,7 +2227,7 @@ PYLOCK
   await 'comp 0 0'
   # ---- the notification center (emo-desktop M25, A25.3) ----
   #
-  # The editor's `s` byte is its save: the buffer's two rows onto the
+  # The editor's `Ctrl+S` byte is its save: the buffer's rows onto the
   # volume, then the gate's verb 27. The editor's own quit is the wake
   # the shell's take rides — the desk loop's poll runs before the exit
   # is handled, so the card (the shell's toplevel, the card's own size)
@@ -2220,9 +2244,9 @@ PYLOCK
   await_count 'desktop editor up' 2
   printf 'a' >&3
   await_count 'put a' 2
-  printf 's' >&3
+  printf '\023' >&3
   await_count 'save' 1
-  printf 'q' >&3
+  printf '\021' >&3
   sleep 1
   await_count 'desktop editor exit 0' 2
   await "frame $notify_card"
@@ -2255,9 +2279,9 @@ PYLOCK
   await_count 'desktop editor up' 3
   printf 'a' >&3
   await_count 'put a' 3
-  printf 's' >&3
+  printf '\023' >&3
   await_count 'save' 2
-  printf 'q' >&3
+  printf '\021' >&3
   sleep 1
   await_count 'desktop editor exit 0' 3
   await "frame $notify_panel2"
