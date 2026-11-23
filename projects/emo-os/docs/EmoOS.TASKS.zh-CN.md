@@ -64,6 +64,14 @@ C 程序里的 `dir` 是真类型条目;shell 与桌面一直在写的 `a/one.tx
 
 真机证明:桌面启动写出 `comp 0 0 884125748`(金测的壁纸引脚)、`desktop icons 2`、`desktop apps 5`;`write note.txt shell wrote this` 答 `frame 624477878`,`write a/one.txt first inside` 答 `frame 1586168726`——两个都是金测的引脚,类型化视图的像素与前缀视图一致。文件夹 screendump 自己的金测运行仍是引脚(这里没跑)。
 
+### T1.3 的记录(2026-11-23)
+
+arena 是进程的 64 KiB 运行,由 `space.build` 映射在它的物理身份上;build 知道子进程的 pid,直接把它按 pid 的单元(proc 页的后半,`0x8700d800`)写成 base/end 的页号——没有服务拷贝,也没有共享单元可赛跑。动词 46 `arena_info` 答调用者的单元。C 库的 `mem_init` 解页号;`brk`/`sbrk`/`malloc`/`free`/`realloc`/`mmap`/`munmap`/`mprotect` 都建在它的 bump 分配器上;`munmap` 与 `mprotect` 是 arena 的空操作,越过末尾的写仍是原来的缺页。
+
+路上发现:最初的打包把物理地址放进各自的一半——arena 的第 31 位让 ecall 的应答变成负数,shim 把它读成路由,合成器说 `the verb is nobody's (24)`。现在打包的是页号(base 高 20 位,end 低 20 位)。
+
+真机证明:`chello.elf`(20,376 字节)在 `stat ok`、`read back: fd table on EmoOS`、`fd table cleaned`、`path ok`、`dir listing ok`、`rename ok`、`vfs cleaned` 之后答 `heap ok` 与 `mmap ok`;调试运行的 arena base 是 `0x84550000`,`sbrk(0)` 答它。
+
 ### M1——POSIX 底座(内核与库)
 
 每个 C 程序站立的那一层。任务只在第一个消费者提出时落地,但顺序就是依赖顺序。
@@ -74,7 +82,8 @@ C 程序里的 `dir` 是真类型条目;shell 与桌面一直在写的 `a/one.tx
 - [x] **T1.2**——C 库的路径层:根、相对与绝对路径、`.` 与 `..`、进程的 `cwd`、`mkdir`/`rmdir`/`stat`/`rename`、`opendir`/`readdir`/`closedir`,都建在卷的平铺名字上。目录就是标记名 `dir/` 与它前缀下的名字;24 字节的平铺名上界就是切法,更长的路径答 `ENAMETOOLONG`。
 - [x] **T1.2k**——服务里的真目录条目:名字条目 `+56` 的类型字(0 文件、1 目录)、`path_type`/`mkdir`/`rmdir` 作为动词 42..44,C 库改用它们。隐式目录——前缀下的名字——仍答为目录,所以平铺年代的卷继续可用。
 - [x] **T1.2d**——桌面的类型化列举:动词 45 `list_dir` 带类型字节,图标与文件夹视图读它,`desk_view_build` 的前缀分组退休。启动器 `.elf` 目录仍读平铺列表。金测自己的运行是剩下的引脚;启动壁纸与两个写节拍的 frame 摘要已手动对上。
-- [ ] **T1.3**——内存:进程 arena 上的 `brk` 与匿名私有 `mmap`/`munmap`/`mprotect`;越界访问仍是今天的击杀。
+- [x] **T1.3**——内存:进程 64 KiB arena 上的 `brk`/`sbrk` 与匿名私有 `mmap`/`munmap`/`mprotect`。动词 46 以页号暴露 arena 的 base/end;C 库的 bump 分配器拥有 break,`munmap` 与 `mprotect` 是 arena 的空操作,越过 arena 的写仍是原来的缺页。
+- [ ] **T1.3k**——arena 的增长:超过 64 KiB 的 `brk`/`mmap` 向内核要帧并扩展进程的表;固定 arena 是这一刀的边界。
 - [ ] **T1.4**——进程:`exec` 时的 `argv`/`envp`,`fork`(复制地址空间;COW 是后续优化)、`execve`、`wait4` 状态字、进程组。
 - [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
 - [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。

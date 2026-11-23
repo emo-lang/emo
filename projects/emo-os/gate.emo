@@ -270,6 +270,10 @@ const route_notify_take = -1028
 // 29 is the gate's, no service between — the board's RTC, two loads.
 const route_poweroff = -103
 const route_heap_gone = -104
+// The arena's per-pid cell (T1.3): the process and exec services park
+// the child's packed base/end there; arena_info answers the caller's.
+const arena_for = koff + 0x8700d800
+const arena_bound = 256
 
 // The write permission, ELF p_flags' bit 1 (X=1, W=2, R=4).
 const flag_w = 2
@@ -1218,6 +1222,15 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   }
   if n == 29 {
     return rtc_seconds()
+  }
+  if n == 46 {
+    // arena_info(): the caller's arena, base in the high 32 bits and
+    // end in the low; 0 for a process with none (the boot pass).
+    var me2 = peek64(handoff_caller)
+    if me2 >= arena_bound {
+      return 0
+    }
+    return peek64(arena_for + (me2 * 8))
   }
   if n == 4 {
     var me = peek64(handoff_caller)

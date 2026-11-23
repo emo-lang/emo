@@ -91,6 +91,7 @@ undocumented ever acts.
 | 43 | `mkdir(name, name_len)` | the name becomes an explicit directory — the type word at the entry's `+56`; the parent must be a directory, an existing name (file, directory or implicit prefix) is refused; answers 0 |
 | 44 | `rmdir(name, name_len)` | the explicit directory removed; it must be empty — a name under its prefix refuses; answers 0 |
 | 45 | `list_dir(name, name_len, buf, cap)` | the named directory's immediate children, each a type byte (0 file, 1 directory), a length byte and the name, deduped in the name table's order; the implicit directories are included, the root is the empty name; answers the bytes written (EmoOS plan B, T1.2d) |
+| 46 | `arena_info()` | the caller's arena, the base and end as page numbers — base in the high 20 bits, end in the low 20, the physical identities the image's own table maps; 0 for a process with none (the boot pass). The library's `brk`/`mmap` live inside it (EmoOS plan B, T1.3) |
 
 The fd and path verbs share the filesystem's four request slots; the
 slot's `+88` marker selects the open-file table and the path calls,

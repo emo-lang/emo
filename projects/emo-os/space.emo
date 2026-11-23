@@ -94,6 +94,11 @@ const block = 65536
 // and the space word at 872 the build answers into (the stride 888).
 const slot_arena_base = 880
 const slot_arena_end = 584
+// The arena's per-pid cell (T1.3): the build writes the child's own
+// here — the base/end page numbers packed, the gate's arena_info
+// answering them. The proc page's second half.
+const arena_for = koff + 0x8700d800
+const arena_bound = 256
 const slot_stack = 864
 const slot_space = 872
 
@@ -307,6 +312,15 @@ def build(slot Int64) Void {
   }
   var arena = sv39.pa_of(peek64(slot + slot_arena_base))
   top = sv39.pa_of(peek64(slot + slot_arena_end))
+  // The child's arena (T1.3): the page numbers, not the addresses —
+  // the RAM's bases carry bit 31, and a packed word's sign would read
+  // as a route at the ecall's return. The build knows the child's
+  // pid, so the cell is written here and no service copies it.
+  var bpid = peek64(slot + 8)
+  if bpid < arena_bound {
+    poke64(arena_for + (bpid * 8),
+      ((arena >> 12) << 20) | ((top >> 12) & 1048575))
+  }
   va = arena
   while va < top {
     map_page(root, va, va, rwu)

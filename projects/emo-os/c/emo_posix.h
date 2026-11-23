@@ -36,6 +36,7 @@
 #define EMO_ERANGE 34
 #define EMO_ENAMETOOLONG 36
 #define EMO_ENOTEMPTY 39
+#define EMO_ENOMEM 12
 
 #define EMO_PATH_MAX 24
 #define EMO_DIR_LIST 2048
@@ -81,5 +82,20 @@ int stat(const char *path, struct emo_stat *st);
 EMO_DIR *opendir(const char *path);
 struct emo_dirent *readdir(EMO_DIR *d);
 int closedir(EMO_DIR *d);
+
+// The arena's memory surface (EmoOS plan B, T1.3): brk/sbrk and the
+// anonymous private mmap live inside the process's 64 KiB arena, which
+// the kernel exposes with arena_info; munmap is the bump allocator's
+// no-op and mprotect answers 0. A write past the arena's end is the
+// page fault it always was.
+void *malloc(unsigned long n);
+void free(void *p);
+void *realloc(void *p, unsigned long n);
+void *sbrk(long n);
+int brk(void *addr);
+void *mmap(void *addr, unsigned long len, int prot, int flags, int fd,
+           long off);
+int munmap(void *addr, unsigned long len);
+int mprotect(void *addr, unsigned long len, int prot);
 
 #endif

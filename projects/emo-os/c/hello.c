@@ -16,6 +16,8 @@ static char dir_ok[] = "dir listing ok\n";
 static char dir_bad[] = "dir listing bad\n";
 static char rename_ok[] = "rename ok\n";
 static char vfs_clean[] = "vfs cleaned\n";
+static char heap_ok[] = "heap ok\n";
+static char mmap_ok[] = "mmap ok\n";
 
 static int streq(const char *a, const char *b) {
   int i = 0;
@@ -123,5 +125,28 @@ int main(void) {
     return 14;
   }
   write(1, vfs_clean, sizeof(vfs_clean) - 1);
+
+  // ---- the arena (T1.3): brk/sbrk and an anonymous mmap.
+  if ((long)sbrk(0) <= 0) {
+    write(2, "brk failed\n", 11);
+    return 15;
+  }
+  void *hp = malloc(1000);
+  if (hp == 0) {
+    write(2, "malloc failed\n", 14);
+    return 16;
+  }
+  ((char *)hp)[0] = 'M';
+  ((char *)hp)[999] = 'S';
+  void *mp = mmap(0, 4096, 0, 0, -1, 0);
+  if ((long)mp < 0) {
+    write(2, "mmap failed\n", 12);
+    return 17;
+  }
+  ((char *)mp)[0] = 'Q';
+  write(1, heap_ok, sizeof(heap_ok) - 1);
+  write(1, mmap_ok, sizeof(mmap_ok) - 1);
+  free(hp);
+  munmap(mp, 4096);
   return 0;
 }

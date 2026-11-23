@@ -21,6 +21,10 @@ static char cwd[EMO_PATH_MAX + 1] = "/";
 static char list_buf[EMO_DIR_LIST];
 static struct emo_dirent dirent;
 static EMO_DIR dirs[2];
+static char *heap_base;
+static char *heap_cur;
+static char *heap_end;
+static int heap_ready;
 
 static int reason_errno(long answer) {
   if (answer == -6) {
@@ -748,5 +752,144 @@ int closedir(EMO_DIR *d) {
     return -1;
   }
   d->used = 0;
+  return 0;
+}
+
+// ---- the arena's memory (EmoOS plan B, T1.3) ----
+
+static void mem_init(void) {
+  if (heap_ready) {
+    return;
+  }
+  heap_ready = 1;
+  long info = emo_arena_info();
+  if (info <= 0) {
+    return;
+  }
+  // The gate packs the arena's base and end page numbers: base in the
+  // high 20 bits, end in the low 20 — an address's bit 31 would make
+  // the answer look like a route.
+  heap_base = (char *)(long)((info >> 20) << 12);
+  heap_end = (char *)(long)((info & 1048575) << 12);
+  heap_cur = heap_base;
+}
+
+void *sbrk(long n) {
+  mem_init();
+  if (heap_base == 0) {
+    errno = EMO_ENOMEM;
+    return (void *)-1;
+  }
+  if (n == 0) {
+    return heap_cur;
+  }
+  long next = (long)heap_cur + n;
+  if (next < (long)heap_base || next > (long)heap_end) {
+    errno = EMO_ENOMEM;
+    return (void *)-1;
+  }
+  char *old = heap_cur;
+  heap_cur = (char *)next;
+  return old;
+}
+
+int brk(void *addr) {
+  mem_init();
+  if (heap_base == 0) {
+    errno = EMO_ENOMEM;
+    return -1;
+  }
+  long a = (long)addr;
+  if (a < (long)heap_base || a > (long)heap_end) {
+    errno = EMO_ENOMEM;
+    return -1;
+  }
+  heap_cur = (char *)a;
+  return 0;
+}
+
+void *malloc(unsigned long n) {
+  mem_init();
+  if (heap_base == 0) {
+    errno = EMO_ENOMEM;
+    return 0;
+  }
+  unsigned long need = (n + 16 + 15) & ~15UL;
+  if (heap_cur + need > heap_end) {
+    errno = EMO_ENOMEM;
+    return 0;
+  }
+  char *p = heap_cur;
+  heap_cur = heap_cur + need;
+  ((long *)p)[0] = (long)n;
+  return p + 16;
+}
+
+void free(void *p) {
+  (void)p;
+}
+
+void *realloc(void *p, unsigned long n) {
+  if (p == 0) {
+    return malloc(n);
+  }
+  if (n == 0) {
+    free(p);
+    return 0;
+  }
+  long old = ((long *)p)[-2];
+  char *q = malloc(n);
+  if (q == 0) {
+    return 0;
+  }
+  unsigned long k = (unsigned long)old;
+  if (k > n) {
+    k = n;
+  }
+  unsigned long i = 0;
+  while (i < k) {
+    q[i] = ((char *)p)[i];
+    i = i + 1;
+  }
+  return q;
+}
+
+void *mmap(void *addr, unsigned long len, int prot, int flags, int fd,
+           long off) {
+  (void)addr;
+  (void)prot;
+  (void)flags;
+  (void)fd;
+  (void)off;
+  mem_init();
+  if (heap_base == 0 || len == 0) {
+    errno = EMO_EINVAL;
+    return (void *)-1;
+  }
+  unsigned long cur = ((unsigned long)heap_cur + 4095) & ~4095UL;
+  if (cur + len > (unsigned long)heap_end) {
+    errno = EMO_ENOMEM;
+    return (void *)-1;
+  }
+  char *p = (char *)cur;
+  heap_cur = p + len;
+  unsigned long i = 0;
+  while (i < len) {
+    p[i] = 0;
+    i = i + 1;
+  }
+  return p;
+}
+
+int munmap(void *addr, unsigned long len) {
+  (void)addr;
+  (void)len;
+  return 0;
+}
+
+int mprotect(void *addr, unsigned long len, int prot) {
+  (void)addr;
+  (void)len;
+  (void)prot;
   return 0;
 }

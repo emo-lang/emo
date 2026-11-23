@@ -109,4 +109,11 @@ static inline long emo_rmdir(const void *name, unsigned long nlen) {
   return emo_ecall(44, (long)name, (long)nlen, 0, 0, 0, 0);
 }
 
+// Verb 46: the caller's arena, base in the high 32 bits and end in
+// the low; 0 for a process with none. The library's brk/mmap live
+// inside it (T1.3).
+static inline long emo_arena_info(void) {
+  return emo_ecall(46, 0, 0, 0, 0, 0, 0);
+}
+
 #endif

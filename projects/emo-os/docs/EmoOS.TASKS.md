@@ -191,6 +191,30 @@ the golden's pins, the typed view's pixels identical to the prefix
 view's. The folder screendump's own golden run remains the pin (not
 run here).
 
+### T1.3's record (2026-11-23)
+
+The arena is the process's 64 KiB run, mapped at its physical identity
+by `space.build`; the build writes the child's per-pid cell (the proc
+page's second half, `0x8700d800`) with the base/end page numbers —
+the build knows the child's pid, so no service copies it and no
+shared cell races. Verb 46 `arena_info` answers the caller's cell.
+The C library's `mem_init` decodes the page numbers;
+`brk`/`sbrk`/`malloc`/`free`/`realloc`/`mmap`/`munmap`/`mprotect` live
+on its bump allocator; `munmap` and `mprotect` are the arena's
+no-ops, and a write past the end is the page fault it always was.
+
+Found on the way: the first pack put the physical addresses in their
+own halves — the arena's bit 31 made the ecall answer negative, the
+shim read it as a route, and the compositor said `the verb is
+nobody's (24)`. The pack is page numbers now (base in the high 20
+bits, end in the low 20).
+
+The metal proof: `chello.elf` (20,376 bytes) answered `heap ok` and
+`mmap ok` after `stat ok`, `read back: fd table on EmoOS`, `fd table
+cleaned`, `path ok`, `dir listing ok`, `rename ok`, `vfs cleaned`;
+the debug run's arena base was `0x84550000` and `sbrk(0)` answered
+it.
+
 ### M1 — the POSIX substrate (the kernel and the library)
 
 The layer every C program stands on. Tasks land only as their first
@@ -228,9 +252,14 @@ consumer asks, but the order is the dependency order.
   `.elf` catalog still reads the flat list. The golden's own run is
   the remaining pin; the boot's wallpaper and both write beats'
   frame digests matched by hand.
-- [ ] **T1.3** — Memory: `brk` and anonymous private `mmap`/`munmap`/
-  `mprotect` over the process arena; a fault past the mapping is the
-  kill it is today.
+- [x] **T1.3** — Memory: `brk`/`sbrk` and anonymous private `mmap`/
+  `munmap`/`mprotect` over the process's 64 KiB arena. Verb 46
+  exposes the arena's base/end as page numbers; the C library's bump
+  allocator owns the break, `munmap` and `mprotect` are the arena's
+  no-ops, and a write past the arena is the page fault it always was.
+- [ ] **T1.3k** — The arena's growth: `brk`/`mmap` past the 64 KiB ask
+  the kernel for frames and extend the process's table; the fixed
+  arena is this cut's bound.
 - [ ] **T1.4** — Process: `argv`/`envp` at `exec`, `fork` (copy the
   address space; COW is a later optimization), `execve`, `wait4`
   status words, process groups.
