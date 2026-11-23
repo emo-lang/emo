@@ -21,6 +21,13 @@ def is_builtin(name String) Bool {
     || name == "kill" || name == "break" || name == "continue" || name == "return"
 }
 
+// The builtin roster, the editor's completion reading it — the same
+// names is_builtin answers to.
+def names() Array[String] {
+  return ["cd", "pwd", "echo", "exit", "export", "unset", "true", "false",
+    "jobs", "fg", "bg", "wait", "kill", "break", "continue", "return"]
+}
+
 // One builtin, its words already expanded; the answer is the exit
 // status.
 def run(sh shell.Shell, words Array[String]) Int64 {

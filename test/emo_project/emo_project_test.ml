@@ -2704,6 +2704,17 @@ let cc_works =
    and the exit status it must leave with (the `.exit` file); the run
    happens from the project's own directory, the scratch files a
    fixture touches being its own to create and remove. *)
+(* Whether the needle rides anywhere in the haystack — the editor
+   goldens' invariant checks (the rendering is hundreds of ANSI bytes;
+   the accepted lines and the redraw marks are what the pins speak). *)
+let contains_sub (haystack : string) (needle : string) : bool =
+  let n = String.length needle in
+  let rec has i =
+    if i + n > String.length haystack then false
+    else String.sub haystack i n = needle || has (i + 1)
+  in
+  has 0
+
 let emosh_golden_tests =
   [
     tc
@@ -2819,6 +2830,55 @@ let emosh_golden_tests =
             Alcotest.(check int)
               (tag ^ " dash exit") 5
               (match status with Unix.WEXITED n -> n | _ -> -1);
+            (* The line editor: EMOSH_ASSUME_TTY runs the editor's keys
+               and rendering over a pipe — the goldens drive it by its
+               bytes, the state file riding the scratch so no probe
+               touches the user's real history. *)
+            let ed tag printf_args checks want_exit =
+              let out, _, status =
+                Emo_test_support.run_cmd
+                  (Printf.sprintf
+                     "exec 2>&1; EMO_STATE_DIR=%s EMOSH_ASSUME_TTY=1 printf %s | %s"
+                     (Filename.quote scratch)
+                     printf_args
+                     (Filename.quote bin))
+              in
+              List.iter
+                (fun (what, needle) ->
+                  if what = "has" then begin
+                    if not (contains_sub out needle) then
+                      Alcotest.fail
+                        (tag ^ ": missing " ^ String.escaped needle)
+                  end
+                  else if contains_sub out needle then
+                    Alcotest.fail
+                      (tag ^ ": unexpected " ^ String.escaped needle))
+                checks;
+              Alcotest.(check int)
+                (tag ^ " exit") want_exit
+                (match status with Unix.WEXITED n -> n | _ -> -1)
+            in
+            ed "ed-eof" "'\004'"
+              [ ("has", "emosh> \027[2K\remosh> \n") ]
+              0;
+            ed "ed-run" "'echo hi\r\004'"
+              [ ("has", "hi\n"); ("has", "\027[2K") ]
+              0;
+            ed "ed-backspace" "'echo abc\177\177\177xyz\r\004'"
+              [ ("has", "xyz\n") ]
+              0;
+            ed "ed-ctrlc" "'echo bad\003echo good\r\004'"
+              [ ("has", "good\n") ]
+              0;
+            ed "ed-history-seed" "'echo past\r\004'"
+              [ ("has", "past\n") ]
+              0;
+            ed "ed-history-recall" "'\033[A\r\004'"
+              [ ("has", "past\n") ]
+              0;
+            let hist = Emo_project.read_file (Filename.concat scratch "state2/emosh-history") in
+            if not (contains_sub hist "echo past\n") then
+              Alcotest.fail "the history file lost the session's line";
             run_args (tag ^ " positionals") bin
               "-c 'echo count:$#; echo $@' nm a b" "count:2\na b\n" 0;
             run_args (tag ^ " c-open-block") bin "-c 'if true {'"

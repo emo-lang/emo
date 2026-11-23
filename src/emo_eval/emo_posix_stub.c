@@ -26,6 +26,7 @@
 #include <time.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,6 +61,81 @@ CAMLprim value emo_stub_waitpid_nohang(value v_pid) {
      and none has exited yet — then the kernel's own status word */
   v_result = caml_alloc_2(0, Val_int((int)r), Val_int(st));
   CAMLreturn(v_result);
+}
+
+/* The terminal tier: tty_raw puts the descriptor's terminal into raw
+   mode — cfmakeraw, the portable door on macOS and glibc/musl alike —
+   and answers the state that was there as opaque words, one int per
+   eight bytes of the kernel's struct termios; tty_restore hands the
+   words back. The blob answers to the same runtime that made it (the
+   interp's and the c target's encodings never cross), the bytes read
+   nowhere outside the pair, so the shell's editor restores exactly
+   what it saved. Failures raise the Unix error whose reason os_result
+   spells byte-identically with the c runtime's emo_os_fail. */
+
+static void emo_tty_raw_setup(int fd, struct termios *saved) {
+  struct termios t;
+  if (tcgetattr(fd, &t) != 0) unix_error(errno, "tty_raw", Nothing);
+  *saved = t;
+  cfmakeraw(&t);
+  if (tcsetattr(fd, TCSADRAIN, &t) != 0)
+    unix_error(errno, "tty_raw", Nothing);
+}
+
+#define EMO_TERMIOS_WORDS ((int)((sizeof(struct termios) + 7) / 8))
+
+static void emo_tty_words_of(const struct termios *t, int64_t *out) {
+  unsigned char bytes[sizeof(struct termios)];
+  memcpy(bytes, t, sizeof(struct termios));
+  for (int i = 0; i < EMO_TERMIOS_WORDS; i++) {
+    int lo = i * 8;
+    int span = (int)sizeof(struct termios) - lo < 8
+                   ? (int)sizeof(struct termios) - lo
+                   : 8;
+    int64_t w = 0;
+    memcpy(&w, bytes + lo, (size_t)span);
+    out[i] = w;
+  }
+}
+
+static void emo_tty_words_into(const int64_t *words, struct termios *t) {
+  unsigned char bytes[sizeof(struct termios)];
+  memset(bytes, 0, sizeof bytes);
+  for (int i = 0; i < EMO_TERMIOS_WORDS; i++) {
+    int lo = i * 8;
+    int span = (int)sizeof(struct termios) - lo < 8
+                   ? (int)sizeof(struct termios) - lo
+                   : 8;
+    memcpy(bytes + lo, &words[i], (size_t)span);
+  }
+  memcpy(t, bytes, sizeof(struct termios));
+}
+
+CAMLprim value emo_stub_tty_raw(value v_fd) {
+  CAMLparam1(v_fd);
+  CAMLlocal1(v_result);
+  struct termios saved;
+  emo_tty_raw_setup(Int_val(v_fd), &saved);
+  int64_t words[EMO_TERMIOS_WORDS];
+  emo_tty_words_of(&saved, words);
+  v_result = caml_alloc(EMO_TERMIOS_WORDS, 0);
+  for (int i = 0; i < EMO_TERMIOS_WORDS; i++)
+    Store_field(v_result, i, caml_copy_int64(words[i]));
+  CAMLreturn(v_result);
+}
+
+CAMLprim value emo_stub_tty_restore(value v_fd, value v_words) {
+  CAMLparam2(v_fd, v_words);
+  if ((int)Wosize_val(v_words) != EMO_TERMIOS_WORDS)
+    unix_error(EINVAL, "tty_restore", Nothing);
+  int64_t words[EMO_TERMIOS_WORDS];
+  for (int i = 0; i < EMO_TERMIOS_WORDS; i++)
+    words[i] = Int64_val(Field(v_words, i));
+  struct termios t;
+  emo_tty_words_into(words, &t);
+  if (tcsetattr(Int_val(v_fd), TCSADRAIN, &t) != 0)
+    unix_error(errno, "tty_restore", Nothing);
+  CAMLreturn(Val_int(0));
 }
 
 CAMLprim value emo_stub_monotonic_ns(value v_unit) {

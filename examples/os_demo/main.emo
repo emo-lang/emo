@@ -135,6 +135,19 @@ case os.waitpid_nohang(sleeper) {
   (R.ok, _)     then { println("unexpected ok") }
 }
 
+// ---- the terminal tier: a pipe refuses, the same bytes everywhere ----
+const (R.ok, (tty_read, tty_write)) = os.pipe()
+case os.tty_raw(tty_read) {
+  (R.error, why) then { println(why) }
+  (R.ok, _)        then { println("unexpected ok") }
+}
+case os.tty_restore(tty_read, [0, 0, 0]) {
+  (R.error, why) then { println(why) }
+  (R.ok, _)      then { println("unexpected ok") }
+}
+os.close(tty_read)
+os.close(tty_write)
+
 // ---- process identity ----
 println(os.getpid() != os.getppid())
 println(os.getcwd().length() > 0)

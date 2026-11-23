@@ -118,6 +118,25 @@ def setpgid(pid Int64, pgid Int64) (R, Int64) {
   return os_setpgid(pid, pgid)
 }
 
+// Puts the descriptor's terminal into raw mode and answers the state
+// that was there — the words tty_restore hands back — or the errno
+// reason as a value: a pipe or a regular file refuses with ENOTTY,
+// the same bytes on every target. Raw means one read one byte as
+// typed: no echo, no line discipline, no signal generation — the
+// line editor's own reading. The caller restores before any command
+// runs, so children keep the classic cooked terminal.
+def tty_raw(fd Int64) (R, Array[Int64]) {
+  return os_tty_raw(fd)
+}
+
+// Hands the terminal its saved words back. The blob answers to the
+// same runtime that made it — an opaque round trip, its words never
+// read outside the pair — and a foreign descriptor refuses with the
+// errno reason as a value.
+def tty_restore(fd Int64, saved Array[Int64]) (R, Int64) {
+  return os_tty_restore(fd, saved)
+}
+
 def pipe() (R, (Int64, Int64)) {
   return os_pipe()
 }

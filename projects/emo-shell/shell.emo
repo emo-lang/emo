@@ -156,6 +156,12 @@ class Shell {
     self.last_status = Box.new(0)
     self.running = Box.new(true)
     self.reader = Box.new(bufio.reader(bufio.fd_reader(read_fd)))
+    self.history = Box.new(ArrayBuilder.new().to_array())
+    self.assume_tty = false
+    case os.getenv("EMOSH_ASSUME_TTY") {
+      (R.ok, _) then { self.assume_tty = true }
+      (R.error, _) then {}
+    }
   }
 
   // ---- the three writers ----
@@ -423,6 +429,43 @@ class Shell {
       }
     }
     return (R.error, "no such function")
+  }
+
+  // The function roster's names, the editor's completion reading
+  // them — the driver refreshes the editor's box before every read.
+  def func_names() Array[String] {
+    const taken = self.funcs.read()
+    const names = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      names.push(taken[k].name)
+    }
+    return names.to_array()
+  }
+
+  // ---- the typed-line history ----
+
+  // One accepted line joins the tail (an empty line never does —
+  // there is nothing to recall in it).
+  def history_add(line String) Void {
+    if line != "" {
+      const taken = self.history.read()
+      const fresh = ArrayBuilder.new()
+      for var k = 0; k < taken.length(); k = k + 1 {
+        fresh.push(taken[k])
+      }
+      fresh.push(line)
+      self.history.replace(fresh.to_array())
+    }
+  }
+
+  def history_lines() Array[String] {
+    return self.history.read()
+  }
+
+  // A session's opening move: the file's lines take the table's
+  // place, the recall now reaching before this session's first line.
+  def history_load(lines Array[String]) Void {
+    self.history.replace(lines)
   }
 
   // ---- the positionals ($1.., $#, $@) ----

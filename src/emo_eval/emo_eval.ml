@@ -651,6 +651,10 @@ let global_env () =
     { bound = RuntimeImplFn "os_kill"; mutable_ = false };
   Frame_tbl.replace env.frame "os_setpgid"
     { bound = RuntimeImplFn "os_setpgid"; mutable_ = false };
+  Frame_tbl.replace env.frame "os_tty_raw"
+    { bound = RuntimeImplFn "os_tty_raw"; mutable_ = false };
+  Frame_tbl.replace env.frame "os_tty_restore"
+    { bound = RuntimeImplFn "os_tty_restore"; mutable_ = false };
   Frame_tbl.replace env.frame "time_now_ms"
     { bound = RuntimeImplFn "time_now_ms"; mutable_ = false };
   Frame_tbl.replace env.frame "time_mono_ns"
@@ -2036,6 +2040,9 @@ let expect_raise span message = net_raise span message
 external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
 external emo_stub_waitpid_nohang : int -> int * int = "emo_stub_waitpid_nohang"
+external emo_stub_tty_raw : int -> int64 array = "emo_stub_tty_raw"
+external emo_stub_tty_restore : int -> int64 array -> unit
+  = "emo_stub_tty_restore"
 external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
 
 external emo_stub_sendmsg_fd : int -> string -> int -> int
@@ -4666,6 +4673,35 @@ and apply_runtime_impl span name args =
     | "os_waitpid_nohang", vs ->
         error span "E3007"
           (Printf.sprintf "`os_waitpid_nohang` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_tty_raw", [ Int64 fd ] ->
+        os_result span (fun () ->
+            (* The stub answers the saved state as opaque words — one
+               per eight bytes of the kernel's struct termios — and
+               raises the Unix error on a foreign descriptor, whose
+               reason os_result spells byte-identically with the c
+               runtime's emo_os_fail. *)
+            Array
+              (Array.map (fun w -> Int64 w) (emo_stub_tty_raw (Int64.to_int fd))))
+    | "os_tty_raw", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_tty_raw` expects (fd Int64), got %d"
+             (List.length vs))
+    | "os_tty_restore", [ Int64 fd; Array words ] ->
+        os_result span (fun () ->
+            (* The words go back opaque: the same runtime that saved
+               them unpacks them, the blob's shape never read outside
+               the pair. *)
+            let ints =
+              Array.map
+                (function Int64 w -> w | _ -> 0L)
+                words
+            in
+            emo_stub_tty_restore (Int64.to_int fd) ints;
+            Int64 0L)
+    | "os_tty_restore", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_tty_restore` expects (fd Int64, saved Array Int64), got %d"
              (List.length vs))
     | "os_kill", [ Int64 pid; Int64 sig_no ] ->
         (* The classic range rides ahead of the call, the signal_*

@@ -701,6 +701,15 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
         Printf.sprintf "emo_os_waitpid_nohang(%s)" (arg 0 Emo_check.Int64)
       in
       v
+  | "os_tty_raw" ->
+      let v = Printf.sprintf "emo_os_tty_raw(%s)" (arg 0 Emo_check.Int64) in
+      v
+  | "os_tty_restore" ->
+      let v =
+        Printf.sprintf "emo_os_tty_restore(%s, %s)" (arg 0 Emo_check.Int64)
+          (as_dyn env (List.nth args 1))
+      in
+      v
   | "os_kill" ->
       let v =
         Printf.sprintf "emo_os_kill(%s, %s)" (arg 0 Emo_check.Int64)

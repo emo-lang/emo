@@ -359,6 +359,37 @@ $ echo status=$?
 0
 ```
 
+## The line editor
+
+An interactive session reads through the shell's own line editor —
+raw mode, history, completion, written in Emo over the os terminal
+tier (`os.tty_raw`/`os.tty_restore`). The terminal goes raw around
+every read and back to cooked before the line runs, so what you type
+is what the keys say, and what runs runs on the classic terminal.
+
+- the keys: the arrows move and the ↑/↓ walk the history, Backspace
+  and Delete erase — a multi-byte character whole, the UTF-8
+  continuation bytes walked — Home/End jump, Ctrl-A and Ctrl-E run to
+  the line's ends, Ctrl-K kills to the end of the line, Ctrl-U kills
+  the line, Ctrl-W kills the word before the cursor, Ctrl-D on an
+  empty line ends the session, Tab completes;
+- history: ↑ recalls the lines this session typed and the sessions
+  before it — the last 1000 ride `emosh-history` under `EMO_STATE_DIR`,
+  else `$XDG_STATE_HOME/emo`, else `$HOME/.local/state/emo`, written
+  once at the session's end: a concurrent session's save wins the
+  file, and a hard kill loses what came after it (the repl's own
+  honesty);
+- completion: Tab completes the word under the cursor to every
+  candidate's common prefix, and a second Tab lists them in one row
+  under the line. The first word of a line completes as a command —
+  the builtins, the session's functions, then every command the PATH
+  serves; a later word completes as a file of the working directory.
+  Quoting a word defeats completion the way quoting defeats a
+  keyword;
+- `EMOSH_ASSUME_TTY` runs the editor's keys and rendering over a pipe
+  with raw mode skipped — the hook the editor's own goldens drive, and
+  the way to script an editing session in tests.
+
 ## The builtins
 
 | Builtin | What it does |
@@ -426,9 +457,12 @@ terminal's own line discipline flushes it — and the shell survives.
 Every forked child restores the default dispositions before its exec,
 so a foreground command dies to Ctrl-C the way it should.
 
-In cooked mode there is no fresh prompt until the next line completes
-after a Ctrl-C; the line editor (raw mode, history, completion) is
-the next milestone's work, not this one's.
+While a line is being typed the editor owns the terminal in raw mode
+and reads Ctrl-C itself: the line is abandoned and the shell asks
+again with a fresh prompt — the half-typed bytes never reach a
+command. A command that is running keeps the classic discipline (the
+terminal is cooked while it runs) and dies to Ctrl-C the way it
+should.
 
 ## The honest limits
 
@@ -448,8 +482,11 @@ The contract, stated so you never have to guess:
   land); nothing here stops a job, so `bg` always answers
   `already in background`; a background job's stdin stays the
   shell's;
-- no line editor — the terminal's own cooked mode reads; no history,
-  no completion;
+- the editor edits one line at a time: a block's `>` continuation is
+  edited alone and ↑ recalls single lines, never whole blocks; a line
+  longer than one terminal row wraps and the single-line redraw
+  smears; completion's PATH matches arrive as the directories list
+  them, no ranking and no fuzzy matching;
 - no IFS field splitting after expansion;
 - no `~user`, no nested `${…}` forms, no `${var-word}` without the
   colon;

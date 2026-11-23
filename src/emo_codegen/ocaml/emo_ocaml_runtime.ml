@@ -37,6 +37,9 @@ external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
 external emo_stub_waitpid_nohang : int -> int * int
   = "emo_stub_waitpid_nohang"
+external emo_stub_tty_raw : int -> int64 array = "emo_stub_tty_raw"
+external emo_stub_tty_restore : int -> int64 array -> unit
+  = "emo_stub_tty_restore"
 (* The monotonic clock, which the Unix module does not wrap either:
    clock_gettime(CLOCK_MONOTONIC), nanoseconds, the same instrument the
    interpreter and the c runtime read. *)
@@ -1582,6 +1585,35 @@ let pf_hash_float conv minus plus space width prec f =
         error "E3007"
           (Printf.sprintf
              "`os_waitpid_nohang` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_tty_raw", [ Int64 fd ] ->
+        os_result
+          (fun () ->
+            (* The stub answers the saved state as opaque words — one
+               per eight bytes of the kernel's struct termios — and
+               raises the Unix error on a foreign descriptor, whose
+               reason os_result spells byte-identically with the c
+               runtime's emo_os_fail. *)
+            Array
+              (Array.map (fun w -> Int64 w) (emo_stub_tty_raw (Int64.to_int fd))))
+    | "os_tty_raw", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_tty_raw` expects (fd Int64), got %d"
+             (List.length vs))
+    | "os_tty_restore", [ Int64 fd; Array words ] ->
+        os_result
+          (fun () ->
+            let ints =
+              Array.map
+                (function Int64 w -> w | _ -> 0L)
+                words
+            in
+            emo_stub_tty_restore (Int64.to_int fd) ints;
+            Int64 0L)
+    | "os_tty_restore", vs ->
+        error "E3007"
+          (Printf.sprintf
+             "`os_tty_restore` expects (fd Int64, saved Array Int64), got %d"
              (List.length vs))
     | "os_kill", [ Int64 pid; Int64 sig_no ] ->
         (* The classic range rides ahead of the call, the signal_*

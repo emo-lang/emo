@@ -573,6 +573,8 @@ int64_t emo_os_waitpid(int64_t pid);
 emo_value emo_os_waitpid_nohang(int64_t pid);
 emo_value emo_os_kill(int64_t pid, int64_t sig);
 emo_value emo_os_setpgid(int64_t pid, int64_t pgid);
+emo_value emo_os_tty_raw(int64_t fd);
+emo_value emo_os_tty_restore(int64_t fd, emo_value saved);
 emo_value emo_os_pipe(void);
 int64_t emo_os_execv(emo_str path, emo_value argv);
 void emo_os__exit(int64_t status);

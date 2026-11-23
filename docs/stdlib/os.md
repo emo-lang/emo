@@ -109,6 +109,8 @@ with one kill of the negative pid.
 ```emo
 def dup2(old_fd Int64, new_fd Int64) (R, Int64)
 def isatty(fd Int64) Bool
+def tty_raw(fd Int64) (R, Array[Int64])
+def tty_restore(fd Int64, saved Array[Int64]) (R, Int64)
 ```
 
 `dup2` copies `old_fd` onto `new_fd`, closing `new_fd` first if it was
@@ -117,6 +119,18 @@ a pipe end or a file before the exec. `isatty` answers whether `fd` is
 attached to a terminal — how a program tells an interactive session
 from a pipe or a script on stdin. Both are plain POSIX with no
 buffering and no surprises.
+
+`tty_raw(fd)` puts the terminal into raw mode — one read one byte as
+typed: no echo, no line discipline, no signal generation — and answers
+the state that was there as opaque words, the blob `tty_restore(fd,
+saved)` hands back. Raw is the line editor's own reading, and the
+policy is the os's: `cfmakeraw` is the portable door (the flag bits
+themselves differ between macOS and Linux), the saved words answer to
+the same runtime that made them and are read nowhere outside the pair.
+A foreign descriptor — a pipe, a regular file — refuses with the errno
+text as a value: `os: tty_raw: Inappropriate ioctl for device`, the
+same bytes on every target. The caller restores before any command
+runs, so children keep the classic cooked terminal.
 
 ## The environment and the arguments
 

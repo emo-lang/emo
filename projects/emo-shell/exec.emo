@@ -118,11 +118,15 @@ def start() shell.Shell {
 
 def main_entry() Int64 {
   const sh = start()
+  const ed = edit.Editor.new()
+  if sh.interactive || sh.assume_tty {
+    sh.history_load(edit.load_history())
+  }
   if sh.one_shot {
     // -c: the line came on the command line; run it and leave with
     // its status — a block left open there has no next line to ask
     // for, and refuses
-    drive_line(sh, sh.command)
+    drive_line(sh, ed, sh.command)
     sh.stop()
     return sh.status()
   }
@@ -130,27 +134,89 @@ def main_entry() Int64 {
   while reading {
     if sh.interactive {
       sh.notify()
-      os.write(2, "emosh> ")
     }
-    const raw = sh.read_line()
-    if raw == "" {
-      if sh.interactive {
-        os.write(2, "\n")
+    case read_prompted(sh, ed, "emosh> ") {
+      (R.error, _) then {
+        if sh.interactive {
+          os.write(2, "\n")
+        }
+        reading = false
       }
-      reading = false
-    } else {
-      case gather(sh, raw) {
-        (R.error, _) then { reading = false }
-        (R.ok, line) then {
-          drive_line(sh, line)
-          if !sh.keeps_running() {
-            reading = false
+      (R.ok, got) then {
+        const line = got[0]
+        const outcome = got[1]
+        if outcome == 1 {
+          // end of input: the classic newline echo rides the terminal
+          if sh.interactive {
+            os.write(2, "\n")
+          }
+          reading = false
+        } else {
+          if outcome != 2 {
+            // an accepted line — an empty one runs as the no-op it is
+            sh.history_add(line)
+            case gather(sh, ed, line) {
+              (R.error, _) then { reading = false }
+              (R.ok, joined) then {
+                drive_line(sh, ed, joined)
+                if !sh.keeps_running() {
+                  reading = false
+                }
+              }
+            }
           }
         }
       }
     }
   }
+  if sh.interactive || sh.assume_tty {
+    edit.save_history(sh.history_lines())
+  }
   return sh.status()
+}
+
+// The session's next line: the editor's when the session edits — raw
+// on around the read, the terminal handed back before anything runs
+// — and the plain reader's when it does not. The outcome rides beside
+// the line: 0 accepted (an empty line accepted too), 1 end of input,
+// 2 abandoned. EMOSH_ASSUME_TTY skips the raw pair only — the keys
+// and the rendering run the same on a pipe, which is how the editor's
+// goldens drive it.
+def read_prompted(sh shell.Shell, ed edit.Editor, prompt String) (R, (String, Int64)) {
+  if sh.interactive || sh.assume_tty {
+    ed.funcs.replace(sh.func_names())
+    if sh.assume_tty {
+      return ed.read_line(0, prompt, sh.history_lines())
+    }
+    case os.tty_raw(0) {
+      (R.error, _) then {
+        // a terminal that will not go raw: the plain reader carries on
+        os.write(2, prompt)
+        const raw = sh.read_line()
+        if raw == "" {
+          return (R.ok, ("", 1))
+        }
+        return (R.ok, (raw, 0))
+      }
+      (R.ok, saved) then {
+        case ed.read_line(0, prompt, sh.history_lines()) {
+          (R.error, why) then {
+            os.tty_restore(0, saved)
+            return (R.error, why)
+          }
+          (R.ok, got) then {
+            os.tty_restore(0, saved)
+            return (R.ok, got)
+          }
+        }
+      }
+    }
+  }
+  const raw = sh.read_line()
+  if raw == "" {
+    return (R.ok, ("", 1))
+  }
+  return (R.ok, (raw, 0))
 }
 
 // One full logical line: a bare trailing backslash pulls the next
@@ -158,23 +224,38 @@ def main_entry() Int64 {
 // line ends bare, the pieces joined at the escape. The input running
 // out mid-continuation refuses, the classic unexpected end of file,
 // and ends the session's input.
-def gather(sh shell.Shell, first String) (R, String) {
+def gather(sh shell.Shell, ed edit.Editor, first String) (R, String) {
   var line = shell.strip_newline(first)
   var ended = false
+  var dropped = false
   while lex.continues(line) && !ended {
-    if sh.interactive {
-      os.write(2, "> ")
-    }
-    const more = sh.read_line()
-    if more == "" {
-      sh.err("emosh: syntax error: unexpected end of input")
-      sh.set_status(2)
-      ended = true
-    } else {
-      line = line.substring(0, line.length() - 1) + shell.strip_newline(more)
+    case read_prompted(sh, ed, "> ") {
+      (R.error, _) then {
+        sh.err("emosh: syntax error: unexpected end of input")
+        sh.set_status(2)
+        ended = true
+      }
+      (R.ok, got) then {
+        if got[1] == 2 {
+          // a ctrl-c mid-continuation discards the whole pending line
+          dropped = true
+          ended = true
+        } else {
+          if got[0] == "" || got[1] == 1 {
+            sh.err("emosh: syntax error: unexpected end of input")
+            sh.set_status(2)
+            ended = true
+          } else {
+            line = line.substring(0, line.length() - 1) + shell.strip_newline(got[0])
+          }
+        }
+      }
     }
   }
   if ended {
+    if dropped {
+      return (R.ok, "")
+    }
     return (R.error, "")
   }
   return (R.ok, line)
@@ -187,7 +268,7 @@ def gather(sh shell.Shell, first String) (R, String) {
 // assignment rebinds one, and a leftover break or continue — the
 // walker's signals nobody consumed — refuses with the classic
 // complaint.
-def drive_line(sh shell.Shell, line String) Void {
+def drive_line(sh shell.Shell, ed edit.Editor, line String) Void {
   if line != "" {
     case lex.tokenize(line) {
       (R.error, why) then {
@@ -206,16 +287,23 @@ def drive_line(sh shell.Shell, line String) Void {
             }
             (R.ok, items, status) then {
             if status == "incomplete" {
-              if sh.interactive {
-                os.write(2, "> ")
-              }
-              const more = sh.read_line()
-              if more == "" {
-                sh.err("emosh: syntax error: unexpected end of input")
-                sh.set_status(2)
-                pending = false
-              } else {
-                case lex.tokenize(shell.strip_newline(more)) {
+              case read_prompted(sh, ed, "> ") {
+                (R.error, _) then {
+                  sh.err("emosh: syntax error: unexpected end of input")
+                  sh.set_status(2)
+                  pending = false
+                }
+                (R.ok, got) then {
+                if got[1] == 2 {
+                  // a ctrl-c mid-block discards the whole pending line
+                  pending = false
+                } else {
+                if got[0] == "" || got[1] == 1 {
+                  sh.err("emosh: syntax error: unexpected end of input")
+                  sh.set_status(2)
+                  pending = false
+                } else {
+                case lex.tokenize(shell.strip_newline(got[0])) {
                   (R.error, why) then {
                     sh.err(why)
                     sh.set_status(2)
@@ -224,6 +312,9 @@ def drive_line(sh shell.Shell, line String) Void {
                   (R.ok, more_toks) then {
                     cur = tok_concat(cur, more_toks)
                   }
+                }
+                }
+                }
                 }
               }
             } else {
