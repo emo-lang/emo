@@ -1013,3 +1013,174 @@ int mprotect(void *addr, unsigned long len, int prot) {
   (void)prot;
   return 0;
 }
+
+// ---- the process and environment (EmoOS plan B, T1.4b1) ----
+
+char **environ;
+
+#define EMO_ENV_MAX 16
+#define EMO_ENV_LEN 128
+static char env_store[EMO_ENV_MAX][EMO_ENV_LEN];
+static char *env_ptrs[EMO_ENV_MAX + 1];
+static int env_ready;
+
+static int env_match(const char *entry, const char *name, unsigned long nlen) {
+  unsigned long i = 0;
+  while (i < nlen) {
+    if (entry[i] != name[i]) {
+      return 0;
+    }
+    i = i + 1;
+  }
+  return entry[nlen] == '=';
+}
+
+static void env_init(void) {
+  if (env_ready) {
+    return;
+  }
+  env_ready = 1;
+  int n = 0;
+  if (environ != 0) {
+    while (environ[n] != 0 && n < EMO_ENV_MAX) {
+      scopy(env_store[n], environ[n], EMO_ENV_LEN);
+      env_ptrs[n] = env_store[n];
+      n = n + 1;
+    }
+  }
+  env_ptrs[n] = 0;
+  environ = env_ptrs;
+}
+
+static void env_put(int i, const char *name, unsigned long nlen,
+                    const char *value, unsigned long vlen) {
+  unsigned long k = 0;
+  while (k < nlen) {
+    env_store[i][k] = name[k];
+    k = k + 1;
+  }
+  env_store[i][nlen] = '=';
+  k = 0;
+  while (k < vlen) {
+    env_store[i][nlen + 1 + k] = value[k];
+    k = k + 1;
+  }
+  env_store[i][nlen + 1 + vlen] = 0;
+  env_ptrs[i] = env_store[i];
+}
+
+char *getenv(const char *name) {
+  env_init();
+  unsigned long nlen = slen(name);
+  if (nlen == 0) {
+    return 0;
+  }
+  int i = 0;
+  while (environ[i] != 0) {
+    if (env_match(environ[i], name, nlen)) {
+      return environ[i] + nlen + 1;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+int setenv(const char *name, const char *value, int overwrite) {
+  env_init();
+  unsigned long nlen = slen(name);
+  unsigned long vlen = slen(value);
+  if (nlen == 0 || nlen + vlen + 2 > EMO_ENV_LEN) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  int i = 0;
+  while (environ[i] != 0) {
+    if (env_match(environ[i], name, nlen)) {
+      if (!overwrite) {
+        return 0;
+      }
+      env_put(i, name, nlen, value, vlen);
+      return 0;
+    }
+    i = i + 1;
+  }
+  if (i >= EMO_ENV_MAX) {
+    errno = EMO_ENOMEM;
+    return -1;
+  }
+  env_put(i, name, nlen, value, vlen);
+  env_ptrs[i + 1] = 0;
+  return 0;
+}
+
+int unsetenv(const char *name) {
+  env_init();
+  unsigned long nlen = slen(name);
+  if (nlen == 0) {
+    errno = EMO_EINVAL;
+    return -1;
+  }
+  int i = 0;
+  int j = 0;
+  while (environ[i] != 0) {
+    if (env_match(environ[i], name, nlen)) {
+      i = i + 1;
+    } else {
+      if (j != i) {
+        scopy(env_store[j], env_store[i], EMO_ENV_LEN);
+      }
+      env_ptrs[j] = env_store[j];
+      j = j + 1;
+      i = i + 1;
+    }
+  }
+  env_ptrs[j] = 0;
+  return 0;
+}
+
+long getpid(void) {
+  return emo_getpid();
+}
+
+int setpgid(long pid, long pgid) {
+  long a = emo_setpgid(pid, pgid);
+  if (a < 0) {
+    errno = reason_errno(a);
+    return -1;
+  }
+  return 0;
+}
+
+long getpgid(long pid) {
+  long a = emo_getpgid(pid);
+  if (a < 0) {
+    errno = reason_errno(a);
+    return -1;
+  }
+  return a;
+}
+
+long wait4(long pid, int *status, int options, void *rusage) {
+  (void)rusage;
+  if (pid <= 0 || options != 0) {
+    errno = EMO_ENOSYS;
+    return -1;
+  }
+  long a = emo_wait(pid);
+  if (a < 0) {
+    errno = reason_errno(a);
+    return -1;
+  }
+  if (status != 0) {
+    *status = (int)((a & 0xff) << 8);
+  }
+  return pid;
+}
+
+long waitpid(long pid, int *status, int options) {
+  return wait4(pid, status, options, 0);
+}
+
+long wait(int *status) {
+  return wait4(-1, status, 0, 0);
+}

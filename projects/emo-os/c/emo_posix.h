@@ -37,6 +37,7 @@
 #define EMO_ENAMETOOLONG 36
 #define EMO_ENOTEMPTY 39
 #define EMO_ENOMEM 12
+#define EMO_ENOSYS 38
 
 #define EMO_PATH_MAX 24
 #define EMO_DIR_LIST 2048
@@ -97,5 +98,23 @@ void *mmap(void *addr, unsigned long len, int prot, int flags, int fd,
            long off);
 int munmap(void *addr, unsigned long len);
 int mprotect(void *addr, unsigned long len, int prot);
+
+// The process and environment surface (EmoOS plan B, T1.4b1): the
+// pid, the process group, the environment's table, and the wait's
+// status words. The envp a child starts with is empty (T1.4a); the
+// library's environ/setenv build from there.
+extern char **environ;
+long getpid(void);
+int setpgid(long pid, long pgid);
+long getpgid(long pid);
+char *getenv(const char *name);
+int setenv(const char *name, const char *value, int overwrite);
+int unsetenv(const char *name);
+long wait4(long pid, int *status, int options, void *rusage);
+long waitpid(long pid, int *status, int options);
+long wait(int *status);
+
+#define EMO_WIFEXITED(s) (((s) & 0xff) == 0)
+#define EMO_WEXITSTATUS(s) (((s) >> 8) & 0xff)
 
 #endif

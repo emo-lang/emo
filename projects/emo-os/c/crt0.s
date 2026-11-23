@@ -32,6 +32,9 @@ _start:
     addi t0, t0, 8
     j 1b
 2:
+    # The library's environ (T1.4b1): the main's envp, before the call.
+    la t0, environ
+    sd a2, 0(t0)
     call main
 
     li a7, 0          # exit(code)

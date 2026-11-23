@@ -48,7 +48,8 @@
 - [x] **T1.3k**——分配器的复用:`malloc` 的 first-fit 空闲表与 `mmap` 的页空闲表——`free` 与 `munmap` 交还块,`malloc` 与 `mmap` 复用它们,`realloc` 拷贝;1 MiB 的 arena 是边界。
 - [x] **T1.3v**——arena 长过 1 MiB 的运行:动词 47 `arena_grow(bytes)` 取整 64 KiB 块,映射在单元末尾之后的页上,增长表的行在死亡时走回家——shim 的 fault/heap 路径与进程服务的正常 exit。库的 `arena_extend` 跟随应答。
 - [x] **T1.4a**——`exec` 的 `argv`:动词 48 `exec_args(name, args)` 把行的余下文本停在 execargs 页,进程服务的 exec 拾取构建孩子的第一张栈(argc、argv——名字然后各个词——argv 的 NULL 与 envp 的 NULL),C crt0 从 cells 页读 args base 并把 `argc`/`argv`/`envp` 交给 `main`,桌面的 `exec` 把行的余下传给子进程。envp 目前为空。
-- [ ] **T1.4b**——进程:`fork`(复制地址空间;COW 是后续优化)、`execve`、`wait4` 状态字、进程组,以及环境自己的动词。
+- [x] **T1.4b1**——进程与环境的表面:`getpid`(动词 49)、`setpgid`/`getpgid`(50/51,增长页尾每 pid 一个组字节,0 表示 pid 自己的组)、`getenv`/`setenv`/`unsetenv` 与 `environ`(第一次使用时扫描 `main` 的 envp),以及库的 `wait4`/`waitpid` 走动词 4——退出状态 `code << 8`。任意子进程的 wait 与 `exec` 的环境交接随 T1.4b2。
+- [ ] **T1.4b2**——进程:`fork`(复制地址空间;COW 是后续优化)、`execve`(原地换镜像)、任意子进程的 wait、`exec` 时的环境交接,以及这对原语使其有意义的状态。
 - [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
 - [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。
 
@@ -111,6 +112,12 @@ args 的门是动词 48 `exec_args(name, nlen, args, alen)`:门把名字和行�
 路上发现:最初放在新固定地址(`0x87010000`,后来 `0x8700b100`)的 execargs 页在进程服务的表里没有映射——exec 拾取的 peek 在 S-mode 里 trap,机器说 `the kernel took an unexpected trap`。真正映射着的是增长表的页(`0x8700f000`,T1.3v 已证明);execargs 挪到它的页尾,增长表从 255 行缩到 200。另外发现:跨模块的 `exec.args_use()` 调用在这个目标上自己就 trap,而 `exec.args_name()` 等正常;进程服务改从裸单元读 use 标记。
 
 真机证明:`exec chello.elf` 答 `args none`(argc 1),`exec chello.elf hello world` 答 `args ok`(argc 3,argv[1] `hello`,argv[2] `world`);`chello.elf` 24,856 字节,C 的整条链(fd、VFS、复用、增长)保持全绿。桌面的 `exec` 取行的余下作为 args;syscall 包就地长出 `exec_args`,五个 lock 重新钉住。
+
+### T1.4b1 的记录(2026-11-23)
+
+进程表面:动词 49 `getpid`;动词 50 `setpgid(pid, pgid)`(目标 0 是调用者,组 0 是目标,只有调用者或其子进程,父单元是权威);动词 51 `getpgid(pid)`(同一权威)。组单元是增长页尾每 pid 一个字节(`0x8700f000 + 3784`,在 execargs 之后;256 字节),0 表示 pid 自己的组。库的环境是 `environ`(crt0 把 `main` 的 envp 交给它;第一次使用时扫进 16×128 的静态表),背后是 `getenv`/`setenv`/`unsetenv`;`wait4`/`waitpid` 走动词 4,状态为 `(code & 0xff) << 8`;任意子进程的 wait(`pid <= 0`)在 T1.4b2 之前答 `ENOSYS`。
+
+真机证明:`chello.elf`(25,560 字节)在 fd、VFS、复用、增长、args 节拍之后答 `proc ok` 与 `env ok`——pid 查到、组设好又读回、`EMO=yes` 设好、读出、删除——机器的 exit 路由干净。
 
 ### M2——C 库(源自 musl)
 

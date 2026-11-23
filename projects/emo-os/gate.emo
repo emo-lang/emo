@@ -282,6 +282,13 @@ const route_heap_gone = -104
 // the child's packed base/end there; arena_info answers the caller's.
 const arena_for = koff + 0x8700d800
 const arena_bound = 256
+// The process groups (T1.4b1): one byte a pid on the growth page's
+// tail, after the execargs — 0 means the pid's own group. The parent
+// cells beside the arena's.
+const parent_for = koff + 0x8700d000
+const parent_bound = 256
+const pgid_base = koff + 0x8700f000 + 3784
+const pgid_bound = 256
 
 // The write permission, ELF p_flags' bit 1 (X=1, W=2, R=4).
 const flag_w = 2
@@ -1283,6 +1290,56 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     // blocks taken, mapped at the pages after the cell's end, the rows
     // the death reclaim walks home; the answer is the new end's page.
     return space.grow(peek64(handoff_caller), peek64(caller_space_cell), r0)
+  }
+  if n == 49 {
+    // getpid() (T1.4b1): the caller's own number.
+    return peek64(handoff_caller)
+  }
+  if n == 50 {
+    // setpgid(pid, pgid): the target 0 is the caller, the group 0 the
+    // target; the caller may name itself or its child, the parent
+    // cell's authority the process service's own.
+    var me3 = peek64(handoff_caller)
+    var target = r0
+    if target == 0 {
+      target = me3
+    }
+    var group = r1
+    if group == 0 {
+      group = target
+    }
+    if target < 1 || target >= pgid_bound || group < 0 || group >= pgid_bound {
+      return -reason_argument
+    }
+    if target != me3 {
+      if peek64(parent_for + (target * 8)) != me3 {
+        return -reason_permission
+      }
+    }
+    poke8(pgid_base + target, group.to_byte())
+    return 0
+  }
+  if n == 51 {
+    // getpgid(pid): the group the process carries, its own when the
+    // cell is clear; the same authority as setpgid's.
+    var me4 = peek64(handoff_caller)
+    var target2 = r0
+    if target2 == 0 {
+      target2 = me4
+    }
+    if target2 < 1 || target2 >= pgid_bound {
+      return -reason_argument
+    }
+    if target2 != me4 {
+      if peek64(parent_for + (target2 * 8)) != me4 {
+        return -reason_permission
+      }
+    }
+    var g = peek8(pgid_base + target2).to_int64()
+    if g == 0 {
+      g = target2
+    }
+    return g
   }
   if n == 4 {
     var me = peek64(handoff_caller)

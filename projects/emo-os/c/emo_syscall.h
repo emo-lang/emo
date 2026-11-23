@@ -122,4 +122,22 @@ static inline long emo_arena_grow(long bytes) {
   return emo_ecall(47, bytes, 0, 0, 0, 0, 0);
 }
 
+// Verbs 49..51: the caller's pid, the process group's set and query
+// (T1.4b1). Verb 4 is the wait: the child's exit code, blocking.
+static inline long emo_getpid(void) {
+  return emo_ecall(49, 0, 0, 0, 0, 0, 0);
+}
+
+static inline long emo_setpgid(long pid, long pgid) {
+  return emo_ecall(50, pid, pgid, 0, 0, 0, 0);
+}
+
+static inline long emo_getpgid(long pid) {
+  return emo_ecall(51, pid, 0, 0, 0, 0, 0);
+}
+
+static inline long emo_wait(long pid) {
+  return emo_ecall(4, pid, 0, 0, 0, 0, 0);
+}
+
 #endif

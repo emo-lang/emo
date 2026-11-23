@@ -150,9 +150,17 @@ consumer asks, but the order is the dependency order.
   reads the args base from the cells page and hands `main` its
   `argc`/`argv`/`envp`, and the desktop's `exec` passes the line's
   rest. The envp is empty for now.
-- [ ] **T1.4b** — Process: `fork` (copy the address space; COW is a
-  later optimization), `execve`, `wait4` status words, process
-  groups, and the environment's own verbs.
+- [x] **T1.4b1** — The process and environment surface: `getpid`
+  (verb 49), `setpgid`/`getpgid` (50/51, one group byte per pid on the
+  growth page's tail, 0 the pid's own group), `getenv`/`setenv`/
+  `unsetenv` with `environ` (the `main`'s envp scanned at first use),
+  and the library's `wait4`/`waitpid` over verb 4 — the exit status
+  `code << 8`. The any-child wait and the environment at `exec` ride
+  with T1.4b2.
+- [ ] **T1.4b2** — Process: `fork` (copy the address space; COW is a
+  later optimization), `execve` (the in-place image replace), the
+  any-child wait, the environment's handoff at `exec`, and the
+  statuses the pair makes meaningful.
 - [ ] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
   last writer's close.
 - [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
@@ -350,6 +358,24 @@ The metal proof: `exec chello.elf` answered `args none` (argc 1) and
 whole C chain (fd, VFS, reuse, grow) stayed green. The desktop's
 `exec` takes the line's rest as the args; the syscall package grew
 `exec_args` in place and its five locks re-pinned.
+
+### T1.4b1's record (2026-11-23)
+
+The process surface: verb 49 `getpid`; verb 50 `setpgid(pid, pgid)`
+(the target 0 the caller, the group 0 the target, the caller or its
+child only, the parent cell the authority); verb 51 `getpgid(pid)`
+(the same authority). The group cells are one byte per pid on the
+growth page's tail (`0x8700f000 + 3784`, after the execargs; 256
+bytes), 0 meaning the pid's own group. The library's environment is
+`environ` (the crt0 hands it `main`'s envp; the first use scans it
+into a 16×128 static table) behind `getenv`/`setenv`/`unsetenv`, and
+`wait4`/`waitpid` ride verb 4, the status `(code & 0xff) << 8`;
+the any-child wait (`pid <= 0`) answers `ENOSYS` until T1.4b2.
+
+The metal proof: `chello.elf` (25,560 bytes) answered `proc ok` and
+`env ok` after the fd, VFS, reuse, grow and args beats — the pid
+queried, the group set and read back, `EMO=yes` set, read and
+unset — with the machine's exit route clean.
 
 ### M2 — the C library (musl-derived)
 

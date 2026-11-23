@@ -23,6 +23,8 @@ static char mmap_reuse_ok[] = "mmap reuse ok\n";
 static char grow_ok[] = "grow ok\n";
 static char args_ok[] = "args ok\n";
 static char args_none[] = "args none\n";
+static char proc_ok[] = "proc ok\n";
+static char env_ok[] = "env ok\n";
 
 static int streq(const char *a, const char *b) {
   int i = 0;
@@ -182,5 +184,28 @@ int main(int argc, char **argv, char **envp) {
   } else {
     write(1, args_none, sizeof(args_none) - 1);
   }
+
+  // ---- the process and environment (T1.4b1).
+  long pid = getpid();
+  if (pid <= 0) {
+    write(2, "pid failed\n", 11);
+    return 20;
+  }
+  if (setpgid(0, 0) != 0 || getpgid(0) != pid) {
+    write(2, "pgid failed\n", 12);
+    return 21;
+  }
+  if (setenv("EMO", "yes", 1) != 0 || getenv("EMO") == 0 ||
+      !streq(getenv("EMO"), "yes")) {
+    write(2, "setenv failed\n", 14);
+    return 22;
+  }
+  unsetenv("EMO");
+  if (getenv("EMO") != 0) {
+    write(2, "unsetenv failed\n", 16);
+    return 23;
+  }
+  write(1, proc_ok, sizeof(proc_ok) - 1);
+  write(1, env_ok, sizeof(env_ok) - 1);
   return 0;
 }

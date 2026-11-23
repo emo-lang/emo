@@ -90,6 +90,9 @@ trap 落进内核的 shim,它把动词与六个字拼装给门的分派器
 | 46 | `arena_info()` | 调用者的 arena,base 与 end 以页号给出——base 在高 20 位,end 在低 20 位,即镜像自己的表映射的物理身份;没有 arena 的进程(引导趟)得 0。库的 `brk`/`mmap` 住在里面(EmoOS B 方案,T1.3) |
 | 47 | `arena_grow(bytes)` | 调用者的 arena 以整 64 KiB 块长过它的运行,映射在单元末尾之后的页上;答新末尾的页号,负数是拒绝(增长表满或没有帧)。死亡回收把该 pid 的行走回家(EmoOS B 方案,T1.3v) |
 | 48 | `exec_args(name, name_len, args, args_len)` | 名字与参数文本(至多 512 字节,按空格切分)停在 execargs 页;孩子的第一张栈得到 argc、argv(名字然后各个词)、argv 的 NULL 与 envp 的 NULL;与 `exec` 同一个 busy 单元。答孩子的 pid 或理由(EmoOS B 方案,T1.4a) |
+| 49 | `getpid()` | 调用者自己的 pid(EmoOS B 方案,T1.4b1) |
+| 50 | `setpgid(pid, pgid)` | 目标 0 是调用者,组 0 是目标;只有调用者或其子进程可以,父单元是权威;组住在增长页尾该 pid 的字节里;答 0(EmoOS B 方案,T1.4b1) |
+| 51 | `getpgid(pid)` | 该 pid 携带的组,字节为 0 时是它自己的 pid;与 `setpgid` 同一权威;答组号(EmoOS B 方案,T1.4b1) |
 
 fd 与路径动词共用文件系统的四个请求槽;槽的 `+88` 标记选中打开文件表与路径调用,否则走整文件动词自己的路。
 
