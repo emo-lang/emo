@@ -16,5 +16,11 @@ os: kill: No such process
 os: setpgid: No such process
 true
 true
+7
+os: waitpid_nohang: No child processes
+os: tty_raw: Inappropriate ioctl for device
+os: tty_restore: Invalid argument
+true
+true
 os: open os-demo-missing.tmp: No such file or directory
 os: opendir os-demo-missing.d: No such file or directory

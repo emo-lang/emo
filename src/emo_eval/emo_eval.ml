@@ -589,6 +589,8 @@ let global_env () =
     { bound = RuntimeImplFn "os_fork"; mutable_ = false };
   Frame_tbl.replace env.frame "os_waitpid"
     { bound = RuntimeImplFn "os_waitpid"; mutable_ = false };
+  Frame_tbl.replace env.frame "os_waitpid_nohang"
+    { bound = RuntimeImplFn "os_waitpid_nohang"; mutable_ = false };
   Frame_tbl.replace env.frame "os_pipe"
     { bound = RuntimeImplFn "os_pipe"; mutable_ = false };
   Frame_tbl.replace env.frame "os_execv"
@@ -649,6 +651,10 @@ let global_env () =
     { bound = RuntimeImplFn "os_kill"; mutable_ = false };
   Frame_tbl.replace env.frame "os_setpgid"
     { bound = RuntimeImplFn "os_setpgid"; mutable_ = false };
+  Frame_tbl.replace env.frame "os_tty_raw"
+    { bound = RuntimeImplFn "os_tty_raw"; mutable_ = false };
+  Frame_tbl.replace env.frame "os_tty_restore"
+    { bound = RuntimeImplFn "os_tty_restore"; mutable_ = false };
   Frame_tbl.replace env.frame "time_now_ms"
     { bound = RuntimeImplFn "time_now_ms"; mutable_ = false };
   Frame_tbl.replace env.frame "time_mono_ns"
@@ -2033,6 +2039,10 @@ let expect_raise span message = net_raise span message
    c runtime and the other backends read. *)
 external emo_stub_setpgid : int -> int -> unit = "emo_stub_setpgid"
 external emo_stub_waitpid : int -> int = "emo_stub_waitpid"
+external emo_stub_waitpid_nohang : int -> int * int = "emo_stub_waitpid_nohang"
+external emo_stub_tty_raw : int -> int64 array = "emo_stub_tty_raw"
+external emo_stub_tty_restore : int -> int64 array -> unit
+  = "emo_stub_tty_restore"
 external emo_stub_monotonic_ns : unit -> int64 = "emo_stub_monotonic_ns"
 
 external emo_stub_sendmsg_fd : int -> string -> int -> int
@@ -2045,6 +2055,15 @@ external emo_stub_recvmsg_fd : int -> int -> int * string * int
 
 external emo_stub_ftruncate : int -> int64 -> unit = "emo_stub_ftruncate"
 external emo_stub_pwrite : int -> Bytes.t -> int64 -> int = "emo_stub_pwrite"
+
+(* The argv the interpreted program's os.argv answers. The compiler
+   process's own Sys.argv is never the program's — it is the CLI's —
+   so the run seats the program's name and its trailing arguments here
+   before it evaluates. The compiled targets need none of this: their
+   main captures argc and argv at the kernel's hands. Until a run
+   seats it, the answer is the compiler's argv, the shape the REPL's
+   ad-hoc statements see. *)
+let program_argv : string array ref = ref Sys.argv
 
 (* ---- The staging helpers ----
 
@@ -4641,6 +4660,49 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf "`os_waitpid` expects (pid Int64), got %d"
              (List.length vs))
+    | "os_waitpid_nohang", [ Int64 pid ] ->
+        os_result span (fun () ->
+            (* The stub answers (pid-or-0, the kernel's own 16-bit wait
+               status word): 0 when children exist and none has exited
+               yet, the pid beside the raw word when one has — and the
+               Unix error raised when the pid is nobody's child, whose
+               reason os_result spells byte-identically with the c
+               runtime's emo_os_fail. *)
+            let r, raw = emo_stub_waitpid_nohang (Int64.to_int pid) in
+            Tuple [ Int64 (Int64.of_int r); Int64 (Int64.of_int raw) ])
+    | "os_waitpid_nohang", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_waitpid_nohang` expects (pid Int64), got %d"
+             (List.length vs))
+    | "os_tty_raw", [ Int64 fd ] ->
+        os_result span (fun () ->
+            (* The stub answers the saved state as opaque words — one
+               per eight bytes of the kernel's struct termios — and
+               raises the Unix error on a foreign descriptor, whose
+               reason os_result spells byte-identically with the c
+               runtime's emo_os_fail. *)
+            Array
+              (Array.map (fun w -> Int64 w) (emo_stub_tty_raw (Int64.to_int fd))))
+    | "os_tty_raw", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_tty_raw` expects (fd Int64), got %d"
+             (List.length vs))
+    | "os_tty_restore", [ Int64 fd; Array words ] ->
+        os_result span (fun () ->
+            (* The words go back opaque: the same runtime that saved
+               them unpacks them, the blob's shape never read outside
+               the pair. *)
+            let ints =
+              Array.map
+                (function Int64 w -> w | _ -> 0L)
+                words
+            in
+            emo_stub_tty_restore (Int64.to_int fd) ints;
+            Int64 0L)
+    | "os_tty_restore", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_tty_restore` expects (fd Int64, saved Array Int64), got %d"
+             (List.length vs))
     | "os_kill", [ Int64 pid; Int64 sig_no ] ->
         (* The classic range rides ahead of the call, the signal_*
            discipline: an out-of-range number answers the same fixed
@@ -4917,12 +4979,21 @@ and apply_runtime_impl span name args =
              (List.length vs))
     | "os_execvp", [ String file; Array items ] -> (
         (* Success never returns — the process is replaced, the file
-         found through PATH. Failure is a data-driven value: the call
-         returns Void, and the fork child follows it with `_exit`. *)
+           found through PATH. Failure is a data-driven value: the
+           errno reason, spelled without the file name so the text is
+           byte-identical with the c runtime's emo_os_fail (Unix_error
+           would carry the name as its argument) — the fork child's
+           cue to `_exit`. *)
         try
           let argv = Array.of_list (List.map to_string (Array.to_list items)) in
-          Unix.execvp file argv
-        with Unix.Unix_error _ -> Void)
+          (Unix.execvp file argv : unit);
+          Int64 0L
+        with Unix.Unix_error (e, _, _) ->
+          Tuple
+            [
+              EnumMember ("R", "error");
+              String (Printf.sprintf "os: execvp: %s" (Unix.error_message e));
+            ])
     | "os_execvp", vs ->
         error span "E3007"
           (Printf.sprintf
@@ -4935,7 +5006,7 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf "`os_isatty` expects (fd Int64), got %d"
              (List.length vs))
-    | "os_argv", [] -> Array (Array.map (fun s -> String s) Sys.argv)
+    | "os_argv", [] -> Array (Array.map (fun s -> String s) !program_argv)
     | "os_argv", vs ->
         error span "E3007"
           (Printf.sprintf "`os_argv` expects no arguments, got %d"

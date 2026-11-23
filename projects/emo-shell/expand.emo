@@ -6,13 +6,24 @@ require "os"
 // globbing and without IFS can make:
 //
 //   - a tilde expands only at the start of a word whose first part is
-//     unquoted, and only to $HOME (unset leaves the tilde as it is);
+//     neither quoted nor literal, and only to $HOME (unset leaves the
+//     tilde as it is);
 //   - `$name` / `${name}` expand to the variable's value, unset
 //     answering the empty string — there is no word splitting after
 //     expansion, so one expanded word is one argument, always;
 //   - `$?` is the last exit status, `$0` the name the shell was
-//     started with;
-//   - a `$` the rules cannot name stays a literal `$`.
+//     started with, `$1`…`$9` and `${N}` the positional parameters,
+//     `$$` the shell's own process id, `$!` the last background job's
+//     pid (the empty string until there is one), `$#` the positional
+//     count, `$@` the positionals as words of their own — but only
+//     when the form owns the whole word (`"$@"` or bare `$@`); mixed
+//     into other text it stays literal, since one expanded word is
+//     one argument and the strictness rule keeps it so;
+//   - `${name:-word}` answers the variable's value, or word when the
+//     variable is unset or empty (the word expands too; nested braces
+//     do not — the first `}` ends the form);
+//   - a `$` form the rules cannot name stays literal, the whole form
+//     and not just the dollar — `${1x}` runs as the text `${1x}`.
 //
 // Literal parts — single-quoted runs and the escapes the lexer
 // resolved — ride through untouched; that is the whole meaning of
@@ -20,19 +31,24 @@ require "os"
 
 // One piece of a word: the characters, and whether they are literal —
 // a single-quoted run or an escaped character the lexer already
-// resolved, which expansion must never touch.
+// resolved, which expansion must never touch. A part that came from
+// double quotes is `quoted`: it expands, but its characters never
+// glob and never start a tilde — the user did not type them bare.
 class Part {
-  def init(text String, lit Bool) {
+  def init(text String, lit Bool, quoted Bool) {
     self.text = text
     self.lit = lit
+    self.quoted = quoted
   }
 }
 
 // The characters a variable's name may start with, and continue with —
 // the ASCII identifier set, matched through the const-table idiom:
-// index_of finds the byte or answers -1.
+// index_of finds the byte or answers -1. The digits stand apart, for
+// the positional forms.
 const name_first = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
 const name_rest = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789"
+const digits = "0123456789"
 
 def is_name_first(ch String) Bool {
   if ch == "" {
@@ -48,9 +64,62 @@ def is_name_rest(ch String) Bool {
   return name_rest.index_of(ch) >= 0
 }
 
+// The whole of a name: every character, first to last.
+def is_name(s String) Bool {
+  if s == "" {
+    return false
+  }
+  if !is_name_first(s.substring(0, 1)) {
+    return false
+  }
+  for var i = 1; i < s.length(); i = i + 1 {
+    if !is_name_rest(s.substring(i, 1)) {
+      return false
+    }
+  }
+  return true
+}
+
+// Every character a digit.
+def is_digits(s String) Bool {
+  if s == "" {
+    return false
+  }
+  for var i = 0; i < s.length(); i = i + 1 {
+    if digits.index_of(s.substring(i, 1)) < 0 {
+      return false
+    }
+  }
+  return true
+}
+
+// A digit run's value; the caller has checked every character.
+def digits_value(s String) Int64 {
+  var n = 0
+  for var i = 0; i < s.length(); i = i + 1 {
+    n = n * 10 + digits.index_of(s.substring(i, 1))
+  }
+  return n
+}
+
+// One positional parameter: `$0` is the shell's name, `$N` the Nth
+// argument the shell was started with, and past the last one the
+// answer is the empty string.
+def positional(n Int64, args Array[String], name String) String {
+  if n == 0 {
+    return name
+  }
+  if n <= args.length() {
+    return args[n - 1]
+  }
+  return ""
+}
+
 // One whole word, expanded: the parts joined, `$` forms resolved, the
-// leading tilde traded for $HOME when the word opens unquoted.
-def word(parts Array[Part], status Int64, name String) String {
+// leading tilde traded for $HOME when the word opens with a bare,
+// unquoted run. [vars] carries the declared bindings (name=value) —
+// their names answer before the environment does.
+def word(parts Array[Part], status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64, vars Array[String]) String {
   var joined = ""
   var first = true
   for var i = 0; i < parts.length(); i = i + 1 {
@@ -59,10 +128,10 @@ def word(parts Array[Part], status Int64, name String) String {
     if part.lit {
       joined = joined + text
     } else {
-      if first && text.starts_with("~") {
+      if first && !part.quoted && text.starts_with("~") {
         text = expand_tilde(text)
       }
-      joined = joined + dollars(text, status, name)
+      joined = joined + dollars(text, status, name, args, shell_pid, last_bg, vars)
     }
     first = false
   }
@@ -82,9 +151,10 @@ def expand_tilde(text String) String {
   }
 }
 
-// Every `$` form in one unquoted run: `?`, `0`, `${name}`, `$name` —
-// anything else keeps its dollar.
-def dollars(text String, status Int64, name String) String {
+// Every `$` form in one expandable run: `?`, `0`, the positionals,
+// `$` and `!` (the shell's pid, the last background job's), `#`, the
+// `@` fan-out, `${…}`, `$name` — anything else keeps its dollar.
+def dollars(text String, status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64, vars Array[String]) String {
   var out = ""
   var i = 0
   while i < text.length() {
@@ -106,26 +176,52 @@ def dollars(text String, status Int64, name String) String {
             out = out + name
             i = i + 2
           } else {
-            if next == "{" {
-              const close = text.index_of("}")
-              if close < 0 {
-                out = out + "$"
-                i = i + 1
-              } else {
-                out = out + value_of(text.substring(i + 2, close - i - 2))
-                i = close + 1
-              }
+            if next == "$" {
+              out = out + shell_pid.to_string()
+              i = i + 2
             } else {
-              if is_name_first(next) {
-                var j = i + 1
-                while j < text.length() && is_name_rest(text.substring(j, 1)) {
-                  j = j + 1
+              if next == "!" {
+                if last_bg != 0 {
+                  out = out + last_bg.to_string()
                 }
-                out = out + value_of(text.substring(i + 1, j - i - 1))
-                i = j
+                i = i + 2
               } else {
-                out = out + "$"
-                i = i + 1
+                if next == "#" {
+                  out = out + args.length().to_string()
+                  i = i + 2
+                } else {
+                  if digits.index_of(next) >= 0 {
+                    out = out + positional(digits.index_of(next), args, name)
+                    i = i + 2
+                  } else {
+                    if next == "{" {
+                      // the closing brace is searched from here, never from
+                      // the start of the run — a `}` the word carried before
+                      // the form must not end it
+                      const rest = text.substring(i + 2, text.length() - i - 2)
+                      const rel = rest.index_of("}")
+                      if rel < 0 {
+                        out = out + "$"
+                        i = i + 1
+                      } else {
+                        out = out + braced(rest.substring(0, rel), status, name, args, shell_pid, last_bg, vars)
+                        i = i + 2 + rel + 1
+                      }
+                    } else {
+                      if is_name_first(next) {
+                        var j = i + 1
+                        while j < text.length() && is_name_rest(text.substring(j, 1)) {
+                          j = j + 1
+                        }
+                        out = out + value_of(text.substring(i + 1, j - i - 1), vars)
+                        i = j
+                      } else {
+                        out = out + "$"
+                        i = i + 1
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -136,10 +232,61 @@ def dollars(text String, status Int64, name String) String {
   return out
 }
 
-// One variable's value; unset answers the empty string.
-def value_of(name String) String {
+// One `${…}` form's inside: a name answers the variable's value, a
+// digit run answers the positional it numbers, `name:-word` answers
+// the value or word when unset or empty. Anything else the rules
+// cannot name — `${1x}`, `${a-b}`, `${}` — comes back as the literal
+// text it went in as.
+def braced(body String, status Int64, name String, args Array[String], shell_pid Int64, last_bg Int64, vars Array[String]) String {
+  if is_digits(body) {
+    return positional(digits_value(body), args, name)
+  }
+  if is_name(body) {
+    return value_of(body, vars)
+  }
+  const sep = body.index_of(":-")
+  if sep > 0 {
+    const left = body.substring(0, sep)
+    if is_name(left) {
+      const value = value_of(left, vars)
+      if value != "" {
+        return value
+      }
+      return dollars(body.substring(sep + 2, body.length() - sep - 2), status, name, args, shell_pid, last_bg, vars)
+    }
+  }
+  // the literal form, assembled from pieces — a `$` before a `{` in
+  // one string literal would open an interpolation, not spell the
+  // form
+  return "$" + "{" + body + "}"
+}
+
+// One variable's value: a declared binding answers first, the
+// environment next, unset the empty string.
+def value_of(name String, vars Array[String]) String {
+  for var k = 0; k < vars.length(); k = k + 1 {
+    const binding = vars[k]
+    const eq = binding.index_of("=")
+    if binding.substring(0, eq) == name {
+      return binding.substring(eq + 1, binding.length() - eq - 1)
+    }
+  }
   case os.getenv(name) {
     (R.ok, value) then { return value }
     (R.error, _)  then { return "" }
   }
+}
+
+// Whether the word is the positionals-as-words form standing alone:
+// `$@`, bare or whole-word double-quoted. A `$@` mixed into other
+// text — `x$@`, `$@y` — is not this word, and stays literal.
+def is_dollar_at(parts Array[Part]) Bool {
+  if parts.length() != 1 {
+    return false
+  }
+  const part = parts[0]
+  if part.lit {
+    return false
+  }
+  return part.text == "$@"
 }

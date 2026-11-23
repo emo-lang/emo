@@ -101,11 +101,15 @@ let refuse_manifest_entry ~(file : string) ~(hint : string) : int =
   66
 
 (* Runs one file through the project pipeline: discover the module tree,
-   check every module, then evaluate. Exit codes: 0 success, 1 uncaught
-   exception, 65 lex/parse/check, 66 unreadable input or a manifest in
-   place of a program, 70 evaluation. A curfew set by the caller (the
-   `run` command, for --curfew) raises Emo_eval.Curfew_exceeded past it. *)
-let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
+   check every module, then evaluate. [args] are the program's own —
+   argv[0] is the file as it was named, the way a compiled binary's
+   argv[0] is the path it was invoked by. Exit codes: 0 success, 1
+   uncaught exception, 65 lex/parse/check, 66 unreadable input or a
+   manifest in place of a program, 70 evaluation. A curfew set by the
+   caller (the `run` command, for --curfew) raises
+   Emo_eval.Curfew_exceeded past it. *)
+let run_file_args ~(args : string list) ~(file : string) ~(color : bool)
+    ~(error_limit : int) : int =
   match Sys.file_exists file with
   | false ->
       prerr_endline (Printf.sprintf "%s: No such file or directory" file);
@@ -113,6 +117,7 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
   | true when Emo_pkg.is_manifest_file file ->
       refuse_manifest_entry ~file ~hint:"name the module to run"
   | true -> (
+      Emo_eval.program_argv := Array.of_list (file :: args);
       let render diagnostic =
         render_errors ~color ~error_limit [ diagnostic ]
       in
@@ -145,6 +150,11 @@ let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
           | _ ->
               render diagnostic;
               70))
+
+(* The no-arguments run, the shape every caller before the passthrough
+   knew: the program's argv is its file alone. *)
+let run_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
+  run_file_args ~args:[] ~file ~color ~error_limit
 
 (* ---- `emo build`: compile to a native binary ----
 
@@ -1222,6 +1232,14 @@ let check_file ~(file : string) ~(color : bool) ~(error_limit : int) : int =
 
 let run =
   let file = Arg.(required & pos 0 (some string) None & info [] ~docv:"FILE") in
+  let passthrough =
+    Arg.(
+      value & pos_right 0 string []
+      & info [] ~docv:"ARG"
+          ~doc:
+            "Arguments the program reads through os.argv (argv[0] is FILE's \
+             name, the way a compiled binary's is).")
+  in
   let no_color =
     Arg.(value & flag & info [ "no-color" ] ~doc:"Disable colored diagnostics.")
   in
@@ -1259,14 +1277,26 @@ let run =
             "wasm: run the program as a WASI 0.3 command component under \
              wasmtime (46+), the second engine.")
   in
-  let run file no_color error_limit target curfew wasi locked =
+  let run file passthrough no_color error_limit target curfew wasi locked =
     (match locked_guard ~locked with Some code -> exit code | None -> ());
+    (* A leading `--` is the option processor's own marker, never one
+       of the program's words. *)
+    let passthrough =
+      match passthrough with "--" :: rest -> rest | args -> args
+    in
     let color = (not no_color) && Unix.isatty Unix.stderr in
     (match (target, curfew) with
     | Some _, Some _ ->
         prerr_endline
           "emo run: --curfew governs the interpreter's own run — a --target \
            artifact does not consult it";
+        exit 64
+    | _ -> ());
+    (match (target, passthrough) with
+    | Some _, _ :: _ ->
+        prerr_endline
+          "emo run: program arguments ride the interpreter's own run — a \
+           --target artifact gets none";
         exit 64
     | _ -> ());
     match target with
@@ -1405,7 +1435,7 @@ let run =
           | None -> ()
         in
         match
-          try run_file ~file ~color ~error_limit
+          try run_file_args ~args:passthrough ~file ~color ~error_limit
           with Emo_eval.Curfew_exceeded seconds ->
             end_deputized_group ();
             prerr_endline
@@ -1420,8 +1450,8 @@ let run =
   Cmd.v
     (Cmd.info "run" ~doc:"Run an Emo program.")
     Term.(
-      const run $ file $ no_color $ error_limit $ target $ curfew $ wasi
-      $ locked_flag ())
+      const run $ file $ passthrough $ no_color $ error_limit $ target $ curfew
+      $ wasi $ locked_flag ())
 
 (* The count of brackets a pending source still has open — the depth the
    continuation prompt indents by — or None when the lexer cannot scan

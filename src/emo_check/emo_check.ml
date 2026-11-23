@@ -1426,6 +1426,36 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
+        ( "os_waitpid_nohang",
+          {
+            vtype =
+              FuncType
+                ( [ ("pid", Int64) ],
+                  TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "os_tty_raw",
+          {
+            vtype =
+              FuncType
+                ( [ ("fd", Int64) ],
+                  TupleType [ EnumType "R"; ArrayType Int64 ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "os_tty_restore",
+          {
+            vtype =
+              FuncType
+                ( [ ("fd", Int64); ("saved", ArrayType Int64) ],
+                  TupleType [ EnumType "R"; Int64 ] );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "os_kill",
           {
             vtype =
@@ -1628,7 +1658,8 @@ let empty_env =
           {
             vtype =
               FuncType
-                ([ ("file", String); ("argv", ArrayType String) ], Unknown);
+                ( [ ("file", String); ("argv", ArrayType String) ],
+                  TupleType [ EnumType "R"; Int64 ] );
             is_var = false;
             depth = 0;
             span = Emo_support.Span.zero;

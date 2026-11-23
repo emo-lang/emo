@@ -1,0 +1,129 @@
+const greeting = "hello"
+var who = "shell"
+echo $greeting $who
+var who = "emosh"
+echo $who
+def greet() {
+  echo greet:$1
+}
+greet world
+greet again
+if echo cond-ok {
+  echo then-taken
+}
+if false {
+  echo never-else
+} else {
+  echo else-taken
+}
+if false {
+  echo no
+} else {
+  if true {
+    echo nested-else-if
+  } else {
+    echo nested-else
+  }
+}
+echo gate=$gate
+for var i = 0; i < 3; i = i + 1 {
+  echo tick $i
+}
+for var n = 3; n > 0; n = n - 1 {
+  echo down $n
+}
+for var z = 0; z < 0; z = z + 1 {
+  echo never
+}
+echo skipped=$?
+for var b = 0; b < 5; b = b + 1 {
+  if true {
+    echo inner $b
+    break
+  }
+}
+echo broken=$?
+while false {
+  echo never
+}
+echo while-zero=$?
+var countdown = 2
+while echo counting {
+  break
+}
+echo counted=$countdown
+const frozen = 1
+const frozen = 2
+echo frozen-refused=$?
+unset frozen
+echo unset-refused=$?
+unset greeting
+echo unset-ok=$?
+echo greeting=[$greeting]
+def returning() {
+  return 3
+  echo never
+}
+returning
+echo returned=$?
+var s = 3
+if s > 5 {
+  echo big
+} else {
+  echo small
+}
+if s > 1 && s < 5 {
+  echo mid
+}
+if s == 3 {
+  echo three
+}
+var n = 3
+while n > 0 {
+  echo down $n
+  n = n - 1
+}
+echo final=$n
+if 1 + 1 == 2 {
+  echo math
+}
+var acc = 0
+for var i = 1; i <= 4; i = i + 1 {
+  acc = acc + i
+}
+echo sum=$acc
+var phrase = "a" "b"
+echo phrase=[$phrase]
+phrase = "new" "words"
+echo phrase=[$phrase]
+ghost = 5
+echo ghost-refused=$?
+const locked = 9
+locked = 8
+echo locked-refused=$?
+echo locked=$locked
+var unlocked = 1
+unlocked = unlocked + 41
+echo unlocked=$unlocked
+var shown = 41
+shown
+echo bare-name=$?
+s + 1
+echo plus=$?
+1 + 1
+s < 5
+const c = "foo"
+c
+echo const-bare=$?
+'echo' quoted-runs
+s foo
+echo trailing=$?
+-5
+echo literal=$?
+var neg = 2
+while neg > 0 {
+  neg = neg - 3
+}
+echo neg=$neg
+return 4
+echo never-after

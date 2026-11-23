@@ -24,8 +24,9 @@ require "os"
 为何失败——`os: open_write notes.txt: Permission denied`——没有
 错误码,没有 nil。不会失败的调用(`getpid`、`getppid`、`getcwd`、
 `isatty`、`argv`、`wait_*` 状态解码器)就是普通函数,`waitpid` 的
-原始状态字同理;`execv` 与 `execvp` 失败时返回而不是抛出——那是
-fork 子进程接 `_exit` 的暗号。
+原始状态字同理;`execv` 失败时返回而不是抛出——那是 fork 子进程接
+`_exit` 的暗号;`execvp` 把失败作为值回答 `(R.error, reason)`
+——与其他调用同一类 errno reason。
 
 ## 进程
 
@@ -34,6 +35,7 @@ def getpid() Int64
 def getppid() Int64
 def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
+def waitpid_nohang(pid Int64) (R, (Int64, Int64))
 def kill(pid Int64, sig Int64) (R, Int64)
 def setpgid(pid Int64, pgid Int64) (R, Int64)
 def execv(path String, argv Array[String]) Void
@@ -57,13 +59,23 @@ if os.wait_exited(w[1]) {
 - `wait_signaled` / `wait_signal` —— 被信号杀死,以及是哪个信号。
 - `wait_stopped` / `wait_stop_signal` —— 被停止,以及是哪个信号。
 
+`waitpid_nohang(pid)` 是 waitpid 的轮询半:尚无子进程退出时,调用
+者继续走自己的路。已退出的子进程回答 `(R.ok, (pid, status))`
+——与 waitpid 携带的同一个原始状态字;有子进程但都没退回答
+`(R.ok, (0, 0))`,内核自己的零;谁也不是的 pid 以 errno reason
+拒绝(`os: waitpid_nohang: No child processes`),两个目标同一
+文本。这正是 shell 轮询后台作业而不泊车的方式。
+
 `execv(path, argv)` 替换调用进程;成功时它绝不返回,失败时返回
 ——fork 子进程随后接 `_exit`,因为在那里抛异常会把父进程的清理
 逻辑再跑一遍。`_exit(status)` 立即结束调用进程,不做任何展开——
 这是 fork 子进程的出口,保证子进程不会把父进程的清理逻辑再跑一遍。
 `execvp(file, argv)` 是同一种替换,只是多一步查找:`file` 沿 `PATH`
-环境变量搜索(与 shell 自己的查找一致;带斜杠的名字原样使用),
-失败约定与 execv 相同。
+环境变量搜索(与 shell 自己的查找一致;带斜杠的名字原样使用)。
+成功时它绝不返回;失败时它回答 `(R.error, "os: execvp: …")`——
+`PATH` 里没有的名字是 `No such file or directory`,不能运行的是
+`Permission denied`——两个目标同一文本,fork 子进程接 `_exit` 的
+暗号。
 
 `kill(pid, sig)` 把 `sig` 发给 `pid`——进程 id,或其负数,代表以它
 为 id 的整个进程组,这是监护者赖以生存的纪律:一次调用结束一个组。
@@ -80,12 +92,23 @@ pid 的 kill 就能结束整个组。
 ```emo
 def dup2(old_fd Int64, new_fd Int64) (R, Int64)
 def isatty(fd Int64) Bool
+def tty_raw(fd Int64) (R, Array[Int64])
+def tty_restore(fd Int64, saved Array[Int64]) (R, Int64)
 ```
 
 `dup2` 把 `old_fd` 复制到 `new_fd` 上,若 `new_fd` 原本打开会先关掉
 ——shell 靠它在 exec 之前把子进程的 stdin/stdout 指到管道端点或
 文件上。`isatty` 回答 `fd` 是否连接着终端——程序由此分辨交互会话
 与管道、脚本喂入的 stdin。两者都是朴素 POSIX,没有缓冲,没有意外。
+
+`tty_raw(fd)` 把终端放进 raw 模式——一次读一个字节,如打即得:
+无回显、无行纪律、无信号生成——并答出当时的状态作为不透明字,
+即 `tty_restore(fd, saved)` 交回去的那份。raw 是行编辑器自己的读
+法,策略归 os:`cfmakeraw` 是可移植的门(旗标位本身在 macOS 与
+Linux 之间不同),保存的字只归造出它的那个运行时读, blob 不出配
+对之外。陌生的描述符——管道、普通文件——以 errno 文本作值拒绝:
+`os: tty_raw: Inappropriate ioctl for device`,每个目标同样字节。
+调用者在任何命令运行之前先恢复,子进程保持在经典的熟模式终端。
 
 ## 环境变量与参数
 
@@ -195,7 +218,8 @@ main 普通 `return` 会把父进程的清理逻辑跑两遍。
 `["ocaml", "c", "wasm"]`。ocaml 目标把 os 调用建在宿主的 Unix 模块上;
 c 目标直接发射 POSIX 调用;wasm 目标把 fd、目录与工作目录半边降级为
 模块的 syscall,把进程半边降级为运行时 raise——`fork`、`execv`、
-`execvp`、`waitpid`、`pipe`、`dup2`、`getpid`、`getppid`、`_exit`、
+`execvp`、`waitpid`、`waitpid_nohang`、`pipe`、`dup2`、`getpid`、
+`getppid`、`_exit`、
 `isatty`、`argv`、环境变量与信号处置各自在被调用时点名能力
 (`os_fs_demo` 走 fd 与目录半边;含 fork 的 `os_demo` 仍是 c
 golden)。typescript 与 beam 目标拒绝这个包。

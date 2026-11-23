@@ -1,0 +1,704 @@
+require "os"
+
+// The line editor: raw mode, history, completion — the interactive
+// session's own reading, written in Emo over the os terminal tier.
+// The caller (the session driver) puts the terminal into raw mode
+// around every read and restores it before any command runs, so the
+// editor owns the bytes only while a line is being typed and
+// children keep the classic cooked terminal; Ctrl-C arrives as a
+// byte here and abandons the line instead of killing anything.
+//
+// Every byte the editor speaks — the prompt, the redraws, the key
+// sequences' own echo — rides raw os.write on the descriptor the
+// session drives prompts with, so a redirected stdout stays clean
+// and the two targets' bytes are the comparable kind.
+//
+// The buffer is a byte string and the cursor a byte offset, but the
+// cursor only ever stands on a character boundary: every move and
+// edit walks the UTF-8 continuation bytes (10xxxxxx), so multi-byte
+// characters are inserted, erased, and stepped over whole. Column
+// math counts a character the way the terminal draws it — the
+// East-Asian-Wide blocks as two columns — enough for the lines a
+// shell session types; a line longer than one terminal row wraps and
+// the single-line redraw smears (the honest limit the guide states).
+
+// ---- bytes ----
+
+// One byte of the buffer as a number — the editor's whole byte
+// vocabulary (to_bytes().get()), the string escapes not carrying a
+// byte-literal form to compare against.
+def byte_of(s String, i Int64) Int64 {
+  return s.to_bytes().get(i)
+}
+
+// One ESC byte ahead of a body: the sequences the redraw and the
+// cursor speak (ESC [ 2 K, ESC [ n D). Built, not spelled — the
+// escape table has no byte-literal form either.
+def ctrl(body String) String {
+  const b = Bytes.new(1)
+  b.set(0, 27)
+  return b.to_string() + body
+}
+
+// ---- utf-8 ----
+
+// Whether the byte is a continuation byte: one of the 10xxxxxx
+// trailer bytes a multi-byte character carries after its lead.
+def is_cont(b Int64) Bool {
+  return (b & 192) == 128
+}
+
+// The length of the character whose lead byte stands at i: the
+// continuation count the lead promises, one for anything the editor
+// cannot read (a stray byte rides alone).
+def char_len(buf String, i Int64) Int64 {
+  const lead = byte_of(buf, i)
+  if lead < 128 {
+    return 1
+  }
+  if (lead & 224) == 192 {
+    return 2
+  }
+  if (lead & 240) == 224 {
+    return 3
+  }
+  if (lead & 248) == 240 {
+    return 4
+  }
+  return 1
+}
+
+// The character boundary just before i: the lead byte's own offset
+// when continuation bytes sit behind the cursor.
+def prev_boundary(buf String, i Int64) Int64 {
+  var j = i - 1
+  while j > 0 && is_cont(byte_of(buf, j)) {
+    j = j - 1
+  }
+  if j < 0 {
+    return 0
+  }
+  return j
+}
+
+// The code point at a character's lead byte — the width table's
+// question, nothing more.
+def code_at(buf String, i Int64) Int64 {
+  const b = byte_of(buf, i)
+  if b < 128 {
+    return b
+  }
+  if (b & 224) == 192 {
+    return (b - 192) * 64 + (byte_of(buf, i + 1) - 128)
+  }
+  if (b & 240) == 224 {
+    return (b - 224) * 4096 + (byte_of(buf, i + 1) - 128) * 64
+      + (byte_of(buf, i + 2) - 128)
+  }
+  return (b - 240) * 262144 + (byte_of(buf, i + 1) - 128) * 4096
+    + (byte_of(buf, i + 2) - 128) * 64 + (byte_of(buf, i + 3) - 128)
+}
+
+// Whether the code point draws two columns: the East-Asian-Wide and
+// Fullwidth blocks CJK input rides in, the ranges without tables.
+def wide(code Int64) Bool {
+  if code >= 4352 && code <= 4447 {
+    return true
+  }
+  if code >= 11904 && code <= 42127 {
+    return true
+  }
+  if code >= 44032 && code <= 55203 {
+    return true
+  }
+  if code >= 63744 && code <= 64255 {
+    return true
+  }
+  if code >= 65072 && code <= 65103 {
+    return true
+  }
+  if code >= 65280 && code <= 65376 {
+    return true
+  }
+  if code >= 65504 && code <= 65510 {
+    return true
+  }
+  if code >= 131072 && code <= 262141 {
+    return true
+  }
+  return false
+}
+
+// The columns a run of the buffer draws, character by character.
+def display_width(buf String) Int64 {
+  var width = 0
+  var i = 0
+  while i < buf.length() {
+    const code = code_at(buf, i)
+    if wide(code) {
+      width = width + 2
+    } else {
+      width = width + 1
+    }
+    i = i + char_len(buf, i)
+  }
+  return width
+}
+
+// The longest text every candidate starts with — the completion's
+// answer, kept to whole bytes (the candidates all start with the
+// typed prefix, so the shared run never splits a character).
+def common_prefix(cands Array[String]) String {
+  if cands.length() == 0 {
+    return ""
+  }
+  var shared = cands[0]
+  for var k = 1; k < cands.length(); k = k + 1 {
+    const other = cands[k]
+    var n = 0
+    while n < shared.length() && n < other.length()
+      && byte_of(shared, n) == byte_of(other, n) {
+      n = n + 1
+    }
+    shared = shared.substring(0, n)
+  }
+  return shared
+}
+
+// ---- the editor ----
+
+// One interactive line's reading. The state one read carries — the
+// buffer, the cursor, the history browsing index, the line a history
+// walk suspends — plus the completion's live sources (the session's
+// function names, refreshed by the driver before every read, so the
+// module stays out of the session's own dependency lane).
+class Editor {
+  def init() {
+    self.buf = Box.new("")
+    self.pos = Box.new(0)
+    self.hidx = Box.new(0 - 1)
+    self.stash = Box.new("")
+    self.last_tab = Box.new(false)
+    self.prompt = Box.new("")
+    self.funcs = Box.new(ArrayBuilder.new().to_array())
+  }
+
+  // One line: render the prompt, decode keys until Enter. The answer
+  // is the line and what ended the read — 0 accepted (an empty line
+  // is an accepted line too), 1 end of input, 2 abandoned. The error
+  // answer is the read's own reason, the driver's cue that the input
+  // is gone.
+  def read_line(fd Int64, prompt String, history Array[String]) (R, (String, Int64)) {
+    self.buf.replace("")
+    self.pos.replace(0)
+    self.hidx.replace(0 - 1)
+    self.last_tab.replace(false)
+    self.prompt.replace(prompt)
+    os.write(2, prompt)
+    self.render()
+    var done = false
+    var outcome = 0
+    while !done {
+      case os.read(fd, 1) {
+        (R.error, why) then { return (R.error, ("", 0 - 1)) }
+        (R.ok, chunk) then {
+          if chunk == "" {
+            outcome = 1
+            done = true
+          } else {
+            const verdict = self.key(chunk, fd, history)
+            if verdict != 0 {
+              outcome = verdict - 1
+              done = true
+            }
+          }
+        }
+      }
+    }
+    if outcome == 0 {
+      // the enter's own echo: raw mode has no OPOST, so the carriage
+      // return rides along — the line's output and the next prompt
+      // start below the line instead of redrawing over it (the first
+      // cut skipped this, and every accepted line vanished under the
+      // next prompt's erase)
+      os.write(2, "\r\n")
+    }
+    return (R.ok, (self.buf.read(), outcome))
+  }
+
+  // One decoded key: 0 keeps reading, 1 the line is accepted, 2 end
+  // of input, 3 the line abandoned.
+  def key(ch String, fd Int64, history Array[String]) Int64 {
+    const b = byte_of(ch, 0)
+    if b == 13 || b == 10 {
+      // enter (raw terminals send the carriage return)
+      return 1
+    }
+    if b == 3 {
+      // ctrl-c: the line abandoned — the typed text stays on its row
+      // (bash's ^C row), the prompt asks again on the next one
+      self.buf.replace("")
+      self.pos.replace(0)
+      os.write(2, "\r\n")
+      return 3
+    }
+    if b == 4 {
+      // ctrl-d on an empty line is end of input; on text it does
+      // nothing (the characters are not going anywhere)
+      if self.buf.read() == "" {
+        return 2
+      }
+      return 0
+    }
+    if b == 127 || b == 8 {
+      self.backspace()
+      return 0
+    }
+    if b == 27 {
+      return self.escape(fd, history)
+    }
+    if b == 9 {
+      self.complete(fd)
+      return 0
+    }
+    if b == 1 {
+      self.pos.replace(0)
+      self.render()
+      return 0
+    }
+    if b == 5 {
+      self.pos.replace(self.buf.read().length())
+      self.render()
+      return 0
+    }
+    if b == 11 {
+      // ctrl-k: the tail dies
+      self.buf.replace(self.buf.read().substring(0, self.pos.read()))
+      self.render()
+      return 0
+    }
+    if b == 21 {
+      // ctrl-u: the whole line dies
+      self.buf.replace("")
+      self.pos.replace(0)
+      self.render()
+      return 0
+    }
+    if b == 23 {
+      self.kill_word()
+      return 0
+    }
+    if b < 32 {
+      // the remaining controls stay silent — the editor claims only
+      // the keys above
+      return 0
+    }
+    self.insert_run(ch, fd)
+    return 0
+  }
+
+  // A printable run: the lead byte rode in, its continuation bytes
+  // follow one read each — gathered here so one character is one
+  // insertion and the cursor lands whole.
+  def insert_run(ch String, fd Int64) Void {
+    var text = ch
+    const lead = byte_of(ch, 0)
+    if lead >= 128 {
+      const want = char_len(text, 0)
+      var got = 1
+      while got < want {
+        case os.read(fd, 1) {
+          (R.ok, more) then {
+            text = text + more
+            got = got + 1
+          }
+          (R.error, _) then {}
+        }
+      }
+    }
+    const buf = self.buf.read()
+    const pos = self.pos.read()
+    self.buf.replace(buf.substring(0, pos) + text + buf.substring(pos, buf.length() - pos))
+    self.pos.replace(pos + text.length())
+    self.render()
+  }
+
+  def backspace() Void {
+    const pos = self.pos.read()
+    if pos > 0 {
+      const buf = self.buf.read()
+      const start = prev_boundary(buf, pos)
+      self.buf.replace(buf.substring(0, start) + buf.substring(pos, buf.length() - pos))
+      self.pos.replace(start)
+      self.render()
+    }
+  }
+
+  def delete_at() Void {
+    const buf = self.buf.read()
+    const pos = self.pos.read()
+    if pos < buf.length() {
+      const nxt = pos + char_len(buf, pos)
+      self.buf.replace(buf.substring(0, pos) + buf.substring(nxt, buf.length() - nxt))
+      self.render()
+    }
+  }
+
+  def kill_word() Void {
+    const buf = self.buf.read()
+    var start = self.pos.read()
+    while start > 0 && byte_of(buf, start - 1) == 32 {
+      start = start - 1
+    }
+    while start > 0 && byte_of(buf, start - 1) != 32 {
+      start = start - 1
+    }
+    self.buf.replace(buf.substring(0, start) + buf.substring(self.pos.read(), buf.length() - self.pos.read()))
+    self.pos.replace(start)
+    self.render()
+  }
+
+  // The escape family: the second byte names the bracket — `[` the
+  // CSI forms the arrows live in, `O` the application-mode twins —
+  // and the third names the key. Anything else is a bare ESC riding
+  // alone; the editor stays quiet.
+  def escape(fd Int64, history Array[String]) Int64 {
+    case os.read(fd, 1) {
+      (R.error, _) then { return 0 }
+      (R.ok, second) then {
+        const b = byte_of(second, 0)
+        if b == 91 || b == 79 {
+          case os.read(fd, 1) {
+            (R.error, _) then {}
+            (R.ok, third) then {
+              const k = byte_of(third, 0)
+              if k == 65 {
+                self.history_up(history)
+              } else {
+                if k == 66 {
+                  self.history_down(history)
+                } else {
+                  if k == 67 {
+                    self.right()
+                  } else {
+                    if k == 68 {
+                      self.left()
+                    } else {
+                      if k == 72 {
+                        self.pos.replace(0)
+                        self.render()
+                      } else {
+                        if k == 70 {
+                          self.pos.replace(self.buf.read().length())
+                          self.render()
+                        } else {
+                          if k >= 48 && k <= 57 {
+                            // ESC [ n ~: delete is the 3, home and
+                            // end the 1 and 4 the keypad sends
+                            case os.read(fd, 1) {
+                              (R.error, _) then {}
+                              (R.ok, tilde) then {
+                                if byte_of(tilde, 0) == 126 {
+                                  if k == 51 {
+                                    self.delete_at()
+                                  } else {
+                                    if k == 49 || k == 55 {
+                                      self.pos.replace(0)
+                                      self.render()
+                                    } else {
+                                      if k == 52 || k == 56 {
+                                        self.pos.replace(self.buf.read().length())
+                                        self.render()
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        return 0
+      }
+    }
+  }
+
+  def left() Void {
+    const pos = self.pos.read()
+    if pos > 0 {
+      self.pos.replace(prev_boundary(self.buf.read(), pos))
+      self.render()
+    }
+  }
+
+  def right() Void {
+    const buf = self.buf.read()
+    const pos = self.pos.read()
+    if pos < buf.length() {
+      self.pos.replace(pos + char_len(buf, pos))
+      self.render()
+    }
+  }
+
+  def history_up(history Array[String]) Void {
+    var idx = self.hidx.read()
+    var going = true
+    if idx == 0 - 1 {
+      if history.length() > 0 {
+        self.stash.replace(self.buf.read())
+        idx = history.length() - 1
+      } else {
+        going = false
+      }
+    } else {
+      if idx == 0 {
+        going = false
+      } else {
+        idx = idx - 1
+      }
+    }
+    if going {
+      self.hidx.replace(idx)
+      self.buf.replace(history[idx])
+      self.pos.replace(self.buf.read().length())
+      self.render()
+    }
+  }
+
+  def history_down(history Array[String]) Void {
+    const idx = self.hidx.read()
+    if idx != 0 - 1 {
+      if idx + 1 >= history.length() {
+        self.hidx.replace(0 - 1)
+        self.buf.replace(self.stash.read())
+      } else {
+        self.hidx.replace(idx + 1)
+        self.buf.replace(history[idx + 1])
+      }
+      self.pos.replace(self.buf.read().length())
+      self.render()
+    }
+  }
+
+  // One redraw: the line erased whole, prompt and buffer written
+  // fresh, the cursor walked back left to its own column — the
+  // columns the text after the cursor occupies.
+  def render() Void {
+    const buf = self.buf.read()
+    os.write(2, ctrl("[2K") + "\r" + self.prompt.read() + buf)
+    const after = display_width(buf.substring(self.pos.read(), buf.length() - self.pos.read()))
+    if after > 0 {
+      os.write(2, ctrl("[" + after.to_string() + "D"))
+    }
+  }
+
+  // Tab: the word under the cursor completed to every candidate's
+  // common prefix — and when the prefix adds nothing and several
+  // candidates stand, the second Tab lists them in one row under the
+  // line. The word is what the cursor's back walk reaches before a
+  // space or a semicolon; the first word of the line completes as a
+  // command, any later word as a file of the working directory.
+  def complete(fd Int64) Void {
+    const buf = self.buf.read()
+    const pos = self.pos.read()
+    var start = pos
+    while start > 0 && byte_of(buf, start - 1) != 32 && byte_of(buf, start - 1) != 59 {
+      start = start - 1
+    }
+    const prefix = buf.substring(start, pos - start)
+    const cands = self.candidates(prefix, start == 0)
+    const shared = common_prefix(cands)
+    var acted = false
+    if cands.length() > 0 && shared.length() > prefix.length() {
+      self.buf.replace(buf.substring(0, start) + shared + buf.substring(pos, buf.length() - pos))
+      self.pos.replace(start + shared.length())
+      acted = true
+    }
+    if !acted && cands.length() > 1 && self.last_tab.read() {
+      var row = ""
+      for var k = 0; k < cands.length(); k = k + 1 {
+        row = row + cands[k] + "  "
+      }
+      os.write(2, "\r\n" + row + "\r\n")
+      self.render()
+      acted = true
+    }
+    if cands.length() == 0 || (acted && shared.length() == prefix.length() && cands.length() == 1) {
+      self.last_tab.replace(false)
+    } else {
+      self.last_tab.replace(!acted)
+    }
+  }
+
+  // The candidates a prefix names: a first word rides the command
+  // vocabulary — the builtins, the session's own functions (the
+  // driver refreshes the box before every read), then every command
+  // the PATH serves; a later word rides the working directory's
+  // names. Order is each source's own; a duplicate is one candidate
+  // twice, harmless in a prefix walk.
+  def candidates(prefix String, first Bool) Array[String] {
+    const out = ArrayBuilder.new()
+    if first {
+      const roster = builtin.names()
+      for var k = 0; k < roster.length(); k = k + 1 {
+        if roster[k].starts_with(prefix) {
+          out.push(roster[k])
+        }
+      }
+      const funcs = self.funcs.read()
+      for var k = 0; k < funcs.length(); k = k + 1 {
+        if funcs[k].starts_with(prefix) {
+          out.push(funcs[k])
+        }
+      }
+      case os.getenv("PATH") {
+        (R.ok, path) then {
+          const dirs = path.split(":")
+          for var k = 0; k < dirs.length(); k = k + 1 {
+            case os.list_dir(dirs[k]) {
+              (R.ok, names) then {
+                for var j = 0; j < names.length(); j = j + 1 {
+                  if names[j].starts_with(prefix) {
+                    out.push(names[j])
+                  }
+                }
+              }
+              (R.error, _) then {}
+            }
+          }
+        }
+        (R.error, _) then {}
+      }
+    } else {
+      case os.list_dir(".") {
+        (R.ok, names) then {
+          for var k = 0; k < names.length(); k = k + 1 {
+            if names[k].starts_with(prefix) {
+              out.push(names[k])
+            }
+          }
+        }
+        (R.error, _) then {}
+      }
+    }
+    return out.to_array()
+  }
+}
+
+// ---- the history file ----
+
+// The state file's path, the repl's own resolution chain: EMO_STATE_DIR
+// replaces the whole root (the cache precedent), else the XDG state
+// home's emo directory, else the HOME fallback. No HOME at all means
+// no file, and the session still edits.
+def history_path() (R, String) {
+  case os.getenv("EMO_STATE_DIR") {
+    (R.ok, root) then { return (R.ok, root + "/emosh-history") }
+    (R.error, _) then {}
+  }
+  var base = ""
+  case os.getenv("XDG_STATE_HOME") {
+    (R.ok, xdg) then { base = xdg + "/emo" }
+    (R.error, _) then {
+      case os.getenv("HOME") {
+        (R.ok, home) then { base = home + "/.local/state/emo" }
+        (R.error, _) then { return (R.error, "") }
+      }
+    }
+  }
+  return (R.ok, base + "/emosh-history")
+}
+
+// The file's directory — everything before its last slash.
+def dir_of(path String) String {
+  var cut = 0 - 1
+  for var k = 0; k < path.length(); k = k + 1 {
+    if path.substring(k, 1) == "/" {
+      cut = k
+    }
+  }
+  if cut <= 0 {
+    return "."
+  }
+  return path.substring(0, cut)
+}
+
+// The typed lines of sessions past, the file's tail only — the cap
+// keeps a lifetime of sessions from slowing the first prompt down.
+def load_history() Array[String] {
+  case history_path() {
+    (R.error, _) then { return [] }
+    (R.ok, path) then {
+      case os.open_read(path) {
+        (R.error, _) then { return [] }
+        (R.ok, fd) then {
+          var text = ""
+          var going = true
+          while going {
+            case os.read(fd, 8192) {
+              (R.ok, chunk) then {
+                if chunk == "" {
+                  going = false
+                } else {
+                  text = text + chunk
+                }
+              }
+              (R.error, _) then { going = false }
+            }
+          }
+          os.close(fd)
+          const parts = text.split("\n")
+          const all = ArrayBuilder.new()
+          for var k = 0; k < parts.length(); k = k + 1 {
+            if parts[k] != "" {
+              all.push(parts[k])
+            }
+          }
+          const lines = all.to_array()
+          const cap = 1000
+          if lines.length() <= cap {
+            return lines
+          }
+          const tail = ArrayBuilder.new()
+          for var k = lines.length() - cap; k < lines.length(); k = k + 1 {
+            tail.push(lines[k])
+          }
+          return tail.to_array()
+        }
+      }
+    }
+  }
+}
+
+// The session's lines ride the file once, at the session's end — the
+// repl's own honesty: a concurrent session's save wins the file, a
+// hard kill loses what came after the last save.
+def save_history(lines Array[String]) Void {
+  case history_path() {
+    (R.error, _) then {}
+    (R.ok, path) then {
+      case os.mkdir(dir_of(path)) {
+        (R.error, _) then {}
+        (R.ok, _) then {}
+      }
+      case os.open_write(path) {
+        (R.error, _) then {}
+        (R.ok, fd) then {
+          var text = ""
+          for var k = 0; k < lines.length(); k = k + 1 {
+            text = text + lines[k] + "\n"
+          }
+          os.write(fd, text)
+          os.close(fd)
+        }
+      }
+    }
+  }
+}

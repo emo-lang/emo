@@ -570,8 +570,11 @@ emo_value emo_os_getenv(emo_str name);
 int64_t emo_os_getppid(void);
 emo_value emo_os_fork(void);
 int64_t emo_os_waitpid(int64_t pid);
+emo_value emo_os_waitpid_nohang(int64_t pid);
 emo_value emo_os_kill(int64_t pid, int64_t sig);
 emo_value emo_os_setpgid(int64_t pid, int64_t pgid);
+emo_value emo_os_tty_raw(int64_t fd);
+emo_value emo_os_tty_restore(int64_t fd, emo_value saved);
 emo_value emo_os_pipe(void);
 int64_t emo_os_execv(emo_str path, emo_value argv);
 void emo_os__exit(int64_t status);
@@ -590,7 +593,7 @@ emo_value emo_os_rename(emo_str old_path, emo_str new_path);
 emo_value emo_os_getcwd(void); /* the working directory as a cell */
 emo_value emo_os_chdir(emo_str path);
 emo_value emo_os_dup2(int64_t old_fd, int64_t new_fd);
-int64_t emo_os_execvp(emo_str file, emo_value argv);
+emo_value emo_os_execvp(emo_str file, emo_value argv);
 bool emo_os_isatty(int64_t fd);
 void emo_args_set(int argc, char **argv);
 emo_value emo_os_argv(void); /* the process's argument vector as a cell */

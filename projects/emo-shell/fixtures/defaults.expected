@@ -1,0 +1,11 @@
+hello
+fallback
+was-empty
+hello-world
+braced-empty=[]
+${1x} stays
+${SETV
+a}bhelloc
+pos=[]
+digits=
+${SETV-x-colon}

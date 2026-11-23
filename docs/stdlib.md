@@ -179,7 +179,7 @@ decoded by the `wait_exited` / `wait_exit_code` / `wait_signaled` /
 `list_dir` answers byte-order sorted entry names without `.` and
 `..`, the same order on both targets.
 
-Targets: `["ocaml", "c"]`. Reference:
+Targets: `["ocaml", "c", "wasm"]`. Reference:
 [`docs/stdlib/os.md`](stdlib/os.md) · Demo: `examples/os_demo`.
 
 ## The `bufio` package

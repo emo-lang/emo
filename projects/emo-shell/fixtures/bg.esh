@@ -1,0 +1,23 @@
+echo bang-empty=[$!]
+sleep 0.2 & wait %1
+echo wait=$?
+sleep 2 & kill %1
+wait %1
+echo killed=$?
+sleep 1 & jobs | awk '{print $1, $3, $4}'
+wait %1
+echo swept=$?
+sleep 0.2 & fg %1
+echo fg=$?
+sleep 2 & bg %1
+echo bg=$?
+wait
+echo all=$?
+sleep 0.2 & kill $!
+wait %1
+echo bangkill=$?
+echo $$ | awk '{print ($1 + 0 > 0)}'
+sleep 0.2 | cat & wait %1
+echo pipe=$?
+kill 999999
+echo deadpid=$?

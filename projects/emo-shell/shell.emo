@@ -13,22 +13,155 @@ require "bufio"
 // the parent's words and the children's bytes interleave in the order
 // they were written, deterministically, on both targets.
 //
-// The line reader is bufio over fd 0. In an interactive session the
-// terminal's own line discipline does the editing — cooked mode, the
-// way a shell without a line editor reads — and the session's opening
-// moves (in exec) ignore sig_int and sig_quit so a Ctrl-C discards
-// the current line instead of killing the shell; a fork child
-// restores the default disposition before its exec. A session whose
-// stdin is not a tty is a script: no prompt, and the shell dies by
-// its own errors.
+// The line reader is bufio over the session's input descriptor — fd
+// 0 for the standard session, a script file's descriptor when emosh
+// was started with one. In an interactive session the terminal's own
+// line discipline does the editing — cooked mode, the way a shell
+// without a line editor reads — and the session's opening moves (in
+// exec) ignore sig_int and sig_quit so a Ctrl-C discards the current
+// line instead of killing the shell; a fork child restores the
+// default disposition before its exec. A session whose input is not
+// a tty is a script: no prompt, and the shell dies by its own
+// errors. A `-c` session carries its line on the shell itself and
+// never opens a reader at all; the positional parameters ride with
+// it.
+
+// One background job: the number the user names as %n, the pipeline's
+// member pids (the last stage the representative the job's status
+// rides), the command text the notifications speak, and the two
+// mutable answers — the pipeline's final status once the
+// representative has been reaped, and the members still unreaped
+// beside it.
+class Job {
+  def init(n Int64, rep Int64, rest Array[Int64], text String) {
+    self.n = n
+    self.rep = rep
+    self.rest = Box.new(rest)
+    self.text = text
+    self.final = Box.new(0 - 1)
+  }
+
+  // Whether the whole pipeline is in: the representative reaped and
+  // its status recorded.
+  def done() Bool {
+    return self.final.read() >= 0
+  }
+
+  // The pipeline's status, valid once done() answers true.
+  def final_status() Int64 {
+    return self.final.read()
+  }
+
+  // One nohang round: a still-running representative answers false; a
+  // reaped one is decoded, the stragglers waited down blocking (they
+  // die on their pipes the moment the representative does), and true
+  // comes back.
+  def poll() Bool {
+    if self.done() {
+      return true
+    }
+    case os.waitpid_nohang(self.rep) {
+      (R.ok, w) then {
+        if w[0] != 0 {
+          const rest = self.rest.read()
+          for var k = 0; k < rest.length(); k = k + 1 {
+            os.waitpid(rest[k])
+          }
+          self.rest.replace(ArrayBuilder.new().to_array())
+          self.final.replace(decode_status(w[1]))
+          return true
+        }
+        return false
+      }
+      (R.error, _) then { return false }
+    }
+  }
+
+  // The blocking form, fg's and wait's: the representative parked on
+  // until it is in, the stragglers waited down behind it.
+  def wait_blocking() Int64 {
+    if self.done() {
+      return self.final.read()
+    }
+    const w = os.waitpid(self.rep)
+    const rest = self.rest.read()
+    for var k = 0; k < rest.length(); k = k + 1 {
+      os.waitpid(rest[k])
+    }
+    self.rest.replace(ArrayBuilder.new().to_array())
+    const status = decode_status(w[1])
+    self.final.replace(status)
+    return status
+  }
+}
+
+// The kernel's raw status word to the exit status the session speaks:
+// a signal death 128 + signal, an exit the code.
+def decode_status(raw Int64) Int64 {
+  if os.wait_signaled(raw) {
+    return 128 + os.wait_signal(raw)
+  }
+  return os.wait_exit_code(raw)
+}
+
+// One declared binding: the name, its value, and whether `const`
+// froze it against redeclaration and unset.
+class Var {
+  def init(name String, value String, constant Bool) {
+    self.name = name
+    self.value = value
+    self.constant = constant
+  }
+}
+
+// One `def`'d function: the name and the body as it was parsed —
+// calls run the body in place, the session's own state in hand. The
+// parse side's own Func naming stays there; this is the table's entry.
+class FuncEntry {
+  def init(name String, body Array[parse.Item]) {
+    self.name = name
+    self.body = body
+  }
+}
+
+// The empty tables the session opens with — the def return type
+// annotating the literal, the const-annotation grammar not taking
+// bracketed types.
+def empty_vars() Array[Var] {
+  return []
+}
+
+def empty_funcs() Array[FuncEntry] {
+  return []
+}
+
+def empty_args_stack() Array[Array[String]] {
+  return []
+}
 
 class Shell {
-  def init(interactive Bool, name String) {
+  def init(interactive Bool, name String, read_fd Int64, args Array[String], one_shot Bool, command String) {
     self.interactive = interactive
     self.name = name
+    self.args = args
+    self.one_shot = one_shot
+    self.command = command
+    self.pid = os.getpid()
+    self.last_bg = Box.new(0)
+    self.jobs = Box.new(ArrayBuilder.new())
+    self.vars = Box.new(empty_vars())
+    self.funcs = Box.new(empty_funcs())
+    self.args_stack = Box.new(empty_args_stack())
+    self.signal = Box.new(0)
     self.last_status = Box.new(0)
     self.running = Box.new(true)
-    self.reader = Box.new(bufio.reader(bufio.fd_reader(0)))
+    self.reader = Box.new(bufio.reader(bufio.fd_reader(read_fd)))
+    self.history = Box.new(ArrayBuilder.new().to_array())
+    self.assume_tty = false
+    case os.getenv("EMOSH_ASSUME_TTY") {
+      (R.ok, _) then { self.assume_tty = true }
+      (R.error, _) then {}
+    }
   }
 
   // ---- the three writers ----
@@ -67,6 +200,321 @@ class Shell {
 
   def stop() Void {
     self.running.replace(false)
+  }
+
+  // ---- the background jobs ----
+
+  // One job more: it takes the smallest free number, and the
+  // session's $! moves to its representative pid.
+  def job_new(rep Int64, rest Array[Int64], text String) Job {
+    const taken = self.jobs.read().to_array()
+    var n = 1
+    var taken_n = true
+    while taken_n {
+      taken_n = false
+      for var k = 0; k < taken.length(); k = k + 1 {
+        if taken[k].n == n {
+          taken_n = true
+        }
+      }
+      if taken_n {
+        n = n + 1
+      }
+    }
+    const job = Job.new(n: n, rep: rep, rest: rest, text: text)
+    const fresh = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      fresh.push(taken[k])
+    }
+    fresh.push(job)
+    self.jobs.replace(fresh)
+    self.last_bg.replace(rep)
+    return job
+  }
+
+  // One job by number, or the refusal.
+  def find_job(n Int64) (R, Job) {
+    const taken = self.jobs.read().to_array()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].n == n {
+        return (R.ok, taken[k])
+      }
+    }
+    return (R.error, "no such job")
+  }
+
+  // The job leaves the table — being reported and being removed are
+  // the same act, the notification the report.
+  def drop_job(n Int64) Void {
+    const taken = self.jobs.read().to_array()
+    const kept = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].n != n {
+        kept.push(taken[k])
+      }
+    }
+    self.jobs.replace(kept)
+  }
+
+  // One poll over every job, the finished ones announced and dropped:
+  // `[1] done sleep 5`, the status riding after `done` when it is not
+  // zero — the rows ride stderr with the prompt they accompany, so a
+  // redirected stdout stays clean. The interactive loop calls this
+  // before each prompt.
+  def notify() Void {
+    const taken = self.jobs.read().to_array()
+    const kept = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      const j = taken[k]
+      if j.poll() {
+        const status = j.final_status()
+        var row = "[" + j.n.to_string() + "] done"
+        if status != 0 {
+          row = row + " " + status.to_string()
+        }
+        self.err(row + " " + j.text)
+      } else {
+        kept.push(j)
+      }
+    }
+    self.jobs.replace(kept)
+  }
+
+  // The jobs listing: whatever is still running, the classic shape
+  // with the pid in it.
+  def list_jobs() Void {
+    const taken = self.jobs.read().to_array()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      const j = taken[k]
+      self.line("[" + j.n.to_string() + "] " + j.rep.to_string() + " running " + j.text)
+    }
+  }
+
+  // The jobless wait: every job parked on, the table emptied.
+  def wait_all() Int64 {
+    const taken = self.jobs.read().to_array()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      taken[k].wait_blocking()
+    }
+    self.jobs.replace(ArrayBuilder.new())
+    return 0
+  }
+
+  // ---- the declared bindings ----
+
+  // One binding set: an existing name takes the new value (the const
+  // flag unchanged — the caller refuses consts before coming here), a
+  // new name appends.
+  def var_set(name String, value String) Void {
+    const taken = self.vars.read()
+    const fresh = ArrayBuilder.new()
+    var replaced = false
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        fresh.push(Var.new(name: name, value: value, constant: taken[k].constant))
+        replaced = true
+      } else {
+        fresh.push(taken[k])
+      }
+    }
+    if !replaced {
+      fresh.push(Var.new(name: name, value: value, constant: false))
+    }
+    self.vars.replace(fresh.to_array())
+  }
+
+  // A const declared: the table grows the binding with the flag set.
+  def var_declare_const(name String, value String) Void {
+    const taken = self.vars.read()
+    const fresh = ArrayBuilder.new()
+    var replaced = false
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        fresh.push(Var.new(name: name, value: value, constant: true))
+        replaced = true
+      } else {
+        fresh.push(taken[k])
+      }
+    }
+    if !replaced {
+      fresh.push(Var.new(name: name, value: value, constant: true))
+    }
+    self.vars.replace(fresh.to_array())
+  }
+
+  // One binding's value, or the refusal.
+  def var_lookup(name String) (R, String) {
+    const taken = self.vars.read()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        return (R.ok, taken[k].value)
+      }
+    }
+    return (R.error, "unset")
+  }
+
+  // Whether the binding is a const.
+  def var_is_const(name String) Bool {
+    const taken = self.vars.read()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        return taken[k].constant
+      }
+    }
+    return false
+  }
+
+  // Whether the binding exists at all.
+  def var_bound(name String) Bool {
+    const taken = self.vars.read()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        return true
+      }
+    }
+    return false
+  }
+
+  // The binding leaves the table.
+  def var_drop(name String) Void {
+    const taken = self.vars.read()
+    const kept = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name != name {
+        kept.push(taken[k])
+      }
+    }
+    self.vars.replace(kept.to_array())
+  }
+
+  // The flat name=value list the expander reads ($x consults the
+  // declarations before the environment).
+  def vars_list() Array[String] {
+    const taken = self.vars.read()
+    const flat = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      flat.push(taken[k].name + "=" + taken[k].value)
+    }
+    return flat.to_array()
+  }
+
+  // ---- the functions ----
+
+  // One `def` bound: an existing name takes the new body, a new name
+  // appends — redefinition is ordinary.
+  def func_define(name String, body Array[parse.Item]) Void {
+    const taken = self.funcs.read()
+    const fresh = ArrayBuilder.new()
+    var replaced = false
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        fresh.push(FuncEntry.new(name: name, body: body))
+        replaced = true
+      } else {
+        fresh.push(taken[k])
+      }
+    }
+    if !replaced {
+      fresh.push(FuncEntry.new(name: name, body: body))
+    }
+    self.funcs.replace(fresh.to_array())
+  }
+
+  // One function by name, or the refusal.
+  def func_find(name String) (R, FuncEntry) {
+    const taken = self.funcs.read()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      if taken[k].name == name {
+        return (R.ok, taken[k])
+      }
+    }
+    return (R.error, "no such function")
+  }
+
+  // The function roster's names, the editor's completion reading
+  // them — the driver refreshes the editor's box before every read.
+  def func_names() Array[String] {
+    const taken = self.funcs.read()
+    const names = ArrayBuilder.new()
+    for var k = 0; k < taken.length(); k = k + 1 {
+      names.push(taken[k].name)
+    }
+    return names.to_array()
+  }
+
+  // ---- the typed-line history ----
+
+  // One accepted line joins the tail (an empty line never does —
+  // there is nothing to recall in it).
+  def history_add(line String) Void {
+    if line != "" {
+      const taken = self.history.read()
+      const fresh = ArrayBuilder.new()
+      for var k = 0; k < taken.length(); k = k + 1 {
+        fresh.push(taken[k])
+      }
+      fresh.push(line)
+      self.history.replace(fresh.to_array())
+    }
+  }
+
+  def history_lines() Array[String] {
+    return self.history.read()
+  }
+
+  // A session's opening move: the file's lines take the table's
+  // place, the recall now reaching before this session's first line.
+  def history_load(lines Array[String]) Void {
+    self.history.replace(lines)
+  }
+
+  // ---- the positionals ($1.., $#, $@) ----
+
+  // A call pushes its arguments; the body runs against them; the
+  // return pops back to what the caller had.
+  def args_push(args Array[String]) Void {
+    const stack = self.args_stack.read()
+    const fresh = ArrayBuilder.new()
+    for var k = 0; k < stack.length(); k = k + 1 {
+      fresh.push(stack[k])
+    }
+    fresh.push(args)
+    self.args_stack.replace(fresh.to_array())
+  }
+
+  def args_pop() Void {
+    const stack = self.args_stack.read()
+    const kept = ArrayBuilder.new()
+    for var k = 0; k < stack.length() - 1; k = k + 1 {
+      kept.push(stack[k])
+    }
+    self.args_stack.replace(kept.to_array())
+  }
+
+  // What $1.. answers right now: the innermost call's arguments, or
+  // the session's own when no call is in flight.
+  def current_args() Array[String] {
+    const stack = self.args_stack.read()
+    if stack.length() > 0 {
+      return stack[stack.length() - 1]
+    }
+    return self.args
+  }
+
+  // ---- the walker signals ----
+
+  // 0 none, 1 break, 2 continue, 3 return — set by the builtins,
+  // consumed by the loop and function walkers, cleared on the way out.
+  def set_signal(n Int64) Void {
+    self.signal.replace(n)
+  }
+
+  def read_signal() Int64 {
+    return self.signal.read()
+  }
+
+  def clear_signal() Void {
+    self.signal.replace(0)
   }
 
   // One more line of input; the empty string means end of input,

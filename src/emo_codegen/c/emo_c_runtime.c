@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <sys/un.h>
 #include <dirent.h>
 #include <sys/wait.h>
@@ -5319,6 +5320,17 @@ int64_t emo_os_waitpid(int64_t pid) {
   return emo_tuple_new(2, elems);
 }
 
+emo_value emo_os_waitpid_nohang(int64_t pid) {
+  int st = 0;
+  pid_t r = waitpid((pid_t)pid, &st, WNOHANG);
+  if (r < 0)
+    return emo_os_fail("waitpid_nohang", "");
+  emo_value elems[2];
+  elems[0] = emo_box_i64((int64_t)r);
+  elems[1] = emo_box_i64((int64_t)st);
+  return emo_os_ok(emo_tuple_new(2, elems));
+}
+
 emo_value emo_os_pipe(void) {
   int fds[2];
   if (pipe(fds) != 0)
@@ -5565,7 +5577,7 @@ emo_value emo_os_dup2(int64_t old_fd, int64_t new_fd) {
   return emo_os_ok(emo_box_i64(0));
 }
 
-int64_t emo_os_execvp(emo_str file, emo_value argv) {
+emo_value emo_os_execvp(emo_str file, emo_value argv) {
   char *f = emo_cstr_owned(file);
   int64_t count = emo_length(argv);
   char **argv_c = malloc(sizeof(char *) * (size_t)(count + 1));
@@ -5575,12 +5587,13 @@ int64_t emo_os_execvp(emo_str file, emo_value argv) {
   }
   argv_c[count] = NULL;
   execvp(f, argv_c);
-  /* Failure is a data-driven value: the call returns (the value is
-     discarded) — the fork child's cue to `_exit`. */
+  /* Failure is the data-driven value: the errno reason names itself,
+     byte-identical with the interpreter's os_result — the fork
+     child's cue to `_exit`. Success never reaches this. */
   for (int64_t i = 0; i < count; i++) free(argv_c[i]);
   free(argv_c);
   free(f);
-  return 0;
+  return emo_os_fail("execvp", "");
 }
 
 bool emo_os_isatty(int64_t fd) { return isatty((int)fd) == 1; }
@@ -5676,6 +5689,65 @@ emo_value emo_os_kill(int64_t pid, int64_t sig) {
 
 emo_value emo_os_setpgid(int64_t pid, int64_t pgid) {
   if (setpgid((pid_t)pid, (pid_t)pgid) < 0) return emo_os_fail("setpgid", "");
+  return emo_os_ok(emo_box_i64(0));
+}
+
+/* The terminal tier: tty_raw puts the descriptor's terminal into raw
+   mode — cfmakeraw, the portable door on macOS and glibc/musl alike —
+   and answers the state that was there as opaque words, one int per
+   eight bytes of the kernel's struct termios; tty_restore hands the
+   words back. The blob answers to the same runtime that made it (the
+   c target's and the interpreter's encodings never cross), the bytes
+   read nowhere outside the pair, and the failures answer as the
+   (R.error, reason) value with the errno text — byte-identical with
+   the interpreter's os_result. */
+#define EMO_TERMIOS_WORDS ((int)((sizeof(struct termios) + 7) / 8))
+
+emo_value emo_os_tty_raw(int64_t fd) {
+  struct termios t;
+  if (tcgetattr((int)fd, &t) != 0) return emo_os_fail("tty_raw", "");
+  struct termios saved = t;
+  cfmakeraw(&t);
+  if (tcsetattr((int)fd, TCSADRAIN, &t) != 0)
+    return emo_os_fail("tty_raw", "");
+  int64_t words[EMO_TERMIOS_WORDS];
+  unsigned char bytes[sizeof(struct termios)];
+  memcpy(bytes, &saved, sizeof(struct termios));
+  for (int i = 0; i < EMO_TERMIOS_WORDS; i++) {
+    int lo = i * 8;
+    int span = (int)sizeof(struct termios) - lo < 8
+                   ? (int)sizeof(struct termios) - lo
+                   : 8;
+    int64_t w = 0;
+    memcpy(&w, bytes + lo, (size_t)span);
+    words[i] = w;
+  }
+  emo_value elems[EMO_TERMIOS_WORDS];
+  for (int i = 0; i < EMO_TERMIOS_WORDS; i++) elems[i] = emo_box_i64(words[i]);
+  return emo_os_ok(emo_array_new(EMO_TERMIOS_WORDS, elems));
+}
+
+emo_value emo_os_tty_restore(int64_t fd, emo_value saved) {
+  if (emo_length(saved) != EMO_TERMIOS_WORDS) {
+    errno = EINVAL;
+    return emo_os_fail("tty_restore", "");
+  }
+  int64_t words[EMO_TERMIOS_WORDS];
+  for (int i = 0; i < EMO_TERMIOS_WORDS; i++)
+    words[i] = emo_unbox_i64(emo_index(saved, i));
+  struct termios t;
+  unsigned char bytes[sizeof(struct termios)];
+  memset(bytes, 0, sizeof bytes);
+  for (int i = 0; i < EMO_TERMIOS_WORDS; i++) {
+    int lo = i * 8;
+    int span = (int)sizeof(struct termios) - lo < 8
+                   ? (int)sizeof(struct termios) - lo
+                   : 8;
+    memcpy(bytes + lo, &words[i], (size_t)span);
+  }
+  memcpy(&t, bytes, sizeof(struct termios));
+  if (tcsetattr((int)fd, TCSADRAIN, &t) != 0)
+    return emo_os_fail("tty_restore", "");
   return emo_os_ok(emo_box_i64(0));
 }
 

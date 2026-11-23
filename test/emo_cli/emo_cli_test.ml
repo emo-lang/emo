@@ -100,6 +100,50 @@ let run_tests =
           (Emo_cli.run_file
              ~file:(Filename.concat scratch "missing.emo")
              ~color:false ~error_limit:20));
+    tc "os.argv answers the file and the run's trailing arguments" (fun () ->
+        let manifest =
+          {|package {
+  name = "emo/argv-probe"
+  version = "0.1.0"
+  targets = ["ocaml"]
+
+  deps {
+    "os" = "0.1.0"
+  }
+}
+|}
+        in
+        let file =
+          fixture ~manifest "argv.emo"
+            {|require "os"
+const a = os.argv()
+println(a.length().to_string())
+println(a[0])
+println(a[1])
+println(a[2])|}
+        in
+        let capture = Filename.concat scratch "argv.out" in
+        let saved_stdout = Unix.dup Unix.stdout in
+        let oc =
+          Unix.openfile capture
+            [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC ]
+            0o644
+        in
+        Unix.dup2 oc Unix.stdout;
+        let code =
+          in_dir (Filename.dirname file) (fun () ->
+              Emo_cli.run_file_args ~args:[ "x"; "y" ] ~file:"argv.emo"
+                ~color:false ~error_limit:20)
+        in
+        Unix.dup2 saved_stdout Unix.stdout;
+        Unix.close oc;
+        Unix.close saved_stdout;
+        let ic = open_in capture in
+        let out = really_input_string ic (in_channel_length ic) in
+        close_in ic;
+        Alcotest.(check int) "exit" 0 code;
+        Alcotest.(check string)
+          "the file leads, the arguments follow" "3\nargv.emo\nx\ny\n" out);
   ]
 
 (* The curfew: a run that will not end gets stopped by the clock the
@@ -1463,6 +1507,57 @@ println("unreachable")
           (contains err
              "the runtime implementation `os_kill` is not available on the \
               wasm target"));
+    tc "wasm os.waitpid_nohang raises naming the capability" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let source =
+          {|
+require "os"
+
+println("before")
+os.waitpid_nohang(1)
+println("unreachable")
+|}
+        in
+        let entry = scratch_entry "wasm-waitpid-nohang-refusal" source in
+        let dir = Filename.dirname entry in
+        let manifest = Filename.concat dir "package.emo" in
+        write_file manifest
+          {|package {
+  name = "emo/wasm-waitpid-nohang-refusal"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "wasm"]
+
+  deps {
+    "os" = "0.1.0"
+  }
+}
+|};
+        let out_wasm = Filename.concat dir "waitpid-nohang.wasm" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out_wasm);
+        let out, err, status =
+          run_cmd
+            (Printf.sprintf "cd %s && node %s %s" (Filename.quote dir)
+               (Filename.quote (Lazy.force wasm_runner_path))
+               (Filename.quote out_wasm))
+        in
+        Alcotest.(check string) "output stops at the call" "before\n" out;
+        (match status with
+        | Unix.WEXITED 1 -> ()
+        | s ->
+            Alcotest.fail
+              (Printf.sprintf "node exited %s: %s"
+                 (match s with
+                 | Unix.WEXITED n -> string_of_int n
+                 | Unix.WSIGNALED n -> Printf.sprintf "signal %d" n
+                 | Unix.WSTOPPED n -> Printf.sprintf "stop %d" n)
+                 err));
+        Alcotest.(check bool)
+          "the refusal names os_waitpid_nohang" true
+          (contains err
+             "the runtime implementation `os_waitpid_nohang` is not available \
+              on the wasm target"));
     tc "wasm os.setpgid raises naming the capability" (fun () ->
         if not (Lazy.force node_available) then Alcotest.skip ();
         let source =

@@ -32,8 +32,10 @@ reason a String stating exactly which system call failed and why —
 `os: open_write notes.txt: Permission denied` — no error codes, no
 nil. The calls that never fail (`getpid`, `getppid`, `getcwd`,
 `isatty`, `argv`, the `wait_*` status decoders) are plain functions,
-and so is `waitpid`'s raw status word; `execv` and `execvp` return on
-failure instead of raising, the fork child's cue to `_exit`.
+and so is `waitpid`'s raw status word; `execv` returns on failure
+instead of raising, the fork child's cue to `_exit`, and `execvp`
+answers its failure as the value `(R.error, reason)` — the same
+errno reason the other calls carry.
 
 ## Processes
 
@@ -42,6 +44,7 @@ def getpid() Int64
 def getppid() Int64
 def fork() (R, Int64)
 def waitpid(pid Int64) (Int64, Int64)
+def waitpid_nohang(pid Int64) (R, (Int64, Int64))
 def kill(pid Int64, sig Int64) (R, Int64)
 def setpgid(pid Int64, pgid Int64) (R, Int64)
 def execv(path String, argv Array[String]) Void
@@ -66,6 +69,15 @@ if os.wait_exited(w[1]) {
 - `wait_signaled` / `wait_signal` — killed by a signal, and which.
 - `wait_stopped` / `wait_stop_signal` — stopped, and which signal.
 
+`waitpid_nohang(pid)` is the polling half: the caller keeps going
+when no child has exited yet. A child that has exited answers
+`(R.ok, (pid, status))` — the same raw word `waitpid` carries;
+children but none exited yet answers `(R.ok, (0, 0))`, the kernel's
+own zero; a pid that is nobody's child refuses with the errno reason
+(`os: waitpid_nohang: No child processes`), the same text on both
+targets. The way a shell polls its background jobs without parking on
+them.
+
 `execv(path, argv)` replaces the calling process; on success it never
 returns, and on failure it returns — the fork child follows it with
 `_exit`, since a raise there would run the parent's cleanup a second
@@ -74,7 +86,11 @@ unwinding — the fork child's way out, so a child cannot run its
 parent's cleanup a second time. `execvp(file, argv)` is the same
 replacement with a lookup: `file` is searched through the `PATH`
 environment variable the way the shell's own lookup is (a name with a
-slash in it is used as-is), and the failure contract is the execv one.
+slash in it is used as-is). On success it never returns; on failure
+it answers `(R.error, "os: execvp: …")` — `No such file or directory`
+for a name the `PATH` does not carry, `Permission denied` for one it
+cannot run — the same text on both targets, the fork child's cue to
+`_exit`.
 
 `kill(pid, sig)` sends `sig` to `pid` — a process id, or its negative
 for the whole process group with that id, the discipline a supervisor
@@ -93,6 +109,8 @@ with one kill of the negative pid.
 ```emo
 def dup2(old_fd Int64, new_fd Int64) (R, Int64)
 def isatty(fd Int64) Bool
+def tty_raw(fd Int64) (R, Array[Int64])
+def tty_restore(fd Int64, saved Array[Int64]) (R, Int64)
 ```
 
 `dup2` copies `old_fd` onto `new_fd`, closing `new_fd` first if it was
@@ -101,6 +119,18 @@ a pipe end or a file before the exec. `isatty` answers whether `fd` is
 attached to a terminal — how a program tells an interactive session
 from a pipe or a script on stdin. Both are plain POSIX with no
 buffering and no surprises.
+
+`tty_raw(fd)` puts the terminal into raw mode — one read one byte as
+typed: no echo, no line discipline, no signal generation — and answers
+the state that was there as opaque words, the blob `tty_restore(fd,
+saved)` hands back. Raw is the line editor's own reading, and the
+policy is the os's: `cfmakeraw` is the portable door (the flag bits
+themselves differ between macOS and Linux), the saved words answer to
+the same runtime that made them and are read nowhere outside the pair.
+A foreign descriptor — a pipe, a regular file — refuses with the errno
+text as a value: `os: tty_raw: Inappropriate ioctl for device`, the
+same bytes on every target. The caller restores before any command
+runs, so children keep the classic cooked terminal.
 
 ## The environment and the arguments
 
@@ -219,8 +249,9 @@ end it does not use, and the child leaves through `_exit` — ordinary
 host's Unix module; the c target emits direct POSIX calls; the wasm
 target lowers the fd, directory, and working-directory half to the
 module's syscalls and lowers the process half to a run-time raise —
-`fork`, `execv`, `execvp`, `waitpid`, `pipe`, `dup2`, `getpid`,
-`getppid`, `_exit`, `isatty`, `argv`, the environment, and the signal
-dispositions each name the capability when called (`os_fs_demo` walks
-the fd and directory half; `os_demo`, which forks, stays a c golden).
-The typescript and beam targets refuse the package.
+`fork`, `execv`, `execvp`, `waitpid`, `waitpid_nohang`, `pipe`,
+`dup2`, `getpid`, `getppid`, `_exit`, `isatty`, `argv`, the
+environment, and the signal dispositions each name the capability
+when called (`os_fs_demo` walks the fd and directory half; `os_demo`,
+which forks, stays a c golden). The typescript and beam targets
+refuse the package.

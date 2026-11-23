@@ -79,6 +79,17 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M50 — The GC bootstrap | 89 | The machine object model the interpreter run hosts, and the collector in Emo over it: sixteen bare-name doors — the fixed `struct` block, the counted `array` block, the rooted `ref`, and the walk's doors (`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`) — admitted only by the interpreter run (checked as target `interpreter`; every build target refuses by name, E4032), words self-describing by parity (even a shifted scalar, odd a reference, `0` null), slot 0 of every block the collector's header; the `gc` package implements mark-sweep in pure Emo — tagged accessors, the worklist drain, cycles cut by the mark bit — answering the words reclaimed; the weak root registry makes the host collector the liveness oracle and roots the mutator discipline (a handle a collection must respect lives in a `ref`); the goldens: `examples/gc_demo`'s nine lines on the interpreter alone (a rooted chain and a traced array survive the kill of four thousand unrooted nodes; the cycle dies the moment its root drops — the shape reference counting can never reclaim), `gc_heap_tests`, and the `gc_refusal` negative goldens on every refusing target (`CHECK.md`, `docs/gc-heap.md`). |
 | M51 — The GC ladder | 90 | The heap grows its own allocator and its wings: step 90 lands the arena — `heap_new` makes it, the raw `heap_load`/`heap_store` lane moves words, `heap_carve`/`heap_release` bind and unbind ranges — and the `gc` package's free list (first fit over two maps, split and neighbor-merge) becomes the only allocator, `struct_new`/`array_new`/`heap_free` retiring with the doors' blessing; handles carry offset + generation so a stale handle dies loudly without tombstones; the header word packs magic/kind/generation/mark/size; the demo's second generation lands inside the sweep's own words, the arena never growing (`CHECK.md`). |
 | M52 — The GC heap's riscv64 host | 91 | The metal joins the heap's hosts: the image grants the collector a region in its `.bss` (the mebibyte arena, the binding table, the root table, the slide's stage), the twenty-four doors land as runtime helpers compiled beside the program, `Ref` joins the tagged value model as kind 12 and the metal's `Map` as kind 13 (identity kinds under the runtime's reference counting, a zero release unlinking the root table), the raise gap this host carried since the hash twin closes (`Raise` lowers to `emo_raise`, the exception value rendering the `c` host's way), and module-level `var`s lower (cells in static memory, the prologue initializing) so the `gc` package's own geometry rides the image; the demo's 24 gold lines answer byte-for-byte on the interpreter, the `c` host and the metal — three boots stable, through the EmoOS kernel and direct — with the debug round's six walls named in `CHECK.md` (the prologue's double pool, the Map's half-taken +8 shift, the slide's raw pairs, the forwarding map's split key shapes, the rehash that copied only `next`, the unrounded arena cursor) and the gold leg riding `@emo_os`'s `gc_metal` group (`CHECK.md`, `docs/gc-heap.md`, `plan/step-91-riscv64-gc-host.md`). |
+| M53 — The shell's everyday surface | 92 | `emosh` grows the surface a daily shell cannot live without, all on the `os`+`bufio` face it already rides: a script file and `-c` open the invocation (`emosh script.esh args`, `emosh -c 'line' name args`, the script-unopenable 127, the broken option 2), the positional parameters land (`$1`…`$9`, `${N}`), `${var:-default}` joins the braced forms with the unnamed form staying literal — the whole form, not just the dollar — and the `${` scan now searches from the form instead of the word's start (`a}b${SETV}c` was a latent negative substring); the stderr redirections land (`2>`, `2>>`, `2>&1`, the digit-word rule keeping `hi2>` an argument, the dup's order the meaning); the glob lands (`*` and `?` the user typed bare only — quoting is remembered as a flag now, which also stops a quoted `~` from reaching `$HOME`, a found-and-fixed v0 bug), walking path segments, hiding dot names from a segment without the leading `.`, sorting the answers, refusing the command when nothing matches; the single command's words expand once instead of twice; four fixtures join and the harness pins the invocation modes on both targets (`CHECK.md`, `docs/emosh-guide.md`, `plan/step-92-emosh-everyday.md`). |
+| M54 — The shell's background jobs | 93 | `os` grows the polling half of waitpid in place at 0.1.0 (`waitpid_nohang` — the exited child `(R.ok, (pid, raw))`, children-but-none `(R.ok, (0, 0))`, the ECHILD errno reason byte-identical across the interpreter and the c runtime, the wasm process-half raise naming the capability) and `emosh` spends it: `&` after a pipeline runs the whole item as one job (the spawn the separator, `a & b` runs `b`), every member pinned by the parent's `setpgid` into one new process group so the terminal's Ctrl-C can never reach a background job while a foreground command keeps the classic death, the job table with the smallest-free-number rule and `$!` its representative pid and `$$` the shell's own, the notification `[1] done sleep 5` polled before every interactive prompt, and the builtins `jobs` (`[1] 4821 running sleep 5`), `fg %n` (the honest wait — no terminal handoff, the Ctrl-C cannot reach what it brings back), `bg %n` (nothing ever stops — `already in background`, bash's own answer), `wait [%n]` (127 the unknown), `kill [-N] [%n|pid]...` (`%n` the whole group by the negative pid); `os_demo` walks the poll three ways and the `bg` fixture rides `sleep`/`kill`/`awk` so no child output ever interleaves (`CHECK.md`, `docs/stdlib/os.md`, `docs/emosh-guide.md`, `plan/step-93-emosh-jobs.md`). |
+| M55 — The shell's control flow | 94 | `emosh` speaks Emo in its own grammar — brace blocks, no `then`/`fi`/`do`/`done` — and grows the three-layer machinery to run it: the parser gained compounds (`if`/`else` chains flattened into nesting, `while`, the numeric `for` with its three header-expression slices kept as tokens for the runtime evaluator, `def name() { }` with the attached-parentheses form beside the spaced one) and declarations (`const`/`var name = word`), answering incomplete — the driver reads the next line, `>` prompting, a `;` riding between the joined lines as the newline-as-separator — while `{`/`}` are reserved standalone words ending commands and lists; the executor walks them (`run_compound`, the header evaluator with comparisons-lowest precedence over bare variables, `$#` and integer literals, division by zero refusing, the step an assignment `name = expr`), the declarations bind a variable table consulted before the environment (a `const` refusing redeclaration and `unset`, a `for` variable restoring its prior binding whatever way the loop leaves), `def` joins a function table called by bare name with the call's arguments becoming `$1..` and restored on return, `break`/`continue`/`return` ride a session signal the loop and call walkers consume and the top level refuses (`break: only in a loop`); a compound takes `&` (the fork child walking it, the whole line the job's text) and the ctrl fixture walks every shape byte-identically on both targets (`CHECK.md`, `docs/emosh-guide.md`, `plan/step-94-emosh-control-flow.md`). |
+| M56 — The shell's line editor | 95 | `emosh`'s interactive session reads through its own line editor — raw mode, history, completion — written in Emo over the os terminal tier: os grew `tty_raw`/`tty_restore` in place at 0.1.0 (`cfmakeraw` the portable door, the saved state an opaque word array answering to the runtime that made it, the ENOTTY refusal byte-identical on a pipe, wasm raising on the capability); the editor walks the UTF-8 continuation bytes so multi-byte characters insert, erase, and step whole, ↑/↓ walk the last 1000 lines riding `emosh-history` under the repl's state-dir chain, Tab completes the word under the cursor to every candidate's common prefix (the first word as a command — builtins, session functions, then the PATH; later words as files of the working directory), Ctrl-C abandons the line instead of killing, and the terminal returns to cooked before anything runs — children keep the classic terminal, a running command dies to Ctrl-C as always; `EMOSH_ASSUME_TTY` skips the raw pair only, the keys and rendering running over a pipe — the goldens drive the editor by its bytes (`CHECK.md`, `docs/stdlib/os.md`, `docs/emosh-guide.md`, `plan/step-95-emosh-line-editor.md`). |
+
+
+## M56 — The shell's line editor
+
+### Step 95 — The editor in Emo over the os terminal tier
+
+The os package grew `tty_raw(fd)`/`tty_restore(fd, saved)` in place at 0.1.0 — `cfmakeraw` the portable policy (the flag bits themselves differ between macOS and Linux, so the words never cross the boundary), the saved state an opaque `Array[Int64]` the same runtime alone unpacks, the failures data-driven values with the errno text (`os: tty_raw: Inappropriate ioctl for device` byte-identical on both targets, wasm raising naming the capability). `emosh` spent it: `edit.emo` decodes keys one byte at a time, walks the UTF-8 continuation bytes so a multi-byte character is one insert, one erase, one cursor step, renders through raw `os.write` on the stderr descriptor, and answers three outcomes — accepted, end of input, abandoned. The session driver puts the terminal raw around every read and restores it before anything runs: children keep the classic cooked terminal, Ctrl-C abandons the half-typed line and asks again fresh, a running command dies to Ctrl-C as always. History rides the last 1000 lines through the repl's own state-dir chain (`EMO_STATE_DIR` → `XDG_STATE_HOME/emo` → `$HOME/.local/state/emo`), loaded at the session's start and written once at its end. Completion takes the word under the cursor to every candidate's common prefix, a second Tab listing them: the first word rides the command vocabulary — the builtins' roster, the session's functions, then every command the PATH serves — a later word rides the working directory. `EMOSH_ASSUME_TTY` skips the raw pair only, so the editor's keys and rendering run over a pipe and the goldens drive it by its bytes; the eleven fixtures stay byte-identical (the editor never engages on a pipe without the hook), and the pty hand-checks ran the whole key suite on both targets.
 
 ## Design gates
 
@@ -5311,3 +5322,153 @@ record, `docs/gc-heap.md` the design note.)
       section), `docs/stdlib/gc.md` + zh (three hosts), the stdlib
       index rows, this section + zh mirror,
       `plan/step-91-riscv64-gc-host.md`, CHECK.md's record.
+
+## M53 — The shell's everyday surface
+
+### Step 92 — emosh opens with scripts and `-c`, aims stderr, globs the bare patterns, and answers the everyday `${…}`
+
+**Status:** complete. (`plan/step-92-emosh-everyday.md` is the step's
+record.)
+
+- [x] **T92.1** — The invocation: `emosh script.esh args` reads the
+      session's lines from the file (the session never interactive,
+      the arguments the positionals, an unopenable file reporting the
+      os reason and leaving 127), `emosh -c 'line' name args` runs the
+      one line — connectors and all — and leaves with its status (the
+      word after the line stands as `$0`), and an unknown option
+      refuses with 2; the shell reads through whatever descriptor its
+      session opens, stdin still the commands' own.
+- [x] **T92.2** — The expansion: `$1`…`$9` and `${N}` answer the
+      positionals (empty past the last), `${var:-word}` answers the
+      value or the word when unset or empty (the word expanding; no
+      nested braces), a `$` form the rules cannot name comes back as
+      the literal whole form (`${1x}` runs as `${1x}`), and the `${`
+      scan finds its `}` from the form's own position — `a}b${SETV}c`
+      expanding instead of dying on a negative substring.
+- [x] **T92.3** — The stderr redirections: `2>` and `2>>` open files
+      onto fd 2 the way the stdout pair does, `2>&1` dups without a
+      file (the order the meaning: `> f 2>&1` lands both in `f`), a
+      `2` before `>` counts only when the whole bare word is the
+      digit (`echo hi2> f` passes `hi2` to `echo`), and `2>&` that is
+      not `2>&1` refuses by name; the single command's words now
+      expand once, the expanded argv handed to the child.
+- [x] **T92.4** — The glob: `*` and `?` typed bare outside every
+      quote turn a word into its sorted matches — quoting rides the
+      parts as a flag now (the found-and-fixed v0 bug: a quoted `~`
+      reached `$HOME`), expansion results never glob, the pattern
+      walks path segments with dead branches dropping silently and
+      the last segment matching files, a segment's leading `.` is
+      what unhides the hidden names, and no match refuses the command
+      (`emosh: no matches: …`, status 1) instead of passing the
+      pattern as a literal argument.
+- [x] **T92.5** — The acceptance: `fixtures/globs.esh`,
+      `fixtures/defaults.esh`, `fixtures/redirs2.esh` join the six
+      (each pinning merged output and exit on both targets;
+      `words.esh` grows the quoted-tilde and empty-positional pins),
+      the harness pins `-c` with name and positionals, the refusals,
+      a script file's run and its unopenable twin on both targets
+      byte for byte, `docs/emosh-guide.md` + zh grow the invocation,
+      the glob's section, the braced forms and the honest limits'
+      new shape, this section + zh mirror,
+      `plan/step-92-emosh-everyday.md`, CHECK.md's record.
+
+## M54 — The shell's background jobs
+
+### Step 93 — `os.waitpid_nohang`, and emosh's `&`, the job table, and the five builtins
+
+**Status:** complete. (`plan/step-93-emosh-jobs.md` is the step's
+record.)
+
+- [x] **T93.1** — The os surface: `waitpid_nohang(pid)` answers
+      `(R.ok, (pid, raw))` for an exited child (the kernel's own
+      16-bit word, `waitpid`'s contract), `(R.ok, (0, 0))` while
+      children exist and none has exited, and the ECHILD errno reason
+      byte-identically — the landing rides the kill/setpgid
+      checklist's every site: os.emo, the interpreter's arm and stub
+      (`emo_posix_stub.c`), the ocaml target's runtime and its stub
+      twin, the c runtime and its header, the c emitter's name table,
+      the checker's empty_env admission, the wasm raise arm naming
+      the capability, the os docs EN+zh (and `docs/stdlib.md`'s
+      targets line, stale since the process half grew), and the
+      wasm-refusal test beside its process-group siblings.
+- [x] **T93.2** — The os_demo poll: a child parked on a pipe read is
+      the still-running answer, the parent's wake byte the moment it
+      should end — the while-poll rides the exited child home (the
+      exit-code decode), the third poll answers the ECHILD reason,
+      all three hosts byte-identical against `expected.txt` (no
+      `os.sleep_ms` — the pause is the c runtime's alone, the demo's
+      first cut found out the loud way).
+- [x] **T93.3** — The spawn: `&` lexes as its own operator and marks
+      the whole item background; `a & b` runs `b` on the spawn, the
+      separator itself; the background spawn pins each forked member
+      into the first member's process group from the parent — the
+      terminal's Ctrl-C aimed at the shell's group can never reach a
+      background job, and the foreground keeps the v0 discipline
+      untouched.
+- [x] **T93.4** — The table and the builtins: `jobs` (one poll, then
+      the running rows `[1] 4821 running sleep 5`), `fg %n` (the
+      blocking wait, the job's own status, the honest limit that a
+      Ctrl-C cannot reach what it brings back), `bg %n` (`already in
+      background` — nothing here stops), `wait [%n]` (no argument
+      empties the table; unknown 127), `kill [-N] [%n|pid]...` (the
+      `%n` a whole group by the negative pid, 15 the default), and
+      `$!`/`$$` riding the expansion's new pid answers.
+- [x] **T93.5** — The acceptance: the notification
+      `[1] done sleep 5` polled before every interactive prompt (a
+      pty drives it by hand, both binaries identical); the `bg`
+      fixture rides `sleep`/`kill`/`awk` so no background child's
+      output ever interleaves (an `echo` job's interleaving was the
+      first cut's found-and-fixed divergence between the targets);
+      the `&` refusal row in `errors.esh` retires to the `2>&11`
+      refusal it always sat beside; ten fixtures byte-identical on
+      the ocaml and c targets; the guide EN+zh grows the jobs
+      section and the honest edges (no terminal handoff, no stopped
+      jobs, stdin stays the shell's), this section + zh mirror,
+      `plan/step-93-emosh-jobs.md`, CHECK.md's record.
+
+## M55 — The shell's control flow
+
+### Step 94 — Emo 同款 control flow in emosh: brace compounds, declarations, and the walkers
+
+**Status:** complete. (`plan/step-94-emosh-control-flow.md` is the
+step's record.)
+
+- [x] **T94.1** — The grammar: `if LIST { LIST } else { LIST }`,
+      `while LIST { LIST }`,
+      `for var I = EXPR; I < EXPR; I = I + EXPR { LIST }`, and
+      `def name() { LIST }` (the attached `greet()` form beside
+      `greet ()`), plus `const NAME = WORD` / `var NAME = WORD` — the
+      keywords recognized at command positions on bare unquoted words
+      only, `{`/`}` reserved standalone words ending commands, an
+      `else` chaining `if` flattened into nesting, and a line that
+      ends inside a block answering incomplete for the driver.
+- [x] **T94.2** — The driver: an incomplete parse reads the next line
+      (`> ` interactively), a `;` token riding between the joined
+      lines as the newline-as-separator, empty statements skipped;
+      EOF mid-block refusing with the classic unexpected end of
+      input.
+- [x] **T94.3** — The walkers: `run_compound` over if/while/for/def,
+      the for header evaluated by a recursive-descent integer
+      expression reader (bare variables, `$#`, `+ - * / %`, the six
+      comparisons, parentheses, division by zero refusing, the step
+      an assignment `name = expr`), break/continue/return riding a
+      session signal the loops and calls consume and a signal
+      outranking the connector so `return 3` stops its list.
+- [x] **T94.4** — The tables: declared bindings answered before the
+      environment by `$name` (a const refusing redeclaration and
+      unset, a for variable snapshot-restored), the function table
+      called by bare name with the call's arguments becoming `$1..`
+      and restored on return, a function call taking no redirections
+      and functions running bodies in place (state changes are the
+      session's).
+- [x] **T94.5** — The acceptance: `fixtures/ctrl.esh` walks
+      declarations, if/else and the nested else-if, both for
+      directions, zero-iteration loops, break, while-with-command
+      condition, the const refusals, a returning function and the
+      top-level return's refusal — byte-identical on the ocaml and c
+      targets beside the ten older fixtures — and the harness pins
+      `-c` with an open block refusing at EOF; the guide EN+zh grows
+      the control-flow section and the honest limits' new shape
+      (no compound-in-pipeline, no case/until, no word-list for, no
+      locals, declaration values one word), this section + zh mirror,
+      `plan/step-94-emosh-control-flow.md`, CHECK.md's record.

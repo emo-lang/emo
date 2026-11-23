@@ -69,7 +69,7 @@ ok test.greet.test_greet
 1 test, 1 passed
 ```
 
-`emo run` 直接对模块树求值，不产生产物。`emo build` 的 `--target` 不是运行方式；`emo run --target` 今天只支持 `riscv64`。
+`emo run` 直接对模块树求值，不产生产物。文件之后的词就是程序自己的 `os.argv`——`emo run main.emo x y` 回答 `["main.emo"; "x"; "y"]`,argv[0] 是文件名,与编译产物 argv[0] 是它被调用的路径同理(开头的 `--` 是选项分隔符,会被吃掉);`--target` 的产物拿不到参数。`emo build` 的 `--target` 不是运行方式；`emo run --target` 今天只支持 `riscv64`。
 
 有一个标志属于解释器自己的运行:`emo run --curfew SECONDS` 给这次求值一个墙钟截止。程序经标准库的 `time` 包读时钟,但失控的程序不必配合——所以结束它的截止住在这里、住在工具链里:求值器每 65,536 步检查一次截止,过了截止,运行以退出码 124(与 `timeout(1)` 同一个数)结束,stderr 带着裁定。`--target` 的产物不使用 curfew,而 `--curfew` 与 `--target` 同时给出会被拒绝。这个标志为 playground([`projects/emo-playground`](../../projects/emo-playground))而存在——它的服务器给每次提交一个;其余场景不被要求使用它。
 
