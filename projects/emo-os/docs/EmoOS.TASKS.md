@@ -169,11 +169,16 @@ consumer asks, but the order is the dependency order.
   wait is an exit-table scan by parent cell or a parked wait answered
   by the first child's exit. The C library grows `fork` (the assembly
   context save), `exit`/`_exit`, and `wait4`'s packed answer.
-- [ ] **T1.4b3** — `execve` (the in-place image replace), the
-  environment's handoff at `exec`, and the filesystem's fd inheritance
-  across `fork` (the library's table copies with the image; the
-  service's per-pid handles must follow), with the statuses that pair
-  makes meaningful.
+- [x] **T1.4b3a** — Fork's descriptors: the library's fd table now
+  carries the name, flags and offset beside `used`; a child's first
+  access to an inherited fd reopens the name under its own pid and
+  seeks to the copied offset (O_APPEND keeps the service's end, and
+  O_CREAT/O_TRUNC are dropped). The description's offset diverges
+  from the parent's — the documented approximation until the service
+  owns shared descriptions.
+- [ ] **T1.4b3b** — `execve` (the in-place image replace) and the
+  environment's handoff at `exec`, with the statuses that pair makes
+  meaningful.
 - [ ] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
   last writer's close.
 - [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
@@ -431,9 +436,29 @@ The metal proof: `chello.elf` (25,928 bytes) answered `fork ok` and
 `wait ok` after the fd, VFS, heap, grow, args, proc and env beats —
 the child exited 42 and the parent read it, then the any-child wait
 reaped the second child's 7 — and the machine's exit route was clean.
-The library's fd numbers copy with the image, but the filesystem
-service's per-pid handles do not yet: an inherited descriptor is
-T1.4b3's (with execve and the environment's handoff).
+The library's fd numbers copy with the image; T1.4b3a's lazy reopen
+makes the filesystem service's per-pid handle follow on first use.
+execve and the environment's handoff are T1.4b3b.
+
+### T1.4b3a's record (2026-11-23)
+
+The library's descriptor table grew the copied name (24 bytes), the
+byte length, the open flags and the offset beside `used`. `open_name`
+fills them; `read`/`write` advance the offset, `lseek` sets it.
+A service answer of -4 on a used descriptor means this pid has no
+handle — a fork's inherited fd — so the library reopens the stored
+name under its own pid (O_CREAT and O_TRUNC dropped, O_APPEND left to
+the service's end) and seeks to the copied offset. `close` on such a
+descriptor is a success that only clears the child's copy. The offsets
+diverge after the fork — the service's handle is not a shared
+description yet, the documented approximation.
+
+The metal proof: `chello.elf` (30,280 bytes, one image block) opened
+`forkfd.txt`, wrote `fork fd`, sought to 0 and forked; the child read
+`fork ` through the reopened descriptor, closed it and exited 0, the
+parent reaped it and answered `fd fork ok` — after the fd, VFS, heap,
+grow, args, proc, env, fork and wait beats, with the machine's exit
+route clean.
 
 ### M2 — the C library (musl-derived)
 

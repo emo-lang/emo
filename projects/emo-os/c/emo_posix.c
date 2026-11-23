@@ -17,6 +17,15 @@ static char name_buf[EMO_NAME_MAX];
 static char bounce[2048];
 static char read_bounce[2048];
 static char used[EMO_MAX_FD];
+// The descriptor's own copy (T1.4b3a): the name, flags and offset the
+// child inherits with the image. The service's handle is per pid, so a
+// forked child's first access reopens the name under its own pid and
+// seeks to the copied offset — the description's offset diverges from
+// the parent's, the documented approximation.
+static char fd_name[EMO_MAX_FD][EMO_NAME_MAX + 1];
+static unsigned long fd_nlen[EMO_MAX_FD];
+static int fd_flags[EMO_MAX_FD];
+static long fd_off[EMO_MAX_FD];
 static char cwd[EMO_PATH_MAX + 1] = "/";
 static char list_buf[EMO_DIR_LIST];
 static struct emo_dirent dirent;
@@ -266,8 +275,43 @@ static int open_name(const char *full, int flags) {
     errno = reason_errno(answer);
     return -1;
   }
+  unsigned long k = 0;
+  while (k < nlen) {
+    fd_name[fd][k] = full[k];
+    k = k + 1;
+  }
+  fd_name[fd][nlen] = 0;
+  fd_nlen[fd] = nlen;
+  fd_flags[fd] = flags;
+  fd_off[fd] = 0;
   used[fd] = 1;
   return fd;
+}
+
+// The child's inherited descriptor (T1.4b3a): the service has no
+// handle for this pid yet, so the first access opens the stored name
+// under it and seeks to the copied offset. O_APPEND keeps the
+// service's own end; O_CREAT and O_TRUNC are dropped — the file is
+// already this descriptor's, not a fresh creation.
+static int fd_adopt(int fd) {
+  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd] || fd_nlen[fd] == 0) {
+    errno = EMO_EBADF;
+    return -1;
+  }
+  long answer = emo_fd_open(fd, fd_name[fd], fd_nlen[fd],
+                            fd_flags[fd] & ~(EMO_O_CREAT | EMO_O_TRUNC));
+  if (answer < 0) {
+    errno = reason_errno(answer);
+    return -1;
+  }
+  if ((fd_flags[fd] & EMO_O_APPEND) == 0) {
+    answer = emo_fd_seek(fd, fd_off[fd], EMO_SEEK_SET);
+    if (answer < 0) {
+      errno = fd_errno(answer);
+      return -1;
+    }
+  }
+  return 0;
 }
 
 static int remove_name(const char *full) {
@@ -312,11 +356,13 @@ int close(int fd) {
     return -1;
   }
   long answer = emo_fd_close(fd);
-  if (answer < 0) {
+  if (answer < 0 && answer != -4) {
     errno = fd_errno(answer);
     used[fd] = 0;
     return -1;
   }
+  // -4 is a descriptor this pid never opened — a fork's inherited fd
+  // the child closes before touching it; the child's copy closes.
   used[fd] = 0;
   return 0;
 }
@@ -349,10 +395,17 @@ long read(int fd, void *buf, unsigned long n) {
     cap = sizeof(read_bounce);
   }
   long answer = emo_fd_read(fd, read_bounce, cap);
+  if (answer == -4) {
+    if (fd_adopt(fd) != 0) {
+      return -1;
+    }
+    answer = emo_fd_read(fd, read_bounce, cap);
+  }
   if (answer < 0) {
     errno = fd_errno(answer);
     return -1;
   }
+  fd_off[fd] = fd_off[fd] + answer;
   unsigned long i = 0;
   while (i < (unsigned long)answer) {
     ((char *)buf)[i] = read_bounce[i];
@@ -402,10 +455,17 @@ long write(int fd, const void *buf, unsigned long n) {
       i = i + 1;
     }
     long answer = emo_fd_write(fd, bounce, chunk);
+    if (answer == -4) {
+      if (fd_adopt(fd) != 0) {
+        return done == 0 ? -1 : (long)done;
+      }
+      answer = emo_fd_write(fd, bounce, chunk);
+    }
     if (answer < 0) {
       errno = fd_errno(answer);
       return done == 0 ? -1 : (long)done;
     }
+    fd_off[fd] = fd_off[fd] + answer;
     done = done + chunk;
   }
   return (long)n;
@@ -417,10 +477,17 @@ long lseek(int fd, long off, int whence) {
     return -1;
   }
   long answer = emo_fd_seek(fd, off, whence);
+  if (answer == -4) {
+    if (fd_adopt(fd) != 0) {
+      return -1;
+    }
+    answer = emo_fd_seek(fd, off, whence);
+  }
   if (answer < 0) {
     errno = fd_errno(answer);
     return -1;
   }
+  fd_off[fd] = answer;
   return answer;
 }
 
@@ -430,6 +497,12 @@ int fstat(int fd, struct emo_stat *st) {
     return -1;
   }
   long answer = emo_fd_stat(fd);
+  if (answer == -4) {
+    if (fd_adopt(fd) != 0) {
+      return -1;
+    }
+    answer = emo_fd_stat(fd);
+  }
   if (answer < 0) {
     errno = fd_errno(answer);
     return -1;

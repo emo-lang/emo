@@ -50,7 +50,8 @@
 - [x] **T1.4a**——`exec` 的 `argv`:动词 48 `exec_args(name, args)` 把行的余下文本停在 execargs 页,进程服务的 exec 拾取构建孩子的第一张栈(argc、argv——名字然后各个词——argv 的 NULL 与 envp 的 NULL),C crt0 从 cells 页读 args base 并把 `argc`/`argv`/`envp` 交给 `main`,桌面的 `exec` 把行的余下传给子进程。envp 目前为空。
 - [x] **T1.4b1**——进程与环境的表面:`getpid`(动词 49)、`setpgid`/`getpgid`(50/51,增长页尾每 pid 一个组字节,0 表示 pid 自己的组)、`getenv`/`setenv`/`unsetenv` 与 `environ`(第一次使用时扫描 `main` 的 envp),以及库的 `wait4`/`waitpid` 走动词 4——退出状态 `code << 8`。任意子进程的 wait 随 T1.4b2;`exec` 的环境交接随 T1.4b3。
 - [x] **T1.4b2**——`fork`(动词 52):进程服务复制调用者的镜像运行、栈块、arena 运行与增长块,映射到新表里调用者的虚拟基址,复制私有 handoff 页(保存的上下文与父进程基址在页尾),从库的恢复 trampoline 启动孩子;孩子从 `fork` 返回 0,父进程返回孩子的 pid。wait 的目标与 exit 的码搬到每 pid 的单元(共享的一对会让后到的 exit 覆盖 wait 的参数);动词 4 答孩子的 pid 在其退出码之上,任意子进程的 wait 是按父单元扫退出表,或由第一个孩子的退出应答停泊的 wait。C 库长出 `fork`(汇编上下文保存)、`exit`/`_exit` 与 `wait4` 的打包应答。
-- [ ] **T1.4b3**——`execve`(原地换镜像)、`exec` 时的环境交接,以及 `fork` 时文件系统的 fd 继承(库的表随镜像复制;服务上的每 pid 句柄必须跟上),还有这对原语使其有意义的状态。
+- [x] **T1.4b3a**——fork 的描述符:库的 fd 表现在在 `used` 旁携带名字、标志与偏移;孩子第一次访问继承来的 fd 时以自己的 pid 重开该名字并 seek 到复制的偏移(O_APPEND 保留服务的末尾,O_CREAT/O_TRUNC 丢弃)。描述的偏移与父进程分叉——在服务拥有共享描述之前,这是记录在案的近似。
+- [ ] **T1.4b3b**——`execve`(原地换镜像)与 `exec` 时的环境交接,以及这对原语使其有意义的状态。
 - [ ] **T1.5**——管道:`pipe`、`dup2`、阻塞读、最后一个写者关闭时的 EOF。
 - [ ] **T1.6**——信号:基本集合、处置、`kill`、`sigaction`/`sigprocmask`、shell 读的状态编码。
 
@@ -128,7 +129,13 @@ wait 的目标与 exit 的码从共享的 `proc_arga`/`proc_argb` 搬到新的 `
 
 路上发现:第一版在 build 里复制栈,那是在 `user_spawn` 把合成陷阱帧清零在块底之后——复制覆盖了锚,孩子带着父进程的寄存器恢复(两个进程都打印了父进程那一行)。复制现在挪到 spawn 之前。另一处发现是共享的 wait/exit 参数单元:孩子的退出码落进 wait 的目标,wait 把父进程的 pid 当成退出码答了。
 
-真机证明:`chello.elf`(25,928 字节)在 fd、VFS、堆、增长、args、proc、env 节拍之后答 `fork ok` 与 `wait ok`——孩子退出 42,父进程读到;随后任意子进程的 wait 收走第二个孩子的 7——机器的 exit 路由干净。库的 fd 编号随镜像复制,但文件系统服务的每 pid 句柄还没有跟上:继承的描述符是 T1.4b3 的事(与 execve 及环境交接一起)。
+真机证明:`chello.elf`(25,928 字节)在 fd、VFS、堆、增长、args、proc、env 节拍之后答 `fork ok` 与 `wait ok`——孩子退出 42,父进程读到;随后任意子进程的 wait 收走第二个孩子的 7——机器的 exit 路由干净。库的 fd 编号随镜像复制;T1.4b3a 的懒重开让文件系统服务的每 pid 句柄在第一次使用时跟上。execve 与环境交接是 T1.4b3b。
+
+### T1.4b3a 的记录(2026-11-23)
+
+库的描述符表在 `used` 旁长出复制的名字(24 字节)、字节长度、打开标志与偏移。`open_name` 填它们;`read`/`write` 推进偏移,`lseek` 设定它。对一个在用的描述符,服务答 -4 表示这个 pid 没有句柄——fork 继承来的 fd——于是库以自己的 pid 重开存下的名字(丢弃 O_CREAT 与 O_TRUNC,O_APPEND 留给服务的末尾)并 seek 到复制的偏移。对这样的描述符 `close` 是只清掉孩子副本的成功。偏移在 fork 之后分叉——服务的句柄还不是共享描述,这是记录在案的近似。
+
+真机证明:`chello.elf`(30,280 字节,一个镜像块)打开 `forkfd.txt`,写 `fork fd`,seek 到 0 并 fork;孩子经重开的描述符读到 `fork `,关掉它并退出 0,父进程收尸后答 `fd fork ok`——在 fd、VFS、堆、增长、args、proc、env、fork、wait 节拍之后,机器的 exit 路由干净。
 
 ### M2——C 库(源自 musl)
 

@@ -27,6 +27,8 @@ static char proc_ok[] = "proc ok\n";
 static char env_ok[] = "env ok\n";
 static char fork_ok[] = "fork ok\n";
 static char wait_ok[] = "wait ok\n";
+static char fdfork_ok[] = "fd fork ok\n";
+static char fdfork_msg[] = "fork fd\n";
 
 static int streq(const char *a, const char *b) {
   int i = 0;
@@ -242,5 +244,36 @@ int main(int argc, char **argv, char **envp) {
     return 27;
   }
   write(1, wait_ok, sizeof(wait_ok) - 1);
+
+  // ---- fd inheritance (T1.4b3a): the child reopens the name.
+  int ffd = open("forkfd.txt", EMO_O_RDWR | EMO_O_CREAT | EMO_O_TRUNC);
+  if (ffd < 0) {
+    write(2, "fd fork open failed\n", 20);
+    return 28;
+  }
+  write(ffd, fdfork_msg, sizeof(fdfork_msg) - 1);
+  lseek(ffd, 0, EMO_SEEK_SET);
+  long fdp = fork();
+  if (fdp == 0) {
+    char b[5];
+    long got = read(ffd, b, 5);
+    int good = got == 5 && b[0] == 'f' && b[1] == 'o' && b[2] == 'r' &&
+               b[3] == 'k' && b[4] == ' ';
+    close(ffd);
+    _exit(good ? 0 : 1);
+  }
+  if (fdp < 0) {
+    write(2, "fd fork failed\n", 15);
+    return 29;
+  }
+  int fst3 = 0;
+  long fdw = waitpid(fdp, &fst3, 0);
+  close(ffd);
+  unlink("forkfd.txt");
+  if (fdw != fdp || !EMO_WIFEXITED(fst3) || EMO_WEXITSTATUS(fst3) != 0) {
+    write(2, "fd fork wait failed\n", 20);
+    return 30;
+  }
+  write(1, fdfork_ok, sizeof(fdfork_ok) - 1);
   return 0;
 }
