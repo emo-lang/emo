@@ -21,6 +21,8 @@ static char mmap_ok[] = "mmap ok\n";
 static char reuse_ok[] = "reuse ok\n";
 static char mmap_reuse_ok[] = "mmap reuse ok\n";
 static char grow_ok[] = "grow ok\n";
+static char args_ok[] = "args ok\n";
+static char args_none[] = "args none\n";
 
 static int streq(const char *a, const char *b) {
   int i = 0;
@@ -33,7 +35,8 @@ static int streq(const char *a, const char *b) {
   return a[i] == b[i];
 }
 
-int main(void) {
+int main(int argc, char **argv, char **envp) {
+  (void)envp;
   char head[3];
   char buf[64];
   struct emo_stat st;
@@ -172,5 +175,12 @@ int main(void) {
   ((char *)big)[3 * 1024 * 1024 - 1] = 'R';
   write(1, grow_ok, sizeof(grow_ok) - 1);
   free(big);
+
+  // ---- argv (T1.4a): the line's words on the first stack.
+  if (argc >= 3 && streq(argv[1], "hello") && streq(argv[2], "world")) {
+    write(1, args_ok, sizeof(args_ok) - 1);
+  } else {
+    write(1, args_none, sizeof(args_none) - 1);
+  }
   return 0;
 }

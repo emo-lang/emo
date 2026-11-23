@@ -279,6 +279,39 @@ def load(rec Int64, scratch Int64, run_base Int64, run_blocks Int64) Int64 {
   return 1
 }
 
+// ---- the exec's arguments (EmoOS plan B, T1.4a) ----
+//
+// The growth page's tail (its 200 rows end at 3208): the name at 0,
+// its length at 24, the args' length at 32, the use flag at 40, the
+// args' bytes at 64. The gate stages inside the trap; the process
+// service's exec pickup reads; the flag says which door the request
+// came by (the plain exec's name lives on the exec page, the args
+// exec's here). The page is the one the grow list proved mapped.
+
+const execargs_page = koff + 0x8700f000 + 3208
+const execargs_name = execargs_page
+const execargs_nlen = execargs_page + 24
+const execargs_alen = execargs_page + 32
+const execargs_use = execargs_page + 40
+const execargs_args = execargs_page + 64
+const execargs_cap = 512
+
+def args_name() Int64 {
+  return execargs_name
+}
+
+def args_nlen() Int64 {
+  return peek64(execargs_nlen)
+}
+
+def args_alen() Int64 {
+  return peek64(execargs_alen)
+}
+
+def args_args() Int64 {
+  return execargs_args
+}
+
 // The request word the exec arm serves: the name copied at the gate
 // into the page's cells, read back here.
 def name_len() Int64 {
@@ -373,6 +406,91 @@ def give_run(base Int64, blocks Int64) Void {
 // waits — another pass's spawn, a death — goes to the stash, served in
 // order after the transaction, the stash and the mailbox one FIFO.
 def transaction(fs Pid, name Int64, nlen Int64) Int64 {
+  return transaction_args(fs, name, nlen, 0, 0)
+}
+
+// The child's first stack (T1.4a): argc, argv (the program's name and
+// the args' words), a NULL, the envp's NULL, then the strings — the
+// sp the child starts with, the physical base of the frame's new top.
+// The words split at spaces; no quoting, the shell's line's own cut.
+def build_args(stack Int64, name Int64, nlen Int64, args Int64,
+               alen Int64) Int64 {
+  var argc = 1
+  var i = 0
+  while i < alen {
+    while i < alen && peek8(args + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < alen {
+      argc = argc + 1
+      while i < alen && peek8(args + i).to_int64() != 32 {
+        i = i + 1
+      }
+    }
+  }
+  var sb = nlen + 1
+  i = 0
+  while i < alen {
+    while i < alen && peek8(args + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < alen {
+      var s = i
+      while i < alen && peek8(args + i).to_int64() != 32 {
+        i = i + 1
+      }
+      sb = sb + (i - s) + 1
+    }
+  }
+  var arr = 8 + 8 * (argc + 2)
+  var total = arr + sb
+  var base = sv39.pa_of(stack) + block - total
+  var at = stack + block - total
+  poke64(at, argc)
+  var sp = at + 8
+  var strp = base + arr
+  var kp = at + arr
+  poke64(sp, strp)
+  var j = 0
+  while j < nlen {
+    poke8(kp + j, peek8(name + j))
+    j = j + 1
+  }
+  poke8(kp + nlen, 0B)
+  kp = kp + nlen + 1
+  strp = strp + nlen + 1
+  sp = sp + 8
+  i = 0
+  while i < alen {
+    while i < alen && peek8(args + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < alen {
+      var s = i
+      while i < alen && peek8(args + i).to_int64() != 32 {
+        i = i + 1
+      }
+      poke64(sp, strp)
+      var j2 = s
+      while j2 < i {
+        poke8(kp, peek8(args + j2))
+        kp = kp + 1
+        strp = strp + 1
+        j2 = j2 + 1
+      }
+      poke8(kp, 0B)
+      kp = kp + 1
+      strp = strp + 1
+      sp = sp + 8
+    }
+  }
+  poke64(sp, 0)       // argv's NULL
+  poke64(sp + 8, 0)   // envp's NULL
+  return base
+}
+
+def transaction_args(fs Pid, name Int64, nlen Int64, args Int64,
+                     alen Int64) Int64 {
   // The probe: the size off the name table, no bytes copied — the
   // number the scratch is sized by, or the refusal the caller sees.
   var me = self_pid()
@@ -514,6 +632,13 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
   }
   var entry = peek64(rec + 200)
   frames.arena_for_user()
+  // The args at the stack's top, the sp the runtime's stack block's
+  // own top (the anchor's base follows it); the args base goes to the
+  // child's cells page (0x87fff080), the C crt0's sp. The Emo passes
+  // never read it — their runtime overwrites the region — the C
+  // door's first argv the only reader.
+  var argp = build_args(stack, name, nlen, args, alen)
+  poke64(peek64(rec + record_page) + 0x80, argp)
   var child = user_spawn(entry, sv39.pa_of(stack) + block)
   frames.arena_for_service()
   return child

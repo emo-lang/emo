@@ -143,9 +143,16 @@ consumer asks, but the order is the dependency order.
   the death — the shim's fault and heap paths and the process
   service's normal exit. `arena_extend` in the library follows the
   answer.
-- [ ] **T1.4** — Process: `argv`/`envp` at `exec`, `fork` (copy the
-  address space; COW is a later optimization), `execve`, `wait4`
-  status words, process groups.
+- [x] **T1.4a** — `argv` at `exec`: verb 48 `exec_args(name, args)`
+  stages the line's rest on the execargs page, the process service's
+  exec pickup builds the child's first stack (argc, argv — the name
+  then the words — the argv's NULL and the envp's NULL), the C crt0
+  reads the args base from the cells page and hands `main` its
+  `argc`/`argv`/`envp`, and the desktop's `exec` passes the line's
+  rest. The envp is empty for now.
+- [ ] **T1.4b** — Process: `fork` (copy the address space; COW is a
+  later optimization), `execve`, `wait4` status words, process
+  groups, and the environment's own verbs.
 - [ ] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
   last writer's close.
 - [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
@@ -296,8 +303,8 @@ The metal proof: `chello.elf` (20,536 bytes) answered `heap ok`,
 The growth is `space.grow` behind verb 47: the bytes, the blocks the
 frame allocator backs, the pages after the cell's end — each block at
 its own physical identity, the virtual pages the suite's — and the
-rows in the `.emo_grow` page at `0x8700f000` (255 `(pid, block)` rows,
-the count at its head). `space.grow_reap` gives a pid's rows home; the
+rows in the `.emo_grow` page at `0x8700f000` (200 `(pid, block)` rows,
+the count at its head; T1.4a's execargs page is the page's tail). `space.grow_reap` gives a pid's rows home; the
 shim's fault and heap paths call it after `emo_arena_reap`, and the
 process service's exit calls it for the normal exit. The library's
 `arena_extend` asks the verb, follows the answer's page into
@@ -312,6 +319,37 @@ The metal proof: `chello.elf` (24,752 bytes) answered `grow ok` after
 the fd, VFS and reuse beats; the 3 MiB malloc's first and last bytes
 held, and the frame ledger's held count was the same before and after
 the growth (232, the rows went home at the exit).
+
+### T1.4a's record (2026-11-23)
+
+The args door is verb 48 `exec_args(name, nlen, args, alen)`: the
+gate stages the name and the line's rest (at most 512 bytes) on the
+execargs page, sets the use flag, and routes the process service's
+exec op; the pickup reads the flag's raw cell, and the args' door
+calls `transaction_args`; the plain door copies the name to the exec
+page's buffer as before. `build_args` writes the child's first stack:
+argc at the top, argv (the program's name, then the args' words split
+at spaces), the argv's NULL, the envp's NULL, the strings — the sp is
+the physical base; the C crt0 reads it from the cells page's
+`0x87fff080`, moves the sp, and hands `main` its triple. The Emo
+passes never read the args; their runtime overwrites the region.
+
+Found on the way: the first execargs page at a fixed new address
+(`0x87010000`, then `0x8700b100`) was not mapped in the process
+service's table — the exec pickups' peek trapped in S-mode and the
+machine said `the kernel took an unexpected trap`. The page that is
+mapped is the grow list's (`0x8700f000`, the T1.3v work proved it);
+the execargs moved to its tail and the grow list shrank 255 → 200
+rows. Also found: the cross-module `exec.args_use()` call itself
+trapped on this target, while `exec.args_name()` and kin answered
+fine; the process service reads the use flag from the raw cell.
+
+The metal proof: `exec chello.elf` answered `args none` (argc 1) and
+`exec chello.elf hello world` answered `args ok` (argc 3, argv[1]
+`hello`, argv[2] `world`); `chello.elf` is 24,856 bytes and the
+whole C chain (fd, VFS, reuse, grow) stayed green. The desktop's
+`exec` takes the line's rest as the args; the syscall package grew
+`exec_args` in place and its five locks re-pinned.
 
 ### M2 — the C library (musl-derived)
 

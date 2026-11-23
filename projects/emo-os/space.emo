@@ -103,11 +103,11 @@ const arena_bound = 256
 // The arena's growth (T1.3v): the rows of the grown blocks — the pid
 // and the block's kernel address — on their own page, the count at its
 // head; the grow verb appends, the death reclaim walks the pid's rows
-// home. A page holds 255 rows.
+// home. A page holds 200 rows; T1.4a's execargs sit in its tail.
 const grow_page = koff + 0x8700f000
 const grow_count = grow_page
 const grow_rows = grow_page + 8
-const grow_max = 255
+const grow_max = 200
 const slot_stack = 864
 const slot_space = 872
 

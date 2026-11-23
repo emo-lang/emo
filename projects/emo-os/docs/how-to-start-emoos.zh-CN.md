@@ -108,7 +108,7 @@ $ qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
 | `rm NAME` | 删除文件;成功时安静 |
 | `desktop` | 打开桌面——壁纸、顶栏、dock 与图标;启动本身落在 shell |
 | `counter` | 启动机器的程序——控制台渲染器:帧画在控制台上,`a`/`b` 加减,`q` 回到提示符 |
-| `exec NAME.elf` | 在桌面上启动一个磁盘 ELF——dock 的 tile 是同一扇门的点击形态 |
+| `exec NAME.elf [ARGS…]` | 在桌面上启动一个磁盘 ELF,行的余下作为它的参数——dock 的 tile 是同一扇门的点击形态 |
 | `passwd SECRET` | 把秘密的摘要写进 `lock.hash`;1 到 64 字节 |
 | `lock` | 把会话锁在全屏脸面之后;下一行是秘密的校验 |
 | `poweroff` | 结束机器——exit 路由的 `dma` 行与 frames 账目,然后 QEMU 自己退出 |

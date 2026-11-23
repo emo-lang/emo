@@ -50,7 +50,7 @@ REPL 以横幅开场:
 | `rm` | 一个名字 | `file_remove` | 文件消失;成功时安静 |
 | `desktop` | 无 | 桌面时代(emo-desktop A12.1) | 壁纸、标题栏、dock 与图标升起;启动器的 tile 成为应用的门,行仍是 REPL 的 |
 | `counter` | 无 | 机器的程序:`spawn` + `wait` | 控制台渲染器趟(T7.4)跑到退出键为止,帧就是它的全部输出;成功时安静,提示符回来即程序已毕 |
-| `exec` | 一个文件名 | `exec`,磁盘 ELF 的门(T8.16) | 命名的镜像在桌面上启动;启动器槽位应答 `desktop <name> up`,陌生镜像以沉默应答,拒绝以 `desktop: <原因>` 应答 |
+| `exec` | 一个文件名,然后是它的参数 | `exec_args`,磁盘 ELF 的门(T8.16、T1.4a) | 命名的镜像在桌面上启动,行的余下成为它的 `argv[1..]`(envp 为空);启动器槽位应答 `desktop <name> up`,陌生镜像以沉默应答,拒绝以 `desktop: <原因>` 应答 |
 | `passwd` | 一个秘密,1 到 64 字节 | 摘要写进 `lock.hash` | 账户文件的摘要;成功时安静,越界应答 `passwd: a secret of 1 to 64 bytes` |
 | `lock` | 无 | 会话锁在全屏脸面之后 | `lock on`,下一行是秘密的校验;没有账户应答 `lock: no account` |
 | `poweroff` | 无 | 引导趟的 `exit` | 机器结束——exit 路由的 `dma` 行与 frames 账目,然后 SBI 断电 |

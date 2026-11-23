@@ -422,6 +422,17 @@ def exec(name Int64, name_len Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The exec with the line's arguments (EmoOS plan B, T1.4a): the args'
+// text (at most 512 bytes, split at spaces) lands on the child's first
+// stack as argv[1..]; argv[0] is the name.
+def exec_args(name Int64, name_len Int64, args Int64, args_len Int64) (R, Int64) {
+  var answer = ecall(48, name, name_len, args, args_len, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The exit of the child with that pid number, blocking until it
 // happens. The answer is (R.ok, the child's exit code) or
 // (R.error, why).

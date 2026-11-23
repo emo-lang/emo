@@ -93,6 +93,7 @@ undocumented ever acts.
 | 45 | `list_dir(name, name_len, buf, cap)` | the named directory's immediate children, each a type byte (0 file, 1 directory), a length byte and the name, deduped in the name table's order; the implicit directories are included, the root is the empty name; answers the bytes written (EmoOS plan B, T1.2d) |
 | 46 | `arena_info()` | the caller's arena, the base and end as page numbers — base in the high 20 bits, end in the low 20, the physical identities the image's own table maps; 0 for a process with none (the boot pass). The library's `brk`/`mmap` live inside it (EmoOS plan B, T1.3) |
 | 47 | `arena_grow(bytes)` | the caller's arena extends past its run by whole 64 KiB blocks, mapped at the pages after the cell's end; the answer is the new end's page number, a negative the refusal (a full growth list or no frames). The death reclaim walks the pid's rows home (EmoOS plan B, T1.3v) |
+| 48 | `exec_args(name, name_len, args, args_len)` | the name and the arguments' text (at most 512 bytes, split at spaces) on the execargs page; the child's first stack gets argc, argv (the name then the words), the argv's NULL and the envp's NULL; the same busy cell as `exec`. Answers the child's pid or a reason (EmoOS plan B, T1.4a) |
 
 The fd and path verbs share the filesystem's four request slots; the
 slot's `+88` marker selects the open-file table and the path calls,

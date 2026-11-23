@@ -9,6 +9,19 @@
     .globl _start
 _start:
     la gp, __global_pointer$
+    # The kernel's first stack (T1.4a): the args base on the cells
+    # page, the runtime's stack top above it; the sp moves to the
+    # args, argc at it, argv at sp + 8, the envp's NULL after the
+    # argv's. The pointers are read before the alignment; main gets
+    # the triple, its callee-saved frame below.
+    li t0, 0x87fff080
+    ld t1, 0(t0)
+    mv sp, t1
+    ld a0, 0(sp)
+    addi a1, sp, 8
+    slli t0, a0, 3
+    add a2, a1, t0
+    addi a2, a2, 8
     andi sp, sp, -16
 
     la t0, __bss_start

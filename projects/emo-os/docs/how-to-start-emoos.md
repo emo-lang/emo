@@ -194,7 +194,7 @@ The prompt answers twelve commands, lowercase and exact:
 | `rm NAME` | removes the file; quiet on success |
 | `desktop` | opens the desktop — the wallpaper, the header, the dock and the icons; the boot itself lands at the shell |
 | `counter` | starts the machine's program — the console renderer: the frames paint on the console, `a`/`b` add and subtract, `q` returns to the prompt |
-| `exec NAME.elf` | starts a disk ELF on the desktop — the dock's tiles are the same door by click |
+| `exec NAME.elf [ARGS…]` | starts a disk ELF on the desktop with the rest of the line as its arguments — the dock's tiles are the same door by click |
 | `passwd SECRET` | writes the secret's digest to `lock.hash`; 1 to 64 bytes |
 | `lock` | locks the session behind the full-screen face; the next line is the secret's check |
 | `poweroff` | ends the machine — the exit route's `dma` line and frames account, then QEMU exits on its own |

@@ -3022,24 +3022,26 @@ def desk_launch(f ui_fb.raster.Strike, slot Int64, labels Array[String]) Void {
   }
 }
 
-// The exec command's half (emo-desktop A12.1): the line's name, the
-// launcher's bookkeeping when it names one of the slots' own — the
-// same dot a tile press lights — and the volume's own when it does
-// not (the exec answers; a foreign image's success is silent, the
-// Unix convention the file commands keep).
+// The exec command's half (emo-desktop A12.1, T1.4a): the line's
+// name, then its arguments — the rest of the line, verbatim, the
+// child's argv[1..] — the launcher's bookkeeping when it names one of
+// the slots' own, and the volume's own when it does not.
 def desk_exec_cmd(f ui_fb.raster.Strike, e Int64, n Int64, labels Array[String]) Void {
   var ns = shell.skip_spaces(e, n)
   var ne = shell.word_end(ns, n)
-  if ns == n || shell.skip_spaces(ne, n) < n {
+  if ns == n {
     shell.exec_badarg()
   } else {
     var name = shell.line_ptr() + ns
     var nlen = ne - ns
+    var as = shell.skip_spaces(ne, n)
+    var alen = n - as
+    var args = shell.line_ptr() + as
     var slot = desk_slot_of(name, nlen)
     if slot >= 0 && peek64(buf + desk_pids + (slot * 8)) != 0 {
       desk_running_line(buf + desk_names + (slot * 12), desk_nlen(slot))
     } else {
-      case syscall.exec(name, nlen) {
+      case syscall.exec_args(name, nlen, args, alen) {
         (R.error, why) then { shell.desk_err(why) }
         (R.ok, child) then {
           if slot >= 0 {

@@ -424,6 +424,9 @@ const ev_exit = 0x4558
 // ring entry names its reader (.emo_proc, 0x8700d000).
 const parent_for = koff + 0x8700d000
 const parent_bound = 256
+// The execargs page's use cell (T1.4a): the growth page's tail, the
+// gate's flag the process service's exec pickup reads.
+const execargs_use_cell = koff + 0x8700f000 + 3248
 
 // The desktop segment's cells (T8.4, T8.5): the display service's pid
 // cell the gate routes the desktop verbs by; the authorization table's
@@ -972,10 +975,22 @@ def process_serve(w Int64) Void {
             if fsn == 0 {
               gate_reply(caller_of(w), -5)
             } else {
-              exec.copy_name(exec.name_buf())
-              exec.clear_busy()
-              var ans = exec.transaction(pid_at(fsn), exec.name_buf(),
-                exec.name_len())
+              var ans = 0
+              var use = peek64(execargs_use_cell)
+              if use != 0 {
+                // the args door (T1.4a): the name and the args stay on
+                // the execargs page while the transaction runs — the
+                // busy cell held, a second exec refused — and the
+                // child's first stack is the exec's to build.
+                ans = exec.transaction_args(pid_at(fsn), exec.args_name(),
+                  exec.args_nlen(), exec.args_args(), exec.args_alen())
+                exec.clear_busy()
+              } else {
+                exec.copy_name(exec.name_buf())
+                exec.clear_busy()
+                ans = exec.transaction(pid_at(fsn), exec.name_buf(),
+                  exec.name_len())
+              }
               // the parent's own cell (emo-desktop A12.1, EmoOS
               // T8.19): the exec's caller is the child's parent — the
               // spawn's own write at the disk ELF's door, one write

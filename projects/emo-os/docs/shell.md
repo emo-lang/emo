@@ -112,7 +112,7 @@ included. Commands are lowercase and exact. Twelve:
 | `rm` | one name | `file_remove` | the file is gone; quiet on success |
 | `desktop` | none | the desktop era (emo-desktop A12.1) | the wallpaper, the header, the dock and the icons come up; the launcher's tiles become the apps' door and the line stays the REPL's |
 | `counter` | none | the machine's program: `spawn` + `wait` | the console renderer pass (T7.4) runs to its quit key, the frames its whole output; silence on success, the prompt's return saying it is done |
-| `exec` | one file name | `exec`, the disk ELF's door (T8.16) | the named image starts on the desktop; a success the launcher's slots answer with `desktop <name> up`, a foreign image's with silence, a refusal with `desktop: <the reason>` |
+| `exec` | one file name, then its arguments | `exec_args`, the disk ELF's door (T8.16, T1.4a) | the named image starts on the desktop with the line's rest as its `argv[1..]` (the envp empty); a success the launcher's slots answer with `desktop <name> up`, a foreign image's with silence, a refusal with `desktop: <the reason>` |
 | `passwd` | a secret, 1 to 64 bytes | the digest written to `lock.hash` | the account file's digest; quiet on success, `passwd: a secret of 1 to 64 bytes` outside the bound |
 | `lock` | none | the session locked behind the full-screen face | `lock on`, the next line the secret's check; a missing account answers `lock: no account` |
 | `poweroff` | none | the boot pass's `exit` | the machine ends — the exit route's `dma` line and frames account, then the SBI poweroff |
