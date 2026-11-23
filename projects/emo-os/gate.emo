@@ -50,9 +50,14 @@
 const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
 const seg_count_addr = koff + 0x87002018
 const seg_table = koff + 0x87002020
-const proc_arga = koff + 0x870021b0
-const proc_argb = koff + 0x870021b8
 const handoff_caller = koff + 0x87002110
+// The process door's per-pid arguments (T1.4b2): the wait's target and
+// the exit's code have one cell each per pid, so a request staged
+// behind another cannot overwrite its argument before the service
+// reads it.
+const wait_for = koff + 0x8700a000
+const exit_for = wait_for + 2048
+const proc_bound = 256
 
 // The exec page (emo-desktop A11.1, link.ld's .emo_exec): the per-pid
 // image cells the checks and the build read, and the exec request's
@@ -67,6 +72,12 @@ const img_bound = 256
 const exec_busy = koff + 0x8700c000 + 3912
 const exec_name = koff + 0x8700c000 + 3920
 const exec_nlen = koff + 0x8700c000 + 3944
+// The fork door (T1.4b2): the same busy cell as the execs, and the
+// context and resume entry the process service's pickup reads. The
+// page's tail past the request stash.
+const fork_use_cell = koff + 0x8700c000 + 4024
+const fork_sp_cell = koff + 0x8700c000 + 4032
+const fork_entry_cell = koff + 0x8700c000 + 4040
 // The exec's arguments page (T1.4a): the args door's own staging.
 const execargs_page = koff + 0x8700f000 + 3208
 const execargs_name = execargs_page
@@ -290,7 +301,9 @@ const parent_bound = 256
 const pgid_base = koff + 0x8700f000 + 3784
 const pgid_bound = 256
 
-// The write permission, ELF p_flags' bit 1 (X=1, W=2, R=4).
+// The execute and write permissions, ELF p_flags' bits 0 and 1
+// (X=1, W=2, R=4).
+const flag_x = 1
 const flag_w = 2
 
 // One segment covers the whole range? The subtraction form cannot
@@ -1341,12 +1354,68 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     }
     return g
   }
-  if n == 4 {
-    var me = peek64(handoff_caller)
-    if r0 < 2 || r0 == me {
+  if n == 52 {
+    // fork() (T1.4b2): the caller's saved context and the child's
+    // resume entry, judged against the caller's own image — the entry
+    // must sit in an executable segment. Only an exec'd image forks
+    // (its segments and handoff page are per-image; the boot image's
+    // passes share writable pages no copy can restore). The process
+    // service clones the image, stack and arena and starts the child
+    // at the entry; the same busy cell serializes the door with the
+    // execs.
+    var mef = peek64(handoff_caller)
+    if mef >= img_bound {
       return -reason_argument
     }
-    poke64(proc_arga, r0)
+    var recf = peek64(img_for + (mef * 8))
+    if recf == 0 {
+      return -reason_argument
+    }
+    if r0 <= 0 || r0 >= 0x88000000 {
+      return -reason_argument
+    }
+    var rows = peek64(recf)
+    var ok = false
+    var fi = 0
+    while fi < rows {
+      var fs = recf + 8 + (fi * 24)
+      var fst = peek64(fs)
+      var fen = peek64(fs + 8)
+      var fpf = peek64(fs + 16)
+      if r1 >= fst && r1 < fen {
+        if (fpf & flag_x) != 0 {
+          ok = true
+        }
+      }
+      fi = fi + 1
+    }
+    if ok == false {
+      return -reason_argument
+    }
+    if peek64(exec_busy) != 0 {
+      return -reason_resource
+    }
+    poke64(fork_sp_cell, r0)
+    poke64(fork_entry_cell, r1)
+    poke64(fork_use_cell, 1)
+    poke64(exec_busy, 1)
+    return route_process_exec
+  }
+  if n == 4 {
+    // wait(pid) (T1.4b2): a positive pid the child named, 0 or a
+    // negative one any child of the caller's; the answer is the
+    // child's pid and exit code packed.
+    var me = peek64(handoff_caller)
+    if me >= proc_bound {
+      return -reason_resource
+    }
+    if r0 == me {
+      return -reason_argument
+    }
+    if r0 > 0 && r0 < 2 {
+      return -reason_argument
+    }
+    poke64(wait_for + (me * 8), r0)
     return route_process_wait
   }
   if n == 0 {
@@ -1354,8 +1423,9 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if me == 1 {
       return route_poweroff
     }
-    poke64(proc_arga, r0)
-    poke64(proc_argb, me)
+    if me < proc_bound {
+      poke64(exit_for + (me * 8), r0)
+    }
     return route_process_exit
   }
   if n == 5 {

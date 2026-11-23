@@ -155,12 +155,25 @@ consumer asks, but the order is the dependency order.
   growth page's tail, 0 the pid's own group), `getenv`/`setenv`/
   `unsetenv` with `environ` (the `main`'s envp scanned at first use),
   and the library's `wait4`/`waitpid` over verb 4 — the exit status
-  `code << 8`. The any-child wait and the environment at `exec` ride
-  with T1.4b2.
-- [ ] **T1.4b2** — Process: `fork` (copy the address space; COW is a
-  later optimization), `execve` (the in-place image replace), the
-  any-child wait, the environment's handoff at `exec`, and the
-  statuses the pair makes meaningful.
+  `code << 8`. The any-child wait rode with T1.4b2; the environment
+  at `exec` with T1.4b3.
+- [x] **T1.4b2** — `fork` (verb 52): the process service copies the
+  caller's image run, stack block, arena run and grown blocks, maps
+  them at the caller's virtual bases in a fresh table, copies the
+  private handoff page (the saved context and the parent's bases in
+  its tail), and starts the child at the library's resume trampoline;
+  the child returns from `fork` with 0, the parent with the child's
+  pid. The wait's target and the exit's code moved to per-pid cells
+  (the shared pair let a staged exit overwrite a wait's argument);
+  verb 4 answers the child's pid above its code, and the any-child
+  wait is an exit-table scan by parent cell or a parked wait answered
+  by the first child's exit. The C library grows `fork` (the assembly
+  context save), `exit`/`_exit`, and `wait4`'s packed answer.
+- [ ] **T1.4b3** — `execve` (the in-place image replace), the
+  environment's handoff at `exec`, and the filesystem's fd inheritance
+  across `fork` (the library's table copies with the image; the
+  service's per-pid handles must follow), with the statuses that pair
+  makes meaningful.
 - [ ] **T1.5** — Pipes: `pipe`, `dup2`, blocking reads, EOF on the
   last writer's close.
 - [ ] **T1.6** — Signals: the basic set, dispositions, `kill`,
@@ -376,6 +389,51 @@ The metal proof: `chello.elf` (25,560 bytes) answered `proc ok` and
 `env ok` after the fd, VFS, reuse, grow and args beats — the pid
 queried, the group set and read back, `EMO=yes` set, read and
 unset — with the machine's exit route clean.
+
+### T1.4b2's record (2026-11-23)
+
+fork is verb 52 `fork(ctx, entry)`: the gate judges the resume entry
+against the caller's executable segments, stages the saved context and
+entry on the exec page's tail, and routes the process service; the
+pickup holds the execs' busy cell through the spawn. The clone copies
+the parent's image record into a free record with a fresh run, copies
+the private handoff page and writes the fork recipe (the saved
+context, the parent's stack and arena bases, its pid, its packed arena
+cell), and copies the stack block before the spawn — `user_spawn`
+zeroes its synthetic frame at the block's bottom afterwards, so only
+the dead bottom bytes give way. `space.build` maps the stack at the
+parent's base with U and at its own identity without U (the kernel's
+anchor frame), copies and maps the arena's run and every grown row at
+the parent's virtual places, appends the child's grown rows, and
+writes the child's arena cell as the parent's. The child starts at
+`emo_fork_resume`, reloads gp, moves sp to the saved context, and
+returns through fork's epilogue with a0 = 0.
+
+The wait's target and the exit's code moved from the shared
+`proc_arga`/`proc_argb` cells to per-pid cells on the new
+`.emo_procargs` page (0x8700a000; 256 words each) — without it a
+staged exit could overwrite a wait's target before the service read
+it. Verb 4 now answers `(pid << 32) | code`; the Emo `syscall.wait`
+stub strips the pid, and the C `wait4` returns the actual child (the
+any-child wait knows it now). A parked wait consumes the exit directly
+and the entry never enters the exit table; a wait that comes later
+consumes the entry. The child inherits the parent's process group.
+
+Found on the way: the first fork copied the stack inside the build,
+after `user_spawn` had zeroed the synthetic trap frame at the block's
+bottom — the copy clobbered the anchor and the child resumed with the
+parent's registers (both processes printed the parent's line). The
+copy now precedes the spawn. The other finding was the shared
+wait/exit argument cells: the child's exit code landed in the wait's
+target, and the wait answered the parent's pid as the code.
+
+The metal proof: `chello.elf` (25,928 bytes) answered `fork ok` and
+`wait ok` after the fd, VFS, heap, grow, args, proc and env beats —
+the child exited 42 and the parent read it, then the any-child wait
+reaped the second child's 7 — and the machine's exit route was clean.
+The library's fd numbers copy with the image, but the filesystem
+service's per-pid handles do not yet: an inherited descriptor is
+T1.4b3's (with execve and the environment's handoff).
 
 ### M2 — the C library (musl-derived)
 

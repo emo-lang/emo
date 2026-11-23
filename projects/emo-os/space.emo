@@ -111,6 +111,18 @@ const grow_max = 200
 const slot_stack = 864
 const slot_space = 872
 
+// The fork's recipe on the child's private handoff page (T1.4b2): the
+// saved context and the parent's stack and arena virtual bases, the
+// parent's pid for its grown rows, and its packed arena cell. The mark
+// is written last; a page without it is an ordinary exec's.
+const fork_mark = 0x464f524b
+const fork_sp_off = 0x90
+const fork_mark_off = 0x98
+const fork_stack_off = 0xa0
+const fork_arena_off = 0xa8
+const fork_pid_off = 0xb0
+const fork_cell_off = 0xc0
+
 // The screen carve's grant (T8.2): the cell on the handoff page the
 // process service pokes with the carve's kernel address when the spawn
 // it is serving is the machine's full-screen pass — the screen token's
@@ -270,16 +282,61 @@ def adopt(root_pa Int64) Void {
   poke64(current_cell, root_pa)
 }
 
+// The fork's note (T1.4b2): the recipe the child's build reads from
+// its private handoff page — the saved context, the parent's stack and
+// arena virtual bases, the parent's pid, and its packed arena cell.
+// The mark goes last, so a page never carries a half-written recipe.
+def fork_note(hp Int64, sp Int64, pid Int64, stack Int64, arena Int64,
+              cell Int64) Void {
+  poke64(hp + fork_sp_off, sp)
+  poke64(hp + fork_stack_off, stack)
+  poke64(hp + fork_arena_off, arena)
+  poke64(hp + fork_pid_off, pid)
+  poke64(hp + fork_cell_off, cell)
+  poke64(hp + fork_mark_off, fork_mark)
+}
+
+// A byte run through the kernel's aliases, word at a time: the copy a
+// fork's build makes of a parent's stack, arena and grown blocks. The
+// lengths are the blocks' own, 64 KiB aligned.
+def copy_words(src Int64, dst Int64, len Int64) Void {
+  var i = 0
+  while i < len {
+    poke64(dst + i, peek64(src + i))
+    i = i + 8
+  }
+}
+
+// The parent's grown blocks (T1.4b2): the count the process service's
+// resource judgment reserves, and the room the growth list still has.
+def grown_rows(pid Int64) Int64 {
+  var n = peek64(grow_count)
+  var i = 0
+  var c = 0
+  while i < n {
+    if peek64(grow_rows + (i * 16)) == pid {
+      c = c + 1
+    }
+    i = i + 1
+  }
+  return c
+}
+
+def grow_room() Int64 {
+  return grow_max - peek64(grow_count)
+}
+
 // The spawned pass's table, built at spawn: the runtime's hook, called
 // at the end of emo_user_spawn with the child's slot — every word the
 // build needs is already in it. The kernel's half, the image's
 // segments, the cells page (base), then the process's own: its stack
-// block, and its arena whole — every block of the run from the base at
-// 880 up to the end at 584 (T8.9), each 4 KiB at the identity of its
-// physical address, RW with U. The root's physical address goes into
-// the slot's space word — what the switch resolves on every pick.
-// Frame exhaustion is the loud end, as the arena carve's is: the
-// process table's ceiling in memory.
+// block and its arena whole. A plain spawn maps them at the identity
+// of their physical addresses; a fork (T1.4b2) copies the parent's
+// bytes into the fresh blocks and maps them at the parent's virtual
+// bases, so the copied stack's sp and every heap pointer stay true.
+// The root's physical address goes into the slot's space word — what
+// the switch resolves on every pick. Frame exhaustion is the loud end,
+// as the arena carve's is: the process table's ceiling in memory.
 def build(slot Int64) Void {
   var root = frames.frame_take()
   if root == 0 {
@@ -291,7 +348,10 @@ def build(slot Int64) Void {
   // consumer — the record goes into the child's own image cell, the
   // table built off the image's own segments. Every other spawn finds
   // the cell zero and builds off the boot image's global table, the
-  // shape every pass has carried since T6.2.
+  // shape every pass has carried since T6.2. A fork's record is an
+  // exec's record with a copied run and a private page carrying the
+  // fork's recipe beside the copied cells.
+  var hp = 0
   var rec = peek64(exec_pending)
   if rec != 0 {
     poke64(exec_pending, 0)
@@ -305,7 +365,7 @@ def build(slot Int64) Void {
     // maps — read here, after the dress, by the runtime's init (the
     // delta word its tell). The record's page word is the kernel's
     // alias, as the allocator answered it.
-    var hp = peek64(rec + record_page)
+    hp = peek64(rec + record_page)
     poke64(hp + 0x70, sv39.pa_of(peek64(slot + slot_arena_base)))
     poke64(hp + 0x78, sv39.pa_of(peek64(slot + slot_arena_end)))
     image_base(root, rec)
@@ -313,27 +373,107 @@ def build(slot Int64) Void {
     base(root)
   }
   var stack = peek64(slot + slot_stack)
-  var va = stack
-  var top = stack + block
-  while va < top {
-    map_page(root, va, va, rwu)
-    va = va + page
-  }
-  var arena = sv39.pa_of(peek64(slot + slot_arena_base))
-  top = sv39.pa_of(peek64(slot + slot_arena_end))
-  // The child's arena (T1.3): the page numbers, not the addresses —
-  // the RAM's bases carry bit 31, and a packed word's sign would read
-  // as a route at the ecall's return. The build knows the child's
-  // pid, so the cell is written here and no service copies it.
+  var arena_base = peek64(slot + slot_arena_base)
+  var arena_end = peek64(slot + slot_arena_end)
   var bpid = peek64(slot + 8)
-  if bpid < arena_bound {
-    poke64(arena_for + (bpid * 8),
-      ((arena >> 12) << 20) | ((top >> 12) & 1048575))
+  var fork = 0
+  if hp != 0 {
+    fork = peek64(hp + fork_mark_off)
   }
-  va = arena
-  while va < top {
-    map_page(root, va, va, rwu)
-    va = va + page
+  if fork == fork_mark {
+    // The fork's stack: the parent's block, copied into the child's
+    // fresh block before the spawn and mapped at the parent's base.
+    var pstack = peek64(hp + fork_stack_off)
+    var cstack = stack
+    var va = pstack
+    var top = pstack + block
+    while va < top {
+      map_page(root, va, cstack + (va - pstack), rwu)
+      va = va + page
+    }
+    // The kernel's anchor frame sits at the child block's own bottom
+    // (emo_user_spawn's synthetic frame), so that block must also be
+    // reachable at its identity — read and written in S-mode, no U;
+    // the copied stack above it is the user's at the parent's base.
+    var sva = stack
+    var stop = stack + block
+    while sva < stop {
+      map_page(root, sva, sva, rw)
+      sva = sva + page
+    }
+    // The arena's original run: the parent's block bytes, the child's
+    // new run, mapped at the parent's base.
+    var parena = peek64(hp + fork_arena_off)
+    var carena = sv39.pa_of(arena_base)
+    var run = sv39.pa_of(arena_end) - carena
+    copy_words(parena + koff, arena_base, run)
+    va = parena
+    top = parena + run
+    while va < top {
+      map_page(root, va, carena + (va - parena), rwu)
+      va = va + page
+    }
+    // The arena's grown blocks (T1.3v): each parent row's bytes into a
+    // fresh block, mapped at the row's place in the parent's virtual
+    // run, and a row of the child's own for the death's walk home.
+    var parent = peek64(hp + fork_pid_off)
+    var n = peek64(grow_count)
+    var added = 0
+    var k = 0
+    var gva = parena + run
+    while k < n {
+      var row = grow_rows + (k * 16)
+      if peek64(row) == parent {
+        if n + added >= grow_max {
+          sv39.die("sv39: the growth list has no room for a fork")
+        }
+        var take = frames.take()
+        if take == 0 {
+          sv39.die("sv39: no block left for a fork")
+        }
+        copy_words(peek64(row + 8), take, block)
+        var pa = sv39.pa_of(take)
+        var q = 0
+        while q < block {
+          map_page(root, gva + q, pa + q, rwu)
+          q = q + page
+        }
+        poke64(grow_rows + ((n + added) * 16), bpid)
+        poke64(grow_rows + ((n + added) * 16) + 8, take)
+        added = added + 1
+        gva = gva + block
+      }
+      k = k + 1
+    }
+    poke64(grow_count, n + added)
+    // The child's arena cell is the parent's: the same base and end,
+    // grown blocks included; the run the reap walks stays the slot's
+    // 576..584, the grown blocks the rows' own.
+    if bpid < arena_bound {
+      poke64(arena_for + (bpid * 8), peek64(hp + fork_cell_off))
+    }
+  } else {
+    var va2 = stack
+    var top2 = stack + block
+    while va2 < top2 {
+      map_page(root, va2, va2, rwu)
+      va2 = va2 + page
+    }
+    var arena = sv39.pa_of(arena_base)
+    var end = sv39.pa_of(arena_end)
+    // The child's arena (T1.3): the page numbers, not the addresses —
+    // the RAM's bases carry bit 31, and a packed word's sign would read
+    // as a route at the ecall's return. The build knows the child's
+    // pid, so the cell is written here and no service copies it.
+    if bpid < arena_bound {
+      poke64(arena_for + (bpid * 8),
+        ((arena >> 12) << 20) | ((end >> 12) & 1048575))
+    }
+    var va3 = arena
+    while va3 < end {
+      map_page(root, va3, va3, rwu)
+      va3 = va3 + page
+    }
   }
   // The screen carve's grant (T8.2): the service poked the cell before
   // the spawn; this build is the one consumer. The carve maps at the

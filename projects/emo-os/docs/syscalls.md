@@ -52,7 +52,7 @@ undocumented ever acts.
 | 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4 |
 | 2 | `read()` | the next input byte, blocking until one exists; answers it (0–255) — the input service's (T8.3), the serial console's bytes |
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
-| 4 | `wait(pid)` | the exit code of the child with that pid number, blocking until it exits |
+| 4 | `wait(pid)` | the child's pid in the answer's high 32 bits and its exit code in the low, blocking; a positive pid names the child, 0 or a negative one any child of the caller's (the exit table's parent cells). A hit consumes the entry; a miss parks until the child exits (EmoOS plan B, T1.4b2) |
 | 5 | *(the allocator's)* | never returns for the caller — the arena exhaustion report |
 | 6 | `file_write(name, name_len, buf, len)` | the file named by the `name_len` bytes at `name` becomes the `len` bytes at `buf` (at most 2048); answers `len` |
 | 7 | `file_read(name, name_len, buf, cap)` | the file's bytes land at `buf`, at most `cap` of them; answers the file's size |
@@ -97,10 +97,16 @@ undocumented ever acts.
 | 49 | `getpid()` | the caller's own pid (EmoOS plan B, T1.4b1) |
 | 50 | `setpgid(pid, pgid)` | the target 0 is the caller and the group 0 the target; only the caller or its child, the parent cell the authority; the group lives in the pid's byte on the growth page's tail; answers 0 (EmoOS plan B, T1.4b1) |
 | 51 | `getpgid(pid)` | the group the pid carries, its own pid when the byte is 0; the same authority as `setpgid`; answers the group (EmoOS plan B, T1.4b1) |
+| 52 | `fork(ctx, entry)` | the caller's saved context and resume entry; the child's image, stack, arena and grown blocks are copied and mapped at the caller's virtual bases, and the child returns from `fork` with 0 — the parent with the child's pid. Only an exec'd image may fork; the entry must sit in an executable segment (EmoOS plan B, T1.4b2) |
 
 The fd and path verbs share the filesystem's four request slots; the
 slot's `+88` marker selects the open-file table and the path calls,
 the whole-file verbs' own path otherwise.
+
+The process door's arguments ride per-pid cells on `.emo_procargs`
+(0x8700a000): the wait's target in the first half, the exit's code in
+the second (T1.4b2). A request staged behind another cannot overwrite
+its argument before the process service reads it.
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their

@@ -25,6 +25,8 @@ static char args_ok[] = "args ok\n";
 static char args_none[] = "args none\n";
 static char proc_ok[] = "proc ok\n";
 static char env_ok[] = "env ok\n";
+static char fork_ok[] = "fork ok\n";
+static char wait_ok[] = "wait ok\n";
 
 static int streq(const char *a, const char *b) {
   int i = 0;
@@ -207,5 +209,38 @@ int main(int argc, char **argv, char **envp) {
   }
   write(1, proc_ok, sizeof(proc_ok) - 1);
   write(1, env_ok, sizeof(env_ok) - 1);
+
+  // ---- fork and wait (T1.4b2): the child's copy of the world.
+  long fp = fork();
+  if (fp == 0) {
+    _exit(42);
+  }
+  if (fp < 0) {
+    write(2, "fork failed\n", 12);
+    return 24;
+  }
+  int fst = 0;
+  long fw = waitpid(fp, &fst, 0);
+  if (fw != fp || !EMO_WIFEXITED(fst) || EMO_WEXITSTATUS(fst) != 42) {
+    write(2, "fork wait failed\n", 17);
+    return 25;
+  }
+  write(1, fork_ok, sizeof(fork_ok) - 1);
+
+  long fp2 = fork();
+  if (fp2 == 0) {
+    _exit(7);
+  }
+  if (fp2 < 0) {
+    write(2, "fork2 failed\n", 13);
+    return 26;
+  }
+  int fst2 = 0;
+  long fw2 = waitpid(-1, &fst2, 0);
+  if (fw2 != fp2 || !EMO_WIFEXITED(fst2) || EMO_WEXITSTATUS(fst2) != 7) {
+    write(2, "any wait failed\n", 16);
+    return 27;
+  }
+  write(1, wait_ok, sizeof(wait_ok) - 1);
   return 0;
 }

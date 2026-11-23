@@ -143,7 +143,7 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
    stale files.elf $files_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale spin.elf $spin_src ||
-   stale chello.elf c/hello.c c/emo_syscall.h c/emo_posix.c c/emo_posix.h c/crt0.s c/chello.ld c/build.sh ||
+   stale chello.elf c/hello.c c/emo_syscall.h c/emo_posix.c c/emo_posix.h c/crt0.s c/fork.s c/chello.ld c/build.sh ||
    stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf wallpaper.rle; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo

@@ -135,6 +135,15 @@ SECTIONS
   . = KOFF + 0x87009000;
   .emo_console (NOLOAD) : AT(ADDR(.emo_console) - KOFF) { *(.emo_console) } :tick
 
+  /* The process door's per-pid arguments (EmoOS plan B, T1.4b2), a
+     page above the console's: the wait's target and the exit's code,
+     one cell each per pid. The wait and the exit used to share one
+     pair of cells, and a request staged behind another could have its
+     argument overwritten before the service read it; the per-pid
+     cells make every request's argument its caller's alone. */
+  . = KOFF + 0x8700a000;
+  .emo_procargs (NOLOAD) : AT(ADDR(.emo_procargs) - KOFF) { *(.emo_procargs) } :tick
+
   /* The exec page (emo-desktop A11.1), a page above the console's end:
      the disk ELFs' kernel side — the per-pid image cells (the gate's
      checks and the build's mapping read the caller's image record by

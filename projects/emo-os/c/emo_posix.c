@@ -1162,19 +1162,23 @@ long getpgid(long pid) {
 
 long wait4(long pid, int *status, int options, void *rusage) {
   (void)rusage;
-  if (pid <= 0 || options != 0) {
+  if (options != 0) {
     errno = EMO_ENOSYS;
     return -1;
   }
+  // The answer is packed: the child's pid above the exit code
+  // (T1.4b2) — the any-child wait cannot name the child otherwise.
   long a = emo_wait(pid);
   if (a < 0) {
     errno = reason_errno(a);
     return -1;
   }
+  long child = a >> 32;
+  int code = (int)(a & 0xffffffff);
   if (status != 0) {
-    *status = (int)((a & 0xff) << 8);
+    *status = (code & 0xff) << 8;
   }
-  return pid;
+  return child;
 }
 
 long waitpid(long pid, int *status, int options) {
@@ -1183,4 +1187,24 @@ long waitpid(long pid, int *status, int options) {
 
 long wait(int *status) {
   return wait4(-1, status, 0, 0);
+}
+
+// fork's C half (T1.4b2): the ecall, and the reason's errno. The child
+// never returns here — it resumes at the assembly trampoline with the
+// copied stack.
+long emo_fork_call(long ctx, long entry) {
+  long a = emo_fork(ctx, entry);
+  if (a < 0) {
+    errno = (a == -5) ? EMO_EAGAIN : reason_errno(a);
+    return -1;
+  }
+  return a;
+}
+
+void exit(int code) {
+  emo_exit(code);
+}
+
+void _exit(int code) {
+  emo_exit(code);
 }

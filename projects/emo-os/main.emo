@@ -79,8 +79,9 @@ const process_svc_cell = koff + 0x870020f8
 const con_slots = koff + 0x87009000
 const con_slot_size = 2056
 const con_slot_for = koff + 0x8700b100
-const proc_arga = koff + 0x870021b0
-const proc_argb = koff + 0x870021b8
+const wait_for = koff + 0x8700a000
+const exit_for = wait_for + 2048
+const proc_bound = 256
 
 // The disk ELFs' blobs (emo-desktop A11.1): the three apps' images,
 // embedded beside the boot image (user.S), their bounds parked at the
@@ -114,6 +115,17 @@ const app_blob_x_end = koff + 0x87002228
 // cells sit past the exec's name buffer now.)
 const svc_screen_pid = koff + 0x8700c000 + 4072
 const svc_screen_base = koff + 0x8700c000 + 4080
+// The fork door's cells (T1.4b2), on the exec page's tail before the
+// screen pass's pair: the same busy cell as the execs, the saved
+// context and resume entry. The gate stages; the service's pickup
+// copies them into locals and holds the busy cell through the spawn.
+const fork_use_cell = koff + 0x8700c000 + 4024
+const fork_sp_cell = koff + 0x8700c000 + 4032
+const fork_entry_cell = koff + 0x8700c000 + 4040
+const exec_busy_cell = koff + 0x8700c000 + 3912
+const exec_pending_cell = koff + 0x8700c000 + 3904
+const pgid_base = koff + 0x8700f000 + 3784
+const pgid_bound = 256
 const user_program_cell = 0x87fff000
 const exit_count = koff + 0x87002118
 const exit_pids = koff + 0x87002120
@@ -853,11 +865,15 @@ def console_service(boss Pid) Void {
 // pass costs two blocks, and a spawn the allocator cannot back is
 // refused (−5) before anything is taken; the pass runs on the identity
 // alias of its block (T6.1), so the top it receives is the physical
-// one; wait answers from the exit table or parks the loop holding the
-// request; exit records itself and answers a waiting parent. One gate
-// transaction runs at a time, so the one pending-wait pair of cells is
-// the whole of the waiting bookkeeping; the request's arguments live in
-// this service's own cells (proc_arga/proc_argb), not the console's.
+// one; wait answers from the exit table or parks (any child of the
+// caller's, or the one it named); exit records itself and answers a
+// waiting parent. One gate transaction runs at a time, so the one
+// pending-wait pair of cells is the whole of the waiting bookkeeping;
+// each wait's target and each exit's code live in the caller's own
+// per-pid cell (T1.4b2), so a request staged behind another cannot
+// overwrite its argument before this service reads it. fork (T1.4b2)
+// clones the caller's image, stack, arena and grown blocks and starts
+// the child at the caller's resume entry.
 //
 // The screen carve's grant rides the spawn (T8.2): the cells-page
 // token poked by the spawner is read here, at the spawn — the carve's
@@ -940,24 +956,128 @@ def process_serve(w Int64) Void {
           }
     } else {
       if op == 4 {
+            // The wait (T1.4b2): a positive target is the child the
+            // caller named; 0 or a negative one any child of the
+            // caller's — the parent cell names the reader. A hit is
+            // consumed (the table shifts down) and answered packed:
+            // the child's pid above its exit code. A miss parks.
             var n0 = peek64(exit_count)
+            var target0 = peek64(wait_for + (caller_of(w) * 8))
             var i0 = 0
             var hit = -1
             while i0 < n0 {
-              if peek64(exit_pids + (i0 * 8)) == peek64(proc_arga) {
+              var epid = peek64(exit_pids + (i0 * 8))
+              var match = false
+              if target0 > 0 {
+                if epid == target0 {
+                  match = true
+                }
+              } else {
+                if epid < parent_bound {
+                  if peek64(parent_for + (epid * 8)) == caller_of(w) {
+                    match = true
+                  }
+                }
+              }
+              if match {
                 hit = i0
               }
               i0 = i0 + 1
             }
             if hit >= 0 {
-              gate_reply(caller_of(w), peek64(exit_codes + (hit * 8)))
+              var cpid = peek64(exit_pids + (hit * 8))
+              var ccode = peek64(exit_codes + (hit * 8))
+              var j0 = hit
+              while j0 + 1 < n0 {
+                poke64(exit_pids + (j0 * 8),
+                  peek64(exit_pids + ((j0 + 1) * 8)))
+                poke64(exit_codes + (j0 * 8),
+                  peek64(exit_codes + ((j0 + 1) * 8)))
+                j0 = j0 + 1
+              }
+              poke64(exit_count, n0 - 1)
+              gate_reply(caller_of(w),
+                (cpid << 32) | (ccode & 4294967295))
             } else {
               poke64(pending_waiter, caller_of(w))
-              poke64(pending_target, peek64(proc_arga))
+              poke64(pending_target, target0)
               poke64(pending_flag, 1)
             }
       } else {
         if op == 5 {
+          if peek64(fork_use_cell) != 0 {
+            // fork (T1.4b2): the caller's copied world. The pickup
+            // takes the staged context and entry into locals and holds
+            // the busy cell through the spawn — a second exec or fork
+            // stages only after the child is up. The image's run, the
+            // stack and the arena are judged before anything is taken;
+            // the grown blocks and the table frames ride the build.
+            var fme = caller_of(w)
+            var fsp = peek64(fork_sp_cell)
+            var fentry = peek64(fork_entry_cell)
+            poke64(fork_use_cell, 0)
+            var fblocks = exec.image_blocks(fme)
+            var frows = space.grown_rows(fme)
+            if fblocks <= 0 {
+              poke64(exec_busy_cell, 0)
+              gate_reply(fme, -4)
+            } else {
+              if frows > space.grow_room() {
+                poke64(exec_busy_cell, 0)
+                gate_reply(fme, -5)
+              } else {
+                if frames.spare() < fblocks + frows + frames.user_run() + 41 {
+                  poke64(exec_busy_cell, 0)
+                  gate_reply(fme, -5)
+                } else {
+                  if frames.largest() < frames.user_run() {
+                    poke64(exec_busy_cell, 0)
+                    gate_reply(fme, -5)
+                  } else {
+                    var fstack = frames.take()
+                    if fstack == 0 {
+                      poke64(exec_busy_cell, 0)
+                      gate_reply(fme, -5)
+                    } else {
+                      if frames.largest() < frames.user_run() {
+                        frames.give(fstack)
+                        poke64(exec_busy_cell, 0)
+                        gate_reply(fme, -5)
+                      } else {
+                        var frec = exec.fork_clone(fme, fsp, fstack)
+                        if frec == -4 || frec == -5 {
+                          frames.give(fstack)
+                          poke64(exec_busy_cell, 0)
+                          gate_reply(fme, frec)
+                        } else {
+                          poke64(exec_pending_cell, frec)
+                          frames.arena_for_user()
+                          var fchild = user_spawn(fentry,
+                            sv39.pa_of(fstack) + block)
+                          frames.arena_for_service()
+                          if fchild < parent_bound {
+                            poke64(parent_for + (fchild * 8), fme)
+                          }
+                          // the child's group is the parent's (T1.4b1):
+                          // the byte 0 means the pid's own, so the
+                          // parent's pid stands in for a clear byte
+                          var fg = peek8(pgid_base + fme).to_int64()
+                          if fg == 0 {
+                            fg = fme
+                          }
+                          if fchild < pgid_bound {
+                            poke8(pgid_base + fchild, fg.to_byte())
+                          }
+                          poke64(exec_busy_cell, 0)
+                          gate_reply(fme, fchild)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
           // exec (emo-desktop A11.1): the disk ELF the staged name
           // names. The count is the early refusal — the stack and a
           // user pass's run have to be there at all — and the exact
@@ -1003,17 +1123,48 @@ def process_serve(w Int64) Void {
               gate_reply(caller_of(w), ans)
             }
           }
+          }
         } else {
-          var pid = peek64(proc_argb)
-          var code = peek64(proc_arga)
+          var pid = caller_of(w)
+          var code = 0
+          if pid < proc_bound {
+            code = peek64(exit_for + (pid * 8))
+          }
           // the arena's grown blocks go home (T1.3v): the normal
           // exit's half of the reclaim, the fault's in the shim
           space.grow_reap(pid)
-          var n = peek64(exit_count)
-          if n < 8 {
-            poke64(exit_pids + (n * 8), pid)
-            poke64(exit_codes + (n * 8), code)
-            poke64(exit_count, n + 1)
+          // The parked waiter's judgment first (T1.4b2): a hit is
+          // answered here and never enters the exit table; a dead
+          // waiter's pending is cleared and the exit is recorded like
+          // any other. A miss records for a wait still to come.
+          var pwaiter0 = 0
+          var phit0 = false
+          if peek64(pending_flag) == 1 {
+            pwaiter0 = peek64(pending_waiter)
+            if pwaiter0 == pid {
+              poke64(pending_flag, 0)
+            } else {
+              var ptarget0 = peek64(pending_target)
+              if ptarget0 > 0 {
+                if ptarget0 == pid {
+                  phit0 = true
+                }
+              } else {
+                if pid < parent_bound {
+                  if peek64(parent_for + (pid * 8)) == pwaiter0 {
+                    phit0 = true
+                  }
+                }
+              }
+            }
+          }
+          if phit0 == false {
+            var n = peek64(exit_count)
+            if n < 8 {
+              poke64(exit_pids + (n * 8), pid)
+              poke64(exit_codes + (n * 8), code)
+              poke64(exit_count, n + 1)
+            }
           }
           // The death's word to its parent (emo-desktop A12.1, EmoOS
           // T8.19): the exit table answers the waits; the ring answers
@@ -1045,11 +1196,9 @@ def process_serve(w Int64) Void {
               screen_check(peek64(svc_screen_base))
             }
           }
-          if peek64(pending_flag) == 1 {
-            if peek64(pending_target) == pid {
-              poke64(pending_flag, 0)
-              gate_reply(peek64(pending_waiter), code)
-            }
+          if phit0 {
+            poke64(pending_flag, 0)
+            gate_reply(pwaiter0, (pid << 32) | (code & 4294967295))
           }
         }
       }

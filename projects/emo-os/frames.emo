@@ -218,6 +218,25 @@ def give(base Int64) Void {
   poke64(given, peek64(given) + 1)
 }
 
+// Is this address a claimed block of the region? The fork's judgment
+// (T1.4b2): the caller's saved stack must name one of the allocator's
+// blocks, so a wild sp refuses instead of copying a trap. The address
+// arrives physical (the user's) or as the kernel's alias.
+def owns(base Int64) Bool {
+  var b = base
+  if b >= 0 {
+    b = b + koff
+  }
+  if b < peek64(lo) || b >= peek64(hi) {
+    return false
+  }
+  if b % block != 0 {
+    return false
+  }
+  var i = (b - peek64(lo)) / block
+  return (peek64(claimed + ((i / 64) * 8)) & (1 << (i % 64))) != 0
+}
+
 // How many blocks are free right now — the process service's test that
 // a pass's two blocks (stack and arena) are both there before it
 // spawns, so a spawn the allocator cannot back is a refusal the caller

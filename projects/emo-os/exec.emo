@@ -37,6 +37,8 @@ const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
 // handoff page), then the pending cell the spawn's build consumes, the
 // request's busy cell and name, and the service's request stash.
 const img_for = koff + 0x8700c000
+const arena_for = koff + 0x8700d800
+const arena_bound = 256
 const records = img_for + 2048
 const record_size = 232
 const record_count = 8
@@ -642,6 +644,96 @@ def transaction_args(fs Pid, name Int64, nlen Int64, args Int64,
   var child = user_spawn(entry, sv39.pa_of(stack) + block)
   frames.arena_for_service()
   return child
+}
+
+// A fork's image (T1.4b2): the parent's record copied into a free
+// record, its run copied into a fresh run, its private handoff page
+// copied into a fresh frame — the child's cells carry the parent's
+// parks and the recipe space.emo's build reads (the saved context, the
+// parent's stack and arena bases, its pid and arena cell). The parent's
+// stack is copied into the fresh block here, before user_spawn zeroes
+// its synthetic frame at the block's bottom. The answer is the record
+// pointer, or a negative reason; a refusal after the run is out gives
+// it home before answering.
+def fork_clone(pid Int64, sp Int64, stack Int64) Int64 {
+  if pid >= arena_bound {
+    return -4
+  }
+  var parent = peek64(img_for + (pid * 8))
+  if parent == 0 {
+    return -4
+  }
+  var rows = peek64(parent)
+  var blocks = peek64(parent + 216)
+  if rows == 0 || blocks <= 0 {
+    return -4
+  }
+  var pstack = (sp / block) * block
+  if frames.owns(pstack) == false {
+    return -4
+  }
+  if frames.largest() < blocks {
+    return -5
+  }
+  var rec = record_take()
+  if rec == 0 {
+    return -5
+  }
+  var i = 0
+  while i < record_size {
+    poke64(rec + i, peek64(parent + i))
+    i = i + 8
+  }
+  var run = frames.take_run(blocks)
+  if run == 0 {
+    poke64(rec, 0)
+    return -5
+  }
+  var src = sv39.va_of(peek64(parent + 208))
+  var b = 0
+  while b < blocks {
+    space.copy_words(src + (b * block), run + (b * block), block)
+    b = b + 1
+  }
+  poke64(rec + 208, sv39.pa_of(run))
+  poke64(rec + 216, blocks)
+  var hp = frames.frame_take()
+  if hp == 0 {
+    var z = 0
+    while z < blocks {
+      frames.give(run + (z * block))
+      z = z + 1
+    }
+    poke64(rec, 0)
+    return -5
+  }
+  var php = peek64(parent + record_page)
+  var j = 0
+  while j < page {
+    poke64(hp + j, peek64(php + j))
+    j = j + 8
+  }
+  poke64(rec + record_page, hp)
+  var cell = peek64(arena_for + (pid * 8))
+  var parena = (cell >> 20) << 12
+  // The stack is copied before the spawn: user_spawn zeroes its
+  // synthetic frame at the new block's bottom afterwards, so only the
+  // dead bottom bytes give way — the live frames above survive.
+  space.copy_words(pstack + koff, stack, block)
+  space.fork_note(hp, sp, pid, pstack, parena, cell)
+  return rec
+}
+
+// The parent's image run, in blocks — the process service's fork
+// resource judgment; 0 for a pass without a disk image.
+def image_blocks(pid Int64) Int64 {
+  if pid < arena_bound {
+    var rec = peek64(img_for + (pid * 8))
+    if rec != 0 {
+      return peek64(rec + 216)
+    }
+  }
+  return 0
 }
 
 // The death hook (the runtime's emo_image_give_hook, parked beside the

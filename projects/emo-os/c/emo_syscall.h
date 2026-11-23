@@ -32,6 +32,7 @@ static inline long emo_write(const void *buf, unsigned long len) {
 }
 
 // Verb 0: the calling process ends; the root's exit ends the machine.
+static inline void emo_exit(long code) __attribute__((noreturn));
 static inline void emo_exit(long code) {
   emo_ecall(0, code, 0, 0, 0, 0, 0);
   __builtin_unreachable();
@@ -138,6 +139,13 @@ static inline long emo_getpgid(long pid) {
 
 static inline long emo_wait(long pid) {
   return emo_ecall(4, pid, 0, 0, 0, 0, 0);
+}
+
+// Verb 52: fork — the caller's saved context address and the child's
+// resume entry. The child's address space is the caller's, copied; the
+// answer is the child's pid, or a reason (EmoOS plan B, T1.4b2).
+static inline long emo_fork(long ctx, long entry) {
+  return emo_ecall(52, ctx, entry, 0, 0, 0, 0);
 }
 
 #endif

@@ -30,6 +30,7 @@
 #define EMO_EACCES 13
 #define EMO_ENOSPC 28
 #define EMO_EIO 5
+#define EMO_EAGAIN 11
 #define EMO_EEXIST 17
 #define EMO_ENOTDIR 20
 #define EMO_EISDIR 21
@@ -113,6 +114,9 @@ int unsetenv(const char *name);
 long wait4(long pid, int *status, int options, void *rusage);
 long waitpid(long pid, int *status, int options);
 long wait(int *status);
+long fork(void);
+void exit(int code) __attribute__((noreturn));
+void _exit(int code) __attribute__((noreturn));
 
 #define EMO_WIFEXITED(s) (((s) & 0xff) == 0)
 #define EMO_WEXITSTATUS(s) (((s) >> 8) & 0xff)
