@@ -314,10 +314,11 @@ const parent_bound = 256
 const pgid_base = koff + 0x8700f000 + 3784
 const pgid_bound = 256
 
-// The execute and write permissions, ELF p_flags' bits 0 and 1
-// (X=1, W=2, R=4).
+// The execute, write and read permissions, ELF p_flags' bits 0, 1
+// and 2 (X=1, W=2, R=4).
 const flag_x = 1
 const flag_w = 2
+const flag_r = 4
 
 // One segment covers the whole range? The subtraction form cannot
 // overflow: both operands are non-negative and endp >= start.
@@ -364,6 +365,36 @@ def check_write(buf Int64, len Int64) Int64 {
     var slot = tbl + 8 + (i * 24)
     if covers(peek64(slot), peek64(slot + 8), buf, len) {
       if (peek64(slot + 16) & flag_w) != 0 {
+        return 0
+      }
+      covered = true
+    }
+    i = i + 1
+  }
+  if covered {
+    return reason_permission
+  }
+  return reason_range
+}
+
+// The source's pointer checks (T1.0): the whole range inside one
+// segment, and that segment readable. A buffer the gate *lifts* — the
+// write's bytes, a file's name, the exec's texts — needs no write
+// permission: the image's own text and rodata serve now, and the
+// library's bounce copy is the stack buffer's fallback, not every
+// write's road.
+def check_read(buf Int64, len Int64) Int64 {
+  if len < 0 {
+    return reason_argument
+  }
+  var tbl = caller_table()
+  var covered = false
+  var i = 0
+  var n = peek64(tbl)
+  while i < n {
+    var slot = tbl + 8 + (i * 24)
+    if covers(peek64(slot), peek64(slot + 8), buf, len) {
+      if (peek64(slot + 16) & flag_r) != 0 {
         return 0
       }
       covered = true
@@ -495,7 +526,7 @@ def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     if r1 < 1 || r1 > name_max {
       return -reason_argument
     }
-    var vn = check_write(r0, r1)
+    var vn = check_read(r0, r1)
     if vn != 0 {
       return -vn
     }
@@ -510,7 +541,14 @@ def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     if len < 0 || (n == 6 && len > stage_cap) {
       return -reason_argument
     }
-    var vb = check_write(buf, len)
+    // the write's bytes are the gate's to lift (T1.0); the read's and
+    // the list's land in the caller's buffer, and only those need W
+    var vb = 0
+    if n == 6 {
+      vb = check_read(buf, len)
+    } else {
+      vb = check_write(buf, len)
+    }
     if vb != 0 {
       return -vb
     }
@@ -562,7 +600,7 @@ def fs_fd_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     if r1 < 0 || r1 > name_max {
       return -reason_argument
     }
-    var vn = check_write(r0, r1)
+    var vn = check_read(r0, r1)
     if vn != 0 {
       return -vn
     }
@@ -608,7 +646,7 @@ def fs_fd_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
       poke64(s, 0)
       return -reason_argument
     }
-    var vn = check_write(r1, r2)
+    var vn = check_read(r1, r2)
     if vn != 0 {
       poke64(s, 0)
       return -vn
@@ -635,7 +673,7 @@ def fs_fd_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
       poke64(s, 0)
       return -reason_argument
     }
-    var vb = check_write(r1, r2)
+    var vb = check_read(r1, r2)
     if vb != 0 {
       poke64(s, 0)
       return -vb
@@ -762,12 +800,12 @@ def notify_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     if r3 < 0 || r3 > notify.notify_body_max {
       return -reason_argument
     }
-    var vt = check_write(r0, r1)
+    var vt = check_read(r0, r1)
     if vt != 0 {
       return -vt
     }
     if r3 > 0 {
-      var vb = check_write(r2, r3)
+      var vb = check_read(r2, r3)
       if vb != 0 {
         return -vb
       }
@@ -842,7 +880,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r1 > stage_cap {
       return -reason_argument
     }
-    var verdict = check_write(r0, r1)
+    var verdict = check_read(r0, r1)
     if verdict != 0 {
       return -verdict
     }
@@ -1232,7 +1270,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r1 < 1 || r1 > name_max {
       return -reason_argument
     }
-    var vn = check_write(r0, r1)
+    var vn = check_read(r0, r1)
     if vn != 0 {
       return -vn
     }
@@ -1260,12 +1298,12 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r3 < 0 || r3 > execargs_cap {
       return -reason_argument
     }
-    var vn2 = check_write(r0, r1)
+    var vn2 = check_read(r0, r1)
     if vn2 != 0 {
       return -vn2
     }
     if r3 > 0 {
-      var va = check_write(r2, r3)
+      var va = check_read(r2, r3)
       if va != 0 {
         return -va
       }
@@ -1302,18 +1340,18 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r5 < 0 || r5 > execargs_env_cap {
       return -reason_argument
     }
-    var vn3 = check_write(r0, r1)
+    var vn3 = check_read(r0, r1)
     if vn3 != 0 {
       return -vn3
     }
     if r3 > 0 {
-      var va3 = check_write(r2, r3)
+      var va3 = check_read(r2, r3)
       if va3 != 0 {
         return -va3
       }
     }
     if r5 > 0 {
-      var ve3 = check_write(r4, r5)
+      var ve3 = check_read(r4, r5)
       if ve3 != 0 {
         return -ve3
       }
@@ -1411,7 +1449,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r2 < 0 || r2 > stage_cap {
       return -reason_argument
     }
-    var vpw = check_write(r1, r2)
+    var vpw = check_read(r1, r2)
     if vpw != 0 {
       return -vpw
     }
@@ -1838,7 +1876,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r1 < 0 || r1 > clip_cap {
       return -reason_argument
     }
-    var vcl = check_write(r0, r1)
+    var vcl = check_read(r0, r1)
     if vcl != 0 {
       return -vcl
     }

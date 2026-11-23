@@ -49,7 +49,7 @@ undocumented ever acts.
 | Verb | Spelling | Answer |
 | --- | --- | --- |
 | 0 | `exit(code)` | never returns — the root's exit ends the machine (the SBI poweroff); a spawned process's exit answers its parent's `wait` with the status word `code << 8` (T1.6) |
-| 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4 |
+| 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4. The source segment needs `R` only: the image's own text and rodata serve (T1.0) |
 | 2 | `read()` | the next input byte, blocking until one exists; answers it (0–255) — the input service's (T8.3), the serial console's bytes |
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
 | 4 | `wait(pid)` | the child's pid in the answer's high 32 bits and its status word in the low — the code above the low byte for an exit, the signal's number for a signal death (T1.6) — blocking; a positive pid names the child, 0 or a negative one any child of the caller's (the exit table's parent cells). A hit consumes the entry; a miss parks until the child exits (EmoOS plan B, T1.4b2) |
@@ -423,7 +423,7 @@ owner's read — is the same.
 The disk ELFs' verb (T8.16, emo-desktop A11.1, verb 24) is
 `exec(name, name_len)`: the program the filesystem names becomes a
 process of its own. The name is judged like the filesystem's — inside
-one writable segment of the caller's own (the per-process check: a
+one readable segment of the caller's own (the per-process check: a
 disk ELF's caller is judged by its image's segments, the boot image's
 by its own) — copied into the exec page inside the trap, and routed to
 the process service, which reads the volume through the filesystem
@@ -547,12 +547,17 @@ segment table the loader parked when it staged this image (each
 `PT_LOAD`'s range and ELF `p_flags`): the whole range
 `[buf, buf + len)` must lie inside **one** segment — a call that spans
 segments is refused, not split — and that segment must carry the
-permission the access needs (`write` needs `W`). The range check is
-written overflow-safe (`len > end - buf`, never `buf + len > end`), a
-zero length inside a writable segment answers 0, and the
-range-versus-permission distinction is honest: a range that some
-segment covers but no writable segment covers is reason 3, a range
-nothing covers is reason 2. A write longer than the gate's staging
+permission the access needs: a destination the gate writes into (a
+read's buffer, the listing's) needs `W`, a source it lifts (the
+write's bytes, a name, the exec's texts) needs `R` only — since T1.0
+the image's own text and rodata serve `write`, and the C library's
+bounce copy is the stack buffer's fallback, not every write's road.
+The range check is written overflow-safe (`len > end - buf`, never
+`buf + len > end`), a zero length inside a segment that carries the
+permission answers 0, and the range-versus-permission distinction is
+honest: a range that some segment covers but no segment with the
+needed permission covers is reason 3, a range nothing covers is
+reason 2. A write longer than the gate's staging
 page carries (2048 bytes) is reason 4 before anything is copied.
 
 Since SV39's per-process tables (T6.2) the check and the use are one

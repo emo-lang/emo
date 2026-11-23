@@ -37,11 +37,13 @@ first casualty. A libc port keeps one ABI and grows it by need.
   the tail zeroed by the allocator run; the program's `crt0` clears
   `__bss_start` … `__bss_end` itself, the Emo entry stub's own
   discipline.
-- **Writable staging.** Gate verb 1 (`write`) requires the source
-  segment to be writable — the boot proof's `gate 500500 r3 r2`
-  pins it. A C `write` therefore copies through a writable bounce
-  buffer; a later task may teach the gate a readable-source rule,
-  but not before the proof and the golden are re-pinned.
+- **Readable sources, writable destinations.** Every pointer argument
+  lies inside one segment of the caller's own and carries the
+  permission the access needs: a destination the gate writes into
+  needs `W`, a source it lifts needs `R` only (T1.0). The image's own
+  text and rodata therefore serve `write`; the C library bounces a
+  buffer the gate cannot reach — the stack's — through its `.bss`
+  copy, and the boot proof's `gate 500500 w0 r2` pins the rule.
 - **No libc assumptions.** Every syscall the library speaks is
   implemented by the kernel and documented in
   [`syscalls.md`](syscalls.md) as it lands; the library never
@@ -96,10 +98,13 @@ that re-pins the frame ledger.
 The layer every C program stands on. Tasks land only as their first
 consumer asks, but the order is the dependency order.
 
-- [ ] **T1.0** — The gate's write rule: a readable source segment
-  should serve `write`, retiring the libc's bounce copy. The boot
-  proof and the golden re-pin with it — `gate 500500 r3 r2`'s first
-  refusal no longer names the text segment, which becomes a success.
+- [x] **T1.0** — The gate's source rule: a readable segment serves
+  every buffer the gate lifts — `write`'s bytes, a file's name, the
+  exec's texts, a pipe's — and only a destination needs `W`. The boot
+  proof and the golden re-pinned with it (`gate 500500 w0 r2`, the
+  text segment answering instead of refusing), and the C library's
+  write paths pass a segment's buffer straight through; the `.bss`
+  bounce is the stack buffer's fallback.
 - [x] **T1.1** — The fd table in the C library: 0/1/2 on the
   console; `open`/`close`/`read`/`write`/`lseek`/`fstat` on named
   files over the gate's whole-file verbs; a per-process table, the
@@ -213,6 +218,51 @@ consumer asks, but the order is the dependency order.
   ignore), the wait's status word becomes POSIX's (`code << 8` for an
   exit, the signal's number for a signal death), and a child's exit
   raises SIGCHLD while a broken pipe raises SIGPIPE.
+
+### T1.0's record (2026-11-23)
+
+The gate's pointer rule splits in two: `check_read` beside
+`check_write`, the same one-segment, overflow-safe range walk, asking
+the segment's `R` bit instead of `W`. Every source the gate lifts
+switched to it — verb 1's bytes, the filesystem verbs' names (6..9,
+36, 42..45), the fd write's bytes (39), the pipe write's (58), the
+exec doors' name and texts (24, 48, 54), the notification's title and
+body (27) and the clipboard's write (34). Every destination kept
+`check_write`: verb 7's and 38's read buffers, verb 8's and 45's
+listing, the notification take's and the pipe read's buffers, the
+clipboard's paste (35).
+
+The C library's three write paths — console, file, pipe — now hand the
+caller's pointer to the verb first and bounce only when the gate says
+2 or 3: a source in the image's own text or rodata (a string literal)
+rides straight through, a stack or heap buffer falls back to `.bss`
+and is retried there. The file path keeps its lazy-adopt retry beside
+the fallback; a refusal's answer is the whole of the failure, so the
+retry is safe.
+
+The boot proof's text-segment probe writes zero bytes now: the source
+rule is the same check at any length, and a zero length keeps the
+serial line clean of the entry's machine code. The line re-pinned from
+`gate 500500 r3 r2` (the text segment refused, reason 3) to
+`gate 500500 w0 r2` — the answer 0, the kernel's memory still reason
+2 — and the golden's array and its key-feed sync moved with it;
+`how-to-start-emoos.md` (EN + zh) names the new line.
+
+The metal proof: `exec chello.elf hello world` answered every earlier
+beat, the new `gate 500500 w0 r2` sat where the old refusal's line did,
+and `chello.elf`'s `rodata ok` — a literal write — rode the direct
+path. The golden's own run reached and passed the new line
+(`gate 500500 w0 r2`, then `echo 88`), and failed later on a beat
+unrelated to this change: the counter window's rise stalls after two
+frames (`comp 768 494` never arrives). The same failure reproduces on
+the tree before this change (stashed and re-run), so it is recorded as
+pre-existing, not T1.0's.
+
+Gaps: the gate still judges a buffer by the image's segments only, so
+a stack or heap buffer is reason 2 and the library's bounce remains
+their road — accepting the caller's own stack block and arena would
+retire it wholly, a later task. A source in a segment without `R`
+(an execute-only segment) is reason 3, as it should be.
 
 ### T1.1's record (2026-11-23)
 

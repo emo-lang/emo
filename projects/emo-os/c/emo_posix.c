@@ -525,12 +525,16 @@ static long pipe_write_call(int fd, const void *buf, unsigned long n) {
     if (chunk > sizeof(bounce)) {
       chunk = sizeof(bounce);
     }
-    unsigned long i = 0;
-    while (i < chunk) {
-      bounce[i] = ((const char *)buf)[done + i];
-      i = i + 1;
+    const char *src = (const char *)buf + done;
+    long answer = emo_pipe_write(fd, src, chunk);
+    if (answer == -2 || answer == -3) {
+      unsigned long i = 0;
+      while (i < chunk) {
+        bounce[i] = src[i];
+        i = i + 1;
+      }
+      answer = emo_pipe_write(fd, bounce, chunk);
     }
-    long answer = emo_pipe_write(fd, bounce, chunk);
     if (answer < 0) {
       errno = pipe_errno(answer);
       return done == 0 ? -1 : (long)done;
@@ -628,12 +632,19 @@ long write(int fd, const void *buf, unsigned long n) {
       if (chunk > sizeof(bounce)) {
         chunk = sizeof(bounce);
       }
-      unsigned long i = 0;
-      while (i < chunk) {
-        bounce[i] = ((const char *)buf)[done + i];
-        i = i + 1;
+      const char *src = (const char *)buf + done;
+      long answer = emo_write(src, chunk);
+      if (answer == -2 || answer == -3) {
+        // a stack or heap source: the gate's checks reach the image's
+        // segments only, so this one bounces through .bss (T1.0 — the
+        // segments' own buffers go straight)
+        unsigned long i = 0;
+        while (i < chunk) {
+          bounce[i] = src[i];
+          i = i + 1;
+        }
+        answer = emo_write(bounce, chunk);
       }
-      long answer = emo_write(bounce, chunk);
       if (answer < 0) {
         errno = reason_errno(answer);
         return done == 0 ? -1 : (long)done;
@@ -652,15 +663,19 @@ long write(int fd, const void *buf, unsigned long n) {
     if (chunk > sizeof(bounce)) {
       chunk = sizeof(bounce);
     }
-    unsigned long i = 0;
-    while (i < chunk) {
-      bounce[i] = ((const char *)buf)[done + i];
-      i = i + 1;
-    }
-    long answer = emo_fd_write(fd, bounce, chunk);
+    const char *src = (const char *)buf + done;
+    long answer = emo_fd_write(fd, src, chunk);
     if (answer == -4) {
       if (fd_adopt(fd) != 0) {
         return done == 0 ? -1 : (long)done;
+      }
+      answer = emo_fd_write(fd, src, chunk);
+    }
+    if (answer == -2 || answer == -3) {
+      unsigned long i = 0;
+      while (i < chunk) {
+        bounce[i] = src[i];
+        i = i + 1;
       }
       answer = emo_fd_write(fd, bounce, chunk);
     }

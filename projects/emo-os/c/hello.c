@@ -159,6 +159,11 @@ int main(int argc, char **argv, char **envp) {
   write(1, cleaned, sizeof(cleaned) - 1);
   unlink(name);
 
+  // ---- the source rule (T1.0): a string literal lives in the image's
+  // read-only text segment, and the gate lifts it there — no bounce
+  // copy on this one.
+  write(1, "rodata ok\n", 10);
+
   // ---- the path layer (T1.2): a directory, a relative open, the
   // cwd, the listing, a rename, and the clean-up.
   char here[32];

@@ -289,7 +289,7 @@ PYEOF
 # the relay starts anyway and the hand-driven sequence takes over.
 ride() {
   ride_wait '4999999950000000' && ride_type 'abcde' || return 1
-  ride_wait 'gate 500500 r3 r2' && ride_type 'X' || return 1
+  ride_wait 'gate 500500 w0 r2' && ride_type 'X' || return 1
   ride_wait 'present ok' && ride_type 'a' || return 1
   sleep 1 && ride_type 'a'
   sleep 1 && ride_type 'b'

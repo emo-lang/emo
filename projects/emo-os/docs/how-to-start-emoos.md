@@ -134,7 +134,7 @@ machine waiting for its keys, not a fault. The windows, in order:
 - **five keys once the filesystem's mount line has gone by** — the
   console service's delivery test reads five bytes off the wire
   (`0:97` … `4:101` is what an `abcde` answers);
-- **one key when the `gate 500500 r3 r2` line appears** — the read
+- **one key when the `gate 500500 w0 r2` line appears** — the read
   proof blocks on the console until a byte exists (`echo 88` is the
   answer to an X);
 - **the counter's keys once its panel is on the window** — the screen

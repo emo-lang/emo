@@ -132,6 +132,14 @@ def reason_of(answer (R, Int64)) Int64 {
   }
 }
 
+// The answered count, or -1 for a refusal.
+def count_of(answer (R, Int64)) Int64 {
+  case answer {
+    (R.error, _) then { return 0 - 1 }
+    (R.ok, n) then { return n }
+  }
+}
+
 // One byte into the scratch buffer; the cursor comes back.
 def byte_at(pos Int64, b Int64) Int64 {
   poke8(buf + pos, b.to_byte())
@@ -2437,10 +2445,11 @@ gp = num_at(sum, gp)
 gp = byte_at(gp, 10)
 gate_line(gp)
 
-// The gate proof: one write that answers, two that refuse — the text
-// segment with reason 3 (no permission), the kernel's memory with
-// reason 2 (out of range) — and each refusal printed by the same gate
-// that refused it. The line reads `gate 500500 r3 r2`.
+// The gate proof (T1.0): a write whose source is the text segment —
+// readable, not writable — answers now, and answers 0 for a zero
+// length: the source rule is R, not W. The kernel's memory still
+// refuses with reason 2 (out of range), printed by the same gate that
+// refused it. The line reads `gate 500500 w0 r2`.
 var pos = byte_at(0, 103) // g
 pos = byte_at(pos, 97) // a
 pos = byte_at(pos, 116) // t
@@ -2448,8 +2457,8 @@ pos = byte_at(pos, 101) // e
 pos = byte_at(pos, 32) // space
 pos = num_at(sum, pos)
 pos = byte_at(pos, 32)
-pos = byte_at(pos, 114) // r
-pos = num_at(reason_of(syscall.write(text_seg, 4)), pos)
+pos = byte_at(pos, 119) // w
+pos = num_at(count_of(syscall.write(text_seg, 0)), pos)
 pos = byte_at(pos, 32)
 pos = byte_at(pos, 114) // r
 pos = num_at(reason_of(syscall.write(kernel_mem, 4)), pos)
