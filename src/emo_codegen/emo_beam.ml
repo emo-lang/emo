@@ -2312,6 +2312,14 @@ let rt_source =
 		#<62>(8,1,'integer',['unsigned'|['big']])}#
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_bytes_label'/1 ({'emo_bytes', _k})
+	  <_r> when call 'erlang':'is_reference'(_r) ->
+	      %% a Box is the bare process-dictionary key — every other
+	      %%   reference rides inside a tag, so a bare one is a Box
+	      #{#<60>(8,1,'integer',['unsigned'|['big']]),
+		#<98>(8,1,'integer',['unsigned'|['big']]),
+		#<111>(8,1,'integer',['unsigned'|['big']]),
+		#<120>(8,1,'integer',['unsigned'|['big']]),
+		#<62>(8,1,'integer',['unsigned'|['big']])}#
 	  <{'emo_list', _k}> when 'true' ->
 	      apply 'emo_list_to_str'/1 ({'emo_list', _k})
 	  <{'emo_builder', _k}> when 'true' ->
@@ -5181,9 +5189,12 @@ let rt_source =
 	end
 
 %% The send's array copy: the elements walk into fresh rows under the
-%%   new key, each element packed (a Bytes inside a sent array crosses,
-%%   a nested array re-rows), the length row last. The receiver's tag
-%%   is the new key's own — the rows are already shared.
+%%   new key, each element packed and unpacked in one step — the cells
+%%   table is the root's shared one, so the re-registration a Bytes
+%%   needs happens here and the row holds a value the receiver reads
+%%   as-is (a nested array re-rows the same way), the length row last.
+%%   The receiver's tag is the new key's own — the rows are already
+%%   shared, and already whole.
 'emo_msg_pack_array'/4 =
     fun (_k, _len, _i, _k2) ->
 	case call 'erlang':'>='(_i, _len) of
@@ -5195,9 +5206,10 @@ let rt_source =
 	      do call 'ets':'insert'
 		   (apply 'emo_cells_table'/0 (),
 		    {{_k2, _i},
-		     apply 'emo_msg_pack'/1
-		       (call 'ets':'lookup_element'
-			  (apply 'emo_cells_table'/0 (), {_k, _i}, 2))})
+		     apply 'emo_msg_unpack'/1
+		       (apply 'emo_msg_pack'/1
+			  (call 'ets':'lookup_element'
+			     (apply 'emo_cells_table'/0 (), {_k, _i}, 2)))})
 		 apply 'emo_msg_pack_array'/4
 		   (_k, _len, call 'erlang':'+'(_i, 1), _k2)
 	end

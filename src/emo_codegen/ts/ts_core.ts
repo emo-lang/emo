@@ -710,7 +710,7 @@ function toStr(v: any): string {
   if (v === null || v === undefined) return "nil";
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return String.fromCodePoint(v.c);
-  if (v instanceof EBox) return toStr(v.v);
+  if (v instanceof EBox) return "<box>";
   if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof EList) {
@@ -789,7 +789,7 @@ function toStrP(v: any): string | Promise<string> {
   if (v === null || v === undefined) return "nil";
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return String.fromCodePoint(v.c);
-  if (v instanceof EBox) return toStrP(v.v);
+  if (v instanceof EBox) return "<box>";
   if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof EList) {
@@ -1607,6 +1607,7 @@ const E: any = {
       }
       if (name === "load" && recv instanceof EAtomic) return recv.v;
       if (name === "to_string" && recv instanceof EAtomic) return "<atomic>";
+      if (name === "to_string" && recv instanceof EBox) return "<box>";
       if (name === "store" && recv instanceof EAtomic) {
         recv.v = args[0];
         return undefined;

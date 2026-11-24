@@ -1700,10 +1700,11 @@ int64_t emo_length(emo_value v) {
   uintptr_t k = emo_cell_kind(v);
   if (k == EMO_LIST) return emo_list_length(v);
   if (k == EMO_BUILDER) return emo_builder_length(v);
+  if (k == EMO_MAP) return emo_map_length(v);
   if (k != EMO_TUPLE && k != EMO_ARRAY && k != EMO_BYTES && k != EMO_STRING)
     emo_fatal(
-        "only strings, Bytes, tuples, arrays, Lists, and ArrayBuilders have a "
-        "length");
+        "only strings, Bytes, tuples, arrays, Lists, ArrayBuilders, and Maps "
+        "have a length");
   return (int64_t)*emo_payload(v);
 }
 

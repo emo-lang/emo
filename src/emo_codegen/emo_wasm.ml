@@ -2642,7 +2642,7 @@ and builtin_method_call env self_ name args =
       in
       es env (if matching = [] then builtin () else chain matching)
   | "length", [] ->
-      (* arrays, tuples, strings, Bytes, lists, and builders carry a
+      (* arrays, tuples, strings, Bytes, lists, builders, and maps carry a
          length; an instance answers its own `length` first — the
          interpreter's rule. The arms rebuild from a scratch local — the
          if's arms cannot see the caller's stack *)
@@ -2702,6 +2702,10 @@ and builtin_method_call env self_ name args =
                   W.Ref_cast t_vbuilder;
                   W.Struct_get (t_vbuilder, 1);
                 ] );
+            ( t_vmap,
+              fun l ->
+                [ W.Local_get l; W.Ref_cast t_vmap; W.Struct_get (t_vmap, 2) ]
+            );
           ]
         @ [ W.I64_extend_i32_s; W.Struct_new t_vint ]
       in
@@ -2913,15 +2917,27 @@ and builtin_method_call env self_ name args =
                   chain candidates );
             ]
       in
-      (* the builder's `get` joins the same runtime dispatch: a builder
-         receiver takes builder_get (which traps on an index outside the
-         live prefix), everything else falls through as before *)
+      (* the map's and the builder's `get` join the same runtime dispatch:
+         a map receiver takes map_get (the key a value of any kind), a
+         builder receiver takes builder_get (which traps on an index
+         outside the live prefix), everything else falls through as
+         before *)
       e env
         (W.If_else
            ( W.Result W.Anyref,
-             [ W.Local_get recv; W.Ref_test t_vbuilder ],
-             [ W.Local_get recv; W.Local_get arg; W.Call (rt "builder_get") ],
-             fallback ))
+             [ W.Local_get recv; W.Ref_test t_vmap ],
+             [ W.Local_get recv; W.Local_get arg; W.Call (rt "map_get") ],
+             [
+               W.If_else
+                 ( W.Result W.Anyref,
+                   [ W.Local_get recv; W.Ref_test t_vbuilder ],
+                   [
+                     W.Local_get recv;
+                     W.Local_get arg;
+                     W.Call (rt "builder_get");
+                   ],
+                   fallback );
+             ] ))
   | "set", [ i; v ] ->
       expr env self_;
       expr env i;
@@ -3960,6 +3976,19 @@ let rt_to_str () : W.func_type =
       ]
       [ W.Local_get 0; W.Call (rt "instance_str") ]
   in
+  let box_branch =
+    branch (test_of t_vbox)
+      [
+        W.I32_const 60;
+        W.I32_const 98;
+        W.I32_const 111;
+        W.I32_const 120;
+        W.I32_const 62;
+        W.Array_new_fixed (t_bytes, 5);
+        W.Struct_new t_vstring;
+      ]
+      [ innermost ]
+  in
   let atomic_branch =
     branch (test_of t_vatomic)
       [
@@ -3974,7 +4003,7 @@ let rt_to_str () : W.func_type =
         W.Array_new_fixed (t_bytes, 8);
         W.Struct_new t_vstring;
       ]
-      [ innermost ]
+      [ box_branch ]
   in
   let char_branch =
     branch (test_of t_vchar)
