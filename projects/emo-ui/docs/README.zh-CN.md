@@ -12,5 +12,6 @@
 | [`ui_gtk`](ui_gtk.md) | GTK 4 后端 |
 | [`ui_browser`](ui_browser.md) | DOM 后端 |
 | [`ui_corpus`](ui_corpus.md) | 每个后端都运行的共享应用 |
+| [`ui_calculator`](ui_calculator.md) | 计算器,`apps/` 下的第一个应用 |
 
-一个应用依赖 `emo/ui` 加一个后端包,并调用 `ui.run(view, update, model, backend)`。这些包实现的设计写在仓库的 `README.md` 里;证据与开放问题见 [`docs/emo-ui.md`](../../../docs/zh-CN/emo-ui.md)。
+一个应用依赖 `emo/ui` 加一个后端包,并调用 `ui.run(view, update, model, backend)`。这些包实现的设计写在仓库的 `README.md` 里;证据与开放问题见 [`docs/emo-ui.md`](../../../docs/zh-CN/emo-ui.md)。`apps/` 下的各个应用各有自己的 README——第一个是 [`apps/calculator`](../apps/calculator/README.zh-CN.md)。

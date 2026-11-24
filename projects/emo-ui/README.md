@@ -167,8 +167,9 @@ hosted targets (the `wasm` artifact under the host boundary in
 the import object it exports). The diff's two refusals, a duplicate key and a
 key on a node the core does not know, are pinned by their exit status and
 message on the interpreter and on `c`. It ends by running `tui/check.sh`,
-`ssr/check.sh`, `macos/check.sh`, `gtk/check.sh`, `browser/check.sh` and
-`corpus/check.sh`, so the project keeps one entry point.
+`ssr/check.sh`, `macos/check.sh`, `gtk/check.sh`, `browser/check.sh`,
+`corpus/check.sh` and `apps/calculator/check.sh`, so the project keeps one
+entry point.
 
 `tui/` is the terminal backend (T48.4), a package of its own — `emo/ui_tui`,
 pinned against `emo/ui` — because it carries a platform the core does not. The
@@ -313,6 +314,19 @@ name. The shared entry also found a `wasm` codegen defect: a def named as a
 value is a `ref.func`, and only the hidden closures were in the declarative
 element segment, so the validator rejected the corpus until every defined
 function was declared (`CHECK.md`).
+
+`apps/` is where the applications live. Each is a project of its own — an
+independent application, written once and run on every backend — and from
+here they are how EmoUI's design moves: what an application cannot say is
+the next question for the core. The first is
+[`apps/calculator`](apps/calculator/README.md) (2026-11-24): a
+four-function calculator of nineteen keys, one application package and
+one entry a platform, whose gate pins the same display after every key on
+the headless, server-rendered, terminal, framebuffer, AppKit, GTK 4 and
+browser backends. It needs only the one event every backend delivers, a
+click; what it needed and EmoUI has no word for — a length with a unit, a
+node's equal share, a color, a keyboard — its README records as questions
+for the core.
 
 Still to come: wiring `term` into `ui_tui`'s input source. The package
 references are in [`docs/`](docs/README.md), one page per package. The

@@ -1,0 +1,93 @@
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_fb_frame"
+require "emo/ui_calculator"
+
+// What the two entries of this package share: the surface, the type and
+// the view. The canvas is the size the calculator measures to at its
+// unit — wide enough for four keys and the gaps between them, and as
+// tall as the display above five rows, 148 pixels at the type's line
+// box — and it is small on purpose: on `beam` a pixel store copies the
+// canvas's whole `Bytes`, so a frame's cost grows with the canvas, and
+// eight frames of this one fit where a screen's would not.
+
+// The canvas with the golden's eye on it: the frame golden's, verb for
+// verb — `present` is where the digest is read and said.
+class Eye {
+  def init(canvas ui_fb.Surface) {
+    self.canvas = canvas
+  }
+
+  def width() Int64 {
+    return self.canvas.width()
+  }
+
+  def height() Int64 {
+    return self.canvas.height()
+  }
+
+  def at(x Int64, y Int64) Int64 {
+    return self.canvas.at(x, y)
+  }
+
+  def fill(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.fill(x, y, w, h, color)
+  }
+
+  def blend(x Int64, y Int64, w Int64, h Int64, color Int64) {
+    self.canvas.blend(x, y, w, h, color)
+  }
+
+  def ink(x Int64, y Int64, f ui_fb.raster.Strike, glyph Int64, color Int64) {
+    self.canvas.ink(x, y, f, glyph, color)
+  }
+
+  def rounded(x Int64, y Int64, w Int64, h Int64, radius Int64, top Int64,
+              bottom Int64) {
+    self.canvas.rounded(x, y, w, h, radius, top, bottom)
+  }
+
+  def stroke(x Int64, y Int64, w Int64, h Int64, radius Int64, width Int64,
+             color Int64) {
+    self.canvas.stroke(x, y, w, h, radius, width, color)
+  }
+
+  def shadow(x Int64, y Int64, w Int64, h Int64, radius Int64, soft Int64,
+             color Int64) {
+    self.canvas.shadow(x, y, w, h, radius, soft, color)
+  }
+
+  def store(x Int64, y Int64, word Int64) {
+    // Withheld on the wasm backend's account (emo-desktop M30, A30.1;
+    // CHECK.md carries the record): the interface call to `store` in
+    // this program emits an invalid module. Nothing stores into the
+    // scripted screen.
+  }
+
+  def present() {
+    println("frame ${ui_fb_frame.digest(self.canvas)}")
+  }
+}
+
+def screen() ui_fb.Surface {
+  return Eye.new(canvas: ui_fb_canvas.canvas(256, 148))
+}
+
+// The type the labels are inked in: the desktop's interface face, at
+// the size its chrome and app bodies use. A strike that refuses says so
+// and the entries end on the empty holder.
+def strike() ui_fb.raster.Strike {
+  const holder = ArrayBuilder.new()
+  case ui_fb.raster.strike(ui_fb.raster.inter(), 16) {
+    (R.error, why) then { println("the interface strike refused: ${why}") }
+    (R.ok, s) then { holder.push(s) }
+  }
+  return holder.get(0)
+}
+
+// Each frame's display, said as the loop hands the backend its tree, so
+// the trace is `../expected.txt`'s first lines.
+def view(reg ui.Registry, m ui_calculator.Model) ui.Node {
+  println("display ${ui_calculator.display(m)}")
+  return ui_calculator.view_at(reg, m, 4.0)
+}

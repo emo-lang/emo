@@ -55,6 +55,8 @@ mkfamily emo/ui_ssr
 put "$UI/ssr" emo/ui_ssr package.emo ui_ssr.emo
 mkfamily emo/ui_corpus
 put "$UI/corpus" emo/ui_corpus package.emo main.emo
+mkfamily emo/ui_calculator
+put "$UI/apps/calculator" emo/ui_calculator package.emo main.emo number.emo
 mkfamily emo/ui_browser
 put "$UI/browser" emo/ui_browser package.emo ui_browser.emo css.emo
 mkfamily emo/ui_gtk

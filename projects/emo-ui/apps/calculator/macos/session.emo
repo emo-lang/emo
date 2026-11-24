@@ -1,0 +1,23 @@
+require "emo/ui"
+require "emo/ui_macos"
+require "emo/ui_calculator"
+
+// The gate's entry of the same window: the application, the same frame,
+// and the window session's tags handed to the shim's self-driving
+// script — honored only under `EMO_GUI_AUTOTEST`, a click per tag. Each
+// frame's display is printed as the loop hands the backend its tree, so
+// the run's stdout is `../expected.txt`'s first lines — the same bytes
+// every other entry is pinned to.
+
+def view(reg ui.Registry, m ui_calculator.Model) ui.Node {
+  println("display ${ui_calculator.display(m)}")
+  return ui_calculator.view_at(reg, m, mount.unit())
+}
+
+def main() {
+  ui.run(view, ui_calculator.update, ui_calculator.initial(),
+    ui_macos.backend(mount.title(), mount.width(), mount.height(),
+      ui_calculator.window_script()))
+}
+
+main()

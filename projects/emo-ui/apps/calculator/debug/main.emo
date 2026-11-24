@@ -1,0 +1,26 @@
+require "emo/ui"
+require "emo/ui_calculator"
+
+// The calculator's headless entry: the application run through the debug
+// backend, which paints nothing and has no input source. The session —
+// the keys of `ui_calculator.session()`, as the tags their registration
+// order fixes — is stepped by hand through `deliver`, and each frame's
+// display is printed as the loop hands the backend its tree. The
+// interpreter's output is `../expected.txt`, and every other entry is
+// pinned to the same lines.
+
+def view(reg ui.Registry, m ui_calculator.Model) ui.Node {
+  println("display ${ui_calculator.display(m)}")
+  return ui_calculator.view(reg, m)
+}
+
+def main() {
+  const backend = ui.debug.Debug.new()
+  ui.run(view, ui_calculator.update, ui_calculator.initial(), backend)
+  const script = ui_calculator.tags()
+  for var i = 0; i < script.length(); i = i + 1 {
+    backend.deliver(script[i])
+  }
+}
+
+main()

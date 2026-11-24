@@ -1,0 +1,26 @@
+require "emo/ui"
+require "emo/ui_tui"
+require "emo/ui_calculator"
+
+// The calculator's terminal entry: the application painted by `ui_tui`
+// in a 29x13 frame — four five-cell keys and the spaces between them,
+// the display above, a cell of margin around. The input is a script
+// rather than a keyboard: the terminal backend has no key source of its
+// own yet, so the window session's tags are all it is given, in order.
+// Every frame repaints the screen and then says what its display shows,
+// so the trace is `../expected.txt`'s first lines. `wasm` is not a
+// target here: the terminal backend writes stdout and the runtime has
+// no `printf`. The interpreter's output is `expected.txt`.
+
+def view(reg ui.Registry, m ui_calculator.Model) ui.Node {
+  println("display ${ui_calculator.display(m)}")
+  return ui_calculator.view(reg, m)
+}
+
+def main() {
+  ui.run(view, ui_calculator.update, ui_calculator.initial(),
+    ui_tui.backend(width: 29, height: 13,
+      input: ui_tui.script(ui_calculator.window_tags())))
+}
+
+main()

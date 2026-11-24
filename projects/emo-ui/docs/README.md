@@ -16,8 +16,11 @@ gates are described in the top-level README.
 | [`ui_gtk`](ui_gtk.md) | The GTK 4 backend |
 | [`ui_browser`](ui_browser.md) | The DOM backend |
 | [`ui_corpus`](ui_corpus.md) | The shared application every backend runs |
+| [`ui_calculator`](ui_calculator.md) | The calculator, the first application under `apps/` |
 
 An application depends on `emo/ui` plus one backend package and calls
 `ui.run(view, update, model, backend)`. The design these packages
 implement is stated in the repository's `README.md`; the evidence and
 the open questions are in [`docs/emo-ui.md`](../../../docs/emo-ui.md).
+The applications under `apps/` carry their own README — the first is
+[`apps/calculator`](../apps/calculator/README.md).

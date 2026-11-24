@@ -273,12 +273,14 @@ expect_refusal foreign_key \
 # `corpus/` is the convergence corpus's gate (T48.12): the shared
 # application on the debug, SSR and terminal backends on every host they
 # declare; the macOS, GTK 4 and browser entries are run by their packages'
-# gates above.
+# gates above. `apps/calculator/` is the first application's gate: the
+# same displays from every backend, each through its own entry.
 EMO="$EMO" ./tui/check.sh || fail=1
 EMO="$EMO" ./ssr/check.sh || fail=1
 EMO="$EMO" ./macos/check.sh || fail=1
 EMO="$EMO" ./gtk/check.sh || fail=1
 EMO="$EMO" ./browser/check.sh || fail=1
 EMO="$EMO" ./corpus/check.sh || fail=1
+EMO="$EMO" ./apps/calculator/check.sh || fail=1
 
 exit $fail

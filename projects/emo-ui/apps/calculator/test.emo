@@ -1,0 +1,266 @@
+require "emo/ui"
+
+// The calculator's own test: the arithmetic, the display's twelve digits,
+// and what each key does to what the display shows — all as values, on
+// the interpreter. The tree is checked as a tree, and the session's
+// bytes are the gate's (`../expected.txt`), on every backend.
+//
+//   emo run test.emo
+
+def check(ok Bool, what String) {
+  if ok {
+    println("ok   ${what}")
+  } else {
+    raise Exception.new(message: "assertion failed: ${what}")
+  }
+}
+
+// The number a session leaves on the display.
+def shown(keys Array[String]) String {
+  return main.display(pressed(main.initial(), keys, 0))
+}
+
+def pressed(m main.Model, keys Array[String], i Int64) main.Model {
+  if i >= keys.length() {
+    return m
+  }
+  return pressed(main.update(main.msg_of(keys[i]), m),
+    keys, i + 1)
+}
+
+// ---- the display's digits ----------------------------------------------
+
+def format_checks() {
+  check(number.format(0.0) == "0", "zero is a bare zero")
+  check(number.format(0.0 - 0.0) == "0",
+    "and a negative zero is the same zero")
+  check(number.format(7.0) == "7", "an integer is plain")
+  check(number.format(0.0 - 7.5) == "-7.5", "a negative carries its sign")
+  check(number.format(1.1 + 2.2) == "3.3",
+    "a float's own sum is the sum a person typed")
+  check(number.format(0.1 + 0.2) == "0.3", "0.1 + 0.2 is 0.3")
+  check(number.format(100.0 - 99.9) == "0.1", "and 100 - 99.9 is 0.1")
+  check(number.format(1.0 / 3.0) == "0.333333333333",
+    "a third shows twelve digits")
+  check(number.format(2.0 / 3.0) == "0.666666666667",
+    "and two thirds are rounded up")
+  check(number.format(10.0 / 4.0) == "2.5", "a short decimal keeps its digits")
+  check(number.format(1.0 / 8.0) == "0.125", "an eighth too")
+  check(number.format(10000000000.0 + 0.5) == "10000000000.5",
+    "twelve places before the point are still plain")
+  check(number.format(999999999999.0) == "999999999999",
+    "and so are nine hundred and ninety-nine of them")
+  check(number.format(1000000000000.0) == "1e+12",
+    "a trillion is written in a power of ten")
+  check(number.format(1000000000000000.0) == "1e+15",
+    "and so is a quadrillion")
+  check(number.format(123456789.0 * 987654321.0) == "1.21932631113e+17",
+    "a product past twelve digits keeps twelve")
+  check(number.format(1.0 / 1000000000000.0) == "0.000000000001",
+    "a trillionth is still plain")
+  check(number.format(1.0 / 10000000000000.0) == "0.0000000000001",
+    "and so are thirteen places behind it")
+  check(number.format(1.0 / 100000000000000.0) == "1e-14",
+    "but the fourteenth is a power of ten")
+  check(number.format(0.00001 / 3.0) == "3.33333333333e-6",
+    "a small quotient keeps its twelve digits and a negative power")
+  check(number.format(0.0 - 1.0 / 100000000000000.0) == "-1e-14",
+    "a small negative one carries both")
+  check(number.format(9999999999999.0 * 999.0) == "9.99e+15",
+    "a thirteenth digit of nine rounds the twelfth up")
+  check(number.format(9.999999999999) == "10",
+    "and all of them rounding up carry into the next power of ten")
+  check(number.format(number.limit() * 10.0) == "Error",
+    "a value past the range is the display's error word")
+}
+
+// ---- the typed decimal --------------------------------------------------
+
+def parse_checks() {
+  check(number.parse("0") == 0.0, "a zero parses")
+  check(number.parse("12.") == 12.0, "a trailing dot is no fraction")
+  check(number.parse("0.5") == 0.5, "a half parses")
+  check(number.parse("-0.5") == 0.0 - 0.5, "a negative half parses")
+  check(number.parse("-0") == 0.0, "a negative zero is a zero")
+  check(number.parse("123456789012345") == 123456789012345.0,
+    "fifteen digits parse exactly")
+  check(number.format(number.parse("3.14159265358979"))
+    == "3.14159265359", "a typed pi shows its first twelve digits")
+}
+
+// ---- the guarded operations --------------------------------------------
+
+def failed(r (R, Float64)) Bool {
+  case r {
+    (R.error, _) then { return true }
+    (R.ok, _) then { return false }
+  }
+}
+
+def value(r (R, Float64)) Float64 {
+  const (R.ok, v) = r
+  return v
+}
+
+def operation_checks() {
+  check(failed(number.div(1.0, 0.0)),
+    "a division by zero is a failure, not the interpreter's runtime error")
+  check(failed(number.div(1.0, 0.0 - 0.0)), "and so is a division by a negative zero")
+  check(failed(number.div(1.0, 0.0 - 5.0)) == false,
+    "a division by a negative number is not")
+  check(value(number.div(0.0 - 7.0, 2.0)) == 0.0 - 3.5,
+    "and its quotient is signed")
+  check(failed(number.add(number.limit(), 1.0)),
+    "a sum past the range is a failure")
+  check(failed(number.mul(number.limit(), 10.0)),
+    "a product past the range is a failure, where beam would raise")
+  check(failed(number.div(1.0, 1.0e-200)),
+    "a quotient past the range is refused before it is taken")
+  check(failed(number.div(1.0e-200, 1.0e-200)) == false,
+    "while two equally small values still divide")
+  check(number.inside(0.0 - number.limit()) == false,
+    "the range is the same on both sides of zero")
+}
+
+// ---- what each key does -------------------------------------------------
+
+def key_checks() {
+  check(main.display(main.initial()) == "0",
+    "the display starts at zero")
+  check(shown(["7", "+", "8", "*", "2", "="]) == "30", "a chain evaluates left to right")
+  check(shown(["C", "1", "2", ".", "5", "-", "0", ".", "5", "/", "4", "="]) == "3",
+    "and a decimal enters a chain")
+  check(shown(["C", "5", "/", "0", "="]) == "Error", "a division by zero shows the error word")
+  check(shown(["C", "5", "/", "0", "=", "7", "+", "3"]) == "Error",
+    "which no key changes")
+  check(shown(["C", "5", "/", "0", "=", "7", "C"]) == "0", "but clear")
+  check(shown(["C", "0", ".", "1", "+", "0", ".", "2", "="]) == "0.3",
+    "two typed tenths are three tenths")
+  check(shown(["C", "6", "+/-", "+", "2", "="]) == "-4", "the sign key negates the entry")
+  check(shown(["C", "5", "+", "+/-", "3", "="]) == "2",
+    "and after an operator it starts a negative right-hand side")
+  check(shown(["C", "8", "+/-"]) == "-8", "on a result it flips the result")
+  check(shown(["C", "5", "=", "+/-", "*", "2", "="]) == "-10",
+    "and the flipped result enters a chain")
+  check(shown(["C", "1", "2", "3", "<", "<", "4"]) == "14", "backspace shortens the entry")
+  check(shown(["C", "1", "2", "<", "<", "<", "7"]) == "7",
+    "an entry deleted to nothing starts over")
+  check(shown(["C", "5", "+", "3", "=", "<", "<"]) == "8",
+    "and leaves a result alone")
+  check(shown(["C", "5", "+", "-", "3", "="]) == "2",
+    "an operator pressed twice means the second")
+  check(shown(["C", "2", "+", "2", "=", "=", "="]) == "8", "= repeats the last operation")
+  check(shown(["C", "5", "+", "="]) == "10",
+    "= with an operator waiting takes the display as both sides")
+  check(shown(["C", "0", ".", ".", "5"]) == "0.5", "a second dot is refused")
+  check(shown(["C", "0", "0", "7"]) == "7", "a leading zero gives way")
+  check(shown(["C", "7", "0", "0"]) == "700", "but the zeros behind a digit stay")
+  check(shown(["C", "1", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "+", "0", ".",
+    "5", "="]) == "10000000000.5", "a long integer keeps its half")
+  check(shown(["C", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "1", "2", "3", "4",
+    "5", "6"]) == "123456789012345", "an entry takes fifteen digits and no more")
+  check(shown(["C", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "="])
+    == "1e+13", "an entry shown as a result is shown to twelve digits")
+  check(shown(["C", "1", "/", "3", "=", "=", "="]) == "0.037037037037",
+    "a repeated division stays inside the range")
+  check(shown(["C", "+", "5", "="]) == "5", "an operator before any digit works from zero")
+  check(shown(["C", "-", "5", "*", "3", "="]) == "-15", "a leading minus makes a negative chain")
+  check(shown(["C", "5", "+", "3", "=", "2"]) == "2",
+    "a digit after a result starts a new number")
+  check(shown(["C", "5", "+", "3", "=", "2", "*"]) == "2",
+    "and an operator after that number takes it as the left side")
+  check(shown(["C", "5", "+", "3", "=", "-", "2", "="]) == "6",
+    "while an operator right after a result works from the result")
+}
+
+// ---- the keypad and its tags -------------------------------------------
+
+// Whether every byte of `s` is printable ASCII — by `index_of` in the
+// set rather than by `chars()`, so this module lowers on `riscv64` too.
+def ascii(s String) Bool {
+  const printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_"
+    + "`abcdefghijklmnopqrstuvwxyz{|}~"
+  for var i = 0; i < s.length(); i = i + 1 {
+    if printable.index_of(s.substring(i, 1)) < 0 {
+      return false
+    }
+  }
+  return true
+}
+
+def keypad_checks() {
+  const keys = main.keypad()
+  var count = 0
+  var all_ascii = true
+  var one_byte = true
+  for var r = 0; r < keys.length(); r = r + 1 {
+    for var c = 0; c < keys[r].length(); c = c + 1 {
+      const label = main.label_of(keys[r][c])
+      count = count + 1
+      if !ascii(label) {
+        all_ascii = false
+      }
+      if label.length() > 1 && keys[r][c] != main.Msg.sign {
+        one_byte = false
+      }
+      if main.msg_of(label) != keys[r][c] {
+        one_byte = false
+      }
+    }
+  }
+  check(count == 19 && keys.length() == 5, "the keypad is nineteen keys on five rows")
+  check(keys[0].length() == 3 && keys[1].length() == 4 && keys[4].length() == 4,
+    "three utilities above four rows of four")
+  check(all_ascii, "every label is ASCII, which the terminal and the framebuffer measure")
+  check(one_byte, "and one byte but the sign's, so the keys come out one width")
+
+  check(main.tag_of("C") == 0 && main.tag_of("<") == 1
+    && main.tag_of("+/-") == 2, "the utilities take the first three tags")
+  check(main.tag_of("7") == 3 && main.tag_of("/") == 6
+    && main.tag_of("=") == 18, "and a digit's tag is its place on the keypad")
+  check(main.script_of(["7", "+", "8", "*", "2", "="]) == "3,17,4,10,12,18",
+    "a session reaches a native window as its tags")
+
+  // The tree says the same: the tag each button carries is its label's.
+  const tree = main.view(ui.Registry.new(), main.initial())
+  const top = tree.children()
+  var agree = top.length() == 6
+  var ri = 0
+  while agree && ri < keys.length() {
+    const line = top[ri + 1].children()
+    agree = line.length() == keys[ri].length()
+    var ci = 0
+    while agree && ci < line.length() {
+      const key = line[ci]
+      if key.is(ui.Button) {
+        agree = main.label_of(keys[ri][ci]) == key.label()
+          && main.tag_of(key.label()) == key.event()
+          && key.style().grow()
+      } else {
+        agree = false
+      }
+      ci = ci + 1
+    }
+    ri = ri + 1
+  }
+  check(agree, "every key on screen carries its label's tag and asks to grow")
+  var zero = false
+  const first = top[0]
+  if first.is(ui.Text) {
+    zero = first.body() == "0"
+  }
+  check(zero, "and the first child of the root is the display, at zero")
+
+  check(main.window_length() == main.window_session().length()
+    && main.window_length() < main.session().length()
+    && main.window_length() <= 64,
+    "the window session fits a native shim's sixty-four tags")
+  check(main.tags().length() == main.session().length(),
+    "the hosted session has a tag a key")
+}
+
+format_checks()
+parse_checks()
+operation_checks()
+key_checks()
+keypad_checks()

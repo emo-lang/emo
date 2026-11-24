@@ -1,0 +1,564 @@
+require "emo/ui"
+
+// The calculator application: a model, a pure `update`, a pure `view`, and
+// nothing that names a platform. It is the first application under
+// `apps/`, and it is shaped the way the convergence corpus is — the same
+// module required by every backend's entry — because it needs the one
+// event every backend delivers: a click on a button. Nineteen keys are
+// nineteen messages, and the keypad is the whole of its interface.
+//
+// The arithmetic is `number.emo`'s; what is here is the calculator a
+// person operates — what each key does to what the display shows.
+
+enum Op { none, add, sub, mul, div }
+
+enum Msg {
+  clear,
+  back,
+  sign,
+  d0,
+  d1,
+  d2,
+  d3,
+  d4,
+  d5,
+  d6,
+  d7,
+  d8,
+  d9,
+  dot,
+  add,
+  sub,
+  mul,
+  div,
+  equals
+}
+
+// What the calculator knows between two keys. `acc` is the value the
+// chain has reached and `op` the operator waiting for its right side;
+// `entry` is the number being typed, kept as the string the person sees
+// so that a digit appends and a dot lands once. `typing` says which of
+// the two the display shows. `again` is the last operation `=` carried
+// out, so that a second `=` repeats it. `err` locks every key but `C`.
+class Model {
+  def init(acc Float64, op Op, entry String, typing Bool, err Bool,
+           again_op Op, again_y Float64) {
+    self.acc = acc
+    self.op = op
+    self.entry = entry
+    self.typing = typing
+    self.err = err
+    self.again_op = again_op
+    self.again_y = again_y
+  }
+
+  def acc() Float64 {
+    return self.acc
+  }
+
+  def op() Op {
+    return self.op
+  }
+
+  def entry() String {
+    return self.entry
+  }
+
+  def typing() Bool {
+    return self.typing
+  }
+
+  def err() Bool {
+    return self.err
+  }
+
+  def again_op() Op {
+    return self.again_op
+  }
+
+  def again_y() Float64 {
+    return self.again_y
+  }
+
+  // The copies one key makes: an instance is a value, and a field is
+  // assigned only in `init`, so each is the model with one thing changed.
+
+  // A number is being typed.
+  def typed(e String) Model {
+    return Model.new(acc: self.acc, op: self.op, entry: e, typing: true,
+      err: false, again_op: self.again_op, again_y: self.again_y)
+  }
+
+  // An operator is waiting, its left side reached.
+  def pending(a Float64, o Op) Model {
+    return Model.new(acc: a, op: o, entry: self.entry, typing: false,
+      err: false, again_op: Op.none, again_y: 0.0)
+  }
+
+  // A result is shown, the chain closed.
+  def showing(a Float64) Model {
+    return Model.new(acc: a, op: Op.none, entry: self.entry, typing: false,
+      err: false, again_op: Op.none, again_y: 0.0)
+  }
+
+  // A result is shown, and `=` again repeats the operation that made it.
+  def solved(r Float64, o Op, y Float64) Model {
+    return Model.new(acc: r, op: Op.none, entry: self.entry, typing: false,
+      err: false, again_op: o, again_y: y)
+  }
+
+  // An operator replaces the one waiting, nothing having been typed.
+  def with_op(o Op) Model {
+    return Model.new(acc: self.acc, op: o, entry: self.entry,
+      typing: false, err: false, again_op: Op.none, again_y: 0.0)
+  }
+
+  // A failure is on the display, and stays there until it is cleared.
+  def failed() Model {
+    return Model.new(acc: self.acc, op: self.op, entry: self.entry,
+      typing: false, err: true, again_op: Op.none, again_y: 0.0)
+  }
+}
+
+def initial() Model {
+  return Model.new(acc: 0.0, op: Op.none, entry: "0", typing: false,
+    err: false, again_op: Op.none, again_y: 0.0)
+}
+
+// What the display shows: the word of a failure, the number being typed
+// as it was typed, or the value reached.
+def display(m Model) String {
+  if m.err() {
+    return "Error"
+  }
+  if m.typing() {
+    return m.entry()
+  }
+  return number.format(m.acc())
+}
+
+// One step of a chain, as a value a failure can come back through.
+def apply(a Float64, op Op, b Float64) (R, Float64) {
+  case op {
+    Op.none then { return (R.ok, b) }
+    Op.add then { return number.add(a, b) }
+    Op.sub then { return number.sub(a, b) }
+    Op.mul then { return number.mul(a, b) }
+    Op.div then { return number.div(a, b) }
+  }
+}
+
+// An entry holds at most fifteen significant digits: as many as a double
+// carries exactly, and more than the display can show.
+def digit_count(entry String) Int64 {
+  var n = 0
+  for var i = 0; i < entry.length(); i = i + 1 {
+    const c = entry.substring(i, 1)
+    if c != "." && c != "-" {
+      n = n + 1
+    }
+  }
+  return n
+}
+
+// A digit starts the entry unless one is being typed; a leading zero
+// gives way to it, and a full entry takes no more.
+def type_digit(d String, m Model) Model {
+  if !m.typing() {
+    return m.typed(d)
+  }
+  const entry = m.entry()
+  if entry == "0" {
+    return m.typed(d)
+  }
+  if entry == "-0" {
+    return m.typed("-" + d)
+  }
+  if digit_count(entry) >= 15 {
+    return m
+  }
+  return m.typed(entry + d)
+}
+
+// A dot starts an entry with a zero in front of it, and lands once.
+def type_dot(m Model) Model {
+  if !m.typing() {
+    return m.typed("0.")
+  }
+  if m.entry().index_of(".") >= 0 {
+    return m
+  }
+  return m.typed(m.entry() + ".")
+}
+
+// Backspace shortens the entry being typed and leaves a result alone.
+// An entry deleted to nothing is zero, and still being typed, so the
+// next digit replaces it.
+def back(m Model) Model {
+  if !m.typing() {
+    return m
+  }
+  var rest = m.entry().substring(0, m.entry().length() - 1)
+  if rest == "" || rest == "-" || rest == "-0" || rest == "-0." {
+    rest = "0"
+  }
+  return m.typed(rest)
+}
+
+// The sign key flips the sign of the number being typed. After an
+// operator it starts a negative number — the right-hand side is the one
+// being entered, though nothing of it shows yet — and on a result it
+// flips the result.
+def sign(m Model) Model {
+  if m.typing() {
+    if m.entry().substring(0, 1) == "-" {
+      return m.typed(m.entry().substring(1, m.entry().length() - 1))
+    }
+    return m.typed("-" + m.entry())
+  }
+  if m.op() != Op.none {
+    return m.typed("-0")
+  }
+  return m.showing(0.0 - m.acc())
+}
+
+// An operator closes the step before it — the entry becomes the right
+// side of the operator waiting, if one is — and then waits itself. With
+// nothing typed and an operator already waiting, the new one replaces
+// it: pressing `+` and then `-` means subtraction.
+def operate(op Op, m Model) Model {
+  if m.typing() {
+    const y = number.parse(m.entry())
+    if m.op() == Op.none {
+      return m.pending(y, op)
+    }
+    case apply(m.acc(), m.op(), y) {
+      (R.ok, r) then { return m.pending(r, op) }
+      (R.error, _) then { return m.failed() }
+    }
+  }
+  return m.with_op(op)
+}
+
+// `=` closes the chain with the entry as its last right-hand side. With
+// an operator waiting and nothing typed, the value on the display is
+// both sides (`5 + =` is ten); with nothing waiting, it repeats the last
+// operation (`5 + 3 = =` is eleven).
+def equals(m Model) Model {
+  if m.typing() {
+    const y = number.parse(m.entry())
+    if m.op() == Op.none {
+      return m.showing(y)
+    }
+    case apply(m.acc(), m.op(), y) {
+      (R.ok, r) then { return m.solved(r, m.op(), y) }
+      (R.error, _) then { return m.failed() }
+    }
+  }
+  if m.op() != Op.none {
+    case apply(m.acc(), m.op(), m.acc()) {
+      (R.ok, r) then { return m.solved(r, m.op(), m.acc()) }
+      (R.error, _) then { return m.failed() }
+    }
+  }
+  if m.again_op() != Op.none {
+    case apply(m.acc(), m.again_op(), m.again_y()) {
+      (R.ok, r) then { return m.solved(r, m.again_op(), m.again_y()) }
+      (R.error, _) then { return m.failed() }
+    }
+  }
+  return m
+}
+
+def update(msg Msg, m Model) Model {
+  if msg == Msg.clear {
+    return initial()
+  }
+  // A failure stays on the display until it is cleared: no key changes
+  // a number the calculator no longer has.
+  if m.err() {
+    return m
+  }
+  case msg {
+    Msg.d0 then { return type_digit("0", m) }
+    Msg.d1 then { return type_digit("1", m) }
+    Msg.d2 then { return type_digit("2", m) }
+    Msg.d3 then { return type_digit("3", m) }
+    Msg.d4 then { return type_digit("4", m) }
+    Msg.d5 then { return type_digit("5", m) }
+    Msg.d6 then { return type_digit("6", m) }
+    Msg.d7 then { return type_digit("7", m) }
+    Msg.d8 then { return type_digit("8", m) }
+    Msg.d9 then { return type_digit("9", m) }
+    Msg.dot then { return type_dot(m) }
+    Msg.back then { return back(m) }
+    Msg.sign then { return sign(m) }
+    Msg.equals then { return equals(m) }
+    Msg.add then { return operate(Op.add, m) }
+    Msg.sub then { return operate(Op.sub, m) }
+    Msg.mul then { return operate(Op.mul, m) }
+    Msg.div then { return operate(Op.div, m) }
+    Msg.clear then { return initial() }
+  }
+}
+
+// ---- the keypad ----
+
+// The keys as they stand on screen, row by row: the display's two
+// utilities and the sign above a pad of four columns, the operators down
+// the right and `=` in the corner. A key's label is one byte everywhere
+// but the sign's, and every one is ASCII: the terminal backend measures a
+// label in bytes and the framebuffer walks it a byte at a time, so `×`,
+// `÷` and `±` would misplace a key on the one and paint missing glyphs
+// on the other.
+def keypad() Array[Array[Msg]] {
+  return [
+    [Msg.clear, Msg.back, Msg.sign],
+    [Msg.d7, Msg.d8, Msg.d9, Msg.div],
+    [Msg.d4, Msg.d5, Msg.d6, Msg.mul],
+    [Msg.d1, Msg.d2, Msg.d3, Msg.sub],
+    [Msg.d0, Msg.dot, Msg.add, Msg.equals]
+  ]
+}
+
+def label_of(msg Msg) String {
+  case msg {
+    Msg.clear then { return "C" }
+    Msg.back then { return "<" }
+    Msg.sign then { return "+/-" }
+    Msg.d0 then { return "0" }
+    Msg.d1 then { return "1" }
+    Msg.d2 then { return "2" }
+    Msg.d3 then { return "3" }
+    Msg.d4 then { return "4" }
+    Msg.d5 then { return "5" }
+    Msg.d6 then { return "6" }
+    Msg.d7 then { return "7" }
+    Msg.d8 then { return "8" }
+    Msg.d9 then { return "9" }
+    Msg.dot then { return "." }
+    Msg.add then { return "+" }
+    Msg.sub then { return "-" }
+    Msg.mul then { return "*" }
+    Msg.div then { return "/" }
+    Msg.equals then { return "=" }
+  }
+}
+
+// The tags the loop's table gives the keys, in keypad order. `view` takes
+// them in one pass before it builds anything: `on` is a side effect, so
+// the order of registration is stated once, here, and nowhere else — and
+// it is what makes a key's tag its place on the keypad.
+def register(reg ui.Registry, keys Array[Array[Msg]]) Array[Int64] {
+  const out = ArrayBuilder.new()
+  for var r = 0; r < keys.length(); r = r + 1 {
+    for var c = 0; c < keys[r].length(); c = c + 1 {
+      out.push(reg.on(keys[r][c]))
+    }
+  }
+  return out.to_array()
+}
+
+// The message of the key labelled `label`. The keypad is the one table:
+// an entry's session and a test's scenario name keys, never tags.
+def msg_of(label String) Msg {
+  const keys = keypad()
+  for var r = 0; r < keys.length(); r = r + 1 {
+    for var c = 0; c < keys[r].length(); c = c + 1 {
+      if label_of(keys[r][c]) == label {
+        return keys[r][c]
+      }
+    }
+  }
+  raise Exception.new(message:
+    "calculator: no key is labelled \"${label}\"")
+}
+
+// The tag of the key labelled `label`, which is its place on the keypad:
+// the tags are handed out in the order `view` registers them, and that is
+// the keypad's order. An entry names a session by what is on the keys
+// and never by a number.
+def tag_of(label String) Int64 {
+  const keys = keypad()
+  var i = 0
+  for var r = 0; r < keys.length(); r = r + 1 {
+    for var c = 0; c < keys[r].length(); c = c + 1 {
+      if label_of(keys[r][c]) == label {
+        return i
+      }
+      i = i + 1
+    }
+  }
+  raise Exception.new(message:
+    "calculator: no key is labelled \"${label}\"")
+}
+
+def tags_of(labels Array[String]) Array[Int64] {
+  const out = ArrayBuilder.new()
+  for var i = 0; i < labels.length(); i = i + 1 {
+    out.push(tag_of(labels[i]))
+  }
+  return out.to_array()
+}
+
+// The same tags as the native backends' windows take them: one line,
+// comma-separated.
+def script_of(labels Array[String]) String {
+  var out = ""
+  for var i = 0; i < labels.length(); i = i + 1 {
+    if i > 0 {
+      out = out + ","
+    }
+    out = out + tag_of(labels[i]).to_string()
+  }
+  return out
+}
+
+// ---- the view ----
+
+// Every key asks for an equal share of its row and nothing more. A
+// fixed width is not portable — a `Style` number is a cell on a
+// terminal, a point in a window and a pixel on the web — so the keys
+// grow instead, and because a digit's label and an operator's are one
+// byte each, the four columns come out one width on every backend that
+// measures a label (a browser measures by the font, and does not).
+// `unit` is the one number an entry chooses for its platform: the gap
+// between keys and the margin around them.
+def view_at(reg ui.Registry, m Model, unit Float64) ui.Node {
+  const keys = keypad()
+  const tags = register(reg, keys)
+  const pad = ArrayBuilder.new()
+  var i = 0
+  for var r = 0; r < keys.length(); r = r + 1 {
+    const row = ArrayBuilder.new()
+    for var c = 0; c < keys[r].length(); c = c + 1 {
+      row.push(ui.button(label_of(keys[r][c]), tags[i],
+        ui.style().with_grow(true)))
+      i = i + 1
+    }
+    pad.push(ui.row(row.to_array(), ui.style().with_gap(unit)))
+  }
+  const body = ArrayBuilder.new()
+  body.push(ui.text(display(m), ui.style()))
+  const rows = pad.to_array()
+  for var r = 0; r < rows.length(); r = r + 1 {
+    body.push(rows[r])
+  }
+  return ui.column(body.to_array(),
+    ui.style().with_padding(unit).with_gap(unit).with_align(ui.Align.stretch))
+}
+
+// The display in cells, which is the terminal's unit and the one a tree
+// has when no entry names another.
+def view(reg ui.Registry, m Model) ui.Node {
+  return view_at(reg, m, 1.0)
+}
+
+// ---- the sessions ----
+
+// A session is the keys a person presses, named by what is on them.
+//
+// The first fifty-four keys are the window session, for the backends
+// that paint a whole frame at a time: the AppKit and GTK backends replay
+// it under `EMO_GUI_AUTOTEST`, whose shims take at most sixty-four tags a
+// click apart, and the terminal and the framebuffer print it frame by
+// frame. It reaches every key: a chain, a decimal, a division by zero
+// and its clear, a float's own sum shown plain, the sign key, backspace
+// and a product. The rest — an operator correcting the one before it,
+// `=` repeating itself, an entry that fills up, and the numbers the
+// display writes in powers of ten — is the hosted session, which the
+// backends that print a line a frame run whole.
+//
+// The first six keys are the page session, for the one backend that
+// prints a document a frame: enough of a chain for the display to have
+// been a number being typed, an operand and a result.
+//
+// Every entry prints the display once a frame, so the shorter sessions'
+// bytes are the hosted session's first lines, and `expected.txt` is the
+// one file every entry is pinned to. The three lengths are each a whole
+// number of the groups below.
+def session() Array[String] {
+  return [
+    // 7 + 8, then * 2
+    "7", "+", "8", "*", "2", "=",
+    // 12.5 - 0.5, then / 4
+    "C", "1", "2", ".", "5", "-", "0", ".", "5", "/", "4", "=",
+    // 5 / 0 is an error, no key but C reaches it
+    "C", "5", "/", "0", "=", "7", "C",
+    // 0.1 + 0.2 is 0.3
+    "C", "0", ".", "1", "+", "0", ".", "2", "=",
+    // the sign key: -6 + 2
+    "C", "6", "+/-", "+", "2", "=",
+    // backspace
+    "C", "1", "2", "3", "<", "<", "4",
+    // 999 * 99
+    "C", "9", "9", "9", "*", "9", "9", "=",
+    // + then - means subtraction
+    "C", "5", "+", "-", "3", "=",
+    // = repeats the last operation: 2 + 2, then 4, then 6
+    "+", "2", "=", "=", "=",
+    // 5 + = is ten
+    "C", "5", "+", "=",
+    // an entry takes fifteen digits and no more
+    "C", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "1", "2", "3",
+    "4", "5", "6",
+    // powers of ten, one way and the other
+    "C", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9",
+    "*", "9", "9", "9", "=", "C", "1", "/", "3", "=", "=", "=",
+    "C", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9",
+    "/", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "9", "=",
+    "C", "1", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "+", "0",
+    ".", "5", "=", "C"
+  ]
+}
+
+// The hosted session's tags, for a backend that steps its own events.
+def tags() Array[Int64] {
+  return tags_of(session())
+}
+
+// The same as one line of tags, for a harness that steps a page by tag.
+def script() String {
+  return script_of(session())
+}
+
+// The first `n` of a session.
+def take(all Array[String], n Int64) Array[String] {
+  const out = ArrayBuilder.new()
+  for var i = 0; i < n; i = i + 1 {
+    out.push(all[i])
+  }
+  return out.to_array()
+}
+
+// Seven groups: through `999 * 99 =`.
+def window_length() Int64 {
+  return 54
+}
+
+def window_session() Array[String] {
+  return take(session(), window_length())
+}
+
+// The window session for a backend that steps its own events, and for a
+// native window's shim, which takes its tags on one comma-separated line.
+def window_tags() Array[Int64] {
+  return tags_of(window_session())
+}
+
+def window_script() String {
+  return script_of(window_session())
+}
+
+// One group: `7 + 8 * 2 =`.
+def page_length() Int64 {
+  return 6
+}
+
+def page_session() Array[String] {
+  return take(session(), page_length())
+}
+
+def page_tags() Array[Int64] {
+  return tags_of(page_session())
+}

@@ -1,0 +1,21 @@
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_calculator"
+
+// The framebuffer entry's short leg: the same surface, the same type and
+// the same view, with the page session's tags in the input's seat. It is
+// for `beam`, where a frame costs seconds — a pixel store there copies
+// the canvas's whole `Bytes`, so painting one grows with the canvas — and
+// seven frames say what fifty would: the same bytes the interpreter
+// prints. They are the first lines of `expected.txt`, because the page
+// session is the window session's first keys.
+//
+//   emo run page.emo
+
+def main() {
+  ui.run(screen.view, ui_calculator.update, ui_calculator.initial(),
+    ui_fb.backend(screen.screen(), ui_fb.script(ui_calculator.page_tags()),
+      screen.strike()))
+}
+
+main()
