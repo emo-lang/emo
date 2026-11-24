@@ -402,6 +402,7 @@ is what the keys say, and what runs runs on the classic terminal.
 | `unset NAME` | remove from the environment |
 | `true` | status 0 |
 | `false` | status 1 |
+| `help` | print the shell's builtin commands |
 
 `export` and `unset` change the real environment, so every command
 the shell forks afterwards inherits them:

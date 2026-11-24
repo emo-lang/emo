@@ -3,10 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# The boot tree always carries the TCC slots (T4.5): the kernel's
-# user.S includes them whatever the mode, so a mode that does not build
-# the compiler leaves the zero-length placeholders the install skips.
-for tcc in tcc.elf tcc-libtcc1.a tcc-crt0.o tcc-libc.a tcc-test.c; do
+# The boot tree always carries the TCC binary slots (T4.5): the
+# kernel's user.S includes them whatever the mode, so a mode that does
+# not build the compiler leaves the zero-length placeholders the
+# install skips. `tcc-test.c` is a tracked source, not a generated
+# slot: the TCC build refreshes it and the other modes leave it.
+for tcc in tcc.elf tcc-libtcc1.a tcc-crt0.o tcc-libc.a; do
   : > "$PWD/../$tcc"
 done
 

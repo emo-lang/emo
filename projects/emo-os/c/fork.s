@@ -39,6 +39,7 @@ fork:
     fsd fs11, 192(sp)
     frcsr t0
     sd t0, 200(sp)
+    sd tp, 208(sp)
     mv a0, sp
     la a1, emo_fork_resume
     call emo_fork_call
@@ -71,6 +72,7 @@ fork:
     fld fs11, 192(sp)
     ld t0, 200(sp)
     fscsr t0
+    ld tp, 208(sp)
     addi sp, sp, 224
     ret
     .size fork, .-fork

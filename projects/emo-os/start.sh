@@ -286,7 +286,15 @@ qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio \
 qemu_pid=$!
 tail -f "$log" -n +1 >&2 &
 tail_pid=$!
-trap 'kill "$qemu_pid" "$tail_pid" 2>/dev/null || true' EXIT
+# The hand-off reads the host terminal directly: its line discipline
+# must stop echoing first, or every typed byte rides the serial twice —
+# the host's cooked echo and the guest editor's own render. The saved
+# settings go back on every exit path.
+saved_tty=$(stty -g 2>/dev/null || true)
+restore_tty() {
+  if [ -n "$saved_tty" ]; then stty "$saved_tty" 2>/dev/null || true; fi
+}
+trap 'restore_tty; kill "$qemu_pid" "$tail_pid" 2>/dev/null || true' EXIT
 exec 3>"$fifo"
 
 ride_wait() {
@@ -396,7 +404,16 @@ fi
 # The hand-off: the terminal's bytes ride to the machine byte for byte
 # (`cat`, not a `read -n1` loop — the read eats the newline that ends
 # the REPL's line, and a poweroff without its newline never runs); the
-# feeder is done, fd 3 is the terminal's alone from here.
+# feeder is done, fd 3 is the terminal's alone from here. Raw mode
+# turns the host's echo off so the guest editor is the only one.
+if [ -n "$saved_tty" ]; then
+  # Raw input (the guest editor owns the keys) but cooked output: the
+  # guest writes `\n`, and ONLCR is what returns the carriage so the
+  # help text does not staircase.
+  stty raw -echo 2>/dev/null || true
+  stty opost onlcr 2>/dev/null || true
+fi
 cat >&3
+restore_tty
 kill "$qemu_pid" 2>/dev/null || true
 wait "$qemu_pid" 2>/dev/null || true

@@ -19,14 +19,15 @@ def is_builtin(name String) Bool {
     || name == "poweroff" || name == "export" || name == "unset" || name == "true"
     || name == "false" || name == "jobs" || name == "fg" || name == "bg"
     || name == "wait" || name == "kill" || name == "break" || name == "continue"
-    || name == "return"
+    || name == "return" || name == "help"
 }
 
 // The builtin roster, the editor's completion reading it — the same
 // names is_builtin answers to.
 def names() Array[String] {
   return ["cd", "pwd", "echo", "exit", "poweroff", "export", "unset", "true",
-    "false", "jobs", "fg", "bg", "wait", "kill", "break", "continue", "return"]
+    "false", "jobs", "fg", "bg", "wait", "kill", "break", "continue", "return",
+    "help"]
 }
 
 // One builtin, its words already expanded; the answer is the exit
@@ -39,6 +40,9 @@ def run(sh shell.Shell, words Array[String]) Int64 {
   if name == "pwd" {
     sh.line(os.getcwd())
     return 0
+  }
+  if name == "help" {
+    return help(sh, words)
   }
   if name == "echo" {
     return echo(sh, words)
@@ -124,6 +128,26 @@ def echo(sh shell.Shell, words Array[String]) Int64 {
     text = text + words[i]
   }
   sh.line(text)
+  return 0
+}
+
+// help: the shell's own commands — the roster the editor completes,
+// in the order is_builtin answers to. The programs on the volume are
+// the other half, named by their own files.
+def help(sh shell.Shell, words Array[String]) Int64 {
+  sh.line("emosh: the shell's own commands")
+  const roster = names()
+  var line = "  "
+  var i = 0
+  while i < roster.length() {
+    if i > 0 {
+      line = line + " "
+    }
+    line = line + roster[i]
+    i = i + 1
+  }
+  sh.line(line)
+  sh.line("any other name is a program on the volume")
   return 0
 }
 

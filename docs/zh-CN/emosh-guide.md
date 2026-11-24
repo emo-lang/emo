@@ -264,6 +264,7 @@ $ echo status=$?
 | `unset NAME` | 从环境移除 |
 | `true` | 状态 0 |
 | `false` | 状态 1 |
+| `help` | 打印 shell 的内建命令 |
 
 `export` 与 `unset` 改的是真环境,shell 此后 fork 的每条命令都继承:
 
