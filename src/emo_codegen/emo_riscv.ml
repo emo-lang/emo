@@ -7949,7 +7949,14 @@ emo_dyn_method:
 #
 # emo_add_dyn / emo_sub_dyn / emo_mul_dyn / emo_lt_dyn / emo_le_dyn:
 # a0 = a1 = dynamic values; the result boxed or a Bool immediate
-# (Gt/Ge swap their operands at the call site).
+# (Gt/Ge swap their operands at the call site). The kind test reads the
+# low five bits: 0 the boxed Int64, 2 the boxed Float64, 4 the String,
+# 7 the Byte immediate (kind 3, bit 0 set) — a Byte answers a Byte, the
+# eight-bit wrap the typed lane's own, and the kinds' equality test below
+# keeps a mixed Byte/Int64 pair the loud refusal the interpreter is. An
+# immediate's bit 4 is payload, not kind, so an odd tag masks to its low
+# four bits first (the cell tags are even and wider — 16 the Atomic, 18
+# the Pid — and must keep the five).
 
     .globl emo_add_dyn
 emo_add_dyn:
@@ -7961,13 +7968,29 @@ emo_add_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Lad_int
     li t2, 2
     beq t0, t2, .Lad_float
     li t2, 4
     beq t0, t2, .Lad_str
+    li t2, 7
+    beq t0, t2, .Lad_byte
     j .Ldyn_bad
+.Lad_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    add t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
 .Lad_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -8004,11 +8027,27 @@ emo_sub_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Lsb_int
     li t2, 2
     beq t0, t2, .Lsb_float
+    li t2, 7
+    beq t0, t2, .Lsb_byte
     j .Ldyn_bad
+.Lsb_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    sub t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
 .Lsb_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -8032,11 +8071,27 @@ emo_mul_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Lmu_int
     li t2, 2
     beq t0, t2, .Lmu_float
+    li t2, 7
+    beq t0, t2, .Lmu_byte
     j .Ldyn_bad
+.Lmu_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    mul t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
 .Lmu_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -8060,13 +8115,26 @@ emo_lt_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Llt_int
     li t2, 2
     beq t0, t2, .Llt_float
     li t2, 4
     beq t0, t2, .Llt_str
+    li t2, 7
+    beq t0, t2, .Llt_byte
     j .Ldyn_bad
+.Llt_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    slt t0, t0, t1
+    j .Lcmp_pack
 .Llt_str:
     # the strings' order is the sort's compare (mode 2: bytes, the
     # shorter length settling a matched prefix); `<` is its -1
@@ -8095,13 +8163,27 @@ emo_le_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Lle_int
     li t2, 2
     beq t0, t2, .Lle_float
     li t2, 4
     beq t0, t2, .Lle_str
+    li t2, 7
+    beq t0, t2, .Lle_byte
     j .Ldyn_bad
+.Lle_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    slt t0, t1, t0
+    xori t0, t0, 1
+    j .Lcmp_pack
 .Lle_str:
     # `<=` on the sort's -1/0/1 is the compare below 1
     li a2, 2

@@ -3432,6 +3432,59 @@ and check_method_call ctx env span recv mname args : t =
           Bytes)
     else if
       match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Byte", "from_int64" -> true
+      | _ -> false
+    then (
+      (* Byte.from_int64(n) — the range-checked narrowing, and the answer
+       carries the Byte type (the `Bytes.new` rule's own): a receiver the
+       emitters can key on, where it was Unknown before and the value fell
+       to the dynamic dispatch — the metal's arithmetic helpers refuse a
+       Byte whose type they cannot see. The argument reads a gradual Int64
+       the way the Bytes accessors do; the runtime binds positionally, so
+       the name is not the checker's question. *)
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      match arg_values with
+      | [ (_, (Int64 | Unknown)) ] -> Byte
+      | [ (_, vt) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`Byte.from_int64` expects an Int64, got %s"
+               (to_string vt));
+          Byte
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Byte.from_int64` expects 1 argument, got %d"
+               (List.length arg_values));
+          Byte)
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Float64", "from_bits" -> true
+      | _ -> false
+    then (
+      (* Float64.from_bits(n) — the bit-pattern reading, its answer carrying
+       the Float64 type for the same reason. *)
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      match arg_values with
+      | [ (_, (Int64 | Unknown)) ] -> Float64
+      | [ (_, vt) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`Float64.from_bits` expects an Int64, got %s"
+               (to_string vt));
+          Float64
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Float64.from_bits` expects 1 argument, got %d"
+               (List.length arg_values));
+          Float64)
+    else if
+      match (recv.Ast.desc, mname) with
       | Ast.Type_ident "Exception", ("new" | "with_data") -> true
       | _ -> false
     then (
