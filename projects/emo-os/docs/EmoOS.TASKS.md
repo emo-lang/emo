@@ -26,7 +26,7 @@ first casualty. A libc port keeps one ABI and grows it by need.
 ## The contract
 
 - **Toolchain.** A cross compiler on the host at first (stage 1):
-  `riscv64-elf-gcc` today, a `riscv64-emos` sysroot and wrapper
+  `riscv64-elf-gcc` today, a `riscv64-emoos` sysroot and wrapper
   later. Self-hosted compilation is a late milestone, not a
   prerequisite.
 - **Load.** C user programs link at the same window the Emo user
@@ -756,8 +756,8 @@ not share).
   the gate, one function per documented verb.
 - [x] **T2.2** — `crt`, TLS, `malloc`, `stdio`, `string`, `errno`;
   static `hello`, `printf`, `malloc`, `getenv`.
-- [ ] **T2.3** — The sysroot and the compiler wrapper: `libc.a`, the
-  headers, the link script; `riscv64-emos-gcc`.
+- [x] **T2.3** — The sysroot and the compiler wrapper: `libc.a`, the
+  headers, the link script; `riscv64-emoos-gcc`.
 - [ ] **T2.4** — The conformance probe: a small C suite pinning the
   calls the milestone carries, byte-identical on the metal and the
   host interpreter where both apply.
@@ -821,6 +821,28 @@ the `chello.elf` slot, while the default stays the T1 program, and
 The metal proof: `EMO_MUSL=1 start.sh --fresh`, then `exec chello.elf`,
 printed `hello from musl: musl body 42` and `getenv yes`; the machine
 exited clean and the proof image is 33,864 bytes.
+
+### T2.3's record (2026-11-24)
+
+`c/musl-port/build.sh` now leaves a sysroot: `sysroot/include` (musl's
+headers, the arch and generic `bits`, the generated `alltypes.h` and
+`syscall.h`), `sysroot/lib/libc.a` (the T2.2 body's objects, the gate
+shims, the TLS and stdio pieces, and the T2.1 wrappers), `crt0.o`, and
+`sysroot/lib/emo.ld` (the user image's link script, the C door's
+`chello.ld`). `sysroot/bin/riscv64-emoos-gcc` is the template
+`c/musl-port/riscv64-emoos-gcc.in`: `riscv64-elf-gcc` with
+`-nostdinc -isystem <sysroot>/include`, `-nostdlib`, the link script,
+the crt, `-lc` and `-lgcc`; `-c`/`-E`/`-S` skip the link pieces.
+`-Wl,--gc-sections` drops the library's unused sections (the
+`__towrite` exit hook would otherwise want `__stdio_exit`).
+
+The static hello is built through the wrapper (`riscv64-emoos-gcc
+hello.c -o muslhello.elf`) and still prints its two lines on the
+metal; the proof image is 34,048 bytes. The sysroot and its archives
+are generated and ignored; the template, the build script and the
+tracker are the committed source. The wrapper's `-D_GNU_SOURCE` is the
+default user surface; the T2.2 cuts (static single-process TLS, quad
+stubs, `munmap`/`madvise` no-ops) stand. The conformance probe is T2.4.
 
 ### M3 — emosh as the default shell
 

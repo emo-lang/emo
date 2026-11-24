@@ -12,7 +12,7 @@
 
 ## 契约
 
-- **工具链。** 第一阶段先在宿主机上交叉编译:`riscv64-elf-gcc`;之后是 `riscv64-emos` 的 sysroot 与包装器。自举编译是后期里程碑,不是前提。
+- **工具链。** 第一阶段先在宿主机上交叉编译:`riscv64-elf-gcc`;之后是 `riscv64-emoos` 的 sysroot 与包装器。自举编译是后期里程碑,不是前提。
 - **装载。** C 用户程序和 Emo 用户镜像用同一个窗口 `0x87100000` … `0x88000000`,以 `PT_LOAD` 段链接,入口在窗口内。内核的 exec 装载器已经在强制这一条(`exec.emo` 的 `measure`)。
 - **BSS。** exec 装载器只拷贝段的文件字节,尾部留给分配器给的零;程序自己的 `crt0` 清 `__bss_start` … `__bss_end`,与 Emo 入口桩的纪律一致。
 - **可读源、可写目的地。** 每个指针参数都落在调用者自己的一段里,并带这次访问所需的权限:门要写进去的目的地需要 `W`,门要抬起的源只需 `R`(T1.0)。所以镜像自己的 text 与 rodata 就能服务 `write`;门够不着的缓冲区(栈上的)由 C 库经 `.bss` 的 bounce 兜底,引导证明的 `gate 500500 w0 r2` 钉住这条规则。
@@ -199,7 +199,7 @@ C 库的 `execve` 复制路径(没有路径层——卷的平面名字),把 `arg
 
 - [x] **T2.1**——syscall 层:musl 的 `arch/riscv64` 桩接到门上,每个函数对一个已记录的动词。
 - [x] **T2.2**——`crt`、TLS、`malloc`、`stdio`、`string`、`errno`;静态 `hello`、`printf`、`malloc`、`getenv`。
-- [ ] **T2.3**——sysroot 与编译器包装器:`libc.a`、头文件、链接脚本;`riscv64-emos-gcc`。
+- [x] **T2.3**——sysroot 与编译器包装器:`libc.a`、头文件、链接脚本;`riscv64-emoos-gcc`。
 - [ ] **T2.4**——一致性探针:一小套 C 测试钉住本里程碑的调用,在金属和宿主解释器上(都适用时)逐字节相同。
 
 ### T2.1 的记录(2026-11-24)
@@ -217,6 +217,12 @@ musl 的主体在 `projects/emo-os/c/musl-port/`。移植的 crt(`crt0.s`)接内
 切法:crt/TLS 是移植的静态单进程块,不是 musl 的 `__libc_start_main`/`__init_tls`(内核的启动没有 auxv,也没有动态 TLS);用户镜像在 2 GiB 之上,宿主 libgcc 的 medlow quad 目标无法重定位,所以 `vfprintf` 的 quad 辅助是桩,`%f`/`%Lf` 等一个 medany 的软浮点(整数与字符串格式就是证明);`munmap`/`madvise` 是空操作,`mremap` 拷贝,所以释放的映射会漏到后续的 pass。构建是 `c/musl-port/build.sh`(清单,不是整树);`EMO_MUSL=1` 让 `c/build.sh`/`start.sh` 把证明镜像放进 `chello.elf` 槽,默认仍是 T1 程序,证明后 `c/build.sh` 重建它。
 
 金属证明:`EMO_MUSL=1 start.sh --fresh`,再 `exec chello.elf`,打出 `hello from musl: musl body 42` 与 `getenv yes`;机器干净退出,证明镜像 33,864 字节。
+
+### T2.3 的记录(2026-11-24)
+
+`c/musl-port/build.sh` 现在留下一个 sysroot:`sysroot/include`(musl 的头文件、arch 与 generic 的 `bits`、生成的 `alltypes.h` 与 `syscall.h`)、`sysroot/lib/libc.a`(T2.2 主体的对象、门的 shim、TLS 与 stdio 片段,以及 T2.1 的包装)、`crt0.o`,以及 `sysroot/lib/emo.ld`(用户镜像的链接脚本,即 C 门的 `chello.ld`)。`sysroot/bin/riscv64-emoos-gcc` 是模板 `c/musl-port/riscv64-emoos-gcc.in`:`riscv64-elf-gcc` 加上 `-nostdinc -isystem <sysroot>/include`、`-nostdlib`、链接脚本、crt、`-lc` 与 `-lgcc`;`-c`/`-E`/`-S` 跳过链接件。`-Wl,--gc-sections` 丢掉库里未用的段(否则 `__towrite` 的退出钩子会要 `__stdio_exit`)。
+
+静态 hello 通过包装器构建(`riscv64-emoos-gcc hello.c -o muslhello.elf`),在金属上仍打出两行;证明镜像 34,048 字节。sysroot 与其档案是生成物并已忽略;模板、构建脚本与 tracker 是提交的源。包装器的 `-D_GNU_SOURCE` 是默认用户面;T2.2 的切法(静态单进程 TLS、quad 桩、`munmap`/`madvise` 空操作)不变。一致性探针是 T2.4。
 
 ### M3——emosh 作为默认 shell
 

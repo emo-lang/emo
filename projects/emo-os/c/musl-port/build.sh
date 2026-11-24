@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
-# The musl body's static build (EmoOS plan B, T2.2): the port's crt,
-# TLS and gate shims beside the vendored sources the hello pulls. The
+# The musl body's sysroot (EmoOS plan B, T2.2/T2.3): the port's crt,
+# TLS and gate shims beside the vendored sources the library pulls. The
 # musl tree is pristine at the repository root; this directory is the
 # overlay, and the build compiles the manifest below, not the tree
-# whole. Output: `projects/emo-os/muslhello.elf`.
+# whole. It installs the headers, `libc.a`, the crt, the image's link
+# script and `riscv64-emoos-gcc` under `sysroot/`, then builds the
+# static hello through that wrapper.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 emos_cc=${EMO_CC:-riscv64-elf-gcc}
+emos_ar=${EMO_AR:-riscv64-elf-ar}
 if ! command -v "$emos_cc" >/dev/null 2>&1; then
   echo "musl-port/build.sh: $emos_cc not found" >&2
+  exit 1
+fi
+if ! command -v "$emos_ar" >/dev/null 2>&1; then
+  echo "musl-port/build.sh: $emos_ar not found" >&2
   exit 1
 fi
 
 musl=../../../../third_party/musl
 build=$PWD/.build
-mkdir -p "$build/include/bits" "$build/obj"
+sysroot=$PWD/sysroot
+mkdir -p "$build/include/bits" "$build/obj" \
+  "$sysroot/include/bits" "$sysroot/lib" "$sysroot/bin"
 
 sed -f "$musl/tools/mkalltypes.sed" \
   "$musl/arch/riscv64/bits/alltypes.h.in" \
@@ -36,7 +45,7 @@ cflags=(
   -I"$musl/src/include" -I"$musl/src/internal" -I"$musl/include"
 )
 
-objects=()
+lib_objects=()
 compile() {
   local src=$1
   local name
@@ -48,14 +57,12 @@ compile() {
   name=${name%.*}
   local obj="$build/obj/$name.o"
   "$emos_cc" "${cflags[@]}" -c "$src" -o "$obj"
-  objects+=("$obj")
+  lib_objects+=("$obj")
 }
 
-compile crt0.s
 compile tls.c
 compile gate.c
 compile stdio.c
-compile hello.c
 compile ../emo_syscall.c
 
 for src in "$musl"/src/string/*.c; do compile "$src"; done
@@ -68,7 +75,10 @@ for src in \
   "$musl"/src/stdio/__overflow.c \
   "$musl"/src/stdio/fflush.c \
   "$musl"/src/stdio/stdout.c \
-  "$musl"/src/stdio/ofl.c; do
+  "$musl"/src/stdio/ofl.c \
+  "$musl"/src/stdio/puts.c \
+  "$musl"/src/stdio/fputs.c \
+  "$musl"/src/stdio/putc_unlocked.c; do
   compile "$src"
 done
 
@@ -107,8 +117,20 @@ for src in \
   compile "$src"
 done
 
-"$emos_cc" -march=rv64gc -mabi=lp64d -mcmodel=medany -mno-relax \
-  -nostdlib -T ../chello.ld -Wl,--gc-sections \
-  -o ../../muslhello.elf "${objects[@]}" -lgcc
+"$emos_ar" rcs "$build/libc.a" "${lib_objects[@]}"
+"$emos_cc" "${cflags[@]}" -c crt0.s -o "$build/obj/port_crt0.o"
 
-echo "built ../../muslhello.elf"
+cp -R "$musl/include/." "$sysroot/include/"
+cp "$musl"/arch/generic/bits/*.h "$sysroot/include/bits/"
+cp "$musl"/arch/riscv64/bits/*.h "$sysroot/include/bits/"
+cp "$build/include/bits/alltypes.h" "$sysroot/include/bits/"
+cp "$build/include/bits/syscall.h" "$sysroot/include/bits/"
+cp "$build/libc.a" "$sysroot/lib/libc.a"
+cp "$build/obj/port_crt0.o" "$sysroot/lib/crt0.o"
+cp ../chello.ld "$sysroot/lib/emo.ld"
+cp riscv64-emoos-gcc.in "$sysroot/bin/riscv64-emoos-gcc"
+chmod +x "$sysroot/bin/riscv64-emoos-gcc"
+
+"$sysroot/bin/riscv64-emoos-gcc" hello.c -o ../../muslhello.elf
+
+echo "built ../../muslhello.elf through $sysroot/bin/riscv64-emoos-gcc"
