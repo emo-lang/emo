@@ -44,7 +44,21 @@ apps/calculator/
 
 ## 运行
 
-应用的各个包要经由一份从被测源码暂存出来的注册表才能取到,和每个门禁暂存注册表的方式一样:
+**编译器。** 用来构建它的 `emo`,是从这份检出里编出来的那个:应用的各个包在源码树里,它们所用的语言也在源码树里。在一台还没有它的机器上——下面是 Debian 和 Ubuntu 的包名,Fedora 对应 `gcc make pkgconf-pkg-config openssl-devel gtk4-devel opam`:
+
+```sh
+sudo apt-get install -y build-essential pkg-config libssl-dev libgtk-4-dev git opam
+opam init -a
+opam switch create 5.5.2
+opam install -y dune cmdliner eio_main ssl yojson digestif
+eval $(opam env --switch 5.5.2)
+cd <仓库目录>
+dune build src/emo_cli/emo.exe
+```
+
+最后一行得到的就是编译器,在 `_build/default/src/emo_cli/emo.exe`;`just build` 以 release profile 编同一个文件,`just install` 把它链接到 PATH 上,成为 `emo`。`libgtk-4-dev` 是 GTK 4 的那一半——头文件、pkg-config 文件和库——GTK 入口需要的就只有它:`emo build` 经后端的清单找到 GTK 4。一键安装得来的发布版 `emo` 替代不了它:它可能还说不了这棵源码树的语言。在 Linux 上,路上会出现两个工具链自己的告警——`scripts/stage-registry.sh` 在 GNU `cp` 上把一个文件列了两次,生成的 C 里 `cfmakeraw` 是隐式声明的——两个都不是计算器的。
+
+**注册表。** 应用的各个包要经由一份从被测源码暂存出来的注册表才能取到,和每个门禁暂存注册表的方式一样:
 
 ```sh
 scripts/stage-registry.sh <registry-dir>
@@ -60,15 +74,32 @@ cd projects/emo-ui/apps/calculator
 | 服务端渲染 | `ssr/main.emo` | 读页面和它的片段——还没有请求循环 |
 | 帧缓冲 | `fb/main.emo` | 看窗口会话画在一张托管画布上 |
 
-两个窗口入口为 `c` 构建,页面为 `browser` 构建:
+下面每个代码块都从应用的目录出发,而入口要从它自己的目录构建:`emo build` 读的是当前所在的那个包,入口属于别的包时它回答 E5011,并点名该在哪个目录里运行。两个窗口入口为 `c` 构建:
 
 ```sh
-EMO_REGISTRY=<registry-dir> emo build macos/main.emo --target c -o macos/calculator
-EMO_REGISTRY=<registry-dir> emo build gtk/main.emo --target c -o gtk/calculator
-EMO_REGISTRY=<registry-dir> emo build browser/main.emo --target browser -o browser/out.js
+cd macos                                  # 或 gtk
+EMO_REGISTRY=<registry-dir> emo build main.emo --target c -o calculator
+./calculator
+```
+
+页面为 `browser` 构建:
+
+```sh
+cd browser
+EMO_REGISTRY=<registry-dir> emo build main.emo --target browser -o out.js
 ```
 
 页面是 `browser/index.html`,旁边放着 `out.js`;树挂进它的 `#emo-root`。应用什么也不打印——`./check.sh` 会把三个构建产物留在 `.emo-build/check/` 下,可以直接运行。
+
+**没有显示器时**——或者想看它工作,而不是看它的样子——窗口的会话入口会自己点自己。像应用一样构建,带上 `EMO_GUI_AUTOTEST=1` 运行,它重放窗口会话然后退出;在 `xvfb-run -a` 下它不需要桌面:
+
+```sh
+cd gtk
+EMO_REGISTRY=<registry-dir> emo build session.emo --target c -o session
+EMO_GUI_AUTOTEST=1 xvfb-run -a ./session
+```
+
+它每帧打印一行 `display <显示的内容>`——也就是 `expected.txt` 的开头几行——此外什么也没有。
 
 ## 会话与门禁
 
@@ -80,7 +111,7 @@ EMO_REGISTRY=<registry-dir> emo build browser/main.emo --target browser -o brows
 | 窗口会话 | 前 54 个 | 终端、帧缓冲和两个窗口 |
 | 页面会话 | 前 6 个 | 服务端渲染入口,以及 `beam` 上的帧缓冲 |
 
-窗口会话的长度就是一个原生 shim 能接受的长度——最多六十四个 tag,每拍点一下;页面会话的长度则是一份文档值得打印多少帧。每个入口每帧把显示打印一次,写作 `display <显示的内容>`,所以较短会话的字节就是托管省会话开头的那些行,而 `expected.txt`——无头入口在解释器上的输出——是每个入口都钉住的同一份文件。
+窗口会话的长度就是一个原生 shim 能接受的长度——最多六十四个 tag,每拍点一下;页面会话的长度则是一份文档值得打印多少帧。每个入口每帧把显示打印一次,写作 `display <显示的内容>`,所以较短会话的字节就是托管会话开头的那些行,而 `expected.txt`——无头入口在解释器上的输出——是每个入口都钉住的同一份文件。
 
 ```sh
 ./check.sh

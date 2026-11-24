@@ -102,8 +102,36 @@ them.
 
 ## Running it
 
-The application's packages are reached through a registry staged from the
-sources under test, the way every gate stages one:
+**The compiler.** The `emo` that builds it is the one built from this
+checkout: the application's packages are in the tree, and so is the
+language they are written in. On a machine that has none yet — Debian and
+Ubuntu's names; Fedora's are `gcc make pkgconf-pkg-config openssl-devel
+gtk4-devel opam`:
+
+```sh
+sudo apt-get install -y build-essential pkg-config libssl-dev libgtk-4-dev git opam
+opam init -a
+opam switch create 5.5.2
+opam install -y dune cmdliner eio_main ssl yojson digestif
+eval $(opam env --switch 5.5.2)
+cd <the repository>
+dune build src/emo_cli/emo.exe
+```
+
+The last line is the compiler, at `_build/default/src/emo_cli/emo.exe`;
+`just build` builds the release profile of the same file, and `just
+install` links it onto the PATH as `emo`. `libgtk-4-dev` is the GTK 4
+half — the headers, the pkg-config file and the library — and is all the
+GTK entry needs: `emo build` finds GTK 4 through the backend's manifest.
+A released `emo`, from the one-line installer, is no substitute: it may
+not speak the tree's language yet. On Linux two warnings of the
+toolchain's own appear on the way — `scripts/stage-registry.sh` names a
+file twice under GNU `cp`, and the generated C declares `cfmakeraw`
+implicitly — and neither is the calculator's.
+
+**The registry.** The application's packages are reached through a
+registry staged from the sources under test, the way every gate stages
+one:
 
 ```sh
 scripts/stage-registry.sh <registry-dir>
@@ -119,17 +147,41 @@ cd projects/emo-ui/apps/calculator
 | Server-rendered | `ssr/main.emo` | Read the page and its fragments — no request loop yet |
 | Framebuffer | `fb/main.emo` | Watch the window session paint a hosted canvas |
 
-The window entries, built for `c`, and the page, built for `browser`:
+Each block below starts from the application's directory, and an entry is
+built from its own: `emo build` reads the package rooted where it stands,
+and answers E5011 — naming the directory to run from — when the entry
+belongs to another. The window entries, built for `c`:
 
 ```sh
-EMO_REGISTRY=<registry-dir> emo build macos/main.emo --target c -o macos/calculator
-EMO_REGISTRY=<registry-dir> emo build gtk/main.emo --target c -o gtk/calculator
-EMO_REGISTRY=<registry-dir> emo build browser/main.emo --target browser -o browser/out.js
+cd macos                                  # or gtk
+EMO_REGISTRY=<registry-dir> emo build main.emo --target c -o calculator
+./calculator
+```
+
+And the page, built for `browser`:
+
+```sh
+cd browser
+EMO_REGISTRY=<registry-dir> emo build main.emo --target browser -o out.js
 ```
 
 The page is `browser/index.html` with `out.js` beside it; the tree mounts
 into its `#emo-root`. The application prints nothing — `./check.sh` leaves
 the three built under `.emo-build/check/`, ready to run.
+
+**Without a display** — or to see it work rather than look at it — the
+window's session entry clicks itself. Built like the application and run
+with `EMO_GUI_AUTOTEST=1`, it replays the window session and leaves; under
+`xvfb-run -a` it needs no desktop:
+
+```sh
+cd gtk
+EMO_REGISTRY=<registry-dir> emo build session.emo --target c -o session
+EMO_GUI_AUTOTEST=1 xvfb-run -a ./session
+```
+
+It prints `display <what it shows>` once a frame — the first lines of
+`expected.txt` — and nothing else.
 
 ## The sessions and the gate
 
