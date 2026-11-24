@@ -122,6 +122,21 @@ const app_blob_t_end = koff + 0x87002258
 const app_blob_u = koff + 0x87002260
 const app_blob_u_end = koff + 0x87002268
 
+// The self-hosted compiler (T4.5): the TCC image, its runtime helpers,
+// the TCC-facing crt, the guest link library (the T1 C door runtime)
+// and the acceptance source, installed beside the apps when the boot
+// carries them.
+const app_blob_cc = koff + 0x87002270
+const app_blob_cc_end = koff + 0x87002278
+const app_blob_cl = koff + 0x87002280
+const app_blob_cl_end = koff + 0x87002288
+const app_blob_cr = koff + 0x87002290
+const app_blob_cr_end = koff + 0x87002298
+const app_blob_ca = koff + 0x870022a0
+const app_blob_ca_end = koff + 0x870022a8
+const app_blob_ct = koff + 0x870022b0
+const app_blob_ct_end = koff + 0x870022b8
+
 // The process service's screen-pass state (T8.2), on the exec page's
 // tail: the granted child's pid and the carve's base, across requests —
 // the exit that answers them is the proof's moment. (The tail moved
@@ -6233,6 +6248,76 @@ def put_uutils_name(a Int64) Int64 {
   return 10
 }
 
+def put_tcc_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 46B)   // .
+  poke8(a + 4, 101B)  // e
+  poke8(a + 5, 108B)  // l
+  poke8(a + 6, 102B)  // f
+  return 7
+}
+
+def put_tcc_lib_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 45B)   // -
+  poke8(a + 4, 108B)  // l
+  poke8(a + 5, 105B)  // i
+  poke8(a + 6, 98B)   // b
+  poke8(a + 7, 116B)  // t
+  poke8(a + 8, 99B)   // c
+  poke8(a + 9, 99B)   // c
+  poke8(a + 10, 49B)  // 1
+  poke8(a + 11, 46B)  // .
+  poke8(a + 12, 97B)  // a
+  return 13
+}
+
+def put_tcc_crt_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 45B)   // -
+  poke8(a + 4, 99B)   // c
+  poke8(a + 5, 114B)  // r
+  poke8(a + 6, 116B)  // t
+  poke8(a + 7, 48B)   // 0
+  poke8(a + 8, 46B)   // .
+  poke8(a + 9, 111B)  // o
+  return 10
+}
+
+def put_tcc_libc_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 45B)   // -
+  poke8(a + 4, 108B)  // l
+  poke8(a + 5, 105B)  // i
+  poke8(a + 6, 98B)   // b
+  poke8(a + 7, 99B)   // c
+  poke8(a + 8, 46B)   // .
+  poke8(a + 9, 97B)   // a
+  return 10
+}
+
+def put_tcc_test_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 45B)   // -
+  poke8(a + 4, 116B)  // t
+  poke8(a + 5, 101B)  // e
+  poke8(a + 6, 115B)  // s
+  poke8(a + 7, 116B)  // t
+  poke8(a + 8, 46B)   // .
+  poke8(a + 9, 99B)   // c
+  return 10
+}
+
 def put_script_name(a Int64) Int64 {
   poke8(a, 100B)      // d
   poke8(a + 1, 97B)   // a
@@ -6327,6 +6412,23 @@ if peek64(app_blob_u_end) > peek64(app_blob_u) {
   var un = put_uutils_name(install_scratch)
   install_img(fs_svc, install_scratch, un, peek64(app_blob_u),
     peek64(app_blob_u_end), "uutils.elf")
+}
+if peek64(app_blob_cc_end) > peek64(app_blob_cc) {
+  var ccn = put_tcc_name(install_scratch)
+  install_img(fs_svc, install_scratch, ccn, peek64(app_blob_cc),
+    peek64(app_blob_cc_end), "tcc.elf")
+  var cln = put_tcc_lib_name(install_scratch)
+  install_img(fs_svc, install_scratch, cln, peek64(app_blob_cl),
+    peek64(app_blob_cl_end), "tcc-libtcc1.a")
+  var crn = put_tcc_crt_name(install_scratch)
+  install_img(fs_svc, install_scratch, crn, peek64(app_blob_cr),
+    peek64(app_blob_cr_end), "tcc-crt0.o")
+  var can = put_tcc_libc_name(install_scratch)
+  install_img(fs_svc, install_scratch, can, peek64(app_blob_ca),
+    peek64(app_blob_ca_end), "tcc-libc.a")
+  var ctn = put_tcc_test_name(install_scratch)
+  install_img(fs_svc, install_scratch, ctn, peek64(app_blob_ct),
+    peek64(app_blob_ct_end), "tcc-test.c")
 }
 var wn = put_wall_name(install_scratch)
 install_img(fs_svc, install_scratch, wn, peek64(app_blob_w),

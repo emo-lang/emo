@@ -317,7 +317,10 @@ void makecontext(ucontext_t *u, void (*fn)(void), int argc, ...) {
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/times.h>
+#include <sys/time.h>
 #include <sys/wait.h>
+#include <dlfcn.h>
+#include <semaphore.h>
 
 static void t1_stat_out(const struct emo_t1_stat *in, struct stat *out) {
   memset(out, 0, sizeof *out);
@@ -482,6 +485,193 @@ int sigsuspend(const sigset_t *mask) {
   (void)mask;
   errno = EINTR;
   return -1;
+}
+
+// The 64-bit count-leading-zeros helper (T4.5): the toolchain's
+// libgcc object was built medlow, and its `__clz_tab` sits below the
+// 2 GiB reach of the EmoOS image window; this one compiles beside the
+// image and the linker prefers it.
+int __clzdi2(unsigned long long x) {
+  int n = 0;
+  if (x == 0) {
+    return 64;
+  }
+  while ((x & 0x8000000000000000ULL) == 0) {
+    x = x << 1;
+    n = n + 1;
+  }
+  return n;
+}
+
+int __clzsi2(unsigned int x) {
+  int n = 0;
+  if (x == 0) {
+    return 32;
+  }
+  while ((x & 0x80000000U) == 0) {
+    x = x << 1;
+    n = n + 1;
+  }
+  return n;
+}
+
+int __dup3(int oldfd, int newfd, int flags) {
+  (void)flags;
+  return dup2(oldfd, newfd);
+}
+
+int sem_init(sem_t *sem, int pshared, unsigned value) {
+  (void)sem;
+  (void)pshared;
+  (void)value;
+  return 0;
+}
+
+int sem_post(sem_t *sem) {
+  (void)sem;
+  return 0;
+}
+
+int sem_wait(sem_t *sem) {
+  (void)sem;
+  return 0;
+}
+
+int sem_destroy(sem_t *sem) {
+  (void)sem;
+  return 0;
+}
+
+float strtof(const char *s, char **end) {
+  return (float)strtod(s, end);
+}
+
+// The TCC's preprocessor reads floating constants through strtold and
+// scales them with ldexpl (T4.5). The T2.2 quad cut keeps the double
+// scanner; the long double aliases it, and the soft-fp compare the
+// toolchain's libgcc would pull stays out of the image.
+long double strtold(const char *s, char **end) {
+  return (long double)strtod(s, end);
+}
+
+long double ldexpl(long double x, int e) {
+  while (e > 0) {
+    x = x * 2.0;
+    e = e - 1;
+  }
+  while (e < 0) {
+    x = x / 2.0;
+    e = e + 1;
+  }
+  return x;
+}
+
+time_t time(time_t *out) {
+  struct timespec ts;
+  if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+    return (time_t)-1;
+  }
+  if (out != 0) {
+    *out = ts.tv_sec;
+  }
+  return ts.tv_sec;
+}
+
+// The TCC's __DATE__/__TIME__ macros: the epoch's UTC fields, the
+// only calendar the machine's clock carries.
+struct tm *localtime(const time_t *t) {
+  static struct tm out;
+  long secs = (long)*t;
+  long days = secs / 86400;
+  long rem = secs - days * 86400;
+  out.tm_hour = (int)(rem / 3600);
+  out.tm_min = (int)((rem % 3600) / 60);
+  out.tm_sec = (int)(rem % 60);
+  out.tm_wday = (int)((days + 4) % 7);
+  long y = 1970;
+  while (1) {
+    int leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    long len = leap ? 366 : 365;
+    if (days < len) {
+      break;
+    }
+    days = days - len;
+    y = y + 1;
+  }
+  out.tm_year = (int)(y - 1900);
+  static const int mlen[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  int leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+  int m = 0;
+  while (m < 12) {
+    long len = mlen[m] + (m == 1 && leap ? 1 : 0);
+    if (days < len) {
+      break;
+    }
+    days = days - len;
+    m = m + 1;
+  }
+  out.tm_mon = m;
+  out.tm_mday = (int)days + 1;
+  out.tm_isdst = 0;
+  return &out;
+}
+
+char *realpath(const char *path, char *resolved) {
+  size_t n = strlen(path) + 1;
+  char *out = resolved;
+  if (out == 0) {
+    out = malloc(n);
+    if (out == 0) {
+      return 0;
+    }
+  }
+  memcpy(out, path, n);
+  return out;
+}
+
+int remove(const char *path) {
+  if (unlink(path) == 0) {
+    return 0;
+  }
+  if (rmdir(path) == 0) {
+    return 0;
+  }
+  return -1;
+}
+
+int gettimeofday(struct timeval *tv, void *tz) {
+  (void)tz;
+  struct timespec ts;
+  if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+    return -1;
+  }
+  tv->tv_sec = ts.tv_sec;
+  tv->tv_usec = ts.tv_nsec / 1000;
+  return 0;
+}
+
+// The static machine has no dynamic loader: a ported program that asks
+// for a shared object (the TCC's -run's dlopen, a tcc_add_dll) gets
+// the empty answer rather than a link failure.
+void *dlopen(const char *file, int mode) {
+  (void)file;
+  (void)mode;
+  return 0;
+}
+
+void *dlsym(void *handle, const char *name) {
+  (void)handle;
+  (void)name;
+  return 0;
+}
+
+int dlclose(void *handle) {
+  (void)handle;
+  return 0;
+}
+
+char *dlerror(void) {
+  return "dynamic loading is not available";
 }
 
 double strtod(const char *s, char **end) {

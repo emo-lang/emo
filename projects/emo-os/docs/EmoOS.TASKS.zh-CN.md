@@ -273,7 +273,7 @@ gate 的 spawn 门(verb 48)现在把 envp 对暂存在 verb 54 替换所用的�
 - [x] **T4.2**——核心工具:第一套语料(文件、文本、进程),每个用金测钉住。
 - [x] **T4.3**——构建系统:`make`,然后 autotools/CMake 与 `pkg-config`,让一个 Linux tarball 自己的构建能跑。
 - [x] **T4.4**——软件语料与 CI:什么能构建、什么能跑、各自需要什么;清单就是这个 tracker 诚实的答案。
-- [ ] **T4.5**——自举编译:EmoOS 自己上的 GCC/Clang 与工具。放最后,因为它需要上面一切。
+- [x] **T4.5**——自举编译:EmoOS 自己上的 GCC/Clang 与工具。放最后,因为它需要上面一切。
 
 ### T4.1 的记录(2026-11-24)
 
@@ -307,7 +307,15 @@ port 扩了 sysroot 的 POSIX 面:ctype、strto*/bsearch、setjmp 对、fnmatch�
 | build probe | make、pkg-config、CMake toolchain | sysroot | 是(make + pkg-config;本机 CMake 跳过) | 宿主构建 |
 | emosh | Emo C target | sysroot、Emo 编译器 | 是 | 是(T3.2/T3.3) |
 
-CI 两条腿:`@emo_os` 是 OS 自己的(gc/parity/smoke),`c/corpus.sh` 是包构建的。金属腿就是上面的记录。T4.5 的自举编译器是语料剩下的需求。
+CI 两条腿:`@emo_os` 是 OS 自己的(gc/parity/smoke),`c/corpus.sh` 是包构建的。金属腿就是上面的记录。T4.5 的自举编译器曾是语料剩下的需求。
+
+### T4.5 的记录(2026-11-24)
+
+TCC 0.9.28rc 是第一级自举编译器:`mob` 分支的 riscv64 后端,原样 vendor 在 `third_party/tcc`(0.9.27 没有 riscv64)。overlay 在 `projects/emo-os/c/tcc-port`:把源码树拷到临时目录,用 sysroot wrapper 配置,宿主 `cc` 建 `c2str` 生成器,再用 riscv64 档案链接 `tcc`。启动的 `EMO_TCC=1` 安装 `tcc.elf`(304,648 B)、运行时 `tcc-libtcc1.a`、面向 TCC 的 crt、链接库和验收源码;编译器在卷上时 Emo shell 打印 `tcc ready`。
+
+金属运行:桌面的 `exec tcc.elf -nostdlib -static -Wl,-Ttext=0x87100000 -o tcc-hello.elf tcc-crt0.o tcc-test.c tcc-libc.a` 拉起编译器;TCC 写出 20,835 字节、1 个块的 ELF,`exec tcc-hello.elf` 打印 `tcc self-host ok`,然后启动的 poweroff。`tcc -v` 回答 `tcc version 0.9.28rc (riscv64 Linux)`。
+
+guest 链接的库是机器自带的 T1 C door 运行时(`emo_posix.c` + `emo_syscall.c` + 两个 musl crt 钩子),57,630 B,而不是 502 KB 的 musl 档案:TCC 链接时会把档案整个持在内存里,那个峰值会越过被 spawn 进程的 arena。musl 档案需要更大的 arena 或分块读档案;完整的 GCC/Clang 自举仍是后续里程碑。
 
 ## 边界
 

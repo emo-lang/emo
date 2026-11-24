@@ -202,5 +202,6 @@ int __eqtf2(long double a, long double b) { (void)a; (void)b; return 0; }
 int __letf2(long double a, long double b) { (void)a; (void)b; return 0; }
 int __lttf2(long double a, long double b) { (void)a; (void)b; return 0; }
 int __getf2(long double a, long double b) { (void)a; (void)b; return 0; }
+int __gttf2(long double a, long double b) { (void)a; (void)b; return 0; }
 int __unordtf2(long double a, long double b) { (void)a; (void)b; return 0; }
 double __trunctfdf2(long double a) { (void)a; return 0.0; }

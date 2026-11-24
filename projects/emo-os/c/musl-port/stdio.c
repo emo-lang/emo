@@ -29,6 +29,19 @@ size_t __stdio_write(FILE *f, const unsigned char *buf, size_t len) {
   return total;
 }
 
+size_t __stdio_read(FILE *f, unsigned char *buf, size_t len) {
+  ssize_t n = read(f->fd, buf, len);
+  if (n < 0) {
+    f->flags |= F_ERR;
+    return 0;
+  }
+  if (n == 0) {
+    f->flags |= F_EOF;
+    return 0;
+  }
+  return (size_t)n;
+}
+
 size_t __stdout_write(FILE *f, const unsigned char *buf, size_t len) {
   return __stdio_write(f, buf, len);
 }

@@ -110,7 +110,11 @@ hand=no
 : "${EMO_SHELL:=1}"
 : "${EMO_DASH:=0}"
 : "${EMO_UTILS:=0}"
-export EMO_SHELL EMO_DASH EMO_UTILS
+: "${EMO_TCC:=0}"
+if [ "$EMO_TCC" = 1 ]; then
+  EMO_SHELL=0
+fi
+export EMO_SHELL EMO_DASH EMO_UTILS EMO_TCC
 for arg in "$@"; do
   case $arg in
     --fresh) fresh=yes ;;
@@ -149,14 +153,17 @@ fi
 # the zero-length placeholder and the C shell are different builds of
 # user.S's tail.
 mode_stale=no
-if [ "$EMO_UTILS" = 1 ]; then
+if [ "$EMO_TCC" = 1 ]; then
+  if [ ! -s tcc.elf ]; then mode_stale=yes; fi
+  if [ -s emosh.elf ] || [ -s dash.elf ] || [ -s uutils.elf ]; then mode_stale=yes; fi
+elif [ "$EMO_UTILS" = 1 ]; then
   if [ ! -s uutils.elf ]; then mode_stale=yes; fi
-  if [ -s emosh.elf ] || [ -s dash.elf ]; then mode_stale=yes; fi
+  if [ -s emosh.elf ] || [ -s dash.elf ] || [ -s tcc.elf ]; then mode_stale=yes; fi
 elif [ "$EMO_DASH" = 1 ]; then
   if [ ! -s dash.elf ]; then mode_stale=yes; fi
-  if [ -s emosh.elf ] || [ -s uutils.elf ]; then mode_stale=yes; fi
+  if [ -s emosh.elf ] || [ -s uutils.elf ] || [ -s tcc.elf ]; then mode_stale=yes; fi
 else
-  if [ -s dash.elf ] || [ -s uutils.elf ]; then mode_stale=yes; fi
+  if [ -s dash.elf ] || [ -s uutils.elf ] || [ -s tcc.elf ]; then mode_stale=yes; fi
   if [ "$EMO_SHELL" = 1 ]; then
     if [ ! -s emosh.elf ]; then mode_stale=yes; fi
   else
@@ -175,7 +182,8 @@ if [ "$mode_stale" = yes ] ||
    stale emosh.elf ../emo-shell/*.emo ../emo-shell/package.emo ../emo-shell/package.lock ||
    stale dash.elf ../c/dash-port/build.sh dash-test.sh ||
    stale uutils.elf ../c/utils/build.sh ||
-   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf emosh.elf dash.elf dash-test.sh uutils.elf wallpaper.rle; then
+   stale tcc.elf ../c/tcc-port/build.sh ../c/tcc-port/crt0.s ../c/tcc-port/tcc-test.c ||
+   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf emosh.elf dash.elf dash-test.sh uutils.elf tcc.elf tcc-libtcc1.a tcc-crt0.o tcc-libc.a tcc-test.c wallpaper.rle; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
   else

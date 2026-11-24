@@ -3,6 +3,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# The boot tree always carries the TCC slots (T4.5): the kernel's
+# user.S includes them whatever the mode, so a mode that does not build
+# the compiler leaves the zero-length placeholders the install skips.
+for tcc in tcc.elf tcc-libtcc1.a tcc-crt0.o tcc-libc.a tcc-test.c; do
+  : > "$PWD/../$tcc"
+done
+
 # The musl body's proof image (T2.2): the same `chello.elf` slot, the
 # port's crt and body instead of the C door's test. The default build
 # stays the T1 program; the tracker's metal beat sets EMO_MUSL=1.
@@ -28,7 +35,12 @@ fi
 # The boot's foreground (T3.2/T4.1): the emosh C shell or dash, the
 # first real POSIX program. The mode names the image the build carries;
 # user.S embeds both slots, and an empty one is skipped at install.
-if [ "${EMO_UTILS:-0}" = 1 ]; then
+if [ "${EMO_TCC:-0}" = 1 ]; then
+  : > "$PWD/../emosh.elf"
+  : > "$PWD/../dash.elf"
+  : > "$PWD/../uutils.elf"
+  EMO_CROSS_CC="$emos_cc" bash "$PWD/tcc-port/build.sh"
+elif [ "${EMO_UTILS:-0}" = 1 ]; then
   : > "$PWD/../emosh.elf"
   : > "$PWD/../dash.elf"
   EMO_CROSS_CC="$emos_cc" bash "$PWD/utils/build.sh"

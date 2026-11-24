@@ -4955,6 +4955,12 @@ if emosh_present() {
     (R.ok, _) then {}
   }
 }
+// The self-hosted compiler (T4.5): the image carries TCC and its link
+// inputs, and the desktop's exec command drives it; the marker says the
+// compiler is on the volume, before the shell takes the terminal.
+if tcc_present() {
+  println("tcc ready")
+}
 shell_mode()
 
 // The C shell's name, written into the scratch page; the proof chain's
@@ -4982,6 +4988,17 @@ def put_dash_name(a Int64) Int64 {
   poke8(a + 6, 108B) // l
   poke8(a + 7, 102B) // f
   return 8
+}
+
+def put_tcc_name(a Int64) Int64 {
+  poke8(a, 116B)     // t
+  poke8(a + 1, 99B)  // c
+  poke8(a + 2, 99B)  // c
+  poke8(a + 3, 46B)  // .
+  poke8(a + 4, 101B) // e
+  poke8(a + 5, 108B) // l
+  poke8(a + 6, 102B) // f
+  return 7
 }
 
 def put_uutils_name(a Int64) Int64 {
@@ -5059,6 +5076,20 @@ def uutils_present() Bool {
 def dash_present() Bool {
   const dn = put_dash_name(buf + 18000)
   case syscall.file_read(buf + 18000, dn, buf + 18032, 0) {
+    (R.ok, size) then {
+      if size > 0 {
+        return true
+      }
+    }
+    (R.error, _) then {}
+  }
+  return false
+}
+
+// Whether the volume carries the self-hosted compiler (T4.5).
+def tcc_present() Bool {
+  const tn = put_tcc_name(buf + 18000)
+  case syscall.file_read(buf + 18000, tn, buf + 18032, 0) {
     (R.ok, size) then {
       if size > 0 {
         return true

@@ -987,7 +987,7 @@ the desktop's exec are green; the door the two share is the one above.
   `pkg-config`, so a Linux tarball's own build runs.
 - [x] **T4.4** — The package corpus and its CI: what builds, what
   runs, what each needs; the list is the tracker's honest answer.
-- [ ] **T4.5** — Self-hosted compilation: GCC/Clang and the tools on
+- [x] **T4.5** — Self-hosted compilation: GCC/Clang and the tools on
   EmoOS itself. Last, because it needs everything above.
 
 ### T4.1's record (2026-11-24)
@@ -1077,7 +1077,32 @@ tracker's answer to "what builds, what runs, what each needs":
 
 The CI is two legs: `@emo_os` is the OS's own (gc/parity/smoke), and
 `c/corpus.sh` is the package build's. The metal legs are the records
-above. T4.5's self-hosted compiler is the corpus's remaining need.
+above. T4.5's self-hosted compiler was the corpus's remaining need.
+
+### T4.5's record (2026-11-24)
+
+TCC 0.9.28rc is the first self-hosted compiler: the `mob` branch's
+riscv64 backend, vendored pristine at `third_party/tcc` (the 0.9.27
+release has no riscv64). The overlay at `projects/emo-os/c/tcc-port`
+copies the tree to a temporary directory, configures it with the
+sysroot's wrapper, builds the host-side `c2str` generator, and links
+`tcc` with the riscv64 archives. The boot's `EMO_TCC=1` installs
+`tcc.elf` (304,648 B), its runtime `tcc-libtcc1.a`, the TCC-facing
+crt, the link library and the acceptance source; the Emo shell prints
+`tcc ready` when the compiler is on the volume.
+
+The metal run: the desktop's `exec tcc.elf -nostdlib -static
+-Wl,-Ttext=0x87100000 -o tcc-hello.elf tcc-crt0.o tcc-test.c
+tcc-libc.a` spawned the compiler; TCC wrote a 20,835-byte, 1-block ELF,
+and `exec tcc-hello.elf` printed `tcc self-host ok`, then the boot's
+poweroff. `tcc -v` answers `tcc version 0.9.28rc (riscv64 Linux)`.
+
+The guest link's library is the machine's T1 C door runtime
+(`emo_posix.c` + `emo_syscall.c` + the two musl-crt hooks) at 57,630 B,
+not the 502 KB musl archive: TCC holds the archive whole while linking,
+and that peak crosses the spawned process's arena. The musl archive
+wants a larger arena or a chunked archive read; the full GCC/Clang
+self-host remains the follow-up milestone.
 
 ## The bounds
 

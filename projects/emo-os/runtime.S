@@ -130,6 +130,34 @@ emo_start:
     sd t0, 0(t1)
     la t0, emo_os_user_blob_u_end
     sd t0, 8(t1)
+    # the self-hosted compiler (T4.5): the compiler image, its runtime
+    # helpers, the TCC-facing crt, the sysroot's libc and the
+    # acceptance source — the five pairs the boot install reads.
+    la t0, emo_os_user_blob_cc
+    li t1, 0xFFFFFFC087002270
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_cc_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_cl
+    li t1, 0xFFFFFFC087002280
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_cl_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_cr
+    li t1, 0xFFFFFFC087002290
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_cr_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_ca
+    li t1, 0xFFFFFFC0870022a0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_ca_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_ct
+    li t1, 0xFFFFFFC0870022b0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_ct_end
+    sd t0, 8(t1)
     # the service handoff (T4.4): the service pids and the caller cell
     # start zeroed, filled by the kernel's own boot flow. The spawned
     # process's entry is the user image's own business — its stub parks

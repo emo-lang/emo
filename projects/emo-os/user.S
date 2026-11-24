@@ -98,3 +98,37 @@ emo_os_user_blob_u:
     .globl emo_os_user_blob_u_end
 emo_os_user_blob_u_end:
 
+    # TCC (T4.5): the self-hosted C compiler, its runtime helpers, the
+    # guest link inputs (the TCC-facing crt and the sysroot's libc),
+    # and the acceptance source. An empty placeholder leaves the
+    # length zero and the kernel skips the install.
+    .globl emo_os_user_blob_cc
+emo_os_user_blob_cc:
+    .incbin "tcc.elf"
+    .globl emo_os_user_blob_cc_end
+emo_os_user_blob_cc_end:
+
+    .globl emo_os_user_blob_cl
+emo_os_user_blob_cl:
+    .incbin "tcc-libtcc1.a"
+    .globl emo_os_user_blob_cl_end
+emo_os_user_blob_cl_end:
+
+    .globl emo_os_user_blob_cr
+emo_os_user_blob_cr:
+    .incbin "tcc-crt0.o"
+    .globl emo_os_user_blob_cr_end
+emo_os_user_blob_cr_end:
+
+    .globl emo_os_user_blob_ca
+emo_os_user_blob_ca:
+    .incbin "tcc-libc.a"
+    .globl emo_os_user_blob_ca_end
+emo_os_user_blob_ca_end:
+
+    .globl emo_os_user_blob_ct
+emo_os_user_blob_ct:
+    .incbin "tcc-test.c"
+    .globl emo_os_user_blob_ct_end
+emo_os_user_blob_ct_end:
+

@@ -100,6 +100,25 @@ for src in \
   "$musl"/src/stdio/putc_unlocked.c \
   "$musl"/src/stdio/putc.c \
   "$musl"/src/stdio/putchar.c \
+  "$musl"/src/stdio/fopen.c \
+  "$musl"/src/stdio/__fdopen.c \
+  "$musl"/src/stdio/sprintf.c \
+  "$musl"/src/stdio/vsprintf.c \
+  "$musl"/src/stdio/__fmodeflags.c \
+  "$musl"/src/internal/syscall_ret.c \
+  "$musl"/src/stdio/freopen.c \
+  "$musl"/src/stdio/fread.c \
+  "$musl"/src/stdio/fgets.c \
+  "$musl"/src/stdio/fgetc.c \
+  "$musl"/src/stdio/ungetc.c \
+  "$musl"/src/stdio/fseek.c \
+  "$musl"/src/stdio/ftell.c \
+  "$musl"/src/stdio/feof.c \
+  "$musl"/src/stdio/ferror.c \
+  "$musl"/src/stdio/fileno.c \
+  "$musl"/src/stdio/perror.c \
+  "$musl"/src/stdio/stdin.c \
+  "$musl"/src/exit/assert.c \
   "$musl"/src/stdio/fprintf.c \
   "$musl"/src/stdio/snprintf.c \
   "$musl"/src/stdio/vsnprintf.c \
@@ -108,7 +127,8 @@ for src in \
   "$musl"/src/stdio/setvbuf.c \
   "$musl"/src/stdio/open_memstream.c \
   "$musl"/src/stdio/ofl_add.c \
-  "$musl"/src/stdio/stderr.c; do
+  "$musl"/src/stdio/stderr.c \
+  "$musl"/src/stdio/__stdio_exit.c; do
   compile "$src"
 done
 
