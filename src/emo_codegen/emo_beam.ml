@@ -541,10 +541,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env
         (Printf.sprintf "{'emo_enum', %s, %s}" (atom enum_name) (atom member))
   | Box_new v ->
-      (* a Box is a process-dictionary key (T18.4 upgrades to a
-         holding process for cross-process boxes) *)
+      (* the cell key lives in the root's shared cells table: a spawn's
+         argument shares the Box (the interpreter's identity), a send
+         packs the value and the receiver parks a fresh key *)
       put env "let <_boxref> = call 'erlang':'make_ref'() in ";
-      put env "do call 'erlang':'put'(_boxref, ";
+      put env "do apply 'emo_cell_put'/2 (_boxref, ";
       expr env v;
       put env ") _boxref"
   | Atomic_new v ->
@@ -1022,7 +1023,7 @@ and builtin_method_call env self_ name args =
           put env "apply 'emo_str_chars'/1 ";
           args_list env [ self_ ]
       | "read", [] ->
-          put env "call 'erlang':'get'(";
+          put env "apply 'emo_cell_get'/1 (";
           expr env self_;
           put env ")"
       | "replace", [ v ] ->
@@ -3277,7 +3278,7 @@ let rt_source =
 'emo_box_replace'/2 =
     fun (_k, _v) ->
 	do
-	    call 'erlang':'put'(_k, _v)
+	    apply 'emo_cell_put'/2 (_k, _v)
 	    _v
 
 'emo_bytes_new'/1 =
@@ -3657,22 +3658,71 @@ let rt_source =
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
 
+%% The List is a row-backed deque: the cells table (the root's shared
+%%   one) holds {{K, 'f'}, Front}, {{K, 'b'}, Back} and {{K, 'n'}, Len},
+%%   one row per element at {{K, 'i', I}, V}. Every operation touches
+%%   O(1) rows, so a push costs no more than a map write; the tag is a
+%%   key, so a spawn's argument shares the deque (the interpreter's
+%%   alias) while a send re-rows a copy.
 'emo_list_new'/1 =
     fun (_arr) ->
 	let <_k> = call 'erlang':'make_ref'()
-	in do call 'erlang':'put'
-		 (_k,
-	  {apply 'emo_array_elems'/1 (_arr), []})
-	   {'emo_list', _k}
+	in let <_es> = apply 'emo_array_elems'/1 (_arr)
+	   in let <_n> = call 'erlang':'length'(_es)
+	      in do apply 'emo_list_fill'/3 (_es, _k, 0)
+		 do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'f'}, 0})
+		 do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'b'}, _n})
+		    do call 'ets':'insert'
+			 (apply 'emo_cells_table'/0 (), {{_k, 'n'}, _n})
+		       {'emo_list', _k}
+
+'emo_list_fill'/3 =
+    fun (_es, _k, _i) ->
+	case _es of
+	  <[_h | _t]> when 'true' ->
+	      do call 'ets':'insert'
+		   (apply 'emo_cells_table'/0 (), {{_k, 'i', _i}, _h})
+		 apply 'emo_list_fill'/3
+		   (_t, _k, call 'erlang':'+'(_i, 1))
+	  <[]> when 'true' -> 'ok'
+	end
+
+'emo_list_row'/2 =
+    fun (_k, _tag) ->
+	call 'ets':'lookup_element'
+	  (apply 'emo_cells_table'/0 (), {_k, _tag}, 2)
+
+'emo_list_set_row'/3 =
+    fun (_k, _tag, _v) ->
+	call 'ets':'insert'
+	  (apply 'emo_cells_table'/0 (), {{_k, _tag}, _v})
+
+'emo_list_bump'/2 =
+    fun (_k, _d) ->
+	let <_n> = apply 'emo_list_row'/2 (_k, 'n')
+	in apply 'emo_list_set_row'/3
+	     (_k, 'n', call 'erlang':'+'(_n, _d))
+
+'emo_list_walk'/3 =
+    fun (_k, _i, _b) ->
+	case call 'erlang':'<'(_i, _b) of
+	  <'true'> when 'true' ->
+	      [call 'ets':'lookup_element'
+		 (apply 'emo_cells_table'/0 (), {_k, 'i', _i}, 2)
+	       | apply 'emo_list_walk'/3
+		   (_k, call 'erlang':'+'(_i, 1), _b)]
+	  <'false'> when 'true' -> []
+	end
 
 'emo_list_elems'/1 =
     fun (_l) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    call 'erlang':'++'(_f, call 'lists':'reverse'(_r))
-	      end
+	      apply 'emo_list_walk'/3
+		(_k, apply 'emo_list_row'/2 (_k, 'f'),
+		 apply 'emo_list_row'/2 (_k, 'b'))
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_list', _other})
 	end
@@ -3681,11 +3731,13 @@ let rt_source =
     fun (_l, _v) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    do call 'erlang':'put'(_k, {[_v | _f], _r})
-		       _l
-	      end
+	      let <_f> = apply 'emo_list_row'/2 (_k, 'f')
+	      in let <_i> = call 'erlang':'-'(_f, 1)
+		 in do call 'ets':'insert'
+			 (apply 'emo_cells_table'/0 (), {{_k, 'i', _i}, _v})
+		    do apply 'emo_list_set_row'/3 (_k, 'f', _i)
+		       do apply 'emo_list_bump'/2 (_k, 1)
+			  _l
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_list', _other})
 	end
@@ -3694,11 +3746,13 @@ let rt_source =
     fun (_l, _v) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    do call 'erlang':'put'(_k, {_f, [_v | _r]})
+	      let <_b> = apply 'emo_list_row'/2 (_k, 'b')
+	      in do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'i', _b}, _v})
+		 do apply 'emo_list_set_row'/3
+		      (_k, 'b', call 'erlang':'+'(_b, 1))
+		    do apply 'emo_list_bump'/2 (_k, 1)
 		       _l
-	      end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_list', _other})
 	end
@@ -3707,22 +3761,20 @@ let rt_source =
     fun (_l) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    case _f of
-		      <[_h | _t]> when 'true' ->
-			  do call 'erlang':'put'(_k, {_t, _r})
-			     _h
-		      <[]> when 'true' ->
-			  case call 'lists':'reverse'(_r) of
-			    <[_h | _t]> when 'true' ->
-				do call 'erlang':'put'(_k, {_t, []})
-				   _h
-			    <[]> when 'true' ->
-				call 'erlang':'error'({'emo_empty_list',
-						       'pop_front', _l})
-			  end
-		    end
+	      case apply 'emo_list_row'/2 (_k, 'n') of
+		<0> when 'true' ->
+		    call 'erlang':'error'({'emo_empty_list', 'pop_front', _l})
+		<_> when 'true' ->
+		    let <_f> = apply 'emo_list_row'/2 (_k, 'f')
+		    in let <_v> = call 'ets':'lookup_element'
+				    (apply 'emo_cells_table'/0 (),
+				     {_k, 'i', _f}, 2)
+		       in do call 'ets':'delete'
+			       (apply 'emo_cells_table'/0 (), {_k, 'i', _f})
+			  do apply 'emo_list_set_row'/3
+			       (_k, 'f', call 'erlang':'+'(_f, 1))
+			     do apply 'emo_list_bump'/2 (_k, -1)
+				_v
 	      end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_list', _other})
@@ -3732,22 +3784,20 @@ let rt_source =
     fun (_l) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    case _r of
-		      <[_h | _t]> when 'true' ->
-			  do call 'erlang':'put'(_k, {_f, _t})
-			     _h
-		      <[]> when 'true' ->
-			  case call 'lists':'reverse'(_f) of
-			    <[_h | _t]> when 'true' ->
-				do call 'erlang':'put'(_k, {[], _t})
-				   _h
-			    <[]> when 'true' ->
-				call 'erlang':'error'({'emo_empty_list',
-						       'pop_back', _l})
-			  end
-		    end
+	      case apply 'emo_list_row'/2 (_k, 'n') of
+		<0> when 'true' ->
+		    call 'erlang':'error'({'emo_empty_list', 'pop_back', _l})
+		<_> when 'true' ->
+		    let <_i> = call 'erlang':'-'
+				 (apply 'emo_list_row'/2 (_k, 'b'), 1)
+		    in let <_v> = call 'ets':'lookup_element'
+				    (apply 'emo_cells_table'/0 (),
+				     {_k, 'i', _i}, 2)
+		       in do call 'ets':'delete'
+			       (apply 'emo_cells_table'/0 (), {_k, 'i', _i})
+			  do apply 'emo_list_set_row'/3 (_k, 'b', _i)
+			     do apply 'emo_list_bump'/2 (_k, -1)
+				_v
 	      end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_list', _other})
@@ -3757,11 +3807,7 @@ let rt_source =
     fun (_l) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    call 'erlang':'+'(call 'erlang':'length'(_f),
-				      call 'erlang':'length'(_r))
-	      end
+	      apply 'emo_list_row'/2 (_k, 'n')
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_list', _other})
 	end
@@ -3781,32 +3827,52 @@ let rt_source =
 %% process dictionary — the same mechanism emo_list_new uses. Push
 %% conses onto the reversed list, so it is O(1); get is O(n) (it walks to
 %% the index), which only push is required to avoid.
+%% The ArrayBuilder is the List's row shape without the two ends: a row
+%%   per element at {{K, 'i', I}, V} and a count at {{K, 'n'}, N}, so
+%%   push is O(1) and get reads one row.
 'emo_builder_new'/0 =
     fun () ->
 	let <_k> = call 'erlang':'make_ref'()
-	in do call 'erlang':'put'(_k, {0, []})
+	in do call 'ets':'insert'
+	      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, 0})
 	   {'emo_builder', _k}
 
 'emo_builder_push'/2 =
     fun (_b, _v) ->
 	case _b of
 	  <{'emo_builder', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_n, _r}> when 'true' ->
-		    do call 'erlang':'put'(_k, {call 'erlang':'+'(_n, 1), [_v | _r]})
-		       _b
-	      end
+	      let <_n> = apply 'emo_builder_row'/2 (_k, 'n')
+	      in do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'i', _n}, _v})
+		 do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, call 'erlang':'+'(_n, 1)})
+		    _b
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_builder', _other})
+	end
+
+'emo_builder_row'/2 =
+    fun (_k, _tag) ->
+	call 'ets':'lookup_element'
+	  (apply 'emo_cells_table'/0 (), {_k, _tag}, 2)
+
+'emo_builder_walk'/3 =
+    fun (_k, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'true'> when 'true' ->
+	      [call 'ets':'lookup_element'
+		 (apply 'emo_cells_table'/0 (), {_k, 'i', _i}, 2)
+	       | apply 'emo_builder_walk'/3
+		   (_k, call 'erlang':'+'(_i, 1), _n)]
+	  <'false'> when 'true' -> []
 	end
 
 'emo_builder_elems'/1 =
     fun (_b) ->
 	case _b of
 	  <{'emo_builder', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_n, _r}> when 'true' -> call 'lists':'reverse'(_r)
-	      end
+	      apply 'emo_builder_walk'/3
+		(_k, 0, apply 'emo_builder_row'/2 (_k, 'n'))
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_builder', _other})
 	end
@@ -3815,9 +3881,7 @@ let rt_source =
     fun (_b) ->
 	case _b of
 	  <{'emo_builder', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_n, _r}> when 'true' -> _n
-	      end
+	      apply 'emo_builder_row'/2 (_k, 'n')
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_builder', _other})
 	end
@@ -3826,32 +3890,340 @@ let rt_source =
     fun (_b, _i) ->
 	case _b of
 	  <{'emo_builder', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_n, _r}> when 'true' ->
-		    case call 'erlang':'is_integer'(_i) of
-		      <'true'> when 'true' ->
-			  case call 'erlang':'>='(_i, 0) of
-			    <'true'> when 'true' ->
-				case call 'erlang':'<'(_i, _n) of
-				  <'true'> when 'true' ->
-				      call 'lists':'nth'(call 'erlang':'-'(_n, _i), _r)
-				  <'false'> when 'true' ->
-				      call 'erlang':'error'({'emo_builder_index', _i, _n})
-				end
-			    <'false'> when 'true' ->
-				call 'erlang':'error'({'emo_builder_index', _i, _n})
-			  end
-		      <'false'> when 'true' ->
-			  call 'erlang':'error'({'emo_builder_index', _i, _n})
-		    end
-	      end
+	      let <_n> = apply 'emo_builder_row'/2 (_k, 'n')
+	      in case call 'erlang':'is_integer'(_i) of
+		   <'true'> when 'true' ->
+		       case call 'erlang':'>='(_i, 0) of
+			 <'true'> when 'true' ->
+			     case call 'erlang':'<'(_i, _n) of
+			       <'true'> when 'true' ->
+				   call 'ets':'lookup_element'
+				     (apply 'emo_cells_table'/0 (),
+				      {_k, 'i', _i}, 2)
+			       <'false'> when 'true' ->
+				   call 'erlang':'error'
+				     ({'emo_builder_index', _i, _n})
+			     end
+			 <'false'> when 'true' ->
+			     call 'erlang':'error'
+			       ({'emo_builder_index', _i, _n})
+		       end
+		   <'false'> when 'true' ->
+		       call 'erlang':'error'({'emo_builder_index', _i, _n})
+		 end
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_builder', _other})
 	end
 
-%% to_array hands out a fresh {'emo_array', Key} tag over a fresh
-%%   tuple — a copy, so the builder stays free to grow without touching
-%%   the array it already returned.
+'emo_map_key'/1 =
+    fun (_k) ->
+	case call 'erlang':'is_float'(_k) of
+	  <'true'> when 'true' -> call 'erlang':'+'(_k, 0.0)
+	  <_other> when 'true' -> _k
+	end
+
+%% The Map's order is a row per position ({{K, 'o', I}, Key}) and its
+%%   values a row per normalized key ({{K, 'v', Kn}, Value}), so a set
+%%   replaces one row instead of copying a pairs map. The cells table is
+%%   the root's shared one: a spawn's argument shares the map, a send
+%%   re-rows a copy.
+%% The Map's order is a row per position ({{K, 'o', I}, Key}) and its
+%%   values a row per normalized key ({{K, 'v', Kn}, Value}), so a set
+%%   replaces one row instead of copying a pairs map. The cells table is
+%%   the root's shared one: a spawn's argument shares the map, a send
+%%   re-rows a copy.
+'emo_map_new'/1 =
+    fun (_pairs) ->
+	let <_k> = call 'erlang':'make_ref'()
+	in do call 'ets':'insert'
+	      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, 0})
+	   do apply 'emo_map_new_walk'/2 (_pairs, _k)
+	      {'emo_map', _k}
+
+'emo_map_new_walk'/2 =
+    fun (_pairs, _k) ->
+	case _pairs of
+	  <[{_key, _v} | _rest]> when 'true' ->
+	      do apply 'emo_map_set'/3 ({'emo_map', _k}, _key, _v)
+		 apply 'emo_map_new_walk'/2 (_rest, _k)
+	  <[]> when 'true' -> 'ok'
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_map_pairs', _other})
+	end
+
+'emo_map_count'/1 =
+    fun (_k) ->
+	call 'ets':'lookup_element'
+	  (apply 'emo_cells_table'/0 (), {_k, 'n'}, 2)
+
+'emo_map_order_at'/2 =
+    fun (_k, _i) ->
+	call 'ets':'lookup_element'
+	  (apply 'emo_cells_table'/0 (), {_k, 'o', _i}, 2)
+
+'emo_map_value'/2 =
+    fun (_k, _kn) ->
+	case call 'ets':'lookup'
+	       (apply 'emo_cells_table'/0 (), {_k, 'v', _kn}) of
+	  <[{{_kk, 'v', _kn2}, _v}]> when 'true' -> {'ok', _v}
+	  <[]> when 'true' -> 'error'
+	end
+
+'emo_map_set'/3 =
+    fun (_m, _key, _v) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      let <_kn> = apply 'emo_map_key'/1 (_key)
+	      in case call 'ets':'lookup'
+			(apply 'emo_cells_table'/0 (), {_k, 'v', _kn}) of
+		   <[_row]> when 'true' ->
+		       do call 'ets':'insert'
+			    (apply 'emo_cells_table'/0 (),
+			     {{_k, 'v', _kn}, _v})
+			  _m
+		   <[]> when 'true' ->
+		       let <_n> = apply 'emo_map_count'/1 (_k)
+		       in do call 'ets':'insert'
+			      (apply 'emo_cells_table'/0 (),
+			       {{_k, 'o', _n}, _key})
+			  do call 'ets':'insert'
+			       (apply 'emo_cells_table'/0 (),
+				{{_k, 'v', _kn}, _v})
+			     do call 'ets':'insert'
+				  (apply 'emo_cells_table'/0 (),
+				   {{_k, 'n'}, call 'erlang':'+'(_n, 1)})
+				_m
+		 end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_get'/2 =
+    fun (_m, _key) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      case apply 'emo_map_value'/2
+		     (_k, apply 'emo_map_key'/1 (_key)) of
+		{'ok', _v} when 'true' -> _v
+		'error' when 'true' ->
+		    call 'erlang':'error'
+		      ({'emo_no_key',
+			call 'erlang':'iolist_to_binary'
+			  ([110, 111, 32, 107, 101, 121, 32,
+			    apply 'emo_map_dbg'/1 (_key),
+			    32, 105, 110, 32, 116, 104, 105, 115, 32,
+			    77, 97, 112])})
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_has'/2 =
+    fun (_m, _key) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      case apply 'emo_map_value'/2
+		     (_k, apply 'emo_map_key'/1 (_key)) of
+		{'ok', _v} when 'true' -> 'true'
+		'error' when 'true' -> 'false'
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+%% One walk over the order rows with two cursors: the removed key's
+%%   row is skipped and every other row is written at the write cursor,
+%%   so the order stays dense. A remove is the one O(n) operation.
+'emo_map_compact'/5 =
+    fun (_k, _r, _w, _n, _kn) ->
+	case call 'erlang':'<'(_r, _n) of
+	  <'true'> when 'true' ->
+	      let <_key> = apply 'emo_map_order_at'/2 (_k, _r)
+	      in case call 'erlang':'=:='
+		      (apply 'emo_map_key'/1 (_key), _kn) of
+		   <'true'> when 'true' ->
+		       apply 'emo_map_compact'/5
+			 (_k, call 'erlang':'+'(_r, 1), _w, _n, _kn)
+		   <'false'> when 'true' ->
+		       do call 'ets':'insert'
+			    (apply 'emo_cells_table'/0 (),
+			     {{_k, 'o', _w}, _key})
+			  apply 'emo_map_compact'/5
+			    (_k, call 'erlang':'+'(_r, 1),
+			     call 'erlang':'+'(_w, 1), _n, _kn)
+		 end
+	  <'false'> when 'true' ->
+	      case call 'erlang':'<'(_w, _n) of
+		<'true'> when 'true' ->
+		    do call 'ets':'delete'
+			 (apply 'emo_cells_table'/0 (), {_k, 'o', _w})
+		       apply 'emo_map_compact'/5
+			 (_k, _n, call 'erlang':'+'(_w, 1), _n, _kn)
+		<'false'> when 'true' -> 'ok'
+	      end
+	end
+
+'emo_map_remove'/2 =
+    fun (_m, _key) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      let <_kn> = apply 'emo_map_key'/1 (_key)
+	      in case call 'ets':'lookup'
+			(apply 'emo_cells_table'/0 (), {_k, 'v', _kn}) of
+		   <[]> when 'true' -> _m
+		   <[_row]> when 'true' ->
+		       let <_n> = apply 'emo_map_count'/1 (_k)
+		       in do call 'ets':'delete'
+			      (apply 'emo_cells_table'/0 (), {_k, 'v', _kn})
+			  do apply 'emo_map_compact'/5 (_k, 0, 0, _n, _kn)
+			     do call 'ets':'insert'
+				  (apply 'emo_cells_table'/0 (),
+				   {{_k, 'n'}, call 'erlang':'-'(_n, 1)})
+				_m
+		 end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_order'/3 =
+    fun (_k, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'true'> when 'true' ->
+	      [apply 'emo_map_order_at'/2 (_k, _i)
+	       | apply 'emo_map_order'/3
+		   (_k, call 'erlang':'+'(_i, 1), _n)]
+	  <'false'> when 'true' -> []
+	end
+
+'emo_map_keys'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      apply 'emo_array_lit'/1
+		(apply 'emo_map_order'/3 (_k, 0, apply 'emo_map_count'/1 (_k)))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_values_walk'/3 =
+    fun (_k, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'true'> when 'true' ->
+	      let <_key> = apply 'emo_map_order_at'/2 (_k, _i)
+	      in case apply 'emo_map_value'/2
+		     (_k, apply 'emo_map_key'/1 (_key)) of
+		   {'ok', _v} when 'true' ->
+		       [_v | apply 'emo_map_values_walk'/3
+			       (_k, call 'erlang':'+'(_i, 1), _n)]
+		   'error' when 'true' ->
+		       apply 'emo_map_values_walk'/3
+			 (_k, call 'erlang':'+'(_i, 1), _n)
+		 end
+	  <'false'> when 'true' -> []
+	end
+
+'emo_map_values'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      apply 'emo_array_lit'/1
+		(apply 'emo_map_values_walk'/3
+		   (_k, 0, apply 'emo_map_count'/1 (_k)))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_length'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      apply 'emo_map_count'/1 (_k)
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_equal'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <{'emo_map', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_map', _kb}> when 'true' ->
+		    case call 'erlang':'=:='
+			   (apply 'emo_map_count'/1 (_ka),
+			    apply 'emo_map_count'/1 (_kb)) of
+		      <'false'> when 'true' -> 'false'
+		      <'true'> when 'true' ->
+			  apply 'emo_map_equal_walk'/3
+			    (apply 'emo_map_order'/3
+			       (_ka, 0, apply 'emo_map_count'/1 (_ka)),
+			     _ka, _kb)
+		    end
+		<_other> when 'true' -> 'false'
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _a})
+	end
+
+'emo_map_equal_walk'/3 =
+    fun (_keys, _ka, _kb) ->
+	case _keys of
+	  <[_key | _rest]> when 'true' ->
+	      let <_kn> = apply 'emo_map_key'/1 (_key)
+	      in case apply 'emo_map_value'/2 (_kb, _kn) of
+		   'error' when 'true' -> 'false'
+		   {'ok', _vb} when 'true' ->
+		       case apply 'emo_map_value'/2 (_ka, _kn) of
+			 'error' when 'true' -> 'false'
+			 {'ok', _va} when 'true' ->
+			     case apply 'emo_eq'/2 (_va, _vb) of
+			       <'false'> when 'true' -> 'false'
+			       <'true'> when 'true' ->
+				   apply 'emo_map_equal_walk'/3
+				     (_rest, _ka, _kb)
+			     end
+		       end
+	      end
+	  <[]> when 'true' -> 'true'
+	end
+
+'emo_map_str'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      call 'erlang':'iolist_to_binary'
+		(apply 'emo_map_str_walk'/3
+		   (apply 'emo_map_order'/3
+		      (_k, 0, apply 'emo_map_count'/1 (_k)),
+		    _k, 1))
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _other})
+	end
+
+'emo_map_str_walk'/3 =
+    fun (_keys, _k, _first) ->
+	case _keys of
+	  <[_key | _rest]> when 'true' ->
+	      let <_kd> = apply 'emo_map_dbg'/1 (_key)
+	      in let <_vd> =
+		     case apply 'emo_map_value'/2
+			    (_k, apply 'emo_map_key'/1 (_key)) of
+		       {'ok', _v} when 'true' -> apply 'emo_map_dbg'/1 (_v)
+		     end
+		 in case _first of
+		      <1> when 'true' ->
+			  [123, _kd, 58, 32, _vd
+			   | apply 'emo_map_str_walk'/3 (_rest, _k, 0)]
+		      <_> when 'true' ->
+			  [44, 32, _kd, 58, 32, _vd
+			   | apply 'emo_map_str_walk'/3 (_rest, _k, 0)]
+		    end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' -> [123, 125]
+		<_> when 'true' -> [125]
+	      end
+	end
+
 'emo_builder_to_array'/1 =
     fun (_b) -> apply 'emo_array_lit'/1 (apply 'emo_builder_elems'/1 (_b))
 
@@ -3942,6 +4314,15 @@ let rt_source =
 
 'emo_eq'/2 =
     fun (_a, _b) ->
+	case call 'erlang':'is_reference'(_a) of
+	  <'true'> when 'true' ->
+	      case call 'erlang':'is_reference'(_b) of
+		<'true'> when 'true' ->
+		    apply 'emo_eq'/2
+		      (apply 'emo_cell_get'/1 (_a), apply 'emo_cell_get'/1 (_b))
+		<'false'> when 'true' -> 'false'
+	      end
+	  <'false'> when 'true' ->
 	case _a of
 	  <{'emo_array', _ka}> when 'true' ->
 	      case _b of
@@ -4016,6 +4397,7 @@ let rt_source =
 		    end
 	      end
 	end
+	end
 
 %% The element-wise walk behind emo_eq's tuple arm: a class instance
 %%   ('emo_inst', ...) or a plain tuple may carry a Bytes, List, Map, or
@@ -4072,236 +4454,6 @@ let rt_source =
 %%   position. Keys are the six hashable primitives; a float key
 %%   reaches the pairs map through one normalization (`-0.0 + 0.0`),
 %%   so -0.0 and 0.0 are one key while 1 and 1.0 stay distinct.
-
-'emo_map_key'/1 =
-    fun (_k) ->
-	case call 'erlang':'is_float'(_k) of
-	  <'true'> when 'true' -> call 'erlang':'+'(_k, 0.0)
-	  <_other> when 'true' -> _k
-	end
-
-'emo_map_new'/1 =
-    fun (_pairs) ->
-	apply 'emo_map_new_walk'/3 (_pairs, call 'maps':'from_list'([]), [])
-
-'emo_map_new_walk'/3 =
-    fun (_pairs, _m, _order) ->
-	case _pairs of
-	  <[{_k, _v} | _rest]> when 'true' ->
-	      case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _m) of
-		<'true'> when 'true' ->
-		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _m), _order)
-		<'false'> when 'true' ->
-		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _m), call 'erlang':'++'(_order, [_k]))
-	      end
-	  <[]> when 'true' ->
-	      let <_k> = call 'erlang':'make_ref'()
-	      in do call 'erlang':'put'(_k, {_order, _m})
-		 {'emo_map', _k}
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_map_pairs', _other})
-	end
-
-'emo_map_get'/2 =
-    fun (_m, _k) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'find'(apply 'emo_map_key'/1 (_k), _pairs) of
-		      <{'ok', _v}> when 'true' -> _v
-		      <'error'> when 'true' ->
-			  call 'erlang':'error'
-			    ({'emo_no_key',
-			      call 'erlang':'iolist_to_binary'
-				([110, 111, 32, 107, 101, 121, 32,
-				  apply 'emo_map_dbg'/1 (_k),
-				  32, 105, 110, 32, 116, 104, 105, 115, 32, 77, 97, 112])})
-		    end
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_set'/3 =
-    fun (_m, _k, _v) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs) of
-		      <'true'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {_order, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _pairs)})
-			     _m
-		      <'false'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {call 'erlang':'++'(_order, [_k]), call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _pairs)})
-			     _m
-		    end
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_has'/2 =
-    fun (_m, _k) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs)
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_remove'/2 =
-    fun (_m, _k) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs) of
-		      <'true'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {apply 'emo_map_order_drop'/2 (_order, _k), call 'maps':'remove'(apply 'emo_map_key'/1 (_k), _pairs)})
-			     _m
-		      <'false'> when 'true' -> _m
-		    end
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_order_drop'/2 =
-    fun (_keys, _k) ->
-	case _keys of
-	  <[_h | _t]> when 'true' ->
-	      case call 'erlang':'=='(_h, _k) of
-		<'true'> when 'true' -> _t
-		<'false'> when 'true' ->
-		    [_h | apply 'emo_map_order_drop'/2 (_t, _k)]
-	      end
-	  <[]> when 'true' -> []
-	end
-
-'emo_map_length'/1 =
-    fun (_m) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    call 'maps':'size'(_pairs)
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_keys'/1 =
-    fun (_m) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    apply 'emo_array_lit'/1 (_order)
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_values'/1 =
-    fun (_m) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    apply 'emo_array_lit'/1
-		      (apply 'emo_map_values_walk'/2 (_order, _pairs))
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_values_walk'/2 =
-    fun (_keys, _pairs) ->
-	case _keys of
-	  <[_k | _rest]> when 'true' ->
-	      [call 'maps':'get'(apply 'emo_map_key'/1 (_k), _pairs)
-	       | apply 'emo_map_values_walk'/2 (_rest, _pairs)]
-	  <[]> when 'true' -> []
-	end
-
-'emo_map_str'/1 =
-    fun (_m) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    call 'erlang':'iolist_to_binary'
-		      (apply 'emo_map_str_walk'/3 (_order, _pairs, 1))
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_str_walk'/3 =
-    fun (_keys, _pairs, _first) ->
-	case _keys of
-	  <[_k | _rest]> when 'true' ->
-	      let <_kd> = apply 'emo_map_dbg'/1 (_k)
-	      in let <_vd> = apply 'emo_map_dbg'/1 (call 'maps':'get'(apply 'emo_map_key'/1 (_k), _pairs))
-		 in case _first of
-		      <1> when 'true' ->
-			  [123, _kd, 58, 32, _vd
-			   | apply 'emo_map_str_walk'/3 (_rest, _pairs, 0)]
-		      <_> when 'true' ->
-			  [44, 32, _kd, 58, 32, _vd
-			   | apply 'emo_map_str_walk'/3 (_rest, _pairs, 0)]
-		    end
-	  <[]> when 'true' ->
-	      case _first of
-		<1> when 'true' -> [123, 125]
-		<_> when 'true' -> [125]
-	      end
-	end
-
-'emo_map_equal'/2 =
-    fun (_a, _b) ->
-	case _a of
-	  <{'emo_map', _ka}> when 'true' ->
-	      case _b of
-		<{'emo_map', _kb}> when 'true' ->
-		    case call 'erlang':'get'(_ka) of
-		      <{_oa, _pa}> when 'true' ->
-			  case call 'erlang':'get'(_kb) of
-			    <{_ob, _pb}> when 'true' ->
-				case call 'erlang':'=:='(call 'maps':'size'(_pa), call 'maps':'size'(_pb)) of
-				  <'false'> when 'true' -> 'false'
-				  <'true'> when 'true' ->
-				      apply 'emo_map_equal_walk'/3 (_oa, _pa, _pb)
-				end
-			  end
-		    end
-		<_other> when 'true' -> 'false'
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _a})
-	end
-
-'emo_map_equal_walk'/3 =
-    fun (_keys, _pa, _pb) ->
-	case _keys of
-	  <[_k | _rest]> when 'true' ->
-	      let <_kn> = apply 'emo_map_key'/1 (_k)
-	      in case call 'maps':'is_key'(_kn, _pb) of
-		<'false'> when 'true' -> 'false'
-		<'true'> when 'true' ->
-		    case apply 'emo_eq'/2 (call 'maps':'get'(_kn, _pa), call 'maps':'get'(_kn, _pb)) of
-		      <'false'> when 'true' -> 'false'
-		      <'true'> when 'true' ->
-			  apply 'emo_map_equal_walk'/3 (_rest, _pa, _pb)
-		    end
-	      end
-	  <[]> when 'true' -> 'true'
-	end
 
 %% Inside a Map's rendering and its get-miss message, a string shows
 %% quoted — the interpreter's debug form; everything else goes through
@@ -5238,9 +5390,9 @@ let rt_source =
 %%   copy is a reference — and the receiver's unpack re-registers the
 %%   buffer under its own fresh keys. Both walks recurse through
 %%   tuples and instances (plain element rebuilds when nothing packed
-%%   hides inside). The pd-backed containers (List, Map, Builder) keep
-%%   their tags untouched — their contents not crossing is the
-%%   pre-existing class this walk neither widens nor closes.
+%%   hides inside), and the List, Map, and Builder re-row their contents
+%%   under a fresh key — the cells table is the root's shared one, so the
+%%   child reads a whole container of its own.
 
 'emo_msg_pack'/1 =
     fun (_m) ->
@@ -5255,9 +5407,63 @@ let rt_source =
 		    (apply 'emo_cells_table'/0 (), {_k, 'n'}, 2),
 		  0,
 		  call 'erlang':'make_ref'())}
+	  <{'emo_list', _k}> when 'true' ->
+	      {'emo_list_val',
+	       apply 'emo_msg_pack_list'/1 (apply 'emo_list_elems'/1 (_m))}
+	  <{'emo_builder', _k}> when 'true' ->
+	      {'emo_builder_val',
+	       apply 'emo_msg_pack_list'/1 (apply 'emo_builder_elems'/1 (_m))}
+	  <{'emo_map', _k}> when 'true' ->
+	      {'emo_map_val',
+	       apply 'emo_msg_pack_list'/1
+		 (apply 'emo_map_order'/3
+		    (_k, 0, apply 'emo_map_count'/1 (_k))),
+	       apply 'emo_msg_pack_list'/1
+		 (apply 'emo_map_values_walk'/3
+		    (_k, 0, apply 'emo_map_count'/1 (_k)))}
+	  <_r> when call 'erlang':'is_reference'(_r) ->
+	      {'emo_box_val', apply 'emo_msg_pack'/1 (apply 'emo_cell_get'/1 (_r))}
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
 	      apply 'emo_msg_pack_tuple'/2 (_t, call 'erlang':'tuple_size'(_t))
 	  <_other> when 'true' -> _other
+	end
+
+%% A list's elements each walk the pack/unpack pair into a fresh series
+%%   — a Bytes inside re-registers on the shared table, a nested
+%%   container re-rows, and the sender's later pushes stay invisible.
+'emo_msg_pack_list'/1 =
+    fun (_xs) ->
+	case _xs of
+	  <[_h | _t]> when 'true' ->
+	      [apply 'emo_msg_pack'/1 (_h)
+	       | apply 'emo_msg_pack_list'/1 (_t)]
+	  <[]> when 'true' -> []
+	end
+
+%% The receiver's unpack of a list's two halves, element by element.
+'emo_msg_unpack_list'/1 =
+    fun (_xs) ->
+	case _xs of
+	  <[_h | _t]> when 'true' ->
+	      [apply 'emo_msg_unpack'/1 (_h) | apply 'emo_msg_unpack_list'/1 (_t)]
+	  <[]> when 'true' -> []
+	end
+
+%% A map's order and values re-row the receiver's own map, the key
+%%   normalization reapplied.
+'emo_msg_unpack_map'/3 =
+    fun (_order, _vals, _k) ->
+	case _order of
+	  <[_key | _rest]> when 'true' ->
+	      case _vals of
+		<[_v | _vt]> when 'true' ->
+		    do apply 'emo_map_set'/3
+			 ({'emo_map', _k},
+			  apply 'emo_msg_unpack'/1 (_key),
+			  apply 'emo_msg_unpack'/1 (_v))
+		       apply 'emo_msg_unpack_map'/3 (_rest, _vt, _k)
+	      end
+	  <[]> when 'true' -> 'ok'
 	end
 
 %% The send's array copy: the elements walk into fresh rows under the
@@ -5311,6 +5517,36 @@ let rt_source =
 	      in {'emo_array', _k}
 	  <{'emo_array', _k}> when 'true' ->
 	      _v
+	  <{'emo_box_val', _v}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in do apply 'emo_cell_put'/2 (_k, apply 'emo_msg_unpack'/1 (_v))
+		 _k
+	  <{'emo_list_val', _es}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in let <_vs> = apply 'emo_msg_unpack_list'/1 (_es)
+		 in let <_n> = call 'erlang':'length'(_vs)
+		    in do apply 'emo_list_fill'/3 (_vs, _k, 0)
+		       do call 'ets':'insert'
+			    (apply 'emo_cells_table'/0 (), {{_k, 'f'}, 0})
+			  do call 'ets':'insert'
+			       (apply 'emo_cells_table'/0 (), {{_k, 'b'}, _n})
+			     do call 'ets':'insert'
+				  (apply 'emo_cells_table'/0 (), {{_k, 'n'}, _n})
+				{'emo_list', _k}
+	  <{'emo_builder_val', _es}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in let <_vs> = apply 'emo_msg_unpack_list'/1 (_es)
+		 in let <_n> = call 'erlang':'length'(_vs)
+		    in do apply 'emo_list_fill'/3 (_vs, _k, 0)
+		       do call 'ets':'insert'
+			    (apply 'emo_cells_table'/0 (), {{_k, 'n'}, _n})
+			  {'emo_builder', _k}
+	  <{'emo_map_val', _order, _vals}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, 0})
+		 do apply 'emo_msg_unpack_map'/3 (_order, _vals, _k)
+		    {'emo_map', _k}
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
 	      apply 'emo_msg_unpack_tuple'/2 (_t, call 'erlang':'tuple_size'(_t))
 	  <_other> when 'true' -> _other
