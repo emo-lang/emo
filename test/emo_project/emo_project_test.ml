@@ -3072,6 +3072,27 @@ println(sqrt(4.0))|}
                the mistake. *)
             Alcotest.(check int)
               "line" 2 d.Emo_support.Diagnostic.span.Emo_support.Span.line);
+    tc "a run reaches a module beside a native-tier foreign def it never calls"
+      (fun () ->
+        use_workspace_registry () |> ignore;
+        let entry =
+          with_project
+            [
+              ( "shim.emo",
+                {|foreign def ui_root() Int64 = "ui_root"
+foreign def ui_place(child Int64, x Float64) Void = "ui_place"|}
+              );
+              ("main.emo", {|println("pure")|});
+            ]
+            "main.emo"
+        in
+        let output =
+          capture_output (fun () ->
+              ignore
+                (Emo_project.run_entry ~entry_file:entry ~check:true
+                   ~sched:Emo_project.Own ()))
+        in
+        Alcotest.(check string) "output" "pure\n" output);
   ]
 
 (* ---- Step 46: the `emo test` runner core ----
