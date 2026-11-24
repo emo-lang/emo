@@ -218,10 +218,10 @@ expect_same_file golden/expected.txt "$G/interp.txt" \
   "and prints the file it is pinned to"
 
 # Every hosted target, `c` and `wasm` included: this golden calls the
-# renderer directly rather than handing `ui.run` two defs, so no target
-# refuses it. The wasm artifact runs under the host boundary in
-# `wasm-runner.mjs`; the loop's own spelling is what `c` refuses, and
-# `probe/` pins that separately.
+# renderer directly rather than handing `ui.run` two defs, so it never
+# depended on the loop's spelling lowering. The wasm artifact runs under
+# the host boundary in `wasm-runner.mjs`; the loop's own spelling —
+# which `c` refused until T48.8 — is what `probe/` pins separately.
 for t in ocaml c typescript wasm beam; do
   mkdir -p "$G/$t"
   golden_build "$t" "$G/$t" && rc=0 || rc=$?
