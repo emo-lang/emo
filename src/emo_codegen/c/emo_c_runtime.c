@@ -5313,7 +5313,12 @@ int64_t emo_os_getpid(void) { return (int64_t)getpid(); }
 
 int64_t emo_os_getppid(void) { return (int64_t)getppid(); }
 
-emo_value emo_os_fork(void) { return emo_os_ok(emo_box_i64((int64_t)fork())); }
+emo_value emo_os_fork(void) {
+  int64_t pid = (int64_t)fork();
+  if (pid < 0)
+    return emo_os_fail("fork", "");
+  return emo_os_ok(emo_box_i64(pid));
+}
 
 int64_t emo_os_waitpid(int64_t pid) {
   int st = 0;

@@ -458,7 +458,10 @@ def build(slot Int64) Void {
     // grown blocks included; the run the reap walks stays the slot's
     // 576..584, the grown blocks the rows' own.
     if bpid < arena_bound {
-      poke64(arena_for + (bpid * 8), peek64(hp + fork_cell_off))
+      var ab = sv39.pa_of(arena_base)
+      var ae = sv39.pa_of(arena_end)
+      poke64(arena_for + (bpid * 8),
+        ((ab >> 12) << 20) | ((ae >> 12) & 1048575))
     }
   } else {
     var va2 = stack

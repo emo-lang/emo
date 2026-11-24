@@ -285,6 +285,18 @@ def user_run() Int64 {
   return user_arena_run
 }
 
+// The run this spawn can honestly back: the user run, or the map's
+// largest free run when the desktop's apps have fragmented it below
+// the profile's length. A child's heap may be smaller than the
+// profile's; the exec that follows starts from the same fit.
+def user_run_fit() Int64 {
+  const l = largest()
+  if l < user_arena_run {
+    return l
+  }
+  return user_arena_run
+}
+
 // The three settings of the runtime's run word. A user pass's spawn
 // brackets itself with them: its own run before, the services' back
 // after — the runtime reads the word inside the spawn, twice (the
@@ -292,6 +304,10 @@ def user_run() Int64 {
 // driver's spawn borrows the same bracket with its own length.
 def arena_for_user() Void {
   poke64(peek64(arena_len_cell), user_arena_run)
+}
+
+def arena_for_user_run(n Int64) Void {
+  poke64(peek64(arena_len_cell), n)
 }
 
 def arena_for_service() Void {

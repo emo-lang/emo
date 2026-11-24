@@ -955,7 +955,8 @@ def process_serve_gate(w Int64) Void {
             gate_reply(caller_of(w), -5)
           } else {
             var stack = frames.take()
-            if frames.largest() < frames.user_run() {
+            var fit = frames.user_run_fit()
+            if frames.largest() < fit {
               frames.give(stack)
               gate_reply(caller_of(w), -5)
             } else {
@@ -975,7 +976,7 @@ def process_serve_gate(w Int64) Void {
               // the pass's own run for this one spawn, the services'
               // back after it (frames.emo: the runtime reads the word
               // inside the spawn and nowhere else)
-              frames.arena_for_user()
+              frames.arena_for_user_run(fit)
               var child = user_spawn(exec.entry_for(caller_of(w)),
                 sv39.pa_of(stack) + block)
               frames.arena_for_service()
@@ -1064,6 +1065,7 @@ def process_serve_gate(w Int64) Void {
             poke64(fork_use_cell, 0)
             var fblocks = exec.image_blocks(fme)
             var frows = space.grown_rows(fme)
+            var fit = frames.user_run_fit()
             if fblocks <= 0 {
               poke64(exec_busy_cell, 0)
               gate_reply(fme, -4)
@@ -1072,11 +1074,11 @@ def process_serve_gate(w Int64) Void {
                 poke64(exec_busy_cell, 0)
                 gate_reply(fme, -5)
               } else {
-                if frames.spare() < fblocks + frows + frames.user_run() + 41 {
+                if frames.spare() < fblocks + frows + fit + 41 {
                   poke64(exec_busy_cell, 0)
                   gate_reply(fme, -5)
                 } else {
-                  if frames.largest() < frames.user_run() {
+                  if frames.largest() < fit {
                     poke64(exec_busy_cell, 0)
                     gate_reply(fme, -5)
                   } else {
@@ -1101,7 +1103,8 @@ def process_serve_gate(w Int64) Void {
                       poke64(exec_busy_cell, 0)
                       gate_reply(fme, -5)
                     } else {
-                      if frames.largest() < frames.user_run() {
+                      fit = frames.user_run_fit()
+                      if frames.largest() < fit {
                         frames.give(fstack)
                         poke64(exec_busy_cell, 0)
                         gate_reply(fme, -5)
@@ -1113,7 +1116,15 @@ def process_serve_gate(w Int64) Void {
                           gate_reply(fme, frec)
                         } else {
                           poke64(exec_pending_cell, frec)
-                          frames.arena_for_user()
+                          fit = frames.user_run_fit()
+                          if fit < 1 {
+                            frames.give(fstack)
+                            exec.release_record(frec)
+                            poke64(exec_pending_cell, 0)
+                            poke64(exec_busy_cell, 0)
+                            gate_reply(fme, -5)
+                          } else {
+                          frames.arena_for_user_run(fit)
                           var fchild = user_spawn(fentry,
                             sv39.pa_of(fstack) + block)
                           frames.arena_for_service()
@@ -1138,6 +1149,7 @@ def process_serve_gate(w Int64) Void {
                           sig.clone_pid(fme, fchild)
                           poke64(exec_busy_cell, 0)
                           gate_reply(fme, fchild)
+                          }
                         }
                       }
                     }
@@ -1160,7 +1172,7 @@ def process_serve_gate(w Int64) Void {
               exec.clear_busy()
               gate_reply(rme, -5)
             } else {
-              if frames.largest() < frames.user_run() {
+              if frames.largest() < frames.user_run_fit() {
                 poke64(execargs_use_cell, 0)
                 exec.clear_busy()
                 gate_reply(rme, -5)
@@ -1171,13 +1183,14 @@ def process_serve_gate(w Int64) Void {
                   exec.clear_busy()
                   gate_reply(rme, -5)
                 } else {
-                  if frames.largest() < frames.user_run() {
+                  var fit = frames.user_run_fit()
+                  if frames.largest() < fit {
                     frames.give(rstack)
                     poke64(execargs_use_cell, 0)
                     exec.clear_busy()
                     gate_reply(rme, -5)
                   } else {
-                    var rarena = frames.take_run(frames.user_run())
+                    var rarena = frames.take_run(fit)
                     if rarena == 0 {
                       frames.give(rstack)
                       poke64(execargs_use_cell, 0)
@@ -1188,7 +1201,7 @@ def process_serve_gate(w Int64) Void {
                       if rfs == 0 {
                         frames.give(rstack)
                         var rz0 = 0
-                        while rz0 < frames.user_run() {
+                        while rz0 < fit {
                           frames.give(rarena + (rz0 * block))
                           rz0 = rz0 + 1
                         }
@@ -1203,7 +1216,7 @@ def process_serve_gate(w Int64) Void {
                         if rrec == -4 || rrec == -5 || rrec == -6 {
                           frames.give(rstack)
                           var rz1 = 0
-                          while rz1 < frames.user_run() {
+                          while rz1 < fit {
                             frames.give(rarena + (rz1 * block))
                             rz1 = rz1 + 1
                           }
@@ -1218,14 +1231,14 @@ def process_serve_gate(w Int64) Void {
                           var rentry = exec.entry_of(rrec)
                           var rans = user_replace(rme, rentry,
                             sv39.pa_of(rstack) + block,
-                            rarena, rarena + frames.user_run() * block)
+                            rarena, rarena + fit * block)
                           if rans == rme {
                             poke64(execargs_use_cell, 0)
                             exec.clear_busy()
                           } else {
                             frames.give(rstack)
                             var rz2 = 0
-                            while rz2 < frames.user_run() {
+                            while rz2 < fit {
                               frames.give(rarena + (rz2 * block))
                               rz2 = rz2 + 1
                             }
