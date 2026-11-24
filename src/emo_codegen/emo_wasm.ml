@@ -4871,6 +4871,22 @@ let both_string (a : int) (b : int) : W.instr list =
     W.I32_and;
   ]
 
+(* The gradual operator keeps the static rule: two values of one
+   fixed-width kind, never a coercion across kinds. A mixed pair traps
+   the way the bitwise ops' non-integer operand does — the checker
+   refuses the same program when it can see the types. *)
+let both_float (a : int) (b : int) : W.instr list =
+  [
+    W.Local_get a;
+    W.Ref_test t_vfloat;
+    W.Local_get b;
+    W.Ref_test t_vfloat;
+    W.I32_and;
+  ]
+
+let f64_of (l : int) : W.instr list =
+  [ W.Local_get l; W.Ref_cast t_vfloat; W.Struct_get (t_vfloat, 0) ]
+
 let bytes_of (l : int) : W.instr list =
   [ W.Local_get l; W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
 
@@ -4888,7 +4904,8 @@ let num_to_f64 (local : int) : W.instr list =
         ] );
   ]
 
-(* arithmetic: int path via i64 op, float path via f64 op *)
+(* arithmetic: int path via i64 op, float path via f64 op, a mixed pair
+   traps *)
 let rt_arith (int_body : W.instr list) (float_body : W.instr list) : W.func_type
     =
   {
@@ -4901,11 +4918,18 @@ let rt_arith (int_body : W.instr list) (float_body : W.instr list) : W.func_type
           ( W.Result W.Anyref,
             both_int 0 1,
             i64_of 0 @ i64_of 1 @ int_body,
-            num_to_f64 0 @ num_to_f64 1 @ float_body );
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  both_float 0 1,
+                  f64_of 0 @ f64_of 1 @ float_body,
+                  [ W.Unreachable ] );
+            ] );
       ];
   }
 
-(* add: int + int, string + string (concat), otherwise numeric float *)
+(* add: int + int, string + string (concat), float + float; a mixed pair
+   traps *)
 let rt_add () =
   {
     W.ftype_idx = t_numop;
@@ -4923,8 +4947,14 @@ let rt_add () =
                   both_string 0 1,
                   bytes_of 0 @ bytes_of 1
                   @ [ W.Call (rt "strcat"); W.Struct_new t_vstring ],
-                  num_to_f64 0 @ num_to_f64 1
-                  @ [ W.F64_add; W.Struct_new t_vfloat ] );
+                  [
+                    W.If_else
+                      ( W.Result W.Anyref,
+                        both_float 0 1,
+                        f64_of 0 @ f64_of 1
+                        @ [ W.F64_add; W.Struct_new t_vfloat ],
+                        [ W.Unreachable ] );
+                  ] );
             ] );
       ];
   }
@@ -5751,7 +5781,13 @@ let rt_cmp (int_body : W.instr list) (float_body : W.instr list)
                     W.I32_and;
                   ],
                   string_body,
-                  num_to_f64 0 @ num_to_f64 1 @ float_body );
+                  [
+                    W.If_else
+                      ( W.Result W.Anyref,
+                        both_float 0 1,
+                        f64_of 0 @ f64_of 1 @ float_body,
+                        [ W.Unreachable ] );
+                  ] );
             ] );
       ];
   }

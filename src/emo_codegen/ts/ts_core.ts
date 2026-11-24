@@ -1364,6 +1364,19 @@ function bothInt(a: any, b: any): boolean {
   return isInt(a) && isInt(b);
 }
 
+// The gradual operator keeps the static rule: two values of one
+// fixed-width kind, never a coercion across kinds — `to_float64()`
+// names the conversion, and the runtime is not a place to skip it.
+function bothFloat(a: any, b: any): boolean {
+  return isFloat(a) && isFloat(b);
+}
+
+function numMix(op: string, expects: string, a: any, b: any): never {
+  throw new EEmoException(
+    `operator \`${op}\` expects ${expects}, got ${tag(a)} and ${tag(b)}`,
+  );
+}
+
 function wrap64(x: bigint): bigint {
   return BigInt.asIntN(64, x);
 }
@@ -1433,27 +1446,32 @@ const E: any = {
     if (typeof a === "string" && typeof b === "string") return a + b;
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) + (b as bigint));
     if (bothInt(a, b)) return (a as number) + (b as number);
-    return new EFloat(unfloat(a) + unfloat(b));
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) + unfloat(b));
+    return numMix("+", "two numbers or two strings", a, b);
   },
   sub(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) - (b as bigint));
     if (bothInt(a, b)) return (a as number) - (b as number);
-    return new EFloat(unfloat(a) - unfloat(b));
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) - unfloat(b));
+    return numMix("-", "two numbers", a, b);
   },
   mul(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) * (b as bigint));
     if (bothInt(a, b)) return (a as number) * (b as number);
-    return new EFloat(unfloat(a) * unfloat(b));
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) * unfloat(b));
+    return numMix("*", "two numbers", a, b);
   },
   div(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Div(a as bigint, b as bigint);
     if (bothInt(a, b)) return Math.trunc((a as number) / (b as number));
-    return new EFloat(unfloat(a) / unfloat(b));
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) / unfloat(b));
+    return numMix("/", "two numbers", a, b);
   },
   mod(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Mod(a as bigint, b as bigint);
     if (bothInt(a, b)) return (a as number) % (b as number);
-    return new EFloat(unfloat(a) % unfloat(b));
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) % unfloat(b));
+    return numMix("%", "two numbers", a, b);
   },
   // Bitwise work is integer work. JS bitwise ops run on int32, so
   // results past 2^31 follow the platform's word — the width family
@@ -1496,21 +1514,25 @@ const E: any = {
   },
   lt(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return emoStrLt(a, b);
-    return unfloat(a) < unfloat(b);
+    if (bothInt(a, b) || bothFloat(a, b)) return unfloat(a) < unfloat(b);
+    return numMix("<", "two numbers", a, b);
   },
   le(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string")
       return !emoStrLt(b, a);
-    return unfloat(a) <= unfloat(b);
+    if (bothInt(a, b) || bothFloat(a, b)) return unfloat(a) <= unfloat(b);
+    return numMix("<=", "two numbers", a, b);
   },
   gt(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return emoStrLt(b, a);
-    return unfloat(a) > unfloat(b);
+    if (bothInt(a, b) || bothFloat(a, b)) return unfloat(a) > unfloat(b);
+    return numMix(">", "two numbers", a, b);
   },
   ge(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string")
       return !emoStrLt(a, b);
-    return unfloat(a) >= unfloat(b);
+    if (bothInt(a, b) || bothFloat(a, b)) return unfloat(a) >= unfloat(b);
+    return numMix(">=", "two numbers", a, b);
   },
 
   // The fixed-width family. Int64 values are BigInts — arithmetic wraps

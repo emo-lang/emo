@@ -110,8 +110,6 @@ let add a b =
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.add x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x + y) land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x +. y)
-  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x +. y)
-  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x +. Int64.to_float y)
   | Emo_eval.String x, Emo_eval.String y -> Emo_eval.String (x ^ y)
   | _ -> failwith "operator `+` expects two numbers or two strings"
 
@@ -120,8 +118,6 @@ let sub a b =
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.sub x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x - y) land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x -. y)
-  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x -. y)
-  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x -. Int64.to_float y)
   | _ -> failwith "operator `-` expects two numbers"
 
 let mul a b =
@@ -129,8 +125,6 @@ let mul a b =
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.mul x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x * y land 255)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x *. y)
-  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x *. y)
-  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x *. Int64.to_float y)
   | _ -> failwith "operator `*` expects two numbers"
 
 let div a b =
@@ -141,8 +135,6 @@ let div a b =
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.div x y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x / y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x /. y)
-  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Float (Int64.to_float x /. y)
-  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Float (x /. Int64.to_float y)
   | _ -> failwith "operator `/` expects two numbers"
 
 let modulo a b =
@@ -237,8 +229,6 @@ let lt a b =
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x < y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x < y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x < y)
-  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Bool (Int64.to_float x < y)
-  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Bool (x < Int64.to_float y)
   | _ -> failwith "operator `<` expects two numbers"
 
 let le a b =
@@ -248,8 +238,6 @@ let le a b =
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x <= y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x <= y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x <= y)
-  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Bool (Int64.to_float x <= y)
-  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Bool (x <= Int64.to_float y)
   | _ -> failwith "operator `<=` expects two numbers"
 
 let gt a b =
@@ -259,8 +247,6 @@ let gt a b =
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x > y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x > y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x > y)
-  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Bool (Int64.to_float x > y)
-  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Bool (x > Int64.to_float y)
   | _ -> failwith "operator `>` expects two numbers"
 
 let ge a b =
@@ -270,8 +256,6 @@ let ge a b =
   | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x >= y)
   | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x >= y)
   | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x >= y)
-  | Emo_eval.Int64 x, Emo_eval.Float y -> Emo_eval.Bool (Int64.to_float x >= y)
-  | Emo_eval.Float x, Emo_eval.Int64 y -> Emo_eval.Bool (x >= Int64.to_float y)
   | _ -> failwith "operator `>=` expects two numbers"
 
 let eq a b = Emo_eval.Bool (Emo_eval.equal_value a b)

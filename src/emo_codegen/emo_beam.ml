@@ -2483,8 +2483,6 @@ let rt_source =
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
 		    apply 'emo_mask'/1 (call 'erlang':'+'(_x, _y))
-		<_y> when call 'erlang':'is_float'(_y) ->
-		    call 'erlang':'+'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_x> when call 'erlang':'is_binary'(_x) ->
@@ -2495,8 +2493,6 @@ let rt_source =
 	      end
 	  <_x> when call 'erlang':'is_float'(_x) ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'+'(_x, _y)
 		<_y> when call 'erlang':'is_float'(_y) ->
 		    call 'erlang':'+'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2511,14 +2507,10 @@ let rt_source =
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
 		    apply 'emo_mask'/1 (call 'erlang':'-'(_x, _y))
-		<_y> when call 'erlang':'is_float'(_y) ->
-		    call 'erlang':'-'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_x> when call 'erlang':'is_float'(_x) ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'-'(_x, _y)
 		<_y> when call 'erlang':'is_float'(_y) ->
 		    call 'erlang':'-'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2601,14 +2593,10 @@ let rt_source =
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
 		    apply 'emo_mask'/1 (call 'erlang':'*'(_x, _y))
-		<_y> when call 'erlang':'is_float'(_y) ->
-		    call 'erlang':'*'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_x> when call 'erlang':'is_float'(_x) ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'*'(_x, _y)
 		<_y> when call 'erlang':'is_float'(_y) ->
 		    call 'erlang':'*'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2827,12 +2815,10 @@ let rt_source =
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) -> {_x, _y}
-		<_y> when call 'erlang':'is_float'(_y) -> {_x, _y}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_x> when call 'erlang':'is_float'(_x) ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) -> {_x, _y}
 		<_y> when call 'erlang':'is_float'(_y) -> {_x, _y}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
