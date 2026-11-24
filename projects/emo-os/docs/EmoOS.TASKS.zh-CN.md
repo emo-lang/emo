@@ -200,7 +200,7 @@ C 库的 `execve` 复制路径(没有路径层——卷的平面名字),把 `arg
 - [x] **T2.1**——syscall 层:musl 的 `arch/riscv64` 桩接到门上,每个函数对一个已记录的动词。
 - [x] **T2.2**——`crt`、TLS、`malloc`、`stdio`、`string`、`errno`;静态 `hello`、`printf`、`malloc`、`getenv`。
 - [x] **T2.3**——sysroot 与编译器包装器:`libc.a`、头文件、链接脚本;`riscv64-emoos-gcc`。
-- [ ] **T2.4**——一致性探针:一小套 C 测试钉住本里程碑的调用,在金属和宿主解释器上(都适用时)逐字节相同。
+- [x] **T2.4**——一致性探针:一小套 C 测试钉住本里程碑的调用,在金属和宿主解释器上(都适用时)逐字节相同。
 
 ### T2.1 的记录(2026-11-24)
 
@@ -223,6 +223,14 @@ musl 的主体在 `projects/emo-os/c/musl-port/`。移植的 crt(`crt0.s`)接内
 `c/musl-port/build.sh` 现在留下一个 sysroot:`sysroot/include`(musl 的头文件、arch 与 generic 的 `bits`、生成的 `alltypes.h` 与 `syscall.h`)、`sysroot/lib/libc.a`(T2.2 主体的对象、门的 shim、TLS 与 stdio 片段,以及 T2.1 的包装)、`crt0.o`,以及 `sysroot/lib/emo.ld`(用户镜像的链接脚本,即 C 门的 `chello.ld`)。`sysroot/bin/riscv64-emoos-gcc` 是模板 `c/musl-port/riscv64-emoos-gcc.in`:`riscv64-elf-gcc` 加上 `-nostdinc -isystem <sysroot>/include`、`-nostdlib`、链接脚本、crt、`-lc` 与 `-lgcc`;`-c`/`-E`/`-S` 跳过链接件。`-Wl,--gc-sections` 丢掉库里未用的段(否则 `__towrite` 的退出钩子会要 `__stdio_exit`)。
 
 静态 hello 通过包装器构建(`riscv64-emoos-gcc hello.c -o muslhello.elf`),在金属上仍打出两行;证明镜像 34,048 字节。sysroot 与其档案是生成物并已忽略;模板、构建脚本与 tracker 是提交的源。包装器的 `-D_GNU_SOURCE` 是默认用户面;T2.2 的切法(静态单进程 TLS、quad 桩、`munmap`/`madvise` 空操作)不变。一致性探针是 T2.4。
+
+### T2.4 的记录(2026-11-24)
+
+探针是 `c/musl-port/conformance.c`:同一份源由宿主的 `cc` 与 sysroot 的 `riscv64-emoos-gcc` 各编一次。它钉住本里程碑的可移植面——`printf` 的整数、字符串、宽度、精度、标志与 `long long` 形状;`string` 调用;`malloc`/`realloc`/`free` 的对齐与拷贝;`getenv`/`setenv`/`unsetenv`;以及被拒绝的 `setenv` 的 `errno`。浮点格式留在外面:T2.2 的 quad 辅助还是桩。
+
+`c/musl-port/conformance.sh` 跑宿主腿,用 `EMO_MUSL=1 EMO_PROG=conformance.c start.sh --fresh` 与 `exec chello.elf` 启动金属腿,去掉 shell 提示与引导噪声,把两段标记之间的输出逐字节 diff。宿主腿是宿主的 C 库,C 套件的参照——Emo 解释器不是 C 运行时,所以「宿主解释器」的对照落在这里是宿主 libc;内核自己的 `parity_metal` 才是 Emo 解释器的孪生。输出逐字节相同(36 行)。脚本在金属跑完后重建 T1 的 `chello.elf`。
+
+缺口:探针不带文件/fd 调用(T1 C 门的面,不是 T2.2 主体)、不带 `%f`/`%Lf`(quad 切法)、不带 `pthread`/动态 TLS(单线程主体)。
 
 ### M3——emosh 作为默认 shell
 

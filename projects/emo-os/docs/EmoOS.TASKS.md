@@ -758,7 +758,7 @@ not share).
   static `hello`, `printf`, `malloc`, `getenv`.
 - [x] **T2.3** — The sysroot and the compiler wrapper: `libc.a`, the
   headers, the link script; `riscv64-emoos-gcc`.
-- [ ] **T2.4** — The conformance probe: a small C suite pinning the
+- [x] **T2.4** — The conformance probe: a small C suite pinning the
   calls the milestone carries, byte-identical on the metal and the
   host interpreter where both apply.
 
@@ -843,6 +843,30 @@ are generated and ignored; the template, the build script and the
 tracker are the committed source. The wrapper's `-D_GNU_SOURCE` is the
 default user surface; the T2.2 cuts (static single-process TLS, quad
 stubs, `munmap`/`madvise` no-ops) stand. The conformance probe is T2.4.
+
+### T2.4's record (2026-11-24)
+
+The probe is `c/musl-port/conformance.c`: the same source compiled by
+the host's `cc` and by the sysroot's `riscv64-emoos-gcc`. It pins the
+milestone's portable surface — `printf`'s integer, string, width,
+precision, flag and `long long` shapes; the `string` calls; `malloc`/
+`realloc`/`free`'s alignment and copy; `getenv`/`setenv`/`unsetenv`;
+and `errno` from a rejected `setenv`. The float formats stay out:
+T2.2's quad helpers are stubs.
+
+`c/musl-port/conformance.sh` runs the host leg, boots the metal leg
+through `EMO_MUSL=1 EMO_PROG=conformance.c start.sh --fresh` and
+`exec chello.elf`, strips the shell prompt and the boot's noise, and
+diffs the marker-delimited outputs. The host leg is the host C
+library, the C suite's reference — the Emo interpreter is not a C
+runtime, so the "host interpreter" comparison is the host libc's; the
+kernel's `parity_metal` is the Emo-interpreter twin. The outputs are
+byte-identical (36 lines). The script rebuilds the T1 `chello.elf`
+after the metal run.
+
+Gaps: the probe carries no file/fd calls (the T1 C door's surface,
+not the T2.2 body's), no `%f`/`%Lf` (the quad cut), and no
+`pthread`/dynamic TLS (the single-threaded body).
 
 ### M3 — emosh as the default shell
 

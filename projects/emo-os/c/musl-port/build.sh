@@ -131,6 +131,7 @@ cp ../chello.ld "$sysroot/lib/emo.ld"
 cp riscv64-emoos-gcc.in "$sysroot/bin/riscv64-emoos-gcc"
 chmod +x "$sysroot/bin/riscv64-emoos-gcc"
 
-"$sysroot/bin/riscv64-emoos-gcc" hello.c -o ../../muslhello.elf
+prog=${EMO_PROG:-hello.c}
+"$sysroot/bin/riscv64-emoos-gcc" "$prog" -o ../../muslhello.elf
 
-echo "built ../../muslhello.elf through $sysroot/bin/riscv64-emoos-gcc"
+echo "built ../../muslhello.elf from $prog through $sysroot/bin/riscv64-emoos-gcc"
