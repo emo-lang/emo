@@ -108,7 +108,8 @@ hand=no
 # shell's image and the root execs it; `EMO_SHELL=0` keeps the Emo
 # desktop's shell for the legacy ride.
 : "${EMO_SHELL:=1}"
-export EMO_SHELL
+: "${EMO_DASH:=0}"
+export EMO_SHELL EMO_DASH
 for arg in "$@"; do
   case $arg in
     --fresh) fresh=yes ;;
@@ -147,10 +148,16 @@ fi
 # the zero-length placeholder and the C shell are different builds of
 # user.S's tail.
 mode_stale=no
-if [ "$EMO_SHELL" = 1 ]; then
-  if [ ! -s emosh.elf ]; then mode_stale=yes; fi
-else
+if [ "$EMO_DASH" = 1 ]; then
+  if [ ! -s dash.elf ]; then mode_stale=yes; fi
   if [ -s emosh.elf ]; then mode_stale=yes; fi
+else
+  if [ -s dash.elf ]; then mode_stale=yes; fi
+  if [ "$EMO_SHELL" = 1 ]; then
+    if [ ! -s emosh.elf ]; then mode_stale=yes; fi
+  else
+    if [ -s emosh.elf ]; then mode_stale=yes; fi
+  fi
 fi
 
 # shellcheck disable=SC2086
@@ -162,7 +169,8 @@ if [ "$mode_stale" = yes ] ||
    stale spin.elf $spin_src ||
    stale chello.elf c/hello.c c/emo_syscall.h c/emo_posix.c c/emo_posix.h c/crt0.s c/fork.s c/chello.ld c/build.sh ||
    stale emosh.elf ../emo-shell/*.emo ../emo-shell/package.emo ../emo-shell/package.lock ||
-   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf emosh.elf wallpaper.rle; then
+   stale dash.elf ../c/dash-port/build.sh dash-test.sh ||
+   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf emosh.elf dash.elf dash-test.sh wallpaper.rle; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
   else
@@ -332,22 +340,31 @@ ride() {
   ride_wait 'desk range 32767 32767' || return 1
   sleep 3 && ride_type 'q'
   ride_wait 'desk 0' || return 1
-  if [ "$EMO_SHELL" = 1 ]; then
-    ride_wait 'emosh>'
+  if [ "$EMO_DASH" = 1 ]; then
+    ride_wait 'dash ok'
   else
-    ride_wait 'emo-os>'
+    if [ "$EMO_SHELL" = 1 ]; then
+      ride_wait 'emosh>'
+    else
+      ride_wait 'emo-os>'
+    fi
   fi
 }
 
 if ride; then
-  if [ "$EMO_SHELL" = 1 ]; then
-    echo 'EmoOS: emosh is up — this terminal is its console now.' >&2
-    echo '  type commands; exit ends the machine (the boot poweroff),' >&2
-    echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+  if [ "$EMO_DASH" = 1 ]; then
+    echo 'EmoOS: dash is up — the acceptance script is running;' >&2
+    echo '  the machine powers off when it ends, Ctrl-A X kills QEMU.' >&2
   else
-    echo 'EmoOS: the shell is up — this terminal is the REPL'"'"'s console now.' >&2
-    echo '  type `desktop` for the desktop; poweroff ends the machine,' >&2
-    echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+    if [ "$EMO_SHELL" = 1 ]; then
+      echo 'EmoOS: emosh is up — this terminal is its console now.' >&2
+      echo '  type commands; exit ends the machine (the boot poweroff),' >&2
+      echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+    else
+      echo 'EmoOS: the shell is up — this terminal is the REPL'"'"'s console now.' >&2
+      echo '  type `desktop` for the desktop; poweroff ends the machine,' >&2
+      echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+    fi
   fi
 else
   echo 'EmoOS: the auto-ride stalled — drive the remaining windows by hand;' >&2

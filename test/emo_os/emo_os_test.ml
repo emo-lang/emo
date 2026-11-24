@@ -218,6 +218,7 @@ let smoke_tests =
             "run.sh";
             "user.emo";
             "user.S";
+            "dash-test.sh";
             "gate.emo";
             "notify.emo";
             "frames.emo";
@@ -663,6 +664,7 @@ let gc_metal_tests =
             "trap.S";
             "sv39.S";
             "user.S";
+            "dash-test.sh";
             "link.ld";
           ];
         (* The wallpaper's bytes (emo-desktop M31, A31.1): user.S embeds

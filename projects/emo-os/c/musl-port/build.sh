@@ -146,6 +146,42 @@ for src in \
   compile "$src"
 done
 
+# The ported programs' body (T4.1): the ctype predicates dash's
+# parser and word tests call, the integer and floating scanners its
+# arithmetic needs, fnmatch's matcher, and the pure signal-set
+# helpers. The signal disposition itself stays the bridge's sigaction.
+for src in \
+  "$musl"/src/ctype/isalnum.c \
+  "$musl"/src/ctype/isalpha.c \
+  "$musl"/src/ctype/isascii.c \
+  "$musl"/src/ctype/isblank.c \
+  "$musl"/src/ctype/iscntrl.c \
+  "$musl"/src/ctype/isdigit.c \
+  "$musl"/src/ctype/isgraph.c \
+  "$musl"/src/ctype/islower.c \
+  "$musl"/src/ctype/isprint.c \
+  "$musl"/src/ctype/ispunct.c \
+  "$musl"/src/ctype/isspace.c \
+  "$musl"/src/ctype/isupper.c \
+  "$musl"/src/ctype/isxdigit.c \
+  "$musl"/src/ctype/tolower.c \
+  "$musl"/src/ctype/toupper.c \
+  "$musl"/src/stdlib/strtol.c \
+  "$musl"/src/stdlib/atoi.c \
+  "$musl"/src/stdlib/bsearch.c \
+  "$musl"/src/setjmp/riscv64/setjmp.S \
+  "$musl"/src/setjmp/riscv64/longjmp.S \
+  "$musl"/src/stdio/__uflow.c \
+  "$musl"/src/stdio/__toread.c \
+  "$musl"/src/regex/fnmatch.c \
+  "$musl"/src/signal/sigemptyset.c \
+  "$musl"/src/signal/sigfillset.c \
+  "$musl"/src/signal/sigaddset.c \
+  "$musl"/src/signal/sigdelset.c \
+  "$musl"/src/signal/sigismember.c; do
+  compile "$src"
+done
+
 libc_new="$build/libc-$$.a"
 "$emos_ar" rcs "$libc_new" "${lib_objects[@]}"
 cp "$libc_new" "$build/libc.a"

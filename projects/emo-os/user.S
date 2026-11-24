@@ -74,3 +74,19 @@ emo_os_user_blob_m:
     .globl emo_os_user_blob_m_end
 emo_os_user_blob_m_end:
 
+    # dash (T4.1): the first real POSIX program, installed like the
+    # apps and exec'd by the root's shell stage when present.
+    .globl emo_os_user_blob_d
+emo_os_user_blob_d:
+    .incbin "dash.elf"
+    .globl emo_os_user_blob_d_end
+emo_os_user_blob_d_end:
+
+    # dash's acceptance script: the shell's own features over the T1
+    # gate's fd surface.
+    .globl emo_os_user_blob_t
+emo_os_user_blob_t:
+    .incbin "dash-test.sh"
+    .globl emo_os_user_blob_t_end
+emo_os_user_blob_t_end:
+

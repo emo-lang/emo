@@ -25,25 +25,32 @@ if ! command -v "$emos_cc" >/dev/null 2>&1; then
   exit 1
 fi
 
-# The emosh boot shell (T3.2): the Emo shell's C build through the
-# sysroot, installed by the boot's first-run image.
-if [ "${EMO_SHELL:-0}" = 1 ]; then
-  here=$PWD
-  root=$(cd "$here/../../.." && pwd)
-  sysroot="$here/musl-port/sysroot/bin/riscv64-emoos-gcc"
-  emo="$root/_build/default/src/emo_cli/emo.exe"
-  if [ ! -x "$emo" ]; then
-    echo "c/build.sh: the Emo compiler is missing: $emo" >&2
-    exit 1
-  fi
-  (cd "$root/projects/emo-shell" && \
-    EMO_CC="$sysroot" EMO_CROSS_CC="$emos_cc" \
-    "$emo" build main.emo --target c -o "$here/../emosh.elf")
-else
-  # The kernel's user.S embeds emosh.elf whatever the boot; a build
-  # without the shell writes the empty placeholder and the kernel skips
-  # its install, so the golden keeps the Emo desktop.
+# The boot's foreground (T3.2/T4.1): the emosh C shell or dash, the
+# first real POSIX program. The mode names the image the build carries;
+# user.S embeds both slots, and an empty one is skipped at install.
+if [ "${EMO_DASH:-0}" = 1 ]; then
   : > "$PWD/../emosh.elf"
+  EMO_CROSS_CC="$emos_cc" bash "$PWD/dash-port/build.sh"
+else
+  : > "$PWD/../dash.elf"
+  if [ "${EMO_SHELL:-0}" = 1 ]; then
+    here=$PWD
+    root=$(cd "$here/../../.." && pwd)
+    sysroot="$here/musl-port/sysroot/bin/riscv64-emoos-gcc"
+    emo="$root/_build/default/src/emo_cli/emo.exe"
+    if [ ! -x "$emo" ]; then
+      echo "c/build.sh: the Emo compiler is missing: $emo" >&2
+      exit 1
+    fi
+    (cd "$root/projects/emo-shell" && \
+      EMO_CC="$sysroot" EMO_CROSS_CC="$emos_cc" \
+      "$emo" build main.emo --target c -o "$here/../emosh.elf")
+  else
+    # The kernel's user.S embeds emosh.elf whatever the boot; a build
+    # without the shell writes the empty placeholder and the kernel skips
+    # its install, so the golden keeps the Emo desktop.
+    : > "$PWD/../emosh.elf"
+  fi
 fi
 
 # The C door's test image is built whatever the boot: the first-run

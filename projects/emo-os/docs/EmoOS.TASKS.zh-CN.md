@@ -269,11 +269,19 @@ gate 的 spawn 门(verb 48)现在把 envp 对暂存在 verb 54 替换所用的�
 
 ### M4——生态
 
-- [ ] **T4.1**——busybox 或 dash:第一个真正的 POSIX 程序,shell 自己的验收。
+- [x] **T4.1**——busybox 或 dash:第一个真正的 POSIX 程序,shell 自己的验收。
 - [ ] **T4.2**——核心工具:第一套语料(文件、文本、进程),每个用金测钉住。
 - [ ] **T4.3**——构建系统:`make`,然后 autotools/CMake 与 `pkg-config`,让一个 Linux tarball 自己的构建能跑。
 - [ ] **T4.4**——软件语料与 CI:什么能构建、什么能跑、各自需要什么;清单就是这个 tracker 诚实的答案。
 - [ ] **T4.5**——自举编译:EmoOS 自己上的 GCC/Clang 与工具。放最后,因为它需要上面一切。
+
+### T4.1 的记录(2026-11-24)
+
+dash 0.5.12 是机器上第一个真正的 POSIX 程序。pristine 源 vendor 在 `third_party/dash`;`projects/emo-os/c/dash-port` 的 overlay 用 sysroot 的 `riscv64-emoos-gcc` 配置它(生成器用宿主 cc),把链接出的 `src/dash` 复制到启动树的 `dash.elf`。`EMO_DASH=1` 构建这个镜像并让 emosh 为空;`user.S` 两者都嵌入,首次启动安装,根的 shell 阶段把 `dash-test.sh` 作为 argv[1] exec dash——shell 自己的验收,跑在 T1 门的 fd 面上。默认的 EMO_SHELL/桌面 golden 保留各自的镜像。
+
+port 扩了 sysroot 的 POSIX 面:ctype、strto*/bsearch、setjmp 对、fnmatch、stat 翻译、sigaction 与 sigset 助手、getpwnam/getrlimit/sysconf/umask、进程/tty/父进程的答案(getuid/getgid/geteuid/getegid/getgroups/getppid/getpgrp/killpg/tcgetpgrp/tcsetpgrp/vfork/wait3/sigsuspend)、十进制 strtod(T2.2 的 quad 切法)、fcntl 的 F_DUPFD,以及重定向需要的 fd 机制:dup2 的 console 槽位、库对 dup2 到 0/1/2 的 fd 的 reopen-under-a-copied-fd、gate 的 fd 动词放开到 0..15,让文件能坐在那里。
+
+金属启动:`dash ok`、`x=one123`、`if ok`、`printf ok`、`file ok`、`read file`、`dash done`;机器的退出路由断电。缺口:交互式作业控制(tty 前台组是保守桩,sigsuspend 返回 EINTR),以及 T3.4 的 shell fork 外部命令缺口仍适用于 shell 子进程;脚本用的是 shell 内建与重定向。第一批外部工具是 T4.2。
 
 ## 边界
 

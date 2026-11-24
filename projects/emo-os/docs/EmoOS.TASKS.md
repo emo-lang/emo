@@ -979,7 +979,7 @@ the desktop's exec are green; the door the two share is the one above.
 
 ### M4 — the ecosystem
 
-- [ ] **T4.1** — busybox or dash: the first real POSIX program, the
+- [x] **T4.1** — busybox or dash: the first real POSIX program, the
   shell's own acceptance.
 - [ ] **T4.2** — The core utilities: a first corpus (file, text,
   process), each pinned by a golden.
@@ -989,6 +989,37 @@ the desktop's exec are green; the door the two share is the one above.
   runs, what each needs; the list is the tracker's honest answer.
 - [ ] **T4.5** — Self-hosted compilation: GCC/Clang and the tools on
   EmoOS itself. Last, because it needs everything above.
+
+### T4.1's record (2026-11-24)
+
+dash 0.5.12 is the first real POSIX program on the machine. The
+pristine source is vendored at `third_party/dash`; the overlay at
+`projects/emo-os/c/dash-port` configures it with the sysroot's
+`riscv64-emoos-gcc` (the host's cc for the generators) and copies the
+linked `src/dash` to the boot tree's `dash.elf`. `EMO_DASH=1` builds
+that image and leaves emosh's empty; `user.S` embeds both, the first
+boot installs them, and the root's shell stage execs dash with
+`dash-test.sh` as argv[1] — the shell's own acceptance over the T1
+gate's fd surface. The default EMO_SHELL/desktop goldens keep their
+images.
+
+The port grew the sysroot's POSIX surface: ctype, strto*/bsearch, the
+setjmp pair, fnmatch, the stat translation, sigaction and the sigset
+helpers, getpwnam/getrlimit/sysconf/umask, the process/tty/parent
+answers (getuid/getgid/geteuid/getegid/getgroups/getppid/getpgrp/
+killpg/tcgetpgrp/tcsetpgrp/vfork/wait3/sigsuspend), the decimal strtod
+(the T2.2 quad cut), fcntl's F_DUPFD, and the fd machinery the
+redirects need: dup2's console slot, the library's reopen-under-a-
+copied-fd for the fds a dup2 moves to 0/1/2, and the gate's fd verbs
+opened to 0..15 so a file can sit there.
+
+The metal boot: `dash ok`, `x=one123`, `if ok`, `printf ok`,
+`file ok`, `read file`, `dash done`; the machine's exit route powers
+off. Gap: interactive job control (the tty's foreground group is a
+conservative stub, sigsuspend returns EINTR), and the T3.4 shell-fork
+external-command gap still stands for a child exec'd from the shell;
+the script uses the shell's builtins and the redirections. The first
+external utilities are T4.2.
 
 ## The bounds
 

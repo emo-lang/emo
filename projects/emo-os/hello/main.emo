@@ -4914,6 +4914,22 @@ def lock_byte(f ui_fb.raster.Strike, b Int64) Void {
 // — the EMO_SHELL build installs it), the root hands it the foreground
 // with the same exec door; the Emo shell remains the golden's fallback
 // when the image is absent.
+//
+// Since T4.1 the first real POSIX program rides the same stage: when
+// `dash.elf` is on the volume (the EMO_DASH build installs it), the
+// root execs it with the acceptance script as argv[1] — the shell's
+// own features over the T1 gate's fd surface.
+if dash_present() {
+  const dn = put_dash_name(buf + 18000)
+  const an = put_script_name(buf + 18064)
+  case syscall.execve(buf + 18000, dn, buf + 18064, an, 0, 0) {
+    (R.error, why) then {
+      println("dash: ${why}")
+      shell.desk_err(why)
+    }
+    (R.ok, _) then {}
+  }
+}
 if emosh_present() {
   const en = put_emosh_name(buf + 18000)
   case syscall.execve(buf + 18000, en, 0, 0, 0, 0) {
@@ -4941,6 +4957,34 @@ def put_emosh_name(a Int64) Int64 {
   return 9
 }
 
+def put_dash_name(a Int64) Int64 {
+  poke8(a, 100B)     // d
+  poke8(a + 1, 97B)  // a
+  poke8(a + 2, 115B) // s
+  poke8(a + 3, 104B) // h
+  poke8(a + 4, 46B)  // .
+  poke8(a + 5, 101B) // e
+  poke8(a + 6, 108B) // l
+  poke8(a + 7, 102B) // f
+  return 8
+}
+
+def put_script_name(a Int64) Int64 {
+  poke8(a, 100B)      // d
+  poke8(a + 1, 97B)   // a
+  poke8(a + 2, 115B)  // s
+  poke8(a + 3, 104B)  // h
+  poke8(a + 4, 45B)   // -
+  poke8(a + 5, 116B)  // t
+  poke8(a + 6, 101B)  // e
+  poke8(a + 7, 115B)  // s
+  poke8(a + 8, 116B)  // t
+  poke8(a + 9, 46B)   // .
+  poke8(a + 10, 115B) // s
+  poke8(a + 11, 104B) // h
+  return 12
+}
+
 // The child's base environment (T3.4): the launcher and the desktop's
 // exec both hand it to the spawn door, and the shell's own children
 // carry the same one through the execve staging.
@@ -4953,6 +4997,21 @@ def put_base_env(a Int64) Int64 {
   return 5
 }
 
+
+// Whether the volume carries the first real POSIX program (T4.1): the
+// same zero-capacity probe the C shell's test uses.
+def dash_present() Bool {
+  const dn = put_dash_name(buf + 18000)
+  case syscall.file_read(buf + 18000, dn, buf + 18032, 0) {
+    (R.ok, size) then {
+      if size > 0 {
+        return true
+      }
+    }
+    (R.error, _) then {}
+  }
+  return false
+}
 
 // Whether the volume carries the C shell: the file's size through the
 // read verb's zero-capacity probe, the desktop's own file test shape.

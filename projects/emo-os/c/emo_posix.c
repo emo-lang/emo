@@ -150,11 +150,22 @@ static void fd_drop(int fd) {
 
 // The lowest free descriptor the library can hand out: 3 and up, never
 // one a pipe end holds (the table's own number is the authority).
+int emo_t1_fd_free_above(int k) {
+  while (k < EMO_MAX_FD) {
+    if (!used[k]) {
+      return k;
+    }
+    k = k + 1;
+  }
+  return -1;
+}
+
 static int free_fd(void) {
   int fd = 3;
   while (fd < EMO_MAX_FD) {
     int k = fd_kind[fd];
-    if (!used[fd] && k != EMO_KIND_PREAD && k != EMO_KIND_PWRITE) {
+    if (!used[fd] && k != EMO_KIND_PREAD && k != EMO_KIND_PWRITE &&
+        k != EMO_KIND_CIN && k != EMO_KIND_COUT) {
       return fd;
     }
     fd = fd + 1;
@@ -391,7 +402,7 @@ static int open_name(const char *full, int flags) {
 // service's own end; O_CREAT and O_TRUNC are dropped — the file is
 // already this descriptor's, not a fresh creation.
 static int fd_adopt(int fd) {
-  if (fd < 3 || fd >= EMO_MAX_FD || !used[fd] || fd_nlen[fd] == 0) {
+  if (fd < 0 || fd >= EMO_MAX_FD || !used[fd] || fd_nlen[fd] == 0) {
     errno = EMO_EBADF;
     return -1;
   }
@@ -590,7 +601,7 @@ long read(int fd, void *buf, unsigned long n) {
     cap = sizeof(read_bounce);
   }
   long answer = emo_fd_read(fd, read_bounce, cap);
-  if (answer == -4) {
+  if (answer < 0 && answer != -2 && answer != -3 && fd_nlen[fd] != 0) {
     if (fd_adopt(fd) != 0) {
       return -1;
     }
@@ -664,20 +675,22 @@ long write(int fd, const void *buf, unsigned long n) {
       chunk = sizeof(bounce);
     }
     const char *src = (const char *)buf + done;
-    long answer = emo_fd_write(fd, src, chunk);
-    if (answer == -4) {
-      if (fd_adopt(fd) != 0) {
-        return done == 0 ? -1 : (long)done;
-      }
-      answer = emo_fd_write(fd, src, chunk);
-    }
+    const char *p = src;
+    long answer = emo_fd_write(fd, p, chunk);
     if (answer == -2 || answer == -3) {
       unsigned long i = 0;
       while (i < chunk) {
         bounce[i] = src[i];
         i = i + 1;
       }
-      answer = emo_fd_write(fd, bounce, chunk);
+      p = bounce;
+      answer = emo_fd_write(fd, p, chunk);
+    }
+    if (answer < 0 && answer != -2 && answer != -3 && fd_nlen[fd] != 0) {
+      if (fd_adopt(fd) != 0) {
+        return done == 0 ? -1 : (long)done;
+      }
+      answer = emo_fd_write(fd, p, chunk);
     }
     if (answer < 0) {
       errno = fd_errno(answer);
@@ -1690,7 +1703,7 @@ int dup2(int oldfd, int newfd) {
     used[newfd] = 0;
     fd_kind[newfd] = (char)ok;
   } else if (ok == EMO_KIND_CIN || ok == EMO_KIND_COUT) {
-    used[newfd] = 0;
+    used[newfd] = 1;
     fd_kind[newfd] = (char)ok;
   } else {
     unsigned long k = 0;

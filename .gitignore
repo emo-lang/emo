@@ -8,6 +8,7 @@ examples/*/*.tmp
 *.elf
 projects/emo-os/c/musl-port/.build/
 projects/emo-os/c/musl-port/sysroot/
+projects/emo-os/c/dash-port/.build/
 
 # Benchmark baselines
 benchmarks/baselines/build/

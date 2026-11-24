@@ -630,7 +630,10 @@ def fs_fd_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     }
     return -(1000 + 6 + 16 * pk)
   }
-  if r0 < 3 || r0 > 15 {
+  // The fd verbs take 0..15: the library's console kinds own 0..2
+  // until a dup2 names a file there (T4.1's shell redirection), and
+  // the fs handle is then the caller's own.
+  if r0 < 0 || r0 > 15 {
     return -reason_argument
   }
   var k = fs_slot_pick()
