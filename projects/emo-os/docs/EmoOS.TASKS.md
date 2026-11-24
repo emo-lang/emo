@@ -875,7 +875,7 @@ not the T2.2 body's), no `%f`/`%Lf` (the quad cut), and no
 - [x] **T3.2** — emosh becomes the boot foreground — the line
   editor, history and completion — replacing `hello/shell.emo` as
   the machine's shell.
-- [ ] **T3.3** — The console's handoff: the serial bytes on fd 0,
+- [x] **T3.3** — The console's handoff: the serial bytes on fd 0,
   writes on fd 1/2, `poweroff` as the exit route the boot still
   owns.
 - [ ] **T3.4** — The desktop's `exec` hands `argv`/`envp` to the
@@ -937,6 +937,24 @@ shell source edit was needed for the boot. `ls` is not a builtin (the
 builtins are cd/pwd/echo/exit/export/unset/true/false) — the M4 corpus
 brings the utilities. Gaps: the console's ownership is T3.3; the
 desktop's argv/envp is T3.4.
+
+### T3.3's record (2026-11-24)
+
+The console is the C door's three streams: fd 0 reads the serial byte
+one at a time (`emo_console_read`, the T1 gate's read verb), fd 1 and
+fd 2 write the console (`emo_write`), and the shell's prompt, error
+lines and command output ride them — `echo hi`/`pwd` on fd 1, the
+prompt and `poweroff`'s refusal on fd 2. The shell's `poweroff`
+builtin joins the roster and stops the session with status 0; the
+root's exit verb (pid 1, verb 0) is the boot's own route —
+`route_poweroff`, the DMA/frame account, then the SBI poweroff. `exit`
+reaches the same route.
+
+The metal run typed `poweroff now` (the fd 2 refusal) and `poweroff`
+(the machine's end): the kernel's account printed and QEMU exited on
+the SBI call, no host signal. The console's handoff is the root's own
+exec: the same pid keeps its three streams across `execve`, so the
+prompt after `desk 0` is the serial the desktop's ride left.
 
 ### M4 — the ecosystem
 

@@ -1,6 +1,6 @@
 require "os"
 
-// The shell's own commands — the thirteen a forked child cannot do
+// The shell's own commands — the builtins a forked child cannot do
 // for the session: `cd` and the environment change this process,
 // `exit` ends it, the job family (`jobs`/`fg`/`bg`/`wait`/`kill`)
 // answers from the job table the session holds, and the rest answer
@@ -16,16 +16,17 @@ require "os"
 
 def is_builtin(name String) Bool {
   return name == "cd" || name == "pwd" || name == "echo" || name == "exit"
-    || name == "export" || name == "unset" || name == "true" || name == "false"
-    || name == "jobs" || name == "fg" || name == "bg" || name == "wait"
-    || name == "kill" || name == "break" || name == "continue" || name == "return"
+    || name == "poweroff" || name == "export" || name == "unset" || name == "true"
+    || name == "false" || name == "jobs" || name == "fg" || name == "bg"
+    || name == "wait" || name == "kill" || name == "break" || name == "continue"
+    || name == "return"
 }
 
 // The builtin roster, the editor's completion reading it — the same
 // names is_builtin answers to.
 def names() Array[String] {
-  return ["cd", "pwd", "echo", "exit", "export", "unset", "true", "false",
-    "jobs", "fg", "bg", "wait", "kill", "break", "continue", "return"]
+  return ["cd", "pwd", "echo", "exit", "poweroff", "export", "unset", "true",
+    "false", "jobs", "fg", "bg", "wait", "kill", "break", "continue", "return"]
 }
 
 // One builtin, its words already expanded; the answer is the exit
@@ -44,6 +45,9 @@ def run(sh shell.Shell, words Array[String]) Int64 {
   }
   if name == "exit" {
     return exit(sh, words)
+  }
+  if name == "poweroff" {
+    return poweroff(sh, words)
   }
   if name == "export" {
     return export(sh, words)
@@ -144,6 +148,20 @@ def exit(sh shell.Shell, words Array[String]) Int64 {
   sh.set_status(fold(code))
   sh.stop()
   return fold(code)
+}
+
+// poweroff: the machine's end through the boot's own exit route (T3.3)
+// — the root's exit verb, the SBI poweroff the kernel answers, not a
+// shell-local halt. The Emo shell's command takes no words; this one
+// keeps the same discipline.
+def poweroff(sh shell.Shell, words Array[String]) Int64 {
+  if words.length() > 1 {
+    sh.err("emosh: poweroff: too many arguments")
+    return 1
+  }
+  sh.set_status(0)
+  sh.stop()
+  return 0
 }
 
 // export: each argument a NAME=VALUE pair set into this process's

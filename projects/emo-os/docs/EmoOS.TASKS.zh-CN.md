@@ -236,7 +236,7 @@ musl 的主体在 `projects/emo-os/c/musl-port/`。移植的 crt(`crt0.s`)接内
 
 - [x] **T3.1**——emosh 对着 sysroot 构建。移植被迫改的每一处源码都列出来;目标是零。
 - [x] **T3.2**——emosh 成为启动前台——行编辑、历史、补全——替换 `hello/shell.emo` 作为机器的 shell。
-- [ ] **T3.3**——控制台交接:串口字节进 fd 0,写走 fd 1/2,`poweroff` 仍是引导自己拥有的 exit 路由。
+- [x] **T3.3**——控制台交接:串口字节进 fd 0,写走 fd 1/2,`poweroff` 仍是引导自己拥有的 exit 路由。
 - [ ] **T3.4**——桌面的 `exec` 把 `argv`/`envp` 交给子进程;启动器与 shell 共用一扇门。
 
 ### T3.1 的记录(2026-11-24)
@@ -254,6 +254,12 @@ shell 链接通过:302,040 字节,入口 `0x87100000`,两个 `PT_LOAD` 段都在
 金属运行逼出两处修复。verb 54 以 `bad argument` 拒绝启动根,因为它的 `img_for` 单元是零:根承载的是 boot image,不是 exec 记录,而替换的回收正是把这个单元读成 no-op,随后新镜像的 build 才写入新记录——记录的有无不是这扇门的条件,所以这条检查删掉了。C runtime 的根 fiber 从未运行,因为 EmoOS 的 ucontext 是 T3.1 的桩:`swapcontext` 答 ENOSYS,scheduler 在根未完成时死锁。现在切换失败时 scheduler 直接在 C entry 的栈上跑根 entry;shell 的作业是 OS 进程,不是 fiber。
 
 金属启动:`desk 0` 之后出现 `emosh>`;`echo hi` 答 `hi`;`pwd` 答 `/`;上箭头重放上一行;Tab 把 `ec` 补成 `echo`;`exit` 走内核的退出路由(DMA/帧账目)。shell 是 `projects/emo-shell` 编译到 C,启动不需要改 shell 源码。`ls` 不是内建(builtin 是 cd/pwd/echo/exit/export/unset/true/false)——M4 的语料带来这些工具。缺口:控制台归属是 T3.3;桌面的 argv/envp 是 T3.4。
+
+### T3.3 的记录(2026-11-24)
+
+控制台就是 C 门的三条流:fd 0 一次一字节读串口(`emo_console_read`,T1 门的 read 动词),fd 1 与 fd 2 写控制台(`emo_write`);shell 的提示符、错误行与命令输出都走它们——`echo hi`/`pwd` 走 fd 1,提示符与 `poweroff` 的拒绝走 fd 2。shell 的 `poweroff` builtin 进入名册,以状态 0 结束会话;根的 exit 动词(pid 1,verb 0)就是引导自己的路由——`route_poweroff`、DMA/帧账目,然后 SBI poweroff。`exit` 走同一条路由。
+
+金属运行键入 `poweroff now`(fd 2 的拒绝)与 `poweroff`(机器的终点):内核账目打印,QEMU 在 SBI 调用上自己退出,没有宿主信号。控制台的交接就是根自己的 exec:同一个 pid 带着三条流穿过 `execve`,所以 `desk 0` 之后的提示符仍是桌面 ride 留下的那条串口。
 
 ### M4——生态
 
