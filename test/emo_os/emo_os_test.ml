@@ -30,6 +30,16 @@ let riscv64_available =
     (Sys.command "qemu-system-riscv64 --version >/dev/null 2>&1" = 0
     && Emo_cli.riscv_binutils_prefix () <> None)
 
+(* The C door (EmoOS plan B, M0): the kernel's smoke builds the C app
+   before the kernel embeds it, so the suite needs a cross C compiler
+   beside the binutils. EMO_CC names it, the build script's own
+   variable; riscv64-elf-gcc is the default. *)
+let emos_c_compiler =
+  match Sys.getenv_opt "EMO_CC" with Some c -> c | None -> "riscv64-elf-gcc"
+
+let c_compiler_available =
+  lazy (Sys.command (emos_c_compiler ^ " --version >/dev/null 2>&1") = 0)
+
 (* The payload's serial output: everything after OpenSBI's banner, with
    the console's CRLF rendered back to LF. Without a banner (a bare-metal
    boot) the stream is the payload's already. *)
@@ -180,7 +190,8 @@ cat %s
 let smoke_tests =
   [
     tc "the kernel's run.sh smoke passes" (fun () ->
-        if not (Lazy.force riscv64_available) then Alcotest.skip ();
+        if not (Lazy.force riscv64_available && Lazy.force c_compiler_available)
+        then Alcotest.skip ();
         let scratch =
           Filename.concat (Filename.get_temp_dir_name ()) "emo-os-kernel-smoke"
         in
@@ -207,6 +218,7 @@ let smoke_tests =
             "run.sh";
             "user.emo";
             "user.S";
+            "dash-test.sh";
             "gate.emo";
             "notify.emo";
             "frames.emo";
@@ -215,11 +227,23 @@ let smoke_tests =
             "space.emo";
             "fs.emo";
             "exec.emo";
+            "pipe.emo";
+            "sig.emo";
             "hello/package.emo";
             "hello/package.lock";
             "hello/main.emo";
             "hello/shell.emo";
             "hello/console_ui.emo";
+            "c/crt0.s";
+            "c/fork.s";
+            "c/emo_syscall.h";
+            "c/emo_syscall.c";
+            "c/musl-port/arch/riscv64/syscall_arch.h";
+            "c/emo_posix.c";
+            "c/emo_posix.h";
+            "c/hello.c";
+            "c/chello.ld";
+            "c/build.sh";
           ];
         (* The apps' programs (emo-desktop A11.1, T8.21 added the
            spinner): each its own build root in the scratch tree — the
@@ -366,16 +390,34 @@ let smoke_tests =
         app_build "files";
         app_build "editor";
         app_build "spin";
+        (* The C door (EmoOS plan B, M0): the cross compiler builds
+           chello.elf in the scratch tree before the kernel embeds it —
+           the same script start.sh runs, so the two builds cannot
+           disagree on the contract. *)
+        let c_exit =
+          Sys.command
+            (Printf.sprintf "bash %s"
+               (Filename.quote (Filename.concat scratch "c/build.sh")))
+        in
+        Alcotest.(check int) "the C app build exit" 0 c_exit;
         (* The wallpaper's bytes (emo-desktop M31, A31.1): user.S embeds
            the volume's art the assembler reads beside the sources — the
            fixture mints it the way start.sh does, from the generator
            the desktop package ships. *)
+        (* The generator also writes its golden fixture module; that
+           one is the fb gate's, and it must land outside this tree —
+           the build compiles every .emo here, and the fixture needs
+           the desktop's packages. *)
         ignore
           (Sys.command
-             (Printf.sprintf "python3 %s --out %s"
+             (Printf.sprintf "python3 %s --out %s --fixture %s"
                 (Filename.quote
                    "../../projects/emo-desktop/fb/desktop/gen-wallpaper.py")
-                (Filename.quote (Filename.concat scratch "wallpaper.rle"))));
+                (Filename.quote (Filename.concat scratch "wallpaper.rle"))
+                (Filename.quote
+                   (Filename.concat
+                      (Filename.get_temp_dir_name ())
+                      "emo-os-smoke-wall_rle.emo"))));
         let exit_code =
           in_dir scratch (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:"main.elf"
@@ -553,7 +595,8 @@ let gc_metal_tests =
           (read_file (Filename.concat gc_examples_dir "gc_demo/main.emo"))
           (read_file (Filename.concat gc_examples_dir "gc_metal/main.emo")));
     tc "the demo's 24 gold lines walk the kernel's metal" (fun () ->
-        if not (Lazy.force riscv64_available) then Alcotest.skip ();
+        if not (Lazy.force riscv64_available && Lazy.force c_compiler_available)
+        then Alcotest.skip ();
         let expected =
           read_file (Filename.concat gc_examples_dir "gc_demo/expected.txt")
         in
@@ -615,10 +658,13 @@ let gc_metal_tests =
             "space.emo";
             "fs.emo";
             "exec.emo";
+            "pipe.emo";
+            "sig.emo";
             "runtime.S";
             "trap.S";
             "sv39.S";
             "user.S";
+            "dash-test.sh";
             "link.ld";
           ];
         (* The wallpaper's bytes (emo-desktop M31, A31.1): user.S embeds
@@ -627,10 +673,11 @@ let gc_metal_tests =
            the desktop package ships. *)
         ignore
           (Sys.command
-             (Printf.sprintf "python3 %s --out %s"
+             (Printf.sprintf "python3 %s --out %s --fixture %s"
                 (Filename.quote
                    "../../projects/emo-desktop/fb/desktop/gen-wallpaper.py")
-                (Filename.quote (Filename.concat kernel "wallpaper.rle"))));
+                (Filename.quote (Filename.concat kernel "wallpaper.rle"))
+                (Filename.quote (Filename.concat root "wall_rle.emo"))));
         ignore
           (Sys.command
              (Printf.sprintf "cp %s %s" (Filename.quote demo_elf)
@@ -734,6 +781,37 @@ let gc_metal_tests =
         app_build "files";
         app_build "editor";
         app_build "spin";
+        (* The C door's image (EmoOS plan B, M0): user.S embeds it in
+           this leg too; the cross compiler builds it in the scratch
+           tree, the same script the smoke leg runs. *)
+        List.iter
+          (fun name ->
+            let source = read_file (Filename.concat kernel_dir name) in
+            let path = Filename.concat kernel name in
+            let dir = Filename.dirname path in
+            if not (Sys.file_exists dir) then
+              ignore (Sys.command ("mkdir -p " ^ Filename.quote dir));
+            let oc = open_out_bin path in
+            output_string oc source;
+            close_out oc)
+          [
+            "c/crt0.s";
+            "c/fork.s";
+            "c/emo_syscall.h";
+            "c/emo_syscall.c";
+            "c/musl-port/arch/riscv64/syscall_arch.h";
+            "c/emo_posix.c";
+            "c/emo_posix.h";
+            "c/hello.c";
+            "c/chello.ld";
+            "c/build.sh";
+          ];
+        let c_exit =
+          Sys.command
+            (Printf.sprintf "bash %s"
+               (Filename.quote (Filename.concat kernel "c/build.sh")))
+        in
+        Alcotest.(check int) "the C app build exit" 0 c_exit;
         let kernel_exit =
           in_dir kernel (fun () ->
               Emo_cli.build_file ~entry:"main.emo" ~output:"main.elf"

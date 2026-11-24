@@ -4,12 +4,15 @@ How EmoOS ends its boot: the REPL process that takes the machine's
 foreground once the boot proof is done, the line it reads and the
 commands it answers, and the boundaries it states. Fixed as of T7.3
 (2026-10-31); the desktop era (emo-desktop A12.1, EmoOS T8.19,
-2026-11-06) made the shell the machine's desktop — the line's
-assembly driven by the merged stream's events, the `exec` command
-and the launcher's tiles the way a program begins. Below it are the
-services the gate routes to — the console service (T3.7/T4.4) and
-the filesystem service (T7.2, its design in [`fs.md`](fs.md)); the
-verbs it speaks are [`syscalls.md`](syscalls.md)'s.
+2026-11-06) kept the line's assembly driven by the merged stream's
+events, the `exec` command and the launcher's tiles the way a
+program begins — and made the desktop the line's own door: the boot
+ends at the shell, and the `desktop` command opens the era (the
+wallpaper, the header, the dock and the icons) whenever it is
+wanted. Below it are the services the gate routes to — the console
+service (T3.7/T4.4) and the filesystem service (T7.2, its design in
+[`fs.md`](fs.md)); the verbs it speaks are
+[`syscalls.md`](syscalls.md)'s.
 
 Chinese translation: [`shell.zh-CN.md`](shell.zh-CN.md).
 
@@ -19,12 +22,16 @@ The shell is a **user process** — the boot pass of the user image
 itself. The boot proof (the gate line, the echo, the filesystem
 roundtrip, the four killed passes, the spawn/wait round trip) is the
 top level's preamble; when the desk pass that follows it exits, the
-top level takes the desktop era for its life instead of exiting, and
-the machine stops ending by itself: the desktop is the foreground —
-the dock's tiles the launcher, the REPL's line the keyboard's other
-face — and the way off it is the `poweroff` command, the boot pass's
-exit verb, the same route that ended the machine when the proof was
-the whole program.
+top level takes the foreground for its life instead of exiting, and
+the machine stops ending by itself: the shell is the foreground —
+the line the keyboard's face — and the way off it is the `poweroff`
+command, the boot pass's exit verb, the same route that ended the
+machine when the proof was the whole program. The desktop is the
+line's command (`desktop`): it paints the era, the dock's tiles
+become the launcher and the REPL's line stays the keyboard's other
+face. Once opened the desktop never returns to a bare shell — its
+`poweroff` is the machine's end — but the boot itself no longer
+waits for it.
 
 Everything the shell does crosses the gate: every byte it prints and
 reads rides the write and read verbs through the console service, and
@@ -46,15 +53,16 @@ lifetime bound every user pass lives under.
 
 The console is raw bytes — no line discipline below the shell — so
 the line builds in the shell itself, one byte at a time. The desktop
-era (emo-desktop A12.1) moved the byte's source: the desktop loop
-reads the merged stream — serial bytes, keys, pointer reports, exit
-events, one `input_read` at a time — and feeds each serial byte to
-the line's assembly (`feed`); the echo, the erase, and the line's
-end are the shapes the blocking read rode, unchanged. While a
-launched application's window holds the focus the bytes are its, and
-the shell's line waits — a press on the dock hands the panel the
-focus and the bytes are the shell's again, the missing echo the
-tell.
+era (emo-desktop A12.1) moved the byte's source: the foreground loop
+— the shell's own before the desktop opens, the desktop's after
+(`desktop`) — reads the merged stream (serial bytes, keys, pointer
+reports, exit events, one `input_read` at a time) and feeds each
+serial byte to the line's assembly (`feed`); the echo, the erase,
+and the line's end are the shapes the blocking read rode, unchanged.
+While a launched application's window holds the focus the bytes are
+its, and the shell's line waits — a press on the dock hands the
+panel the focus and the bytes are the shell's again, the missing
+echo the tell.
 
 - **Printable ASCII (32–126)** joins the line and is echoed back —
   the terminal sees what it typed, because nothing else echoes.
@@ -92,19 +100,28 @@ The prompt is `emo-os> `, printed before each line is read.
 The line parses by one rule: leading spaces are skipped, the command
 word ends at the first space (or the line's end), and what follows
 after that one separating space is the argument — verbatim, spaces
-included. Commands are lowercase and exact. Nine:
+included. Commands are lowercase and exact. Twelve:
 
 | Command | Argument | Effect | Output |
 | --- | --- | --- | --- |
-| `help` | none | — | one line naming the nine commands |
+| `help` | none | — | one line naming the twelve commands |
 | `echo` | the text, verbatim | — | the text, then a newline; an empty argument is an empty line |
 | `ls` | none | `file_list` | the names, one per line, as the service lists them; an empty volume lists nothing |
 | `cat` | one name | `file_read` | the file's bytes, then a newline; the read's capacity is 2048, the write bound, so a whole file always fits |
 | `write` | one name, then the text | `file_write` | the file named becomes the text's bytes (an absent text is an empty file); quiet on success |
 | `rm` | one name | `file_remove` | the file is gone; quiet on success |
+| `desktop` | none | the desktop era (emo-desktop A12.1) | the wallpaper, the header, the dock and the icons come up; the launcher's tiles become the apps' door and the line stays the REPL's |
 | `counter` | none | the machine's program: `spawn` + `wait` | the console renderer pass (T7.4) runs to its quit key, the frames its whole output; silence on success, the prompt's return saying it is done |
-| `exec` | one file name | `exec`, the disk ELF's door (T8.16) | the named image starts on the desktop; a success the launcher's slots answer with `desktop <name> up`, a foreign image's with silence, a refusal with `desktop: <the reason>` |
+| `exec` | one file name, then its arguments | `exec_args`, the disk ELF's door (T8.16, T1.4a) | the named image starts on the desktop with the line's rest as its `argv[1..]` (the envp empty); a success the launcher's slots answer with `desktop <name> up`, a foreign image's with silence, a refusal with `desktop: <the reason>` |
+| `passwd` | a secret, 1 to 64 bytes | the digest written to `lock.hash` | the account file's digest; quiet on success, `passwd: a secret of 1 to 64 bytes` outside the bound |
+| `lock` | none | the session locked behind the full-screen face | `lock on`, the next line the secret's check; a missing account answers `lock: no account` |
 | `poweroff` | none | the boot pass's `exit` | the machine ends — the exit route's `dma` line and frames account, then the SBI poweroff |
+
+The desktop-era commands need the era: `desktop` opens it, and
+`exec`/`passwd`/`lock` are the desktop loop's. The shell's own
+commands — `help`, `echo`, `ls`, `cat`, `write`, `rm`, `counter`,
+`poweroff` — work at the bare prompt. A `desktop` typed once the era
+is up answers `desktop: already up`.
 
 The strictness is the platform's, carried to the surface:
 
@@ -156,7 +173,7 @@ addresses themselves keep their old values:
 | `+6144` | the line, 128 bytes (the bound is 120) |
 | `+6272` | the list's buffer, 256 bytes |
 | `+6528` | the read's buffer, 2048 bytes |
-| `+8576` … | the texts: the four refusal messages, `unknown command`, the help line, the prompt, the nine command names, `: `, a LF — poked once at REPL start from byte-array literals, the only texts the shell prints |
+| `+8576` … | the texts: the four refusal messages, `unknown command`, the help line, the prompt, the twelve command names, `: `, a LF — poked once at REPL start from byte-array literals, the only texts the shell prints |
 
 The texts ride byte-array literals because strings cannot: the
 riscv64 backend carries no String-to-bytes path, and the array literal
@@ -166,40 +183,45 @@ array is read, the destination is raw memory.
 
 ## The bounds
 
-- The command set is the nine above. Starting a program became one of
-  them at T7.5, the decision the closure demo owed: `counter` starts
-  the machine's one program — the console renderer pass — by the
-  proof chain's own spawn discipline (the token cell poked, the child
-  re-entering the top level, the exit answering the wait), because
-  the spawn verb carries no arguments and the image is the one program
-  the machine has. The command names what it runs; a program loaded
-  from the disk reopened the name at the desktop era (A12.1): `exec`
-  starts a disk ELF by name, the launcher's tiles the same door by
-  click.
+- The command set is the twelve above. Starting a program became one
+  of them at T7.5, the decision the closure demo owed: `counter`
+  starts the machine's one program — the console renderer pass — by
+  the proof chain's own spawn discipline (the token cell poked, the
+  child re-entering the top level, the exit answering the wait),
+  because the spawn verb carries no arguments and the image is the
+  one program the machine has. The command names what it runs; a
+  program loaded from the disk reopened the name at the desktop era
+  (A12.1): `exec` starts a disk ELF by name, the launcher's tiles the
+  same door by click. The desktop itself is a command too — the
+  era's door — and the shell is not the desktop's exit: opening it
+  leaves the line in the same foreground loop, the dock's panel
+  beside it.
 - One volume, a flat namespace, whole files: the filesystem service's
   own bounds (T7.2). A name with a space in it is legal to the
   service and unreachable from the shell — the space is the
   separator.
 - No flags, no paths, no environment, no job control: the console is
   the whole world and the line is the whole input.
-- The desktop is the boot pass, and its exit is the machine's end: there
-  is no shell to return to, because the shell is the last thing
-  running.
+- The shell is the boot's last thing running, and the desktop is its
+  command: once opened the desktop is the foreground for the machine's
+  life (its `poweroff` is the end), but the boot no longer waits for
+  it.
 - One reader at a time, the console service's oldest-request
   discipline (T3.7): the proof chain's readers are done before the
-  desktop starts, and while a launched application's window holds
+  shell starts, and while a launched application's window holds
   the focus its pass owns the stream's bytes — the exits reach the
   launcher another way (the exit event ring, EmoOS T8.19), a parent
   that never waits.
 
 ## The pins
 
-`run.sh`'s chain grows the desktop's exchange after the proof chain's
-last line, under both timer transports: the era's banner and prompt,
-the tile click launching the counter (`desktop counter up`, the
-session, `desktop counter exit 0` — the exit event ring's line), the
-REPL's `exec` launching the other two, the quits' exit lines, the
-`help` line naming the nine commands, the echo command's echo, the
+`run.sh`'s chain grows the shell's exchange after the proof chain's
+last line, under both timer transports: the banner and the prompt,
+the line's `desktop` word opening the era, the tile click launching
+the counter (`desktop counter up`, the session, `desktop counter
+exit 0` — the exit event ring's line), the REPL's `exec` launching
+the other two, the quits' exit lines, the `help` line naming the
+twelve commands, the echo command's echo, the
 `ls` naming `hello.txt`, the `cat boot.txt` naming the kernel's boot
 file's bytes (`EmoOS boots from disk`, written by the kernel root
 through the first instance — the disk's content read back by a user

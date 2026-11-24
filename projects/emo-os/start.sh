@@ -7,13 +7,17 @@ cd "$(dirname "$0")"
 # it the terminal — the hand-driven boot of
 # docs/how-to-start-emoos.md in one command. run.sh is the golden smoke
 # that asserts the serial chain; this one asserts nothing and drives.
-# The display leg (T8.8): the machine's screen is a cocoa window — the
-# same virtio-gpu and 1920x1080 baseline the golden asserts through the
-# monitor's screendump, here shown live — while the serial console
-# stays the terminal (`-serial mon:stdio`, the mux `-nographic` used
-# to keep). The keyboard rides along: without a DeviceID 18 on the
-# buses the input service's scan ends loudly, so the ride's boot needs
-# the device half of its input stream.
+# The boot ends at the shell, not at the desktop: the ride feeds the
+# proof chain's windows, the banner and the prompt arrive, and the
+# terminal is the REPL's console — the line's `desktop` word opens the
+# desktop whenever it is wanted. The display leg (T8.8): the machine's
+# screen is a cocoa window — the same virtio-gpu and 1920x1080
+# baseline the golden asserts through the monitor's screendump, here
+# shown live — while the serial console stays the terminal
+# (`-serial mon:stdio`, the mux `-nographic` used to keep). The
+# keyboard rides along: without a DeviceID 18 on the buses the input
+# service's scan ends loudly, so the ride's boot needs the device half
+# of its input stream.
 #
 # The images are not committed. The user image builds first — the
 # kernel's build assembles user.S, which embeds hello.elf, so the ELF
@@ -100,6 +104,17 @@ fi
 
 fresh=no
 hand=no
+# The machine's shell (T3.2): the `EMO_SHELL` build installs the C
+# shell's image and the root execs it; `EMO_SHELL=0` keeps the Emo
+# desktop's shell for the legacy ride.
+: "${EMO_SHELL:=1}"
+: "${EMO_DASH:=0}"
+: "${EMO_UTILS:=0}"
+: "${EMO_TCC:=0}"
+if [ "$EMO_TCC" = 1 ]; then
+  EMO_SHELL=0
+fi
+export EMO_SHELL EMO_DASH EMO_UTILS EMO_TCC
 for arg in "$@"; do
   case $arg in
     --fresh) fresh=yes ;;
@@ -133,13 +148,42 @@ if [ ! -f wallpaper.rle ] || [ "$wall_src" -nt wallpaper.rle ]; then
   python3 "$wall_src" --out wallpaper.rle
 fi
 
+# The shell mode is a build input (T3.4): switching EMO_SHELL with every
+# file older than the kernel would otherwise keep the previous image —
+# the zero-length placeholder and the C shell are different builds of
+# user.S's tail.
+mode_stale=no
+if [ "$EMO_TCC" = 1 ]; then
+  if [ ! -s tcc.elf ]; then mode_stale=yes; fi
+  if [ -s emosh.elf ] || [ -s dash.elf ] || [ -s uutils.elf ]; then mode_stale=yes; fi
+elif [ "$EMO_UTILS" = 1 ]; then
+  if [ ! -s uutils.elf ]; then mode_stale=yes; fi
+  if [ -s emosh.elf ] || [ -s dash.elf ] || [ -s tcc.elf ]; then mode_stale=yes; fi
+elif [ "$EMO_DASH" = 1 ]; then
+  if [ ! -s dash.elf ]; then mode_stale=yes; fi
+  if [ -s emosh.elf ] || [ -s uutils.elf ] || [ -s tcc.elf ]; then mode_stale=yes; fi
+else
+  if [ -s dash.elf ] || [ -s uutils.elf ] || [ -s tcc.elf ]; then mode_stale=yes; fi
+  if [ "$EMO_SHELL" = 1 ]; then
+    if [ ! -s emosh.elf ]; then mode_stale=yes; fi
+  else
+    if [ -s emosh.elf ]; then mode_stale=yes; fi
+  fi
+fi
+
 # shellcheck disable=SC2086
-if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src $notify_src "$hash_dir"/package.emo "$hash_dir"/*.emo "$hash_dir"/internal/*.emo ||
+if [ "$mode_stale" = yes ] ||
+   stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src $notify_src "$hash_dir"/package.emo "$hash_dir"/*.emo "$hash_dir"/internal/*.emo ||
    stale counter.elf $counter_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale files.elf $files_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale spin.elf $spin_src ||
-   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf wallpaper.rle; then
+   stale chello.elf c/hello.c c/emo_syscall.h c/emo_posix.c c/emo_posix.h c/crt0.s c/fork.s c/chello.ld c/build.sh ||
+   stale emosh.elf ../emo-shell/*.emo ../emo-shell/package.emo ../emo-shell/package.lock ||
+   stale dash.elf ../c/dash-port/build.sh dash-test.sh ||
+   stale uutils.elf ../c/utils/build.sh ||
+   stale tcc.elf ../c/tcc-port/build.sh ../c/tcc-port/crt0.s ../c/tcc-port/tcc-test.c ||
+   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf emosh.elf dash.elf dash-test.sh uutils.elf tcc.elf tcc-libtcc1.a tcc-crt0.o tcc-libc.a tcc-test.c wallpaper.rle; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
   else
@@ -169,6 +213,10 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
   (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/files.elf")
   (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/editor.elf")
   (cd ../emo-desktop/fb/apps/spin && EMO_REGISTRY="$reg" "$emo" build main.emo --target riscv64 --profile app -o "$here/spin.elf")
+  # The C door (EmoOS plan B, M0): the cross compiler builds the one
+  # program the kernel's own loader will start — the contract's first
+  # proof, built before the kernel embeds it.
+  bash c/build.sh
   "$emo" build main.emo --target riscv64 -o "$elf"
 fi
 
@@ -189,14 +237,15 @@ fi
 
 # The ride drives itself: the proof chain's windows are fed their bytes
 # automatically — the same beats `run.sh` asserts — so the machine
-# boots to the desktop hands-free and the terminal becomes the REPL's
-# console at the prompt. `--hand` keeps the old ride: the windows listed
-# in docs/how-to-start-emoos.md, typed by you.
+# boots to the shell hands-free and the terminal becomes the REPL's
+# console at the prompt; the desktop waits for the line's `desktop`
+# word, whenever it is wanted. `--hand` keeps the old ride: the windows
+# listed in docs/how-to-start-emoos.md, typed by you.
 if [ "$hand" = yes ]; then
   echo 'EmoOS: the machine'"'"'s screen is the window that opens; this terminal is the serial console.' >&2
-  echo '  the proof chain stops for keys on its way to the desktop — the windows and' >&2
+  echo '  the proof chain stops for keys on its way to the shell — the windows and' >&2
   echo '  their bytes are listed in docs/how-to-start-emoos.md (driving it by hand)' >&2
-  echo '  until the desktop composes, the screen holds the boot'"'"'s own gradient flush —' >&2
+  echo '  until the shell composes, the screen holds the boot'"'"'s own gradient flush —' >&2
   echo '  the banded colors are the machine waiting, not a fault' >&2
   echo '  the kill reports on the way are the proof chain working, not trouble' >&2
   echo '  poweroff ends the machine; Ctrl-A X kills QEMU' >&2
@@ -211,8 +260,9 @@ if [ "$hand" = yes ]; then
 fi
 
 echo 'EmoOS: the machine'"'"'s screen is the window that opens; the boot drives itself to' >&2
-echo '  the desktop — the proof chain'"'"'s windows are fed automatically. At the prompt' >&2
-echo '  this terminal is the REPL'"'"'s console: poweroff ends the machine, Ctrl-A X kills QEMU.' >&2
+echo '  the shell — the proof chain'"'"'s windows are fed automatically. At the prompt' >&2
+echo '  this terminal is the REPL'"'"'s console: type `desktop` to open the desktop,' >&2
+echo '  poweroff ends the machine, Ctrl-A X kills QEMU.' >&2
 
 # The serial rides a FIFO so the ride's feeder and, after the prompt,
 # the terminal relay both write it; the serial's bytes land in
@@ -278,7 +328,7 @@ PYEOF
 # the relay starts anyway and the hand-driven sequence takes over.
 ride() {
   ride_wait '4999999950000000' && ride_type 'abcde' || return 1
-  ride_wait 'gate 500500 r3 r2' && ride_type 'X' || return 1
+  ride_wait 'gate 500500 w0 r2' && ride_type 'X' || return 1
   ride_wait 'present ok' && ride_type 'a' || return 1
   sleep 1 && ride_type 'a'
   sleep 1 && ride_type 'b'
@@ -303,12 +353,41 @@ ride() {
   ride_wait 'desk range 32767 32767' || return 1
   sleep 3 && ride_type 'q'
   ride_wait 'desk 0' || return 1
-  ride_wait 'emo-os>'
+  if [ "$EMO_UTILS" = 1 ]; then
+    ride_wait 'utils ok'
+  else
+    if [ "$EMO_DASH" = 1 ]; then
+      ride_wait 'dash ok'
+    else
+      if [ "$EMO_SHELL" = 1 ]; then
+        ride_wait 'emosh>'
+      else
+        ride_wait 'emo-os>'
+      fi
+    fi
+  fi
 }
 
 if ride; then
-  echo 'EmoOS: the desktop is up — this terminal is the REPL'"'"'s console now.' >&2
-  echo '  poweroff ends the machine; Ctrl-D or Ctrl-A X also quit.' >&2
+  if [ "$EMO_UTILS" = 1 ]; then
+    echo 'EmoOS: the core utilities are up — the selftest is running;' >&2
+    echo '  the machine powers off when it ends, Ctrl-A X kills QEMU.' >&2
+  else
+    if [ "$EMO_DASH" = 1 ]; then
+      echo 'EmoOS: dash is up — the acceptance script is running;' >&2
+      echo '  the machine powers off when it ends, Ctrl-A X kills QEMU.' >&2
+    else
+      if [ "$EMO_SHELL" = 1 ]; then
+        echo 'EmoOS: emosh is up — this terminal is its console now.' >&2
+        echo '  type commands; exit ends the machine (the boot poweroff),' >&2
+        echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+      else
+        echo 'EmoOS: the shell is up — this terminal is the REPL'"'"'s console now.' >&2
+        echo '  type `desktop` for the desktop; poweroff ends the machine,' >&2
+        echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+      fi
+    fi
+  fi
 else
   echo 'EmoOS: the auto-ride stalled — drive the remaining windows by hand;' >&2
   echo '  docs/how-to-start-emoos.md lists them in order.' >&2

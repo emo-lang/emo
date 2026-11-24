@@ -55,3 +55,80 @@ emo_os_user_blob_w:
     .globl emo_os_user_blob_w_end
 emo_os_user_blob_w_end:
 
+    # The C door's first image (EmoOS plan B, M0): a program built by
+    # the cross C compiler, linked in the Emo user image's window and
+    # installed on the volume like every other app. It proves the
+    # toolchain contract before the libc work begins.
+    .globl emo_os_user_blob_x
+emo_os_user_blob_x:
+    .incbin "chello.elf"
+    .globl emo_os_user_blob_x_end
+emo_os_user_blob_x_end:
+
+    # The emosh boot shell (T3.2): the Emo shell's C build, installed
+    # on the volume when the image carries it. An empty placeholder
+    # leaves the length zero and the kernel skips the install.
+    .globl emo_os_user_blob_m
+emo_os_user_blob_m:
+    .incbin "emosh.elf"
+    .globl emo_os_user_blob_m_end
+emo_os_user_blob_m_end:
+
+    # dash (T4.1): the first real POSIX program, installed like the
+    # apps and exec'd by the root's shell stage when present.
+    .globl emo_os_user_blob_d
+emo_os_user_blob_d:
+    .incbin "dash.elf"
+    .globl emo_os_user_blob_d_end
+emo_os_user_blob_d_end:
+
+    # dash's acceptance script: the shell's own features over the T1
+    # gate's fd surface.
+    .globl emo_os_user_blob_t
+emo_os_user_blob_t:
+    .incbin "dash-test.sh"
+    .globl emo_os_user_blob_t_end
+emo_os_user_blob_t_end:
+
+    # The first core-utilities corpus (T4.2): one applet binary, the
+    # acceptance its own selftest.
+    .globl emo_os_user_blob_u
+emo_os_user_blob_u:
+    .incbin "uutils.elf"
+    .globl emo_os_user_blob_u_end
+emo_os_user_blob_u_end:
+
+    # TCC (T4.5): the self-hosted C compiler, its runtime helpers, the
+    # guest link inputs (the TCC-facing crt and the sysroot's libc),
+    # and the acceptance source. An empty placeholder leaves the
+    # length zero and the kernel skips the install.
+    .globl emo_os_user_blob_cc
+emo_os_user_blob_cc:
+    .incbin "tcc.elf"
+    .globl emo_os_user_blob_cc_end
+emo_os_user_blob_cc_end:
+
+    .globl emo_os_user_blob_cl
+emo_os_user_blob_cl:
+    .incbin "tcc-libtcc1.a"
+    .globl emo_os_user_blob_cl_end
+emo_os_user_blob_cl_end:
+
+    .globl emo_os_user_blob_cr
+emo_os_user_blob_cr:
+    .incbin "tcc-crt0.o"
+    .globl emo_os_user_blob_cr_end
+emo_os_user_blob_cr_end:
+
+    .globl emo_os_user_blob_ca
+emo_os_user_blob_ca:
+    .incbin "tcc-libc.a"
+    .globl emo_os_user_blob_ca_end
+emo_os_user_blob_ca_end:
+
+    .globl emo_os_user_blob_ct
+emo_os_user_blob_ct:
+    .incbin "tcc-test.c"
+    .globl emo_os_user_blob_ct_end
+emo_os_user_blob_ct_end:
+

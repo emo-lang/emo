@@ -235,7 +235,10 @@ let expression_tests =
           "renders utf-8" "世"
           (Emo_eval.to_string (Emo_eval.Char 0x4E16));
         let diagnostic =
-          eval_err "Bytes.new(1).set(0, 255).to_string().chars()"
+          diag_err (fun () ->
+              ignore
+                (run_stmts
+                   "var b = Bytes.new(1)\nb.set(0, 255)\nb.to_string().chars()"))
         in
         Alcotest.(check string) "code" "E3007" (code_of diagnostic);
         Alcotest.(check string)
@@ -1377,8 +1380,11 @@ let loop_tests =
   println("skip")
 }|}));
     tc "foreach binds the element read-only" (fun () ->
+        (* The interpreter's refusal: the rewritten binding is a `const`,
+           so the assignment dies at run time with E3003. A compiled
+           program meets the checker's E4007 first. *)
         let diagnostic = program_err {|:foreach x in [1] { x = 2 }|} in
-        Alcotest.(check string) "code" "E4007" (code_of diagnostic));
+        Alcotest.(check string) "code" "E3003" (code_of diagnostic));
     tc "a while counts through its body" (fun () ->
         Alcotest.(check string)
           "output" "n = 0\nn = 1\nn = 2\n"

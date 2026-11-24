@@ -15,6 +15,11 @@ Chinese translation: [`how-to-start-emoos.zh-CN.md`](how-to-start-emoos.zh-CN.md
   `qemu-system-misc` (or equivalent) does.
 - **OCaml + dune** — to build the compiler once. The repository pins
   the opam switch `5.5.2`.
+- **`riscv64-elf-gcc`** — the cross C compiler the C door builds
+  with (macOS: the Homebrew `riscv64-elf-gcc` formula; Linux: the
+  distribution's `riscv64-unknown-elf-gcc` or equivalent). The Emo
+  builds still need the RISC-V binutils the compiler already
+  probes for.
 
 The compiler is one self-contained binary. From the repository root:
 
@@ -54,15 +59,17 @@ $ (cd ../emo-desktop/fb/apps/files && EMO_REGISTRY=<the registry> \
 $ (cd ../emo-desktop/fb/apps/editor && EMO_REGISTRY=<the registry> \
      ../../../_build/default/src/emo_cli/emo.exe build main.emo \
      --target riscv64 --profile user -o "$OLDPWD/editor.elf")
+$ bash c/build.sh
 $ ../../_build/default/src/emo_cli/emo.exe build main.emo --target riscv64 \
      -o main.elf
 ```
 
 The user image builds first: the kernel's build assembles `user.S`,
-which embeds `hello.elf` and the three apps' ELFs (emo-desktop A11.1)
-— they all have to exist before the kernel links. After any change
-to `hello/`, to the apps' trees, to the kernel's own modules, or to
-the staged packages, rebuild all five, in that order.
+which embeds `hello.elf`, the three apps' ELFs (emo-desktop A11.1),
+and the C door's first program (`chello.elf`, EmoOS plan B, M0) —
+they all have to exist before the kernel links. After any change to
+`hello/`, to the apps' trees, to `c/`, to the kernel's own modules,
+or to the staged packages, rebuild all of them, in that order.
 
 ## The golden smoke
 
@@ -76,9 +83,10 @@ formats it, the second mounts the volume the first left, so the two
 boots are one story — the first with the SBI `set_timer` fallback
 driving the tick, the second with the `stimecmp` transport. Each boot
 runs the whole serial chain (bring-up, the proofs, the shell exchange
-starting the machine's program, the filesystem roundtrip, the exit
-route) and asserts every line's presence and order; a missing or
-misordered line fails the run. Once the compositor's moved copy has
+starting the machine's program, the filesystem roundtrip, the C
+door's first cross-built program, the exit route) and asserts every
+line's presence and order; a missing or misordered line fails the
+run. Once the compositor's moved copy has
 landed, the monitor's screendump takes the display's PPM and every
 pixel is read back against the composition history's union — the
 golden has eyes as well as ears (T8.8). Three consecutive runs
@@ -90,9 +98,10 @@ byte-identical is the bar the tracker's tasks are held to.
 they are missing or stale, creates the disk when it is missing
 (`--fresh` trades the volume for a blank one), **feeds the proof
 chain's windows automatically** — the same beats the golden asserts —
-and boots to the desktop; the terminal becomes the REPL's console at
-the prompt. `--hand` keeps the raw ride, and the raw steps follow for
-anyone driving by hand.
+and boots to the shell; the terminal becomes the REPL's console at
+the prompt, and the line's `desktop` command opens the desktop when
+it is wanted. `--hand` keeps the raw ride, and the raw steps follow
+for anyone driving by hand.
 
 The disk is a raw 4 MiB image. The filesystem formats a blank one at
 its first mount and keeps its files across boots, so create it once
@@ -118,14 +127,14 @@ serial console stays the terminal (`-serial mon:stdio` holds the mux
 OpenSBI's banner goes by, the
 kernel boots paged on the table it built (the `sv39 8 0x…` line), the
 block device and the filesystem report — and the chain stops for keys
-on its way to the desktop. **Until the desktop composes, the screen
+on its way to the shell. **Until the shell composes, the screen
 holds the boot's own gradient flush** — the banded colors are the
 machine waiting for its keys, not a fault. The windows, in order:
 
 - **five keys once the filesystem's mount line has gone by** — the
   console service's delivery test reads five bytes off the wire
   (`0:97` … `4:101` is what an `abcde` answers);
-- **one key when the `gate 500500 r3 r2` line appears** — the read
+- **one key when the `gate 500500 w0 r2` line appears** — the read
   proof blocks on the console until a byte exists (`echo 88` is the
   answer to an X);
 - **the counter's keys once its panel is on the window** — the screen
@@ -149,9 +158,8 @@ machine waiting for its keys, not a fault. The windows, in order:
 The four kill reports before the counter are the proof chain doing
 its job — misbehaving passes dying alone (one of them by its own
 allocator's exhaustion) while the machine goes on — not trouble. Then
-the desktop composes — the wallpaper, the header bar, the dock and
-the volume's icons on it (emo-desktop A13) — and the banner and the
-prompt arrive (the `O` and `S` in ANSI cyan):
+the banner and the prompt arrive (the `O` and `S` in ANSI cyan) and
+the machine is the shell:
 
     _____                      ____     ____
    | ____|  __  __    ____    / __ \   / ___|
@@ -161,6 +169,12 @@ prompt arrive (the `O` and `S` in ANSI cyan):
 
     emo-os>
 
+Type `desktop` at the prompt and the machine composes the desktop —
+the wallpaper, the header bar, the dock and the volume's icons on it
+(emo-desktop A13) — the dock's tiles becoming the apps' launcher and
+the line staying the REPL's. Until then the screen holds the boot's
+own gradient flush.
+
 Keys typed outside those three windows are not simply lost. OpenSBI
 drains the UART while it runs, and whatever it leaves sits in the FIFO
 until the kernel's driver picks it up — the bytes surface later, in
@@ -168,18 +182,21 @@ order, feeding whichever reader comes next: the proof chain's answers
 come out wrong, and the shell's first command arrives prefixed with
 them. Type only in the windows, and only what they ask for.
 
-The prompt answers nine commands, lowercase and exact:
+The prompt answers twelve commands, lowercase and exact:
 
 | Command | Effect |
 | --- | --- |
-| `help` | names the nine |
+| `help` | names the twelve |
 | `echo TEXT` | prints the text back |
 | `ls` | lists the volume's files, one per line |
 | `cat NAME` | prints a file's bytes |
 | `write NAME TEXT` | makes the file the text's bytes; quiet on success |
 | `rm NAME` | removes the file; quiet on success |
+| `desktop` | opens the desktop — the wallpaper, the header, the dock and the icons; the boot itself lands at the shell |
 | `counter` | starts the machine's program — the console renderer: the frames paint on the console, `a`/`b` add and subtract, `q` returns to the prompt |
-| `exec NAME.elf` | starts a disk ELF on the desktop — the dock's tiles are the same door by click |
+| `exec NAME.elf [ARGS…]` | starts a disk ELF on the desktop with the rest of the line as its arguments — the dock's tiles are the same door by click |
+| `passwd SECRET` | writes the secret's digest to `lock.hash`; 1 to 64 bytes |
+| `lock` | locks the session behind the full-screen face; the next line is the secret's check |
 | `poweroff` | ends the machine — the exit route's `dma` line and frames account, then QEMU exits on its own |
 
 `write`/`ls`/`cat`/`rm` are the filesystem's roundtrip — the files

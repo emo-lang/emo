@@ -554,6 +554,10 @@ emo_os_trap_trampoline:
     call emo_arena_reap      # the stack block and the arena go home
                              # unless a queued message still pins the
                              # arena (T5.2/T5.3)
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld a0, 8(t0)
+    call emo_space__grow_reap # the arena's grown blocks (T1.3v)
     la t1, emo_cur_slot
     ld t1, 0(t1)
     ld t1, 8(t1)             # the dead pid
@@ -596,6 +600,19 @@ emo_os_trap_trampoline:
                              # pid beside it
     li t2, EMO_KOFF + 0x87002a40  # the caller-space cell
     sd t3, 0(t2)
+    # the signal page's staged pair (T1.6): the frame's base and the
+    # caller's slot index — sig_return's restore and the delivery's
+    # saved frame read them from here, never from a symbol the trap
+    # may not name.
+    li t3, EMO_KOFF + 0x87018000
+    sd t0, 0(t3)
+    la t4, emo_cur_slot
+    ld t4, 0(t4)
+    la t5, emo_procs
+    sub t4, t4, t5
+    li t5, 888
+    div t4, t4, t5
+    sd t4, 8(t3)
     ld a0, 136(t0)
     ld a1, 80(t0)
     ld a2, 88(t0)
@@ -608,6 +625,10 @@ emo_os_trap_trampoline:
     beq a0, t1, .Ltrap_exit
     li t1, -104
     beq a0, t1, .Ltrap_heap
+    li t1, -105
+    beq a0, t1, .Ltrap_home   # the signal return (T1.6): the frame is
+                              # the one the handler interrupted, already
+                              # restored — no answer into a0, no sepc bump
     li t1, -1000
     bgt a0, t1, .Ltrap_answer   # answers and refusals ride home; the
     j .Ltrap_route              # routes are -1000 (a child's exit) and
@@ -642,6 +663,10 @@ emo_os_trap_trampoline:
     call emo_arena_reap         # the stack block and the arena go home
                                 # unless a queued message still pins the
                                 # arena (T5.2/T5.3)
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld a0, 8(t0)
+    call emo_space__grow_reap   # the arena's grown blocks (T1.3v)
     la t1, emo_cur_slot
     ld t1, 0(t1)
     ld t1, 8(t1)             # the dead pid
@@ -688,6 +713,22 @@ emo_os_trap_trampoline:
     addi t6, t6, -1000       # the op — for the filesystem's routes the
                              # request slot rides above it (slot << 4 | op,
                              # T7.2), and the whole value goes into the word
+    li t3, 40
+    blt t6, t3, .Lroute_skip_pipe
+    li t3, 44
+    bgt t6, t3, .Lroute_skip_pipe
+    j .Lroute_pipe           # ops 40..44, the pipes' (EmoOS plan B,
+                             # T1.5): the process service's second arm,
+                             # every one of them able to wake a peer
+                             # parked on the pipe. The bound is the
+                             # family's own: the compositor's seat ops
+                             # (16 + 32*slot) and the notification
+                             # family's (27 + 32*slot) pass 44 and are
+                             # no pipe's — an open-ended `>= 40` here
+                             # swallowed them into the process
+                             # service, which drops an op it does not
+                             # know and leaves the caller parked.
+.Lroute_skip_pipe:
     li t3, 10
     bge t6, t3, .Lroute_desktop # ops 10..: the desktop segment (T8.3
                                 # landed verb 12, T8.4 verbs 10 and 11;
@@ -757,6 +798,11 @@ emo_os_trap_trampoline:
     j .Lroute_post
 .Lroute_proc:
     li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell (+248)
+    j .Lroute_post
+.Lroute_pipe:
+    li a0, EMO_KOFF + 0x870020f8  # the process service's pid cell: the
+                                  # pipes' arm rides beside spawn, wait
+                                  # and exec (T1.5)
     j .Lroute_post
 .Lroute_fs:
     li a0, EMO_KOFF + 0x87005000  # the filesystem service's pid cell
@@ -828,6 +874,44 @@ emo_os_trap_trampoline:
     call emo_arena_reap      # the stack block and the arena go home
                              # unless a queued message still pins the
                              # arena (T5.2/T5.3)
+    j emo_sched_pick
+.Ltrap_sigdeath:
+    # The signal's default action (T1.6): the pass ends here, its
+    # status the signal's number (the POSIX low byte the shell reads).
+    # The exit goes to the process service as any exit's does — the
+    # record, the waiter, the parent's event — and the reclamation is
+    # this path's, the exit route's shape. a0 = the signal, sp = the
+    # frame's top; nothing of the frame is needed again.
+    la t0, emo_cur_slot
+    ld s0, 0(t0)             # the slot
+    ld s1, 8(s0)             # the pid
+    mv s2, a0                # the signal
+    li t0, 1
+    beq s1, t0, .Ltrap_exit  # the root's death is the machine's end
+    li t0, 256
+    bge s1, t0, .Lsig_mark
+    li t0, EMO_KOFF + 0x8700a800  # exit_for: `.emo_procargs`'s second
+                                  # half (0x8700a000 + 2048)
+    slli t1, s1, 3
+    add t0, t0, t1
+    sd s2, 0(t0)             # the status word: the signal's number
+    li t0, EMO_KOFF + 0x870020f8  # the process service's pid cell
+    ld a0, 0(t0)
+    beqz a0, .Lsig_mark      # no service: the slot still ends here
+    slli a1, zero, 32        # op 0, the exit route's own request
+    or a1, a1, s1
+    call emo_gate_post
+.Lsig_mark:
+    li t0, 256
+    bge s1, t0, 9f
+    li t0, EMO_KOFF + 0x87008258  # the comp page's dead-owner cell, the
+    slli t1, s1, 3                # exit route's write (T8.14)
+    add t0, t0, t1
+    sd s1, 0(t0)
+9:  li t0, 3
+    sd t0, 16(s0)            # done
+    mv a0, s0
+    call emo_arena_reap      # the stack, the arena and the image go home
     j emo_sched_pick
 .Ltrap_exit:
     # the machine's end: the DMA proof (T6.5) — after everything this
@@ -981,6 +1065,41 @@ emo_os_console_irq:
     la a1, msg_unexpected_end
     call emo_fail
 
+# The delivery's stack (T1.6): its own 4 KiB, because the call runs
+# with sp at the resumed frame's top and the frame's own words sit
+# below it.
+    .section .bss
+    .balign 16
+    .globl emo_os_sig_stack
+emo_os_sig_stack:
+    .zero 4096
+    .globl emo_os_sig_stack_top
+emo_os_sig_stack_top:
+
+    .section .text
+# emo_os_sig_deliver: the signal delivery's chance (T1.6) — a0 = the
+# frame's base. The pass's pending word, its mask and its dispositions
+# decide; a handler's frame is rewritten in place and 0 answers, a
+# default death answers its signal. Runs on the kernel's table with the
+# frame at the pass's anchor, before the anchor is armed.
+    .globl emo_os_sig_deliver
+emo_os_sig_deliver:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    la t0, emo_cur_slot
+    ld t0, 0(t0)             # the pass's slot
+    ld a2, 8(t0)             # its pid (enter's third word)
+    la t1, emo_procs
+    sub t2, t0, t1
+    li t3, 888
+    div a1, t2, t3           # its slot index (enter's second word)
+    ld a0, 8(sp)
+    call emo_sig__enter
+    ld ra, 0(sp)
+    addi sp, sp, 32
+    ret
+
 # emo_os_anchor_arm: sscratch takes the current pass's trap anchor (T6.3)
 # — the identity address of its fixed trap frame's base, in memory the
 # pass's own execution never uses for live data. A spawned pass anchors
@@ -1034,6 +1153,19 @@ emo_os_trap_resume:
     srli t0, t0, 8
     andi t0, t0, 1           # sstatus.SPP: 0 = the frame enters U-mode
     bnez t0, .Lkernel_home
+    # the delivery's chance (T1.6): a pending signal the mask lets
+    # through rewrites this frame into its handler before the anchor is
+    # armed, or answers the default death — the pass then never resumes.
+    # The call rides its own stack: the frame the resume restores sits
+    # right below sp, and a typed call's frames would write over it.
+    addi a0, sp, -544
+    la t0, emo_os_sig_stack_top
+    addi t0, t0, -16
+    sd sp, 0(t0)
+    mv sp, t0
+    call emo_os_sig_deliver
+    ld sp, 0(sp)
+    bnez a0, .Ltrap_sigdeath
     call emo_os_anchor_arm   # the pass's anchor into sscratch (T6.3):
                              # its next trap out of U-mode lands in the
                              # trampoline's user path, on its own frame
@@ -1463,6 +1595,48 @@ emo_os_frames_frame_free:
     .globl emo_os_frames_frame_split
 emo_os_frames_frame_split:
     .zero 8
+
+# The pipes (EmoOS plan B, T1.5): the binding map, the per-pid request# records, and the eight pipe blocks at the fixed addresses the
+# kernel's linker script gives the section. The kernel's Emo (gate.emo,
+# pipe.emo, main.emo) reads and writes every word by its fixed
+# constants; named here so the forensics can read them.
+    .section .emo_pipe, "aw", @nobits
+    .globl emo_os_pipe_map
+emo_os_pipe_map:
+    .zero 4096
+    .globl emo_os_pipe_reqs
+emo_os_pipe_reqs:
+    .zero 12288
+    .globl emo_os_pipe_blocks
+emo_os_pipe_blocks:
+    .zero 8192
+
+# The signals (EmoOS plan B, T1.6): the staged cells, the pending and
+# blocked words, the dispositions, the active marks and the saved
+# frames, at the fixed addresses the kernel's linker script gives the
+# section. The kernel's Emo (sig.emo, gate.emo, main.emo) reads and
+# writes every word by its fixed constant; named here so the forensics
+# can read them.
+    .section .emo_sig, "aw", @nobits
+    .globl emo_os_sig_page
+emo_os_sig_page:
+    .zero 4096              # the shim's staged frame base and slot
+    .globl emo_os_sig_pending
+emo_os_sig_pending:
+    .zero 8192              # one pending word per pid
+    .globl emo_os_sig_mask
+emo_os_sig_mask:
+    .zero 8192              # one blocked word per pid
+    .globl emo_os_sig_disp
+emo_os_sig_disp:
+    .zero 16384             # one disposition word per pid and slot
+    .globl emo_os_sig_active
+emo_os_sig_active:
+    .zero 4096              # the handler's pid, one per slot
+    .globl emo_os_sig_saved
+emo_os_sig_saved:
+    .zero 36864             # the interrupted frame, 576 bytes a slot
+
 
 # The filesystem's pages (T7.2): three pages at the fixed address the
 # kernel's linker script gives the section — the service's pid cell

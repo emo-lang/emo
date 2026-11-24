@@ -137,7 +137,9 @@ def main_entry() Int64 {
     }
     case read_prompted(sh, ed, "emosh> ") {
       (R.error, _) then {
-        if sh.interactive {
+        // the editor's terminal echo: an assumed tty renders like the
+        // interactive session, so the closing newline rides too
+        if sh.interactive || sh.assume_tty {
           os.write(2, "\n")
         }
         reading = false
@@ -147,7 +149,7 @@ def main_entry() Int64 {
         const outcome = got[1]
         if outcome == 1 {
           // end of input: the classic newline echo rides the terminal
-          if sh.interactive {
+          if sh.interactive || sh.assume_tty {
             os.write(2, "\n")
           }
           reading = false

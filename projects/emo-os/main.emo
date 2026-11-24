@@ -79,8 +79,9 @@ const process_svc_cell = koff + 0x870020f8
 const con_slots = koff + 0x87009000
 const con_slot_size = 2056
 const con_slot_for = koff + 0x8700b100
-const proc_arga = koff + 0x870021b0
-const proc_argb = koff + 0x870021b8
+const wait_for = koff + 0x8700a000
+const exit_for = wait_for + 2048
+const proc_bound = 256
 
 // The disk ELFs' blobs (emo-desktop A11.1): the three apps' images,
 // embedded beside the boot image (user.S), their bounds parked at the
@@ -101,6 +102,40 @@ const app_blob_s_end = koff + 0x87002208
 // same way — the machine's own picture on the machine's own volume.
 const app_blob_w = koff + 0x87002210
 const app_blob_w_end = koff + 0x87002218
+// The C door's first image (EmoOS plan B, M0): the cross-built
+// program's bounds ride the handoff page's next free pair, and the
+// first boot installs it on the volume like the apps above.
+const app_blob_x = koff + 0x87002220
+const app_blob_x_end = koff + 0x87002228
+// The emosh boot shell (T3.2): its image's bounds ride the next free
+// pair; the first boot installs it when the image is not empty.
+const app_blob_m = koff + 0x87002230
+const app_blob_m_end = koff + 0x87002238
+// dash and its acceptance script (T4.1): the first real POSIX
+// program, installed like the apps and exec'd by the root's shell
+// stage when the image carries it.
+const app_blob_d = koff + 0x87002240
+const app_blob_d_end = koff + 0x87002248
+const app_blob_t = koff + 0x87002250
+const app_blob_t_end = koff + 0x87002258
+// The core utilities (T4.2): one applet image, installed when present.
+const app_blob_u = koff + 0x87002260
+const app_blob_u_end = koff + 0x87002268
+
+// The self-hosted compiler (T4.5): the TCC image, its runtime helpers,
+// the TCC-facing crt, the guest link library (the T1 C door runtime)
+// and the acceptance source, installed beside the apps when the boot
+// carries them.
+const app_blob_cc = koff + 0x87002270
+const app_blob_cc_end = koff + 0x87002278
+const app_blob_cl = koff + 0x87002280
+const app_blob_cl_end = koff + 0x87002288
+const app_blob_cr = koff + 0x87002290
+const app_blob_cr_end = koff + 0x87002298
+const app_blob_ca = koff + 0x870022a0
+const app_blob_ca_end = koff + 0x870022a8
+const app_blob_ct = koff + 0x870022b0
+const app_blob_ct_end = koff + 0x870022b8
 
 // The process service's screen-pass state (T8.2), on the exec page's
 // tail: the granted child's pid and the carve's base, across requests —
@@ -109,6 +144,20 @@ const app_blob_w_end = koff + 0x87002218
 // cells sit past the exec's name buffer now.)
 const svc_screen_pid = koff + 0x8700c000 + 4072
 const svc_screen_base = koff + 0x8700c000 + 4080
+// The fork door's cells (T1.4b2), on the exec page's tail before the
+// screen pass's pair and past the exec's name buffer: the same busy
+// cell as the execs, the saved context and resume entry. The gate
+// stages; the service's pickup copies them into locals and holds the
+// busy cell through the spawn.
+const fork_use_cell = koff + 0x8700c000 + 4048
+const fork_sp_cell = koff + 0x8700c000 + 4056
+const fork_entry_cell = koff + 0x8700c000 + 4064
+const exec_busy_cell = koff + 0x8700c000 + 3912
+const exec_pending_cell = koff + 0x8700c000 + 3904
+const pgid_base = koff + 0x8700f000 + 3784
+const pgid_bound = 256
+const arena_for = koff + 0x8700d800
+const arena_bound = 256
 const user_program_cell = 0x87fff000
 const exit_count = koff + 0x87002118
 const exit_pids = koff + 0x87002120
@@ -419,6 +468,9 @@ const ev_exit = 0x4558
 // ring entry names its reader (.emo_proc, 0x8700d000).
 const parent_for = koff + 0x8700d000
 const parent_bound = 256
+// The execargs page's use cell (T1.4a): the growth page's tail, the
+// gate's flag the process service's exec pickup reads.
+const execargs_use_cell = koff + 0x8700f000 + 3248
 
 // The desktop segment's cells (T8.4, T8.5): the display service's pid
 // cell the gate routes the desktop verbs by; the authorization table's
@@ -845,11 +897,15 @@ def console_service(boss Pid) Void {
 // pass costs two blocks, and a spawn the allocator cannot back is
 // refused (−5) before anything is taken; the pass runs on the identity
 // alias of its block (T6.1), so the top it receives is the physical
-// one; wait answers from the exit table or parks the loop holding the
-// request; exit records itself and answers a waiting parent. One gate
-// transaction runs at a time, so the one pending-wait pair of cells is
-// the whole of the waiting bookkeeping; the request's arguments live in
-// this service's own cells (proc_arga/proc_argb), not the console's.
+// one; wait answers from the exit table or parks (any child of the
+// caller's, or the one it named); exit records itself and answers a
+// waiting parent. One gate transaction runs at a time, so the one
+// pending-wait pair of cells is the whole of the waiting bookkeeping;
+// each wait's target and each exit's code live in the caller's own
+// per-pid cell (T1.4b2), so a request staged behind another cannot
+// overwrite its argument before this service reads it. fork (T1.4b2)
+// clones the caller's image, stack, arena and grown blocks and starts
+// the child at the caller's resume entry.
 //
 // The screen carve's grant rides the spawn (T8.2): the cells-page
 // token poked by the spawner is read here, at the spawn — the carve's
@@ -870,6 +926,19 @@ def console_service(boss Pid) Void {
 // and base live on the exec page's tail: state across requests, the
 // cells the service's own.
 def process_serve(w Int64) Void {
+    var op = op_of(w)
+    if op >= 40 {
+      // the pipes' arm (EmoOS plan B, T1.5): the gate staged the
+      // request's record, and the service's own thread is what mutates
+      // the pipe tables — a request may park its caller and wake a
+      // peer, so no other context may run them.
+      pipe.pipe_serve(caller_of(w), op)
+    } else {
+    process_serve_gate(w)
+    }
+}
+
+def process_serve_gate(w Int64) Void {
     var op = op_of(w)
     if op == 3 {
           // A spawn is backed before it is served: the stack block and
@@ -932,24 +1001,247 @@ def process_serve(w Int64) Void {
           }
     } else {
       if op == 4 {
+            // The wait (T1.4b2): a positive target is the child the
+            // caller named; 0 or a negative one any child of the
+            // caller's — the parent cell names the reader. A hit is
+            // consumed (the table shifts down) and answered packed:
+            // the child's pid above its status — the POSIX word the
+            // signal change made the wait's (T1.6). A miss parks.
             var n0 = peek64(exit_count)
+            var target0 = peek64(wait_for + (caller_of(w) * 8))
             var i0 = 0
             var hit = -1
             while i0 < n0 {
-              if peek64(exit_pids + (i0 * 8)) == peek64(proc_arga) {
+              var epid = peek64(exit_pids + (i0 * 8))
+              var match = false
+              if target0 > 0 {
+                if epid == target0 {
+                  match = true
+                }
+              } else {
+                if epid < parent_bound {
+                  if peek64(parent_for + (epid * 8)) == caller_of(w) {
+                    match = true
+                  }
+                }
+              }
+              if match {
                 hit = i0
               }
               i0 = i0 + 1
             }
             if hit >= 0 {
-              gate_reply(caller_of(w), peek64(exit_codes + (hit * 8)))
+              var cpid = peek64(exit_pids + (hit * 8))
+              var cstatus = peek64(exit_codes + (hit * 8))
+              var j0 = hit
+              while j0 + 1 < n0 {
+                poke64(exit_pids + (j0 * 8),
+                  peek64(exit_pids + ((j0 + 1) * 8)))
+                poke64(exit_codes + (j0 * 8),
+                  peek64(exit_codes + ((j0 + 1) * 8)))
+                j0 = j0 + 1
+              }
+              poke64(exit_count, n0 - 1)
+              gate_reply(caller_of(w),
+                (cpid << 32) | (cstatus & 4294967295))
             } else {
               poke64(pending_waiter, caller_of(w))
-              poke64(pending_target, peek64(proc_arga))
+              poke64(pending_target, target0)
               poke64(pending_flag, 1)
             }
       } else {
         if op == 5 {
+          if peek64(fork_use_cell) != 0 {
+            // fork (T1.4b2): the caller's copied world. The pickup
+            // takes the staged context and entry into locals and holds
+            // the busy cell through the spawn — a second exec or fork
+            // stages only after the child is up. The image's run, the
+            // stack and the arena are judged before anything is taken;
+            // the grown blocks and the table frames ride the build.
+            var fme = caller_of(w)
+            var fsp = peek64(fork_sp_cell)
+            var fentry = peek64(fork_entry_cell)
+            poke64(fork_use_cell, 0)
+            var fblocks = exec.image_blocks(fme)
+            var frows = space.grown_rows(fme)
+            if fblocks <= 0 {
+              poke64(exec_busy_cell, 0)
+              gate_reply(fme, -4)
+            } else {
+              if frows > space.grow_room() {
+                poke64(exec_busy_cell, 0)
+                gate_reply(fme, -5)
+              } else {
+                if frames.spare() < fblocks + frows + frames.user_run() + 41 {
+                  poke64(exec_busy_cell, 0)
+                  gate_reply(fme, -5)
+                } else {
+                  if frames.largest() < frames.user_run() {
+                    poke64(exec_busy_cell, 0)
+                    gate_reply(fme, -5)
+                  } else {
+                    // the child's stack must not land at a physical
+                    // address the parent's virtual arena range already
+                    // claims (T1.5): the child's table maps the block
+                    // at its own identity for the trap anchor, and the
+                    // parent's grown copies map at the arena's end —
+                    // one page, two translations, the build's loud end
+                    var pcell = 0
+                    if fme < arena_bound {
+                      pcell = peek64(arena_for + (fme * 8))
+                    }
+                    var fstack = 0
+                    if pcell == 0 {
+                      fstack = frames.take()
+                    } else {
+                      fstack = frames.take_outside((pcell >> 20) << 12,
+                        (pcell & 1048575) << 12)
+                    }
+                    if fstack == 0 {
+                      poke64(exec_busy_cell, 0)
+                      gate_reply(fme, -5)
+                    } else {
+                      if frames.largest() < frames.user_run() {
+                        frames.give(fstack)
+                        poke64(exec_busy_cell, 0)
+                        gate_reply(fme, -5)
+                      } else {
+                        var frec = exec.fork_clone(fme, fsp, fstack)
+                        if frec == -4 || frec == -5 {
+                          frames.give(fstack)
+                          poke64(exec_busy_cell, 0)
+                          gate_reply(fme, frec)
+                        } else {
+                          poke64(exec_pending_cell, frec)
+                          frames.arena_for_user()
+                          var fchild = user_spawn(fentry,
+                            sv39.pa_of(fstack) + block)
+                          frames.arena_for_service()
+                          if fchild < parent_bound {
+                            poke64(parent_for + (fchild * 8), fme)
+                          }
+                          // the child's group is the parent's (T1.4b1):
+                          // the byte 0 means the pid's own, so the
+                          // parent's pid stands in for a clear byte
+                          var fg = peek8(pgid_base + fme).to_int64()
+                          if fg == 0 {
+                            fg = fme
+                          }
+                          if fchild < pgid_bound {
+                            poke8(pgid_base + fchild, fg.to_byte())
+                          }
+                          // the pipes' ends copy with the world
+                          // (T1.5): every end the parent held is one
+                          // more holder on its pipe, so the parent's
+                          // close is not yet the child's EOF
+                          pipe.pipe_clone_pid(fme, fchild)
+                          sig.clone_pid(fme, fchild)
+                          poke64(exec_busy_cell, 0)
+                          gate_reply(fme, fchild)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+          var use0 = peek64(execargs_use_cell)
+          if use0 == 2 {
+            // execve (T1.4b3b): the caller's own image is replaced.
+            // The service loads the new image on a fresh stack and
+            // arena, then the runtime reaps the caller's slot and
+            // starts the same pid at the new entry — no reply, the
+            // parked caller is gone. A refusal frees the fresh
+            // resources and answers the caller's ecall.
+            var rme = caller_of(w)
+            if frames.spare() < 1 + frames.user_run() + 48 {
+              poke64(execargs_use_cell, 0)
+              exec.clear_busy()
+              gate_reply(rme, -5)
+            } else {
+              if frames.largest() < frames.user_run() {
+                poke64(execargs_use_cell, 0)
+                exec.clear_busy()
+                gate_reply(rme, -5)
+              } else {
+                var rstack = frames.take()
+                if rstack == 0 {
+                  poke64(execargs_use_cell, 0)
+                  exec.clear_busy()
+                  gate_reply(rme, -5)
+                } else {
+                  if frames.largest() < frames.user_run() {
+                    frames.give(rstack)
+                    poke64(execargs_use_cell, 0)
+                    exec.clear_busy()
+                    gate_reply(rme, -5)
+                  } else {
+                    var rarena = frames.take_run(frames.user_run())
+                    if rarena == 0 {
+                      frames.give(rstack)
+                      poke64(execargs_use_cell, 0)
+                      exec.clear_busy()
+                      gate_reply(rme, -5)
+                    } else {
+                      var rfs = peek64(fs_pid_cell)
+                      if rfs == 0 {
+                        frames.give(rstack)
+                        var rz0 = 0
+                        while rz0 < frames.user_run() {
+                          frames.give(rarena + (rz0 * block))
+                          rz0 = rz0 + 1
+                        }
+                        poke64(execargs_use_cell, 0)
+                        exec.clear_busy()
+                        gate_reply(rme, -5)
+                      } else {
+                        var rrec = exec.transaction_replace(pid_at(rfs),
+                          exec.args_name(), exec.args_nlen(),
+                          exec.args_args(), exec.args_alen(),
+                          exec.args_env(), exec.args_elen(), rstack)
+                        if rrec == -4 || rrec == -5 || rrec == -6 {
+                          frames.give(rstack)
+                          var rz1 = 0
+                          while rz1 < frames.user_run() {
+                            frames.give(rarena + (rz1 * block))
+                            rz1 = rz1 + 1
+                          }
+                          poke64(execargs_use_cell, 0)
+                          exec.clear_busy()
+                          gate_reply(rme, rrec)
+                        } else {
+                          fs.drop_pid(rme)
+                          pipe.pipe_keep_low(rme)
+                          sig.reset_pid(rme)
+                          poke64(exec_pending_cell, rrec)
+                          var rentry = exec.entry_of(rrec)
+                          var rans = user_replace(rme, rentry,
+                            sv39.pa_of(rstack) + block,
+                            rarena, rarena + frames.user_run() * block)
+                          if rans == rme {
+                            poke64(execargs_use_cell, 0)
+                            exec.clear_busy()
+                          } else {
+                            frames.give(rstack)
+                            var rz2 = 0
+                            while rz2 < frames.user_run() {
+                              frames.give(rarena + (rz2 * block))
+                              rz2 = rz2 + 1
+                            }
+                            exec.release_record(rrec)
+                            poke64(execargs_use_cell, 0)
+                            exec.clear_busy()
+                            gate_reply(rme, -4)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
           // exec (emo-desktop A11.1): the disk ELF the staged name
           // names. The count is the early refusal — the stack and a
           // user pass's run have to be there at all — and the exact
@@ -967,10 +1259,23 @@ def process_serve(w Int64) Void {
             if fsn == 0 {
               gate_reply(caller_of(w), -5)
             } else {
-              exec.copy_name(exec.name_buf())
-              exec.clear_busy()
-              var ans = exec.transaction(pid_at(fsn), exec.name_buf(),
-                exec.name_len())
+              var ans = 0
+              var use = peek64(execargs_use_cell)
+              if use != 0 {
+                // the args door (T1.4a): the name and the args stay on
+                // the execargs page while the transaction runs — the
+                // busy cell held, a second exec refused — and the
+                // child's first stack is the exec's to build.
+                ans = exec.transaction_args(pid_at(fsn), exec.args_name(),
+                  exec.args_nlen(), exec.args_args(), exec.args_alen(),
+                  exec.args_env(), exec.args_elen())
+                exec.clear_busy()
+              } else {
+                exec.copy_name(exec.name_buf())
+                exec.clear_busy()
+                ans = exec.transaction(pid_at(fsn), exec.name_buf(),
+                  exec.name_len())
+              }
               // the parent's own cell (emo-desktop A12.1, EmoOS
               // T8.19): the exec's caller is the child's parent — the
               // spawn's own write at the disk ELF's door, one write
@@ -983,14 +1288,70 @@ def process_serve(w Int64) Void {
               gate_reply(caller_of(w), ans)
             }
           }
+          }
+          }
         } else {
-          var pid = peek64(proc_argb)
-          var code = peek64(proc_arga)
-          var n = peek64(exit_count)
-          if n < 8 {
-            poke64(exit_pids + (n * 8), pid)
-            poke64(exit_codes + (n * 8), code)
-            poke64(exit_count, n + 1)
+          var pid = caller_of(w)
+          // the exit's status (T1.6): the POSIX word — the code above
+          // the low byte for an exit, the signal's number for a signal
+          // death. The wait table and the waiters carry it whole; the
+          // parent's event names the code a reader shows, the signal
+          // when the death was one.
+          var status = 0
+          if pid < proc_bound {
+            status = peek64(exit_for + (pid * 8))
+          }
+          var code = status >> 8
+          var slow = status & 127
+          if slow != 0 {
+            code = slow
+          }
+          if pid < parent_bound {
+            var sparent = peek64(parent_for + (pid * 8))
+            if sparent > 0 {
+              sig.sig_raise(sparent, sig.sig_chld)
+            }
+          }
+          // the arena's grown blocks go home (T1.3v): the normal
+          // exit's half of the reclaim, the fault's in the shim
+          space.grow_reap(pid)
+          // the pipe ends go home (T1.5): the lasts of them are a
+          // peer's EOF or broken pipe, answered here while the
+          // service can still reply
+          pipe.pipe_drop_pid(pid)
+          sig.drop_pid(pid)
+          // The parked waiter's judgment first (T1.4b2): a hit is
+          // answered here and never enters the exit table; a dead
+          // waiter's pending is cleared and the exit is recorded like
+          // any other. A miss records for a wait still to come.
+          var pwaiter0 = 0
+          var phit0 = false
+          if peek64(pending_flag) == 1 {
+            pwaiter0 = peek64(pending_waiter)
+            if pwaiter0 == pid {
+              poke64(pending_flag, 0)
+            } else {
+              var ptarget0 = peek64(pending_target)
+              if ptarget0 > 0 {
+                if ptarget0 == pid {
+                  phit0 = true
+                }
+              } else {
+                if pid < parent_bound {
+                  if peek64(parent_for + (pid * 8)) == pwaiter0 {
+                    phit0 = true
+                  }
+                }
+              }
+            }
+          }
+          if phit0 == false {
+            var n = peek64(exit_count)
+            if n < 8 {
+              poke64(exit_pids + (n * 8), pid)
+              poke64(exit_codes + (n * 8), status)
+              poke64(exit_count, n + 1)
+            }
           }
           // The death's word to its parent (emo-desktop A12.1, EmoOS
           // T8.19): the exit table answers the waits; the ring answers
@@ -1022,11 +1383,9 @@ def process_serve(w Int64) Void {
               screen_check(peek64(svc_screen_base))
             }
           }
-          if peek64(pending_flag) == 1 {
-            if peek64(pending_target) == pid {
-              poke64(pending_flag, 0)
-              gate_reply(peek64(pending_waiter), code)
-            }
+          if phit0 {
+            poke64(pending_flag, 0)
+            gate_reply(pwaiter0, (pid << 32) | (status & 4294967295))
           }
         }
       }
@@ -5834,6 +6193,147 @@ def put_spin_name(a Int64) Int64 {
   return 8
 }
 
+// The C door's first image (EmoOS plan B, M0): `chello.elf`, ten
+// bytes — the name the volume carries and the exec verb loads.
+def put_c_name(a Int64) Int64 {
+  poke8(a, 99B)       // c
+  poke8(a + 1, 104B)  // h
+  poke8(a + 2, 101B)  // e
+  poke8(a + 3, 108B)  // l
+  poke8(a + 4, 108B)  // l
+  poke8(a + 5, 111B)  // o
+  poke8(a + 6, 46B)   // .
+  poke8(a + 7, 101B)  // e
+  poke8(a + 8, 108B)  // l
+  poke8(a + 9, 102B)  // f
+  return 10
+}
+
+def put_emosh_name(a Int64) Int64 {
+  poke8(a, 101B)      // e
+  poke8(a + 1, 109B)  // m
+  poke8(a + 2, 111B)  // o
+  poke8(a + 3, 115B)  // s
+  poke8(a + 4, 104B)  // h
+  poke8(a + 5, 46B)   // .
+  poke8(a + 6, 101B)  // e
+  poke8(a + 7, 108B)  // l
+  poke8(a + 8, 102B)  // f
+  return 9
+}
+
+def put_dash_name(a Int64) Int64 {
+  poke8(a, 100B)      // d
+  poke8(a + 1, 97B)   // a
+  poke8(a + 2, 115B)  // s
+  poke8(a + 3, 104B)  // h
+  poke8(a + 4, 46B)   // .
+  poke8(a + 5, 101B)  // e
+  poke8(a + 6, 108B)  // l
+  poke8(a + 7, 102B)  // f
+  return 8
+}
+
+def put_uutils_name(a Int64) Int64 {
+  poke8(a, 117B)      // u
+  poke8(a + 1, 117B)  // u
+  poke8(a + 2, 116B)  // t
+  poke8(a + 3, 105B)  // i
+  poke8(a + 4, 108B)  // l
+  poke8(a + 5, 115B)  // s
+  poke8(a + 6, 46B)   // .
+  poke8(a + 7, 101B)  // e
+  poke8(a + 8, 108B)  // l
+  poke8(a + 9, 102B)  // f
+  return 10
+}
+
+def put_tcc_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 46B)   // .
+  poke8(a + 4, 101B)  // e
+  poke8(a + 5, 108B)  // l
+  poke8(a + 6, 102B)  // f
+  return 7
+}
+
+def put_tcc_lib_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 45B)   // -
+  poke8(a + 4, 108B)  // l
+  poke8(a + 5, 105B)  // i
+  poke8(a + 6, 98B)   // b
+  poke8(a + 7, 116B)  // t
+  poke8(a + 8, 99B)   // c
+  poke8(a + 9, 99B)   // c
+  poke8(a + 10, 49B)  // 1
+  poke8(a + 11, 46B)  // .
+  poke8(a + 12, 97B)  // a
+  return 13
+}
+
+def put_tcc_crt_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 45B)   // -
+  poke8(a + 4, 99B)   // c
+  poke8(a + 5, 114B)  // r
+  poke8(a + 6, 116B)  // t
+  poke8(a + 7, 48B)   // 0
+  poke8(a + 8, 46B)   // .
+  poke8(a + 9, 111B)  // o
+  return 10
+}
+
+def put_tcc_libc_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 45B)   // -
+  poke8(a + 4, 108B)  // l
+  poke8(a + 5, 105B)  // i
+  poke8(a + 6, 98B)   // b
+  poke8(a + 7, 99B)   // c
+  poke8(a + 8, 46B)   // .
+  poke8(a + 9, 97B)   // a
+  return 10
+}
+
+def put_tcc_test_name(a Int64) Int64 {
+  poke8(a, 116B)      // t
+  poke8(a + 1, 99B)   // c
+  poke8(a + 2, 99B)   // c
+  poke8(a + 3, 45B)   // -
+  poke8(a + 4, 116B)  // t
+  poke8(a + 5, 101B)  // e
+  poke8(a + 6, 115B)  // s
+  poke8(a + 7, 116B)  // t
+  poke8(a + 8, 46B)   // .
+  poke8(a + 9, 99B)   // c
+  return 10
+}
+
+def put_script_name(a Int64) Int64 {
+  poke8(a, 100B)      // d
+  poke8(a + 1, 97B)   // a
+  poke8(a + 2, 115B)  // s
+  poke8(a + 3, 104B)  // h
+  poke8(a + 4, 45B)   // -
+  poke8(a + 5, 116B)  // t
+  poke8(a + 6, 101B)  // e
+  poke8(a + 7, 115B)  // s
+  poke8(a + 8, 116B)  // t
+  poke8(a + 9, 46B)   // .
+  poke8(a + 10, 115B) // s
+  poke8(a + 11, 104B) // h
+  return 12
+}
+
 def put_wall_name(a Int64) Int64 {
   poke8(a, 119B)      // w
   poke8(a + 1, 97B)   // a
@@ -5890,6 +6390,46 @@ install_img(fs_svc, install_scratch, en, peek64(app_blob_e),
 var sn = put_spin_name(install_scratch)
 install_img(fs_svc, install_scratch, sn, peek64(app_blob_s),
   peek64(app_blob_s_end), "spin.elf")
+var xn = put_c_name(install_scratch)
+install_img(fs_svc, install_scratch, xn, peek64(app_blob_x),
+  peek64(app_blob_x_end), "chello.elf")
+if peek64(app_blob_m_end) > peek64(app_blob_m) {
+  var mn = put_emosh_name(install_scratch)
+  install_img(fs_svc, install_scratch, mn, peek64(app_blob_m),
+    peek64(app_blob_m_end), "emosh.elf")
+}
+if peek64(app_blob_d_end) > peek64(app_blob_d) {
+  var dn = put_dash_name(install_scratch)
+  install_img(fs_svc, install_scratch, dn, peek64(app_blob_d),
+    peek64(app_blob_d_end), "dash.elf")
+  if peek64(app_blob_t_end) > peek64(app_blob_t) {
+    var tn = put_script_name(install_scratch)
+    install_img(fs_svc, install_scratch, tn, peek64(app_blob_t),
+      peek64(app_blob_t_end), "dash-test.sh")
+  }
+}
+if peek64(app_blob_u_end) > peek64(app_blob_u) {
+  var un = put_uutils_name(install_scratch)
+  install_img(fs_svc, install_scratch, un, peek64(app_blob_u),
+    peek64(app_blob_u_end), "uutils.elf")
+}
+if peek64(app_blob_cc_end) > peek64(app_blob_cc) {
+  var ccn = put_tcc_name(install_scratch)
+  install_img(fs_svc, install_scratch, ccn, peek64(app_blob_cc),
+    peek64(app_blob_cc_end), "tcc.elf")
+  var cln = put_tcc_lib_name(install_scratch)
+  install_img(fs_svc, install_scratch, cln, peek64(app_blob_cl),
+    peek64(app_blob_cl_end), "tcc-libtcc1.a")
+  var crn = put_tcc_crt_name(install_scratch)
+  install_img(fs_svc, install_scratch, crn, peek64(app_blob_cr),
+    peek64(app_blob_cr_end), "tcc-crt0.o")
+  var can = put_tcc_libc_name(install_scratch)
+  install_img(fs_svc, install_scratch, can, peek64(app_blob_ca),
+    peek64(app_blob_ca_end), "tcc-libc.a")
+  var ctn = put_tcc_test_name(install_scratch)
+  install_img(fs_svc, install_scratch, ctn, peek64(app_blob_ct),
+    peek64(app_blob_ct_end), "tcc-test.c")
+}
 var wn = put_wall_name(install_scratch)
 install_img(fs_svc, install_scratch, wn, peek64(app_blob_w),
   peek64(app_blob_w_end), "wallpaper.rle")

@@ -50,9 +50,14 @@
 const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
 const seg_count_addr = koff + 0x87002018
 const seg_table = koff + 0x87002020
-const proc_arga = koff + 0x870021b0
-const proc_argb = koff + 0x870021b8
 const handoff_caller = koff + 0x87002110
+// The process door's per-pid arguments (T1.4b2): the wait's target and
+// the exit's code have one cell each per pid, so a request staged
+// behind another cannot overwrite its argument before the service
+// reads it.
+const wait_for = koff + 0x8700a000
+const exit_for = wait_for + 2048
+const proc_bound = 256
 
 // The exec page (emo-desktop A11.1, link.ld's .emo_exec): the per-pid
 // image cells the checks and the build read, and the exec request's
@@ -67,6 +72,26 @@ const img_bound = 256
 const exec_busy = koff + 0x8700c000 + 3912
 const exec_name = koff + 0x8700c000 + 3920
 const exec_nlen = koff + 0x8700c000 + 3944
+// The fork door (T1.4b2): the same busy cell as the execs, and the
+// context and resume entry the process service's pickup reads. The
+// cells sit past the exec's name buffer (4024..4048) and under the
+// screen pass's pair at 4072 — the first cut's 4024..4040 lay inside
+// the name buffer, so a plain exec's name copy left the use cell
+// non-zero and the next exec was taken for a fork.
+const fork_use_cell = koff + 0x8700c000 + 4048
+const fork_sp_cell = koff + 0x8700c000 + 4056
+const fork_entry_cell = koff + 0x8700c000 + 4064
+// The exec's arguments page (T1.4a): the args door's own staging.
+const execargs_page = koff + 0x8700f000 + 3208
+const execargs_name = execargs_page
+const execargs_nlen = execargs_page + 24
+const execargs_alen = execargs_page + 32
+const execargs_use = execargs_page + 40
+const execargs_elen = execargs_page + 48
+const execargs_args = execargs_page + 64
+const execargs_cap = 512
+const execargs_env = koff + 0x8700b900
+const execargs_env_cap = 256
 
 // The write's staging page (T6.2): the gate copies the caller's buffer
 // here, inside the same trap that checked it, and the console service
@@ -270,9 +295,33 @@ const route_notify_take = -1028
 // 29 is the gate's, no service between — the board's RTC, two loads.
 const route_poweroff = -103
 const route_heap_gone = -104
+// The pipe family (EmoOS plan B, T1.5): the process service's second
+// arm — ops 40..44, the bind, read, write, dup and close, the process
+// service's because every one of them may wake a peer parked on the
+// pipe, and the reply that wakes it is a service's to give. The routes
+// are the family's `-(1000 + op)`, the op the service's record names.
+const route_pipe_bind = -1040
+const route_pipe_read = -1041
+const route_pipe_write = -1042
+const route_pipe_dup = -1043
+const route_pipe_close = -1044
+// The arena's per-pid cell (T1.3): the process and exec services park
+// the child's packed base/end there; arena_info answers the caller's.
+const arena_for = koff + 0x8700d800
+const arena_bound = 256
+// The process groups (T1.4b1): one byte a pid on the growth page's
+// tail, after the execargs — 0 means the pid's own group. The parent
+// cells beside the arena's.
+const parent_for = koff + 0x8700d000
+const parent_bound = 256
+const pgid_base = koff + 0x8700f000 + 3784
+const pgid_bound = 256
 
-// The write permission, ELF p_flags' bit 1 (X=1, W=2, R=4).
+// The execute, write and read permissions, ELF p_flags' bits 0, 1
+// and 2 (X=1, W=2, R=4).
+const flag_x = 1
 const flag_w = 2
+const flag_r = 4
 
 // One segment covers the whole range? The subtraction form cannot
 // overflow: both operands are non-negative and endp >= start.
@@ -319,6 +368,36 @@ def check_write(buf Int64, len Int64) Int64 {
     var slot = tbl + 8 + (i * 24)
     if covers(peek64(slot), peek64(slot + 8), buf, len) {
       if (peek64(slot + 16) & flag_w) != 0 {
+        return 0
+      }
+      covered = true
+    }
+    i = i + 1
+  }
+  if covered {
+    return reason_permission
+  }
+  return reason_range
+}
+
+// The source's pointer checks (T1.0): the whole range inside one
+// segment, and that segment readable. A buffer the gate *lifts* — the
+// write's bytes, a file's name, the exec's texts — needs no write
+// permission: the image's own text and rodata serve now, and the
+// library's bounce copy is the stack buffer's fallback, not every
+// write's road.
+def check_read(buf Int64, len Int64) Int64 {
+  if len < 0 {
+    return reason_argument
+  }
+  var tbl = caller_table()
+  var covered = false
+  var i = 0
+  var n = peek64(tbl)
+  while i < n {
+    var slot = tbl + 8 + (i * 24)
+    if covers(peek64(slot), peek64(slot + 8), buf, len) {
+      if (peek64(slot + 16) & flag_r) != 0 {
         return 0
       }
       covered = true
@@ -411,6 +490,7 @@ def fs_slot_fill(k Int64, name Int64, nlen Int64, len Int64, buf Int64) Int64 {
   poke64(s + 24, len)
   poke64(s + 32, buf)
   poke64(s + 40, peek64(caller_space_cell))
+  poke64(s + 88, 0)
   copy_to(s + 64, name, nlen)
   return s
 }
@@ -449,7 +529,7 @@ def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     if r1 < 1 || r1 > name_max {
       return -reason_argument
     }
-    var vn = check_write(r0, r1)
+    var vn = check_read(r0, r1)
     if vn != 0 {
       return -vn
     }
@@ -464,7 +544,14 @@ def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     if len < 0 || (n == 6 && len > stage_cap) {
       return -reason_argument
     }
-    var vb = check_write(buf, len)
+    // the write's bytes are the gate's to lift (T1.0); the read's and
+    // the list's land in the caller's buffer, and only those need W
+    var vb = 0
+    if n == 6 {
+      vb = check_read(buf, len)
+    } else {
+      vb = check_write(buf, len)
+    }
     if vb != 0 {
       return -vb
     }
@@ -489,6 +576,215 @@ def fs_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
   return -(1000 + op)
 }
 
+// The fd verbs (EmoOS plan B, T1.1k): open, close, read, write, lseek
+// and fstat, served by the filesystem's open-file table. The slot is
+// the filesystem's own; its layout for these verbs is fd at +16, the
+// first argument at +32, the second at +48, the flags at +56, the
+// name at +64, the write's bytes at +256. The op is 64 +
+// (verb-36)*4 + slot, apart from the whole-file verbs' n + 16*slot.
+def fs_fd_slot(k Int64) Int64 {
+  var s = fs_slots + k * fs_slot_size
+  poke64(s, 1)
+  poke64(s + 8, peek64(handoff_caller))
+  poke64(s + 16, 0)
+  poke64(s + 24, 0)
+  poke64(s + 32, 0)
+  poke64(s + 40, peek64(caller_space_cell))
+  poke64(s + 48, 0)
+  poke64(s + 56, 0)
+  poke64(s + 88, 1)
+  return s
+}
+
+def fs_fd_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
+  // The path verbs (T1.2k): path_type, mkdir and rmdir carry the name
+  // in r0/r1 instead of a fd. They share the fd slot and its marker.
+  if n >= 42 {
+    if r1 < 0 || r1 > name_max {
+      return -reason_argument
+    }
+    var vn = check_read(r0, r1)
+    if vn != 0 {
+      return -vn
+    }
+    var pk = fs_slot_pick()
+    if pk < 0 {
+      return -reason_resource
+    }
+    var ps = fs_fd_slot(pk)
+    poke64(ps + 24, n)
+    copy_to(ps + 64, r0, r1)
+    poke64(ps + 48, r1)
+    if n == 45 {
+      if r3 < 0 {
+        poke64(ps, 0)
+        return -reason_argument
+      }
+      var vb = check_write(r2, r3)
+      if vb != 0 {
+        poke64(ps, 0)
+        return -vb
+      }
+      poke64(ps + 32, r2)
+      poke64(ps + 56, r3)
+    }
+    return -(1000 + 6 + 16 * pk)
+  }
+  // The fd verbs take 0..15: the library's console kinds own 0..2
+  // until a dup2 names a file there (T4.1's shell redirection), and
+  // the fs handle is then the caller's own.
+  if r0 < 0 || r0 > 15 {
+    return -reason_argument
+  }
+  var k = fs_slot_pick()
+  if k < 0 {
+    return -reason_resource
+  }
+  var s = fs_fd_slot(k)
+  poke64(s + 16, r0)
+  poke64(s + 24, n)
+  if n == 36 {
+    if r2 < 1 || r2 > name_max {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    if (r3 & 3) > 2 {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    var vn = check_read(r1, r2)
+    if vn != 0 {
+      poke64(s, 0)
+      return -vn
+    }
+    copy_to(s + 64, r1, r2)
+    poke64(s + 48, r2)
+    poke64(s + 56, r3)
+  }
+  if n == 38 {
+    if r2 < 0 {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    var vb = check_write(r1, r2)
+    if vb != 0 {
+      poke64(s, 0)
+      return -vb
+    }
+    poke64(s + 32, r1)
+    poke64(s + 48, r2)
+  }
+  if n == 39 {
+    if r2 < 0 || r2 > stage_cap {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    var vb = check_read(r1, r2)
+    if vb != 0 {
+      poke64(s, 0)
+      return -vb
+    }
+    copy_to(s + 256, r1, r2)
+    poke64(s + 48, r2)
+  }
+  if n == 40 {
+    if r2 < 0 || r2 > 2 {
+      poke64(s, 0)
+      return -reason_argument
+    }
+    poke64(s + 32, r1)
+    poke64(s + 48, r2)
+  }
+  if n < 36 || n > 41 {
+    poke64(s, 0)
+    return -reason_argument
+  }
+  return -(1000 + 6 + 16 * k)
+}
+
+// The address in one of the caller's executable segments (T1.6): the
+// fork door's check and the signal handler's — the boot image's global
+// table for its own passes, the image record for an exec'd one.
+def exec_addr_ok(me Int64, addr Int64) Bool {
+  if me < img_bound {
+    var rec = peek64(img_for + (me * 8))
+    if rec != 0 {
+      var rows = peek64(rec)
+      var i = 0
+      var ok = false
+      while i < rows {
+        var s = rec + 8 + (i * 24)
+        if addr >= peek64(s) && addr < peek64(s + 8) {
+          if (peek64(s + 16) & flag_x) != 0 {
+            ok = true
+          }
+        }
+        i = i + 1
+      }
+      return ok
+    }
+  }
+  var n = peek64(seg_count_addr)
+  var j = 0
+  while j < n {
+    var s2 = seg_table + (j * 24)
+    if addr >= peek64(s2) && addr < peek64(s2 + 8) {
+      if (peek64(s2 + 16) & flag_x) != 0 {
+        return true
+      }
+    }
+    j = j + 1
+  }
+  return false
+}
+
+// The caller's process group, its own pid when the byte is clear.
+def pgid_of(pid Int64) Int64 {
+  if pid < 0 || pid >= pgid_bound {
+    return 0
+  }
+  var g = peek8(pgid_base + pid).to_int64()
+  if g == 0 {
+    g = pid
+  }
+  return g
+}
+
+// A group signal's authority (T1.6): the caller's own group, or a
+// group one of its children carries (the shell's `kill -- -N`).
+def group_ok(group Int64, me Int64, mine Int64) Bool {
+  if group == mine {
+    return true
+  }
+  var i = 1
+  while i < proc_bound {
+    if peek64(parent_for + (i * 8)) == me {
+      if pgid_of(i) == group {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  return false
+}
+
+def group_raise(group Int64, which Int64) Void {
+  var i = 1
+  while i < proc_bound {
+    if pgid_of(i) == group {
+      sig.sig_raise(i, which)
+    }
+    i = i + 1
+  }
+}
+
+// The signals' vocabulary mask: the bits the gate accepts a caller to
+// block. SIGKILL's bit is never one.
+def sig_known_mask() Int64 {
+  return (1 << 2) | (1 << 3) | (1 << 9) | (1 << 10) | (1 << 11) |
+    (1 << 13) | (1 << 15) | (1 << 17)
+}
+
 // The notification verbs (emo-desktop M25, EmoOS Step 11): the
 // filesystem's own shape — every pointer argument inside one writable
 // segment of the caller's, the byte bounds checked here, a slot free,
@@ -510,12 +806,12 @@ def notify_dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64) Int64 {
     if r3 < 0 || r3 > notify.notify_body_max {
       return -reason_argument
     }
-    var vt = check_write(r0, r1)
+    var vt = check_read(r0, r1)
     if vt != 0 {
       return -vt
     }
     if r3 > 0 {
-      var vb = check_write(r2, r3)
+      var vb = check_read(r2, r3)
       if vb != 0 {
         return -vb
       }
@@ -590,7 +886,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r1 > stage_cap {
       return -reason_argument
     }
-    var verdict = check_write(r0, r1)
+    var verdict = check_read(r0, r1)
     if verdict != 0 {
       return -verdict
     }
@@ -611,6 +907,9 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   }
   if n >= 6 && n <= 9 {
     return fs_dispatch(n, r0, r1, r2, r3)
+  }
+  if n >= 36 && n <= 45 {
+    return fs_fd_dispatch(n, r0, r1, r2, r3)
   }
   if n == 2 {
     return route_input_byte
@@ -977,7 +1276,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r1 < 1 || r1 > name_max {
       return -reason_argument
     }
-    var vn = check_write(r0, r1)
+    var vn = check_read(r0, r1)
     if vn != 0 {
       return -vn
     }
@@ -989,8 +1288,360 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     }
     copy_to(exec_name, r0, r1)
     poke64(exec_nlen, r1)
+    poke64(execargs_use, 0)
+    poke64(execargs_elen, 0)
     poke64(exec_busy, 1)
     return route_process_exec
+  }
+  if n == 48 {
+    // exec_args(name, nlen, args, alen) (T1.4a): the name and the
+    // arguments text on the execargs page, the use flag naming the
+    // door the process service's pickup reads. T3.4 rides the envp
+    // pair (r4/r5) on the same page verb 54 uses, so the launcher's
+    // spawn and the shell's replace share one builder. The same busy
+    // cell — one exec at a time.
+    if r1 < 1 || r1 > name_max {
+      return -reason_argument
+    }
+    if r3 < 0 || r3 > execargs_cap {
+      return -reason_argument
+    }
+    if r5 < 0 || r5 > execargs_env_cap {
+      return -reason_argument
+    }
+    var vn2 = check_read(r0, r1)
+    if vn2 != 0 {
+      return -vn2
+    }
+    if r3 > 0 {
+      var va = check_read(r2, r3)
+      if va != 0 {
+        return -va
+      }
+    }
+    if r5 > 0 {
+      var ve2 = check_read(r4, r5)
+      if ve2 != 0 {
+        return -ve2
+      }
+    }
+    if peek64(handoff_caller) >= img_bound {
+      return -reason_resource
+    }
+    if peek64(exec_busy) != 0 {
+      return -reason_resource
+    }
+    copy_to(execargs_name, r0, r1)
+    poke64(execargs_nlen, r1)
+    if r3 > 0 {
+      copy_to(execargs_args, r2, r3)
+    }
+    poke64(execargs_alen, r3)
+    if r5 > 0 {
+      copy_to(execargs_env, r4, r5)
+    }
+    poke64(execargs_elen, r5)
+    poke64(execargs_use, 1)
+    poke64(exec_busy, 1)
+    return route_process_exec
+  }
+  if n == 54 {
+    // execve(name, nlen, args, alen, env, elen) (T1.4b3b): the
+    // in-place image replace. The name and both texts are staged like
+    // verb 48's; the use flag names the replace door, and the process
+    // service loads the image and calls the runtime's replace with the
+    // caller's own pid. The same busy cell serializes every exec door.
+    if r1 < 1 || r1 > name_max {
+      return -reason_argument
+    }
+    if r3 < 0 || r3 > execargs_cap {
+      return -reason_argument
+    }
+    if r5 < 0 || r5 > execargs_env_cap {
+      return -reason_argument
+    }
+    var vn3 = check_read(r0, r1)
+    if vn3 != 0 {
+      return -vn3
+    }
+    if r3 > 0 {
+      var va3 = check_read(r2, r3)
+      if va3 != 0 {
+        return -va3
+      }
+    }
+    if r5 > 0 {
+      var ve3 = check_read(r4, r5)
+      if ve3 != 0 {
+        return -ve3
+      }
+    }
+    var me6 = peek64(handoff_caller)
+    if me6 >= img_bound {
+      return -reason_resource
+    }
+    // The boot root carries the boot image, not an exec record: its
+    // cell is zero, and the replace's reap reads exactly that cell
+    // (`image_home` no-ops) before the new image's build writes the
+    // fresh record. A process with a slot may replace itself; the
+    // record's presence is not the door's condition.
+    if peek64(exec_busy) != 0 {
+      return -reason_resource
+    }
+    copy_to(execargs_name, r0, r1)
+    poke64(execargs_nlen, r1)
+    if r3 > 0 {
+      copy_to(execargs_args, r2, r3)
+    }
+    poke64(execargs_alen, r3)
+    if r5 > 0 {
+      copy_to(execargs_env, r4, r5)
+    }
+    poke64(execargs_elen, r5)
+    poke64(execargs_use, 2)
+    poke64(exec_busy, 1)
+    return route_process_exec
+  }
+  if n == 55 {
+    // pipe_bind(rfd, wfd) (EmoOS plan B, T1.5): two fresh ends of a
+    // new pipe, bound to the caller's fds — the library picked the
+    // numbers, and the pairs are its own allocation. The process
+    // service makes the pipe and drops whatever old bindings the two
+    // fds carried (an exec's stale high fd, a fork's inherited end
+    // the library has since reused).
+    if r0 < 0 || r0 > 15 || r1 < 0 || r1 > 15 || r0 == r1 {
+      return -reason_argument
+    }
+    var pme = peek64(handoff_caller)
+    if pme >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme, pipe.pipe_op_bind, r0, r1, 0, 0, 0)
+    return route_pipe_bind
+  }
+  if n == 56 {
+    // pipe_read(fd, buf, cap): the ring's bytes into the caller's
+    // buffer, blocking on an empty ring a writer may still fill, and
+    // answering 0 the moment no writer is left. The caller's own
+    // table walks the buffer, its space word staged with the request.
+    if r0 < 0 || r0 > 15 {
+      return -reason_argument
+    }
+    if r2 < 0 || r2 > stage_cap {
+      return -reason_argument
+    }
+    var vpr = check_write(r1, r2)
+    if vpr != 0 {
+      return -vpr
+    }
+    var pme2 = peek64(handoff_caller)
+    if pme2 >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme2, pipe.pipe_op_read, r0, 0, r1, r2,
+      peek64(caller_space_cell))
+    return route_pipe_read
+  }
+  if n == 57 {
+    // pipe_probe(fd): is this descriptor a pipe end? 0 no, 1 the read
+    // end, 2 the write end. The library asks once per fd and caches
+    // the answer — the fresh image after an exec asks about the low
+    // ends its predecessor redirected. The gate answers itself: one
+    // peek of the binding map, no service between.
+    if r0 < 0 || r0 > 15 {
+      return -reason_argument
+    }
+    var ppv = pipe.pipe_binding(peek64(handoff_caller), r0)
+    if (ppv & pipe.pipe_bind_mask) == 0 {
+      return 0
+    }
+    if (ppv & pipe.pipe_bind_mask) == pipe.pipe_bind_read {
+      return 1
+    }
+    return 2
+  }
+  if n == 58 {
+    // pipe_write(fd, buf, len): the caller's bytes into the ring, what
+    // its room takes this pass (the partial answer POSIX gives past a
+    // buffer), and the broken pipe once no reader is left. A full
+    // ring parks the writer; a read or a reader's close serves it.
+    if r0 < 0 || r0 > 15 {
+      return -reason_argument
+    }
+    if r2 < 0 || r2 > stage_cap {
+      return -reason_argument
+    }
+    var vpw = check_read(r1, r2)
+    if vpw != 0 {
+      return -vpw
+    }
+    var pme3 = peek64(handoff_caller)
+    if pme3 >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme3, pipe.pipe_op_write, r0, 0, r1, r2,
+      peek64(caller_space_cell))
+    return route_pipe_write
+  }
+  if n == 59 {
+    // pipe_dup(oldfd, newfd): the pipe end the old fd names, the new
+    // fd's — the old binding at newfd dropped first. The library has
+    // already dropped whatever file the new fd held; the pipe's own
+    // tables are the kernel's.
+    if r0 < 0 || r0 > 15 || r1 < 0 || r1 > 15 {
+      return -reason_argument
+    }
+    var pme4 = peek64(handoff_caller)
+    if pme4 >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme4, pipe.pipe_op_dup, r0, r1, 0, 0, 0)
+    return route_pipe_dup
+  }
+  if n == 60 {
+    // pipe_close(fd): one end's holder gone. The last writer's close
+    // is the readers' EOF, the last reader's the writers' broken
+    // pipe — the service wakes each.
+    if r0 < 0 || r0 > 15 {
+      return -reason_argument
+    }
+    var pme5 = peek64(handoff_caller)
+    if pme5 >= pipe.pipe_pid_bound {
+      return -reason_resource
+    }
+    pipe.pipe_stage(pme5, pipe.pipe_op_close, r0, 0, 0, 0, 0)
+    return route_pipe_close
+  }
+  if n == 61 {
+    // kill(pid, sig) (EmoOS plan B, T1.6): one pending bit raised on
+    // the target (or on every member of the group), delivered at its
+    // next resume. A positive pid names a process, 0 the caller's own
+    // group, a negative one the group it names; the authority is the
+    // caller's own body, its child, or a group it carries. Signal 0 is
+    // the permission probe: nothing is raised. The vocabulary is the
+    // gate's — a signal outside it is the argument refusal.
+    if r1 < 0 || r1 > 31 {
+      return -reason_argument
+    }
+    if r1 != 0 {
+      if sig.sig_slot_of(r1) < 0 {
+        return -reason_argument
+      }
+    }
+    var kme = peek64(handoff_caller)
+    if kme >= proc_bound {
+      return -reason_resource
+    }
+    var kmine = pgid_of(kme)
+    if r0 < 0 {
+      var kg = -r0
+      if group_ok(kg, kme, kmine) == false {
+        return -reason_permission
+      }
+      if r1 != 0 {
+        group_raise(kg, r1)
+      }
+      return 0
+    }
+    if r0 == 0 {
+      if r1 != 0 {
+        group_raise(kmine, r1)
+      }
+      return 0
+    }
+    if r0 >= proc_bound {
+      return -reason_argument
+    }
+    var kt = r0
+    var kok = kt == kme
+    if peek64(parent_for + (kt * 8)) == kme {
+      kok = true
+    }
+    if pgid_of(kt) == kmine {
+      kok = true
+    }
+    if kok == false {
+      return -reason_permission
+    }
+    if r1 != 0 {
+      sig.sig_raise(kt, r1)
+    }
+    return 0
+  }
+  if n == 62 {
+    // sig_action(sig, disp) (T1.6): the disposition — 0 the default,
+    // 1 ignored, an address a handler inside one of the caller's
+    // executable segments. Answers the old one. SIGKILL cannot be
+    // caught or ignored, the machine's own law: its number is refused.
+    if sig.sig_slot_of(r0) < 0 {
+      return -reason_argument
+    }
+    if r0 == sig.sig_kill {
+      return -reason_argument
+    }
+    if r1 != 0 && r1 != 1 {
+      if exec_addr_ok(peek64(handoff_caller), r1) == false {
+        return -reason_argument
+      }
+    }
+    var sme = peek64(handoff_caller)
+    if sme >= proc_bound {
+      return -reason_resource
+    }
+    var sold = sig.sig_disp_of(sme, r0)
+    sig.sig_disp_set(sme, r0, r1)
+    return sold
+  }
+  if n == 63 {
+    // sig_mask(how, set) (T1.6): how 0 blocks the set's signals, 1
+    // unblocks them, 2 replaces the mask whole; answers the old mask.
+    // The bits are the signal numbers (bit 2 is SIGINT). SIGKILL's
+    // bit is dropped silently — the standard's own law — and a signal
+    // outside the vocabulary with it.
+    if r0 < 0 || r0 > 2 {
+      return -reason_argument
+    }
+    var mme = peek64(handoff_caller)
+    if mme >= proc_bound {
+      return -reason_resource
+    }
+    var mold = sig.sig_mask_of(mme)
+    var mnext = mold
+    if r0 == 0 {
+      mnext = mold | r1
+    }
+    if r0 == 1 {
+      mnext = mold - (mold & r1)
+    }
+    if r0 == 2 {
+      mnext = r1
+    }
+    mnext = mnext & sig_known_mask()
+    mnext = mnext - (mnext & (1 << sig.sig_kill))
+    sig.sig_mask_set(mme, mnext)
+    return mold
+  }
+  if n == 64 {
+    // sig_return() (T1.6): the trampoline's verb — the slot's saved
+    // frame goes back into the caller's own, the mask with it. The
+    // answer is the shim's special -105: the frame it just restored
+    // resumes as it stands, no answer into a0, no sepc bump. Outside
+    // a handler there is nothing to return to, the argument refusal.
+    var rme = peek64(handoff_caller)
+    if rme >= proc_bound {
+      return -reason_resource
+    }
+    var rframe = peek64(sig.sig_frame)
+    var rslot = peek64(sig.sig_slot_cell)
+    if sig.sig_return(rframe, rslot, rme) == false {
+      return -reason_argument
+    }
+    return -105
+  }
+  if n == 65 {
+    // sig_pending(): the caller's pending word, the signals a mask or
+    // a running handler still holds back.
+    return sig.sig_pending_of(peek64(handoff_caller))
   }
   if n == 25 {
     // win_minimize(grant) (emo-desktop A16.3, EmoOS T10.3): the
@@ -1092,12 +1743,133 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   if n == 29 {
     return rtc_seconds()
   }
-  if n == 4 {
-    var me = peek64(handoff_caller)
-    if r0 < 2 || r0 == me {
+  if n == 46 {
+    // arena_info(): the caller's arena, base in the high 32 bits and
+    // end in the low; 0 for a process with none (the boot pass).
+    var me2 = peek64(handoff_caller)
+    if me2 >= arena_bound {
+      return 0
+    }
+    return peek64(arena_for + (me2 * 8))
+  }
+  if n == 47 {
+    // arena_grow(bytes) (T1.3v): the arena extends past its run — the
+    // blocks taken, mapped at the pages after the cell's end, the rows
+    // the death reclaim walks home; the answer is the new end's page.
+    return space.grow(peek64(handoff_caller), peek64(caller_space_cell), r0)
+  }
+  if n == 49 {
+    // getpid() (T1.4b1): the caller's own number.
+    return peek64(handoff_caller)
+  }
+  if n == 50 {
+    // setpgid(pid, pgid): the target 0 is the caller, the group 0 the
+    // target; the caller may name itself or its child, the parent
+    // cell's authority the process service's own.
+    var me3 = peek64(handoff_caller)
+    var target = r0
+    if target == 0 {
+      target = me3
+    }
+    var group = r1
+    if group == 0 {
+      group = target
+    }
+    if target < 1 || target >= pgid_bound || group < 0 || group >= pgid_bound {
       return -reason_argument
     }
-    poke64(proc_arga, r0)
+    if target != me3 {
+      if peek64(parent_for + (target * 8)) != me3 {
+        return -reason_permission
+      }
+    }
+    poke8(pgid_base + target, group.to_byte())
+    return 0
+  }
+  if n == 51 {
+    // getpgid(pid): the group the process carries, its own when the
+    // cell is clear; the same authority as setpgid's.
+    var me4 = peek64(handoff_caller)
+    var target2 = r0
+    if target2 == 0 {
+      target2 = me4
+    }
+    if target2 < 1 || target2 >= pgid_bound {
+      return -reason_argument
+    }
+    if target2 != me4 {
+      if peek64(parent_for + (target2 * 8)) != me4 {
+        return -reason_permission
+      }
+    }
+    var g = peek8(pgid_base + target2).to_int64()
+    if g == 0 {
+      g = target2
+    }
+    return g
+  }
+  if n == 52 {
+    // fork() (T1.4b2): the caller's saved context and the child's
+    // resume entry, judged against the caller's own image — the entry
+    // must sit in an executable segment. Only an exec'd image forks
+    // (its segments and handoff page are per-image; the boot image's
+    // passes share writable pages no copy can restore). The process
+    // service clones the image, stack and arena and starts the child
+    // at the entry; the same busy cell serializes the door with the
+    // execs.
+    var mef = peek64(handoff_caller)
+    if mef >= img_bound {
+      return -reason_argument
+    }
+    var recf = peek64(img_for + (mef * 8))
+    if recf == 0 {
+      return -reason_argument
+    }
+    if r0 <= 0 || r0 >= 0x88000000 {
+      return -reason_argument
+    }
+    var rows = peek64(recf)
+    var ok = false
+    var fi = 0
+    while fi < rows {
+      var fs = recf + 8 + (fi * 24)
+      var fst = peek64(fs)
+      var fen = peek64(fs + 8)
+      var fpf = peek64(fs + 16)
+      if r1 >= fst && r1 < fen {
+        if (fpf & flag_x) != 0 {
+          ok = true
+        }
+      }
+      fi = fi + 1
+    }
+    if ok == false {
+      return -reason_argument
+    }
+    if peek64(exec_busy) != 0 {
+      return -reason_resource
+    }
+    poke64(fork_sp_cell, r0)
+    poke64(fork_entry_cell, r1)
+    poke64(fork_use_cell, 1)
+    poke64(exec_busy, 1)
+    return route_process_exec
+  }
+  if n == 4 {
+    // wait(pid) (T1.4b2): a positive pid the child named, 0 or a
+    // negative one any child of the caller's; the answer is the
+    // child's pid and exit code packed.
+    var me = peek64(handoff_caller)
+    if me >= proc_bound {
+      return -reason_resource
+    }
+    if r0 == me {
+      return -reason_argument
+    }
+    if r0 > 0 && r0 < 2 {
+      return -reason_argument
+    }
+    poke64(wait_for + (me * 8), r0)
     return route_process_wait
   }
   if n == 0 {
@@ -1105,8 +1877,13 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if me == 1 {
       return route_poweroff
     }
-    poke64(proc_arga, r0)
-    poke64(proc_argb, me)
+    if me < proc_bound {
+      // the exit's status (T1.6): the POSIX word the wait answers —
+      // the code above the low byte, the byte 0 for an exit (a
+      // signal death's status, the signal's number, is the shim's
+      // own write)
+      poke64(exit_for + (me * 8), r0 << 8)
+    }
     return route_process_exit
   }
   if n == 5 {
@@ -1121,7 +1898,7 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if r1 < 0 || r1 > clip_cap {
       return -reason_argument
     }
-    var vcl = check_write(r0, r1)
+    var vcl = check_read(r0, r1)
     if vcl != 0 {
       return -vcl
     }

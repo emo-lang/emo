@@ -1,0 +1,311 @@
+// The signals (EmoOS plan B, T1.6): the per-process pending word, the
+// blocked mask, the dispositions, and the handler's delivery — a
+// handler runs by rewriting the trap frame the resume is about to
+// restore, and its return is the trampoline page's `sig_return` ecall,
+// which puts the interrupted frame back. The state lives on its own
+// fixed pages (`.emo_sig` at 0x87018000), the services' shape: the
+// pending and blocked words one per pid, the dispositions one word per
+// pid and signal slot, the active mark and the saved frames one per
+// process slot.
+//
+// The vocabulary is eight signals — the shell's and a program's first
+// needs: SIGINT, SIGQUIT, SIGKILL, SIGUSR1, SIGSEGV, SIGPIPE,
+// SIGTERM, SIGCHLD. A signal outside it is a refusal the gate names;
+// SIGKILL cannot be caught, ignored or blocked, and its pending bit
+// always delivers. The default action of every one but SIGCHLD is to
+// end the process; SIGCHLD's is to be ignored. A handler runs with
+// every signal masked (no nested handlers, the bound the saved frame
+// states) and the interrupted mask returns with the frame.
+//
+// Delivery is the resume's: emo_os_sig_deliver (trap.S) asks enter on
+// every return into U-mode, before the anchor is armed. A handler's
+// frame rewrites ra to the trampoline, a0 to the signal and sepc to
+// the handler; the interrupted frame — the frame and its sp slot — is
+// saved per slot, so the trampoline's own trap cannot lose it. A
+// default death answers the signal; the shim's death path records it
+// as the exit's status (the POSIX low-byte encoding the shell reads).
+//
+// The untyped-memory discipline as everywhere: Int64 addresses,
+// peek/poke, bit masks, every def fully typed — enter runs inside the
+// resume, the gate's verbs inside the trap, nothing allocates.
+
+const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
+
+// The sig page: the two cells the trap shim stages (the ecall's frame
+// base and its slot index), the pending and blocked words, the
+// dispositions, the active marks, and the saved frames.
+const sig_page = koff + 0x87018000
+const sig_frame = sig_page + 0
+const sig_slot_cell = sig_page + 8
+const sig_pending = sig_page + 0x1000
+const sig_mask = sig_page + 0x3000
+const sig_disp = sig_page + 0x5000
+const sig_active = sig_page + 0x9000
+const sig_saved = sig_page + 0xa000
+const sig_save_stride = 576
+const sig_bound = 256
+const sig_slot_bound = 64
+const sig_frame_bytes = 552 // the sp slot and the 544-byte frame
+
+// The trampoline (T1.6): the one user-executable page every table
+// maps; a handler's return is its `li a7, 64; ecall`, and the third
+// word's ebreak is the loud end of a return no handler entered.
+const sig_tramp = 0x87ffd000
+
+// The vocabulary: the signal's number and its slot in the disposition
+// table. The numbering is the machine's own — not a Linux table copied
+// whole — but the numbers the ports expect are these.
+const sig_int = 2
+const sig_quit = 3
+const sig_kill = 9
+const sig_usr1 = 10
+const sig_segv = 11
+const sig_pipe = 13
+const sig_term = 15
+const sig_chld = 17
+
+// A disposition word: 0 the default, 1 ignored, anything else the
+// handler's address (every image links at 0x87100000 and no real
+// address is 0 or 1).
+const sig_dfl = 0
+const sig_ign = 1
+
+// The handler's frame bytes: ra, a0 and sepc, the trap frame's slots.
+const frame_ra = 0
+const frame_a0 = 80
+const frame_sepc = 152
+
+def sig_slot_of(sig Int64) Int64 {
+  if sig == sig_int {
+    return 0
+  }
+  if sig == sig_quit {
+    return 1
+  }
+  if sig == sig_kill {
+    return 2
+  }
+  if sig == sig_usr1 {
+    return 3
+  }
+  if sig == sig_segv {
+    return 4
+  }
+  if sig == sig_pipe {
+    return 5
+  }
+  if sig == sig_term {
+    return 6
+  }
+  if sig == sig_chld {
+    return 7
+  }
+  return -1
+}
+
+// The default action: every signal ends the process but SIGCHLD,
+// whose default is to be ignored.
+def sig_default_ignores(sig Int64) Bool {
+  return sig == sig_chld
+}
+
+def sig_pending_of(pid Int64) Int64 {
+  if pid < 0 || pid >= sig_bound {
+    return 0
+  }
+  return peek64(sig_pending + pid * 8)
+}
+
+def sig_mask_of(pid Int64) Int64 {
+  if pid < 0 || pid >= sig_bound {
+    return 0
+  }
+  return peek64(sig_mask + pid * 8)
+}
+
+def sig_disp_of(pid Int64, sig Int64) Int64 {
+  var slot = sig_slot_of(sig)
+  if slot < 0 {
+    return sig_dfl
+  }
+  if pid < 0 || pid >= sig_bound {
+    return sig_dfl
+  }
+  return peek64(sig_disp + pid * 32 + slot * 8)
+}
+
+def sig_disp_set(pid Int64, sig Int64, v Int64) Void {
+  var slot = sig_slot_of(sig)
+  if slot >= 0 {
+    if pid >= 0 && pid < sig_bound {
+      poke64(sig_disp + pid * 32 + slot * 8, v)
+    }
+  }
+}
+
+// One pending bit raised (the gate's kill, the exit's SIGCHLD, the
+// broken pipe's SIGPIPE). An unknown signal or pid is nobody's.
+def sig_raise(pid Int64, which Int64) Void {
+  if pid >= 0 && pid < sig_bound {
+    if sig_slot_of(which) >= 0 {
+      poke64(sig_pending + pid * 8,
+        peek64(sig_pending + pid * 8) | (1 << which))
+    }
+  }
+}
+
+// The blocked mask's whole word: the gate's sig_mask verb writes it.
+def sig_mask_set(pid Int64, v Int64) Void {
+  if pid >= 0 && pid < sig_bound {
+    poke64(sig_mask + pid * 8, v)
+  }
+}
+
+// A saved frame's record for a slot.
+def sig_record(slot Int64) Int64 {
+  return sig_saved + slot * sig_save_stride
+}
+
+// The mask a handler saves beside its frame: `sig_frame_bytes` past
+// the record's head.
+def sig_record_mask(rec Int64) Int64 {
+  return rec + sig_frame_bytes
+}
+
+// The resume's delivery: 0 to resume the frame as it stands, or the
+// signal whose default action ends the pass. A handler's frame is
+// rewritten here — the interrupted one copied to the slot's record —
+// and the pass resumes at the handler with every signal masked.
+def enter(frame Int64, slot Int64, pid Int64) Int64 {
+  if pid < 1 || pid >= sig_bound {
+    return 0
+  }
+  if slot < 0 || slot >= sig_slot_bound {
+    return 0
+  }
+  var pend = peek64(sig_pending + pid * 8)
+  if pend == 0 {
+    return 0
+  }
+  // SIGKILL's pending bit is the one the mask and the handler's mark
+  // never hold back: the machine's kill reaches a masked process and
+  // one inside a handler alike.
+  if (pend & (1 << sig_kill)) != 0 {
+    poke64(sig_pending + pid * 8, pend - (1 << sig_kill))
+    return sig_kill
+  }
+  var rec0 = sig_record(slot)
+  var active = peek64(sig_active + slot * 8)
+  if active == pid {
+    return 0 // a handler is running: its frame is the one saved
+  }
+  var mask = peek64(sig_mask + pid * 8)
+  var sig = 0
+  var i = 1
+  while i < 32 {
+    if (pend & (1 << i)) != 0 {
+      if (mask & (1 << i)) == 0 {
+        if sig_slot_of(i) >= 0 {
+          if sig == 0 {
+            sig = i
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  if sig == 0 {
+    return 0
+  }
+  poke64(sig_pending + pid * 8, pend - (1 << sig))
+  var disp = sig_disp_of(pid, sig)
+  if disp == sig_ign {
+    return 0
+  }
+  if sig_default_ignores(sig) {
+    if disp == sig_dfl {
+      return 0
+    }
+  }
+  if disp == sig_dfl {
+    return sig
+  }
+  // a handler: the interrupted frame saved whole — the sp slot, the
+  // 544 bytes, the mask beside them — then the frame rewritten to the
+  // handler. sp is the interrupted one: the handler runs on the same
+  // stack, POSIX's default without sigaltstack.
+  var k = 0
+  while k < 69 {
+    poke64(rec0 + k * 8, peek64(frame - 8 + k * 8))
+    k = k + 1
+  }
+  poke64(sig_record_mask(rec0), mask)
+  poke64(sig_mask + pid * 8, -1)
+  poke64(sig_active + slot * 8, pid)
+  poke64(frame + frame_ra, sig_tramp)
+  poke64(frame + frame_a0, sig)
+  poke64(frame + frame_sepc, disp)
+  return 0
+}
+
+// A fork's inheritance: the dispositions and the mask copy to the
+// child's pid, POSIX's rule — a signal the parent catches is the
+// child's too.
+def clone_pid(parent Int64, child Int64) Void {
+  var slot = 0
+  while slot < 8 {
+    poke64(sig_disp + child * 32 + slot * 8,
+      peek64(sig_disp + parent * 32 + slot * 8))
+    slot = slot + 1
+  }
+  poke64(sig_mask + child * 8, peek64(sig_mask + parent * 8))
+}
+
+// The exec's walk: the pid keeps its mask (POSIX), but every handler
+// address belonged to the old image's segments. The dispositions go
+// back to the default, or a signal would jump into pages the new image
+// does not map.
+def reset_pid(pid Int64) Void {
+  var slot = 0
+  while slot < 8 {
+    poke64(sig_disp + pid * 32 + slot * 8, 0)
+    slot = slot + 1
+  }
+}
+
+// The death's walk: nothing of the pid outlives it (the pids are never
+// reused, the slots are — the delivery's and the return's pid marks
+// keep a new process out of a dead one's saved frame).
+def drop_pid(pid Int64) Void {
+  var slot = 0
+  while slot < 8 {
+    poke64(sig_disp + pid * 32 + slot * 8, 0)
+    slot = slot + 1
+  }
+  poke64(sig_pending + pid * 8, 0)
+  poke64(sig_mask + pid * 8, 0)
+}
+
+// The trampoline's verb: the slot's saved frame goes back into the
+// caller's frame — the same anchor, which the handler's own traps have
+// since overwritten — and the mask with it. The gate answers the
+// special -105 so the shim resumes the frame without writing the
+// answer into a0 or moving sepc past anything. A process with no
+// handler running has nothing to return to: false.
+def sig_return(frame Int64, slot Int64, pid Int64) Bool {
+  if slot < 0 || slot >= sig_slot_bound {
+    return false
+  }
+  if peek64(sig_active + slot * 8) != pid {
+    return false
+  }
+  var rec = sig_record(slot)
+  var k = 0
+  while k < 69 {
+    poke64(frame - 8 + k * 8, peek64(rec + k * 8))
+    k = k + 1
+  }
+  poke64(sig_mask + pid * 8, peek64(sig_record_mask(rec)))
+  poke64(sig_active + slot * 8, 0)
+  return true
+}

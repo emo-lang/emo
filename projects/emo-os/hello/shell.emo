@@ -19,8 +19,10 @@
 // waits for its exit, the REPL parked at the wait while the program
 // owns the console. The `exec` command (emo-desktop A12.1) starts a
 // disk ELF by name — the launcher's own path, the desktop loop's
-// slots its bookkeeping. The machine ends the way the proof's exit
-// did: the poweroff command is the boot pass's exit verb.
+// slots its bookkeeping — and the `desktop` word (the desktop era's
+// door) opens the desktop; both are the requiring module's, the
+// shell's `desktop_p` naming the word. The machine ends the way the
+// proof's exit did: the poweroff command is the boot pass's exit verb.
 //
 // The texts are byte-array literals poked into this image's
 // read-write segment at REPL start — the riscv64 backend carries no
@@ -34,7 +36,7 @@ require "syscall"
 // This image's scratch (main.emo's buf), the shell's addresses above
 // the proof chain's: the line, the list's and the read's buffers, and
 // the texts (the four refusal messages the file verbs can answer,
-// `unknown command`, the help line, the prompt, the eight command
+// `unknown command`, the help line, the prompt, the twelve command
 // names, the boot banner, `: `, a LF, and the echo byte with the
 // erase sequence beside it). All poked once, at REPL start.
 const buf = 0x87200000
@@ -48,23 +50,23 @@ const sh_m_res = sh_text + 32
 const sh_m_ref = sh_text + 64
 const sh_m_unk = sh_text + 72
 const sh_help = sh_text + 88
-const sh_prompt = sh_text + 552
-const sh_c_help = sh_text + 160
-const sh_c_echo = sh_text + 168
-const sh_c_ls = sh_text + 176
-const sh_c_cat = sh_text + 184
-const sh_c_rm = sh_text + 192
-const sh_c_write = sh_text + 200
-const sh_c_pow = sh_text + 208
-const sh_colon = sh_text + 216
-const sh_nl = sh_text + 218
-const sh_one = sh_text + 220
-const sh_c_counter = sh_text + 224
-const sh_c_exec = sh_text + 232
-const sh_c_desktop = sh_text + 240
-const sh_c_passwd = sh_text + 536
-const sh_c_lock = sh_text + 544
-const sh_logo = sh_text + 248
+const sh_prompt = sh_text + 560
+const sh_c_help = sh_text + 168
+const sh_c_echo = sh_text + 176
+const sh_c_ls = sh_text + 184
+const sh_c_cat = sh_text + 192
+const sh_c_rm = sh_text + 200
+const sh_c_write = sh_text + 208
+const sh_c_pow = sh_text + 216
+const sh_colon = sh_text + 224
+const sh_nl = sh_text + 226
+const sh_one = sh_text + 228
+const sh_c_counter = sh_text + 232
+const sh_c_exec = sh_text + 240
+const sh_c_desktop = sh_text + 248
+const sh_c_passwd = sh_text + 544
+const sh_c_lock = sh_text + 552
+const sh_logo = sh_text + 256
 
 // The line's length, the feed's own state — a word of this image's
 // scratch above the texts, the raw memory the module-level var the
@@ -113,14 +115,14 @@ def m_unk() Array[Byte] {
 }
 
 def help_bytes() Array[Byte] {
-  // "commands: help echo ls cat write rm counter exec passwd lock poweroff"
+  // "commands: help echo ls cat write rm desktop counter exec passwd lock poweroff"
   return [
     99B, 111B, 109B, 109B, 97B, 110B, 100B, 115B, 58B, 32B, 104B, 101B, 108B,
     112B, 32B, 101B, 99B, 104B, 111B, 32B, 108B, 115B, 32B, 99B, 97B, 116B,
-    32B, 119B, 114B, 105B, 116B, 101B, 32B, 114B, 109B, 32B, 99B, 111B, 117B,
-    110B, 116B, 101B, 114B, 32B, 101B, 120B, 101B, 99B, 32B, 112B, 97B, 115B,
-    115B, 119B, 100B, 32B, 108B, 111B, 99B, 107B, 32B, 112B, 111B, 119B,
-    101B, 114B, 111B, 102B, 102B
+    32B, 119B, 114B, 105B, 116B, 101B, 32B, 114B, 109B, 32B, 100B, 101B, 115B,
+    107B, 116B, 111B, 112B, 32B, 99B, 111B, 117B, 110B, 116B, 101B, 114B, 32B,
+    101B, 120B, 101B, 99B, 32B, 112B, 97B, 115B, 115B, 119B, 100B, 32B, 108B,
+    111B, 99B, 107B, 32B, 112B, 111B, 119B, 101B, 114B, 111B, 102B, 102B
   ]
 }
 
@@ -246,7 +248,8 @@ def c_lock() Array[Byte] {
 }
 
 def c_desktop() Array[Byte] {
-  // "desktop" — the desktop lines' own prefix, the refusals' word
+  // "desktop" — the shell's door to the era, the desktop lines' own
+  // prefix, the refusals' word
   return [100B, 101B, 115B, 107B, 116B, 111B, 112B]
 }
 
@@ -349,6 +352,13 @@ def line_ptr() Int64 {
 
 def exec_p(s Int64, wlen Int64) Bool {
   return word_is(s, wlen, sh_c_exec, 4)
+}
+
+// The desktop command's word (the shell's foreground and the desktop's
+// door): the requiring module intercepts it the way the desktop loop
+// intercepts `exec` — the shell names the word, main.emo owns the era.
+def desktop_p(s Int64, wlen Int64) Bool {
+  return word_is(s, wlen, sh_c_desktop, 7)
 }
 
 def passwd_p(s Int64, wlen Int64) Bool {
@@ -467,7 +477,7 @@ def cmd_help(e Int64, n Int64) Void {
   if extra_args(e, n) {
     err_line(sh_c_help, 4, sh_m_badarg, 12)
   } else {
-    out(sh_help, 69)
+    out(sh_help, 77)
     out_nl()
   }
 }

@@ -37,6 +37,8 @@ const koff = -274877906944 // 0xFFFFFFC000000000: the high half's base
 // handoff page), then the pending cell the spawn's build consumes, the
 // request's busy cell and name, and the service's request stash.
 const img_for = koff + 0x8700c000
+const arena_for = koff + 0x8700d800
+const arena_bound = 256
 const records = img_for + 2048
 const record_size = 232
 const record_count = 8
@@ -279,6 +281,54 @@ def load(rec Int64, scratch Int64, run_base Int64, run_blocks Int64) Int64 {
   return 1
 }
 
+// ---- the exec's arguments (EmoOS plan B, T1.4a) ----
+//
+// The growth page's tail (its 200 rows end at 3208): the name at 0,
+// its length at 24, the args' length at 32, the use flag at 40, the
+// args' bytes at 64. The gate stages inside the trap; the process
+// service's exec pickup reads; the flag says which door the request
+// came by (the plain exec's name lives on the exec page, the args
+// exec's here). The page is the one the grow list proved mapped.
+
+const execargs_page = koff + 0x8700f000 + 3208
+const execargs_name = execargs_page
+const execargs_nlen = execargs_page + 24
+const execargs_alen = execargs_page + 32
+const execargs_use = execargs_page + 40
+const execargs_elen = execargs_page + 48
+const execargs_args = execargs_page + 64
+const execargs_cap = 512
+const execargs_env = koff + 0x8700b900
+const execargs_env_cap = 256
+
+def args_name() Int64 {
+  return execargs_name
+}
+
+def args_nlen() Int64 {
+  return peek64(execargs_nlen)
+}
+
+def args_alen() Int64 {
+  return peek64(execargs_alen)
+}
+
+def args_args() Int64 {
+  return execargs_args
+}
+
+def args_elen() Int64 {
+  return peek64(execargs_elen)
+}
+
+def args_env() Int64 {
+  return execargs_env
+}
+
+def entry_of(rec Int64) Int64 {
+  return peek64(rec + 200)
+}
+
 // The request word the exec arm serves: the name copied at the gate
 // into the page's cells, read back here.
 def name_len() Int64 {
@@ -373,8 +423,145 @@ def give_run(base Int64, blocks Int64) Void {
 // waits — another pass's spawn, a death — goes to the stash, served in
 // order after the transaction, the stash and the mailbox one FIFO.
 def transaction(fs Pid, name Int64, nlen Int64) Int64 {
-  // The probe: the size off the name table, no bytes copied — the
-  // number the scratch is sized by, or the refusal the caller sees.
+  return transaction_args(fs, name, nlen, 0, 0, 0, 0)
+}
+
+// The child's first stack (T1.4a): argc, argv (the program's name and
+// the args' words), a NULL, the envp's NULL, then the strings — the
+// sp the child starts with, the physical base of the frame's new top.
+// The words split at spaces; no quoting, the shell's line's own cut.
+def build_args(stack Int64, name Int64, nlen Int64, args Int64,
+               alen Int64, env Int64, elen Int64) Int64 {
+  var argc = 1
+  var i = 0
+  while i < alen {
+    while i < alen && peek8(args + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < alen {
+      argc = argc + 1
+      while i < alen && peek8(args + i).to_int64() != 32 {
+        i = i + 1
+      }
+    }
+  }
+  var envc = 0
+  i = 0
+  while i < elen {
+    while i < elen && peek8(env + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < elen {
+      envc = envc + 1
+      while i < elen && peek8(env + i).to_int64() != 32 {
+        i = i + 1
+      }
+    }
+  }
+  var sb = nlen + 1
+  i = 0
+  while i < alen {
+    while i < alen && peek8(args + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < alen {
+      var s = i
+      while i < alen && peek8(args + i).to_int64() != 32 {
+        i = i + 1
+      }
+      sb = sb + (i - s) + 1
+    }
+  }
+  i = 0
+  while i < elen {
+    while i < elen && peek8(env + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < elen {
+      var s2 = i
+      while i < elen && peek8(env + i).to_int64() != 32 {
+        i = i + 1
+      }
+      sb = sb + (i - s2) + 1
+    }
+  }
+  var arr = 8 + 8 * (argc + 1) + 8 * (envc + 1)
+  var total = arr + sb
+  var base = sv39.pa_of(stack) + block - total
+  var at = stack + block - total
+  poke64(at, argc)
+  var sp = at + 8
+  var strp = base + arr
+  var kp = at + arr
+  poke64(sp, strp)
+  var j = 0
+  while j < nlen {
+    poke8(kp + j, peek8(name + j))
+    j = j + 1
+  }
+  poke8(kp + nlen, 0B)
+  kp = kp + nlen + 1
+  strp = strp + nlen + 1
+  sp = sp + 8
+  i = 0
+  while i < alen {
+    while i < alen && peek8(args + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < alen {
+      var s3 = i
+      while i < alen && peek8(args + i).to_int64() != 32 {
+        i = i + 1
+      }
+      poke64(sp, strp)
+      var j2 = s3
+      while j2 < i {
+        poke8(kp, peek8(args + j2))
+        kp = kp + 1
+        strp = strp + 1
+        j2 = j2 + 1
+      }
+      poke8(kp, 0B)
+      kp = kp + 1
+      strp = strp + 1
+      sp = sp + 8
+    }
+  }
+  poke64(sp, 0)       // argv's NULL
+  sp = sp + 8
+  i = 0
+  while i < elen {
+    while i < elen && peek8(env + i).to_int64() == 32 {
+      i = i + 1
+    }
+    if i < elen {
+      var s4 = i
+      while i < elen && peek8(env + i).to_int64() != 32 {
+        i = i + 1
+      }
+      poke64(sp, strp)
+      var j3 = s4
+      while j3 < i {
+        poke8(kp, peek8(env + j3))
+        kp = kp + 1
+        strp = strp + 1
+        j3 = j3 + 1
+      }
+      poke8(kp, 0B)
+      kp = kp + 1
+      strp = strp + 1
+      sp = sp + 8
+    }
+  }
+  poke64(sp, 0)       // envp's NULL
+  return base
+}
+
+// The file's image into a record (T1.4b3b): the probe, the read, the
+// parse, the image run and the private handoff page. The answer is the
+// record (a kernel address) or the refusal's reason; the run and the
+// page belong to the caller, the scratch is home. No stack, no spawn.
+def load_record(fs Pid, name Int64, nlen Int64) Int64 {
   var me = self_pid()
   fs <- (10, me, name, nlen, name, 0)
   var size = 0
@@ -407,7 +594,6 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
   if scratch == 0 {
     return -5
   }
-  // The read: the file's bytes whole into the scratch.
   fs <- (10, me, name, nlen, scratch, size)
   var got2 = false
   while !got2 {
@@ -452,20 +638,11 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
     return -5
   }
   if load(rec, scratch, sv39.pa_of(run), ib) == 0 {
+    poke64(rec, 0)
     give_run(run, ib)
     give_run(scratch, sb)
     return -4
   }
-  // The scratch is copied out; its blocks go home before the child is
-  // even queued. The image's private handoff page (emo-desktop A11.2):
-  // a frame of its own, mapped by the build at the cells page's vaddr
-  // in the child's table — the classic cells page stays the boot
-  // image's, its stub's parks never stolen, so two images hand their
-  // arenas side by side, each through its own page. The delta goes to
-  // the page's cell — the translation the child's stub adds to the
-  // arena pointers it parks — and the record keeps the page's physical
-  // address for the shim's hand, the build's mapping, and the death's
-  // walk. The pending cell carries the record to the build.
   var floor_va = (peek64(rec + 8) / page) * page
   var delta = sv39.pa_of(run) - floor_va
   var hp = frames.frame_take()
@@ -475,43 +652,49 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
     give_run(scratch, sb)
     return -5
   }
-  // The page's protocol starts unstaged: a recycled frame carries its
-  // last owner's bytes, and the trap shim's arena hand reads the pair
-  // cells at the child's first entry — before the child's own stub has
-  // parked them. A zero pair is the honest "nothing staged" the hand
-  // skips; a stale nonzero word is a pointer the kernel would follow.
-  // The delta, the build's arena values, and the stub's parks all land
-  // on the zero page after this.
   sv39.clear(hp)
   poke64(hp + page_delta, delta)
   poke64(rec + record_page, hp)
   give_run(scratch, sb)
   println("image ${size} bytes, ${ib} blocks")
-  poke64(exec_pending, rec)
-  // The refusals from here leave the handoff frame where it is: a
-  // frame never rejoins its block (the page tables' rule, the bound
-  // image_home documents), and the block give's strictness would end
-  // the machine on a frame's address — the path used to try.
+  return rec
+}
+
+// A record's image run goes home, the record frees (T1.4b3b): the
+// refusal's path after the load; the private handoff page never
+// rejoins its block (the page tables' rule), the 4 KiB leak the exec
+// documents.
+def release_record(rec Int64) Void {
+  var base = peek64(rec + 208)
+  var blocks = peek64(rec + 216)
+  var i = 0
+  while i < blocks {
+    frames.give(base + (i * block))
+    i = i + 1
+  }
+  poke64(rec, 0)
+}
+
+def transaction_args(fs Pid, name Int64, nlen Int64, args Int64,
+                     alen Int64, env Int64, elen Int64) Int64 {
+  var rec = load_record(fs, name, nlen)
+  if rec == -4 || rec == -5 || rec == -6 {
+    return rec
+  }
   var stack = frames.take()
   if stack == 0 {
-    poke64(exec_pending, 0)
-    poke64(rec, 0)
-    give_run(run, ib)
+    release_record(rec)
     return -5
   }
-  // The child's arena is a user pass's run, and the allocator has to
-  // hold it as one contiguous run now that everything else is out —
-  // the process service's own judgment at the plain spawn. A region
-  // that cannot is the refusal, every block this transaction took
-  // walking home first; the count alone passed such a region on to the
-  // runtime's loud end inside the spawn.
   if frames.largest() < frames.user_run() {
-    poke64(exec_pending, 0)
-    poke64(rec, 0)
     frames.give(stack)
-    give_run(run, ib)
+    release_record(rec)
     return -5
   }
+  var hp = peek64(rec + record_page)
+  var argp = build_args(stack, name, nlen, args, alen, env, elen)
+  poke64(hp + 0x80, argp)
+  poke64(exec_pending, rec)
   var entry = peek64(rec + 200)
   frames.arena_for_user()
   var child = user_spawn(entry, sv39.pa_of(stack) + block)
@@ -519,7 +702,113 @@ def transaction(fs Pid, name Int64, nlen Int64) Int64 {
   return child
 }
 
-// The death hook (the runtime's emo_image_give_hook, parked beside the
+// The in-place exec's load (T1.4b3b): the image and the first stack on
+// the caller's fresh block, the record returned for the runtime's
+// replace; the service sets the pending cell and calls user_replace.
+def transaction_replace(fs Pid, name Int64, nlen Int64, args Int64,
+                        alen Int64, env Int64, elen Int64,
+                        stack Int64) Int64 {
+  var rec = load_record(fs, name, nlen)
+  if rec == -4 || rec == -5 || rec == -6 {
+    return rec
+  }
+  var hp = peek64(rec + record_page)
+  var argp = build_args(stack, name, nlen, args, alen, env, elen)
+  poke64(hp + 0x80, argp)
+  return rec
+}
+
+// A fork's image (T1.4b2): the parent's record copied into a free
+// record, its run copied into a fresh run, its private handoff page
+// copied into a fresh frame — the child's cells carry the parent's
+// parks and the recipe space.emo's build reads (the saved context, the
+// parent's stack and arena bases, its pid and arena cell). The parent's
+// stack is copied into the fresh block here, before user_spawn zeroes
+// its synthetic frame at the block's bottom. The answer is the record
+// pointer, or a negative reason; a refusal after the run is out gives
+// it home before answering.
+def fork_clone(pid Int64, sp Int64, stack Int64) Int64 {
+  if pid >= arena_bound {
+    return -4
+  }
+  var parent = peek64(img_for + (pid * 8))
+  if parent == 0 {
+    return -4
+  }
+  var rows = peek64(parent)
+  var blocks = peek64(parent + 216)
+  if rows == 0 || blocks <= 0 {
+    return -4
+  }
+  var pstack = (sp / block) * block
+  if frames.owns(pstack) == false {
+    return -4
+  }
+  if frames.largest() < blocks {
+    return -5
+  }
+  var rec = record_take()
+  if rec == 0 {
+    return -5
+  }
+  var i = 0
+  while i < record_size {
+    poke64(rec + i, peek64(parent + i))
+    i = i + 8
+  }
+  var run = frames.take_run(blocks)
+  if run == 0 {
+    poke64(rec, 0)
+    return -5
+  }
+  var src = sv39.va_of(peek64(parent + 208))
+  var b = 0
+  while b < blocks {
+    space.copy_words(src + (b * block), run + (b * block), block)
+    b = b + 1
+  }
+  poke64(rec + 208, sv39.pa_of(run))
+  poke64(rec + 216, blocks)
+  var hp = frames.frame_take()
+  if hp == 0 {
+    var z = 0
+    while z < blocks {
+      frames.give(run + (z * block))
+      z = z + 1
+    }
+    poke64(rec, 0)
+    return -5
+  }
+  var php = peek64(parent + record_page)
+  var j = 0
+  while j < page {
+    poke64(hp + j, peek64(php + j))
+    j = j + 8
+  }
+  poke64(rec + record_page, hp)
+  var cell = peek64(arena_for + (pid * 8))
+  var parena = (cell >> 20) << 12
+  // The stack is copied before the spawn: user_spawn zeroes its
+  // synthetic frame at the new block's bottom afterwards, so only the
+  // dead bottom bytes give way — the live frames above survive.
+  space.copy_words(pstack + koff, stack, block)
+  space.fork_note(hp, sp, pid, pstack, parena, cell)
+  return rec
+}
+
+// The parent's image run, in blocks — the process service's fork
+// resource judgment; 0 for a pass without a disk image.
+def image_blocks(pid Int64) Int64 {
+  if pid < arena_bound {
+    var rec = peek64(img_for + (pid * 8))
+    if rec != 0 {
+      return peek64(rec + 216)
+    }
+  }
+  return 0
+}
+
+
 // death notice): the slot's process is done — if it was an exec's
 // child, its image's run walks home block by block, the record and the
 // pid's cell cleared behind it. The base is physical (the record keeps

@@ -422,13 +422,53 @@ def exec(name Int64, name_len Int64) (R, Int64) {
   return (R.error, why_of(answer))
 }
 
+// The exec with the line's arguments (EmoOS plan B, T1.4a): the args'
+// text (at most 512 bytes, split at spaces) lands on the child's first
+// stack as argv[1..]; argv[0] is the name.
+def exec_args(name Int64, name_len Int64, args Int64, args_len Int64) (R, Int64) {
+  var answer = ecall(48, name, name_len, args, args_len, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The spawn with the environment (EmoOS plan B, T3.4): verb 48's
+// staging gains the envp text on the same execargs page verb 54's
+// replace uses — the launcher and the shell share one builder.
+def exec_args_env(name Int64, name_len Int64, args Int64, args_len Int64,
+                  env Int64, env_len Int64) (R, Int64) {
+  var answer = ecall(48, name, name_len, args, args_len, env, env_len)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The caller's image replaced in place (EmoOS plan B, T1.4b3b): the
+// name, the argv text and the envp text stage on the same door the C
+// library's `execve` rides; the caller's process keeps its pid and
+// becomes the new image. Never returns on success.
+def execve(name Int64, name_len Int64, args Int64, args_len Int64,
+           env Int64, env_len Int64) (R, Int64) {
+  var answer = ecall(54, name, name_len, args, args_len, env, env_len)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The exit of the child with that pid number, blocking until it
-// happens. The answer is (R.ok, the child's exit code) or
-// (R.error, why).
+// happens; 0 or a negative pid the first of the caller's children
+// (T1.4b2). The answer is (R.ok, the child's status word) or
+// (R.error, why); the wire packs the child's pid above the status —
+// the exit code above the low byte for an exit, the signal's number
+// for a signal death (T1.6) — so a caller that wants the code shifts
+// it out itself.
 def wait(pid Int64) (R, Int64) {
   var answer = ecall(4, pid, 0, 0, 0, 0, 0)
   if answer >= 0 {
-    return (R.ok, answer)
+    return (R.ok, answer & 4294967295)
   }
   return (R.error, why_of(answer))
 }
@@ -463,6 +503,18 @@ def file_read(name Int64, name_len Int64, buf Int64, cap Int64) (R, Int64) {
 
 def file_list(buf Int64, cap Int64) (R, Int64) {
   var answer = ecall(8, buf, cap, 0, 0, 0, 0)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
+// The typed directory listing (EmoOS plan B, T1.2d): the named
+// directory's immediate children, each a type byte (0 file, 1
+// directory), a length byte and the name; answers the bytes written.
+// The root is the empty name.
+def list_dir(name Int64, name_len Int64, buf Int64, cap Int64) (R, Int64) {
+  var answer = ecall(45, name, name_len, buf, cap, 0, 0)
   if answer >= 0 {
     return (R.ok, answer)
   }

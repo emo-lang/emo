@@ -135,6 +135,15 @@ SECTIONS
   . = KOFF + 0x87009000;
   .emo_console (NOLOAD) : AT(ADDR(.emo_console) - KOFF) { *(.emo_console) } :tick
 
+  /* The process door's per-pid arguments (EmoOS plan B, T1.4b2), a
+     page above the console's: the wait's target and the exit's code,
+     one cell each per pid. The wait and the exit used to share one
+     pair of cells, and a request staged behind another could have its
+     argument overwritten before the service read it; the per-pid
+     cells make every request's argument its caller's alone. */
+  . = KOFF + 0x8700a000;
+  .emo_procargs (NOLOAD) : AT(ADDR(.emo_procargs) - KOFF) { *(.emo_procargs) } :tick
+
   /* The exec page (emo-desktop A11.1), a page above the console's end:
      the disk ELFs' kernel side — the per-pid image cells (the gate's
      checks and the build's mapping read the caller's image record by
@@ -157,6 +166,42 @@ SECTIONS
      the held reads it serves. */
   . = KOFF + 0x8700d000;
   .emo_proc (NOLOAD) : AT(ADDR(.emo_proc) - KOFF) { *(.emo_proc) } :tick
+
+  /* The open-file table (EmoOS plan B, T1.1k), a page above the
+     process page: the filesystem service's handles — per pid and fd,
+     the flag word, the offset and the size, the name. The service
+     owns the table; a restart drops it (abandon clears the page), the
+     bound the design states. */
+  . = KOFF + 0x8700e000;
+  .emo_vfs (NOLOAD) : AT(ADDR(.emo_vfs) - KOFF) { *(.emo_vfs) } :tick
+
+  /* The arena's growth list (EmoOS plan B, T1.3v), a page above the
+     open-file table: the (pid, block) rows the grow verb appends and
+     the death reclaim walks home. A page's 200 rows; the count at
+     its head — the page's tail carries the execargs (T1.4a).
+     NOLOAD — the spawns and deaths fill and empty it. */
+  . = KOFF + 0x8700f000;
+  .emo_grow (NOLOAD) : AT(ADDR(.emo_grow) - KOFF) { *(.emo_grow) } :tick
+
+  /* The pipes (EmoOS plan B, T1.5), six pages above the growth list:
+     the per-(pid, fd) binding map (one byte a descriptor), the
+     per-pid request records the gate stages, and the eight pipe
+     blocks (the two ends' counts, the ring's cursors, the parked
+     readers and writers, the bytes). The kernel's Emo (gate.emo,
+     pipe.emo, main.emo) reads and writes every word by its fixed
+     constants. NOLOAD — the pipes' whole state is live memory. */
+  . = KOFF + 0x87010000;
+  .emo_pipe (NOLOAD) : AT(ADDR(.emo_pipe) - KOFF) { *(.emo_pipe) } :tick
+
+  /* The signals (EmoOS plan B, T1.6), nineteen pages above the pipes:
+     the trap shim's two staged cells (the ecall's frame base and slot
+     index), the pending and blocked words (one per pid), the
+     dispositions (one word per pid and signal slot), the active marks
+     and the saved frames (one per process slot). The kernel's Emo
+     (sig.emo, gate.emo, main.emo) reads and writes every word by its
+     fixed constants. NOLOAD — live memory. */
+  . = KOFF + 0x87018000;
+  .emo_sig (NOLOAD) : AT(ADDR(.emo_sig) - KOFF) { *(.emo_sig) } :tick
 
   /* The compositor's page (T8.6), a page above the filesystem's: the
      generation, the mode the display service answered at init, and the

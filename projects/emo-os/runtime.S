@@ -100,6 +100,64 @@ emo_start:
     sd t0, 0(t1)
     la t0, emo_os_user_blob_w_end
     sd t0, 8(t1)
+    # the C door's first image (EmoOS plan B, M0): the cross-built
+    # program's bounds ride the handoff page's next free pair
+    la t0, emo_os_user_blob_x
+    li t1, 0xFFFFFFC087002220
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_x_end
+    sd t0, 8(t1)
+    # the emosh shell (T3.2): the same handoff tail, the next free pair
+    la t0, emo_os_user_blob_m
+    li t1, 0xFFFFFFC087002230
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_m_end
+    sd t0, 8(t1)
+    # dash and its acceptance script (T4.1)
+    la t0, emo_os_user_blob_d
+    li t1, 0xFFFFFFC087002240
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_d_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_t
+    li t1, 0xFFFFFFC087002250
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_t_end
+    sd t0, 8(t1)
+    # the core utilities (T4.2)
+    la t0, emo_os_user_blob_u
+    li t1, 0xFFFFFFC087002260
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_u_end
+    sd t0, 8(t1)
+    # the self-hosted compiler (T4.5): the compiler image, its runtime
+    # helpers, the TCC-facing crt, the sysroot's libc and the
+    # acceptance source — the five pairs the boot install reads.
+    la t0, emo_os_user_blob_cc
+    li t1, 0xFFFFFFC087002270
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_cc_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_cl
+    li t1, 0xFFFFFFC087002280
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_cl_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_cr
+    li t1, 0xFFFFFFC087002290
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_cr_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_ca
+    li t1, 0xFFFFFFC0870022a0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_ca_end
+    sd t0, 8(t1)
+    la t0, emo_os_user_blob_ct
+    li t1, 0xFFFFFFC0870022b0
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_ct_end
+    sd t0, 8(t1)
     # the service handoff (T4.4): the service pids and the caller cell
     # start zeroed, filled by the kernel's own boot flow. The spawned
     # process's entry is the user image's own business — its stub parks
@@ -186,6 +244,15 @@ emo_start:
     la t0, emo_exec__image_home
     la t1, emo_image_give_hook
     sd t0, 0(t1)
+    # the signal trampoline (EmoOS plan B, T1.6): the page every user
+    # table maps RX with U — a handler's return is this page's
+    # sig_return ecall, and the ebreak after it is the loud end of a
+    # return no handler entered.
+    li t0, EMO_KOFF + 0x87ffd000
+    li t1, 0x0000007304000893 # addi a7, x0, 64 then ecall — the
+    sd t1, 0(t0)              # sig_return verb, two words
+    li t1, 0x00100073        # ebreak — the loud end of a return no
+    sd t1, 8(t0)             # handler entered
     # the trap machinery (T3.6): the resume stub's address goes to the
     # runtime's hook, then the init probes the timer, sets stvec, and
     # arms the first deadline — all before the program runs
@@ -239,3 +306,109 @@ emo_park:
     .balign 4096
 emo_os_boot_root:
     .zero 4096
+
+# emo_user_replace (EmoOS T1.4b3b): the in-place exec. a0 = the pid to
+# reuse, a1 = the new image's entry, a2 = the new stack's top (the
+# physical address the build maps at its identity), a3 = the new
+# arena's run base and a4 its end (kernel addresses). The slot's old
+# image, stack, arena and grown blocks go home; the slot is dressed
+# with the new stack and arena, its synthetic frame starts the new
+# entry, the build hook consumes the staged image record, and the same
+# pid is queued. a0 = the pid, or -1 when no slot carries it. Masked
+# throughout: the reaps and the build are kernel work, and no pick may
+# see the half-dressed slot.
+    .section .text
+    .globl emo_user_replace
+emo_user_replace:
+    csrci sstatus, 2
+    addi sp, sp, -64
+    sd ra, 0(sp)
+    sd a0, 8(sp)                # the pid, the answer
+    sd a1, 16(sp)               # the entry
+    sd a2, 24(sp)               # the stack top, physical
+    sd a3, 32(sp)               # the arena run's base, kernel
+    sd a4, 40(sp)               # its end, kernel
+    sd s0, 48(sp)
+    la t0, emo_procs
+    li t1, 0
+    li t2, 64
+.Lur_scan:
+    bgeu t1, t2, .Lur_fail
+    li t3, 888
+    mul t4, t1, t3
+    add t4, t0, t4
+    ld t5, 8(t4)
+    beq t5, a0, .Lur_found
+    addi t1, t1, 1
+    j .Lur_scan
+.Lur_fail:
+    li a0, -1
+    j .Lur_out
+.Lur_found:
+    mv s0, t4
+    # The old world goes home: the image through the hook, the stack
+    # and the arena through the reaper (state 3 is the reaper's gate),
+    # the grown blocks through their own walk.
+    li t5, 3
+    sd t5, 16(s0)
+    mv a0, s0
+    call emo_arena_reap
+    ld a0, 8(sp)
+    call emo_space__grow_reap
+    # The new arena (T1.3/T8.9): the service's run, claimed, the
+    # freelist's head cleared at its end; the old mailbox is empty.
+    sd zero, 24(s0)
+    sd zero, 32(s0)
+    ld t0, 32(sp)
+    ld t1, 40(sp)
+    sd t0, 576(s0)
+    sd t1, 584(s0)
+    sd t0, 880(s0)
+    li t2, 1
+    sd t2, 600(s0)
+    sd zero, 592(s0)
+    sd zero, -8(t1)
+    sd t2, 16(s0)               # alive
+    # The synthetic frame at the new stack's bottom: the entry, the
+    # stack top, the user-exit return, the resume hook — the spawn's
+    # own shape.
+    ld t5, 24(sp)
+    li t6, 65536
+    sub t6, t5, t6
+    sd t6, 864(s0)
+    addi t4, t6, 552
+    mv a0, t4
+    addi a1, t4, 552
+.Lur_zero:
+    sd zero, 0(a0)
+    addi a0, a0, 8
+    blt a0, a1, .Lur_zero
+    sd t5, -8(t4)
+    la t1, emo_os_user_exit
+    sd t1, 0(t4)
+    ld t0, 16(sp)
+    li t1, 0x6020               # SPIE, SPP clear, FS dirty
+    sd t1, 144(t4)
+    sd t0, 152(t4)
+    ld t1, emo_trap_resume_hook
+    sd t1, 336(t4)
+    sd zero, 536(t4)
+    addi t4, t4, 336
+    sd t4, 0(s0)
+    # The child's table: the build hook consumes the staged record and
+    # writes the new root into the slot's space word.
+    la t4, emo_space_build_hook
+    ld t4, 0(t4)
+    beqz t4, .Lur_nospace
+    mv a0, s0
+    jalr t4
+.Lur_nospace:
+    mv a0, s0
+    call emo_runq_push
+    ld a0, 8(sp)
+.Lur_out:
+    ld s0, 48(sp)
+    ld ra, 0(sp)
+    addi sp, sp, 64
+    csrsi sstatus, 2
+    ret

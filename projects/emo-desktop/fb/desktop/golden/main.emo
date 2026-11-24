@@ -348,7 +348,10 @@ def main() {
   // geometry's pins with them: the panel centered above the dock, the
   // search line no row's, a press past the survivors' count no row
   // either.
-  const apps = ["counter.elf", "files.elf", "editor.elf", "spin.elf"]
+  // The machine's catalog (EmoOS plan B, T0): the four hosted apps and
+  // the C door's first program, the order the volume's install writes.
+  const apps = ["counter.elf", "files.elf", "editor.elf", "spin.elf",
+    "chello.elf"]
   // The face's bytes composited over the wallpaper's own (emo-desktop
   // M30, A30.1): the buffer the paint's straight-alpha truth, the
   // wallpaper the ground the metal's carve holds, the compose the
@@ -383,7 +386,7 @@ def main() {
     l4.store(wi % lw, wi / lw, words[wi])
     wi = wi + 1
   }
-  emo_desktop.paint_launcher(l1, f, "", apps, 4, -1)
+  emo_desktop.paint_launcher(l1, f, "", apps, 5, -1)
   emo_desktop.paint_launcher(l2, f, "ed", ["editor.elf"], 1, 0)
   emo_desktop.paint_launcher(l3, f, "zz", apps, 0, -1)
   emo_desktop.paint_launcher(l4, f, "e", apps, 3, 2)

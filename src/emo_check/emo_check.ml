@@ -1440,8 +1440,7 @@ let empty_env =
           {
             vtype =
               FuncType
-                ( [ ("fd", Int64) ],
-                  TupleType [ EnumType "R"; ArrayType Int64 ] );
+                ([ ("fd", Int64) ], TupleType [ EnumType "R"; ArrayType Int64 ]);
             is_var = false;
             depth = 0;
             span = Emo_support.Span.zero;
@@ -1863,6 +1862,27 @@ let raw_mem_bindings =
         depth = 0;
         span = Emo_support.Span.zero;
       } );
+    (* user_replace (EmoOS T1.4b3b): the in-place exec — the calling
+       process's slot is reaped and dressed with the new image's entry,
+       stack and arena, and the same pid runs the new program. The
+       answer is the pid, or -1 when no slot carries it. Same admission
+       rule. *)
+    ( "user_replace",
+      {
+        vtype =
+          FuncType
+            ( [
+                ("pid", Int64);
+                ("entry", Int64);
+                ("stack", Int64);
+                ("arena", Int64);
+                ("arena_end", Int64);
+              ],
+              Int64 );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
     (* gate_reply (EmoOS T4.4): a service's answer to the gate's
        parked caller — the target's raw pid names the waiter (it rode
        the request word), the raw answer lands in that caller's own
@@ -2117,8 +2137,8 @@ let gc_heap_builtin = function
 
 let raw_mem_builtin = function
   | "peek8" | "poke8" | "peek64" | "poke64" | "peek32" | "poke32"
-  | "device_wait" | "device_wake" | "ecall" | "user_spawn" | "gate_reply"
-  | "gate_post" | "pid_num" | "pid_at" | "sfence" ->
+  | "device_wait" | "device_wake" | "ecall" | "user_spawn" | "user_replace"
+  | "gate_reply" | "gate_post" | "pid_num" | "pid_at" | "sfence" ->
       true
   | _ -> false
 

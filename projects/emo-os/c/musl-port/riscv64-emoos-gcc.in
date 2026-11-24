@@ -1,0 +1,30 @@
+#!/bin/sh
+# `riscv64-emoos-gcc` (EmoOS plan B, T2.3): the host cross compiler with
+# the EmoOS sysroot's headers, its `libc.a`, the image's link script and
+# the port's crt. Compile-only shapes leave the link pieces off; a link
+# adds the crt, the library and libgcc. `EMO_CROSS_CC` names the
+# underlying cross compiler; `EMO_CC` is the Emo C target's selector,
+# so the wrapper never uses it for itself.
+
+set -e
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+sysroot=$(CDPATH= cd -- "$here/.." && pwd)
+cc=${EMO_CROSS_CC:-riscv64-elf-gcc}
+
+link=1
+for arg in "$@"; do
+  case $arg in
+    -c|-E|-S|-M|-MM) link=0 ;;
+  esac
+done
+
+if [ "$link" = 0 ]; then
+  exec "$cc" -march=rv64gc -mabi=lp64d -mcmodel=medany -mno-relax \
+    -msmall-data-limit=0 -D_GNU_SOURCE -nostdinc -isystem "$sysroot/include" "$@"
+fi
+
+exec "$cc" -march=rv64gc -mabi=lp64d -mcmodel=medany -mno-relax \
+  -msmall-data-limit=0 -D_GNU_SOURCE -nostdinc -isystem "$sysroot/include" \
+  -nostdlib -Wl,--gc-sections -T "$sysroot/lib/emo.ld" \
+  "$@" "$sysroot/lib/crt0.o" -L"$sysroot/lib" -lc -lgcc

@@ -48,11 +48,11 @@ undocumented ever acts.
 
 | Verb | Spelling | Answer |
 | --- | --- | --- |
-| 0 | `exit(code)` | never returns — the root's exit ends the machine (the SBI poweroff); a spawned process's exit answers its parent's `wait` |
-| 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4 |
+| 0 | `exit(code)` | never returns — the root's exit ends the machine (the SBI poweroff); a spawned process's exit answers its parent's `wait` with the status word `code << 8` (T1.6) |
+| 1 | `write(buf, len)` | the `len` bytes at `buf` ride the kernel's console; answers `len` — `len` beyond the gate's staging capacity (2048 bytes) is reason 4. The source segment needs `R` only: the image's own text and rodata serve (T1.0) |
 | 2 | `read()` | the next input byte, blocking until one exists; answers it (0–255) — the input service's (T8.3), the serial console's bytes |
 | 3 | `spawn()` | a new process enters this image's top level on a fresh stack; answers the child's pid number |
-| 4 | `wait(pid)` | the exit code of the child with that pid number, blocking until it exits |
+| 4 | `wait(pid)` | the child's pid in the answer's high 32 bits and its status word in the low — the code above the low byte for an exit, the signal's number for a signal death (T1.6) — blocking; a positive pid names the child, 0 or a negative one any child of the caller's (the exit table's parent cells). A hit consumes the entry; a miss parks until the child exits (EmoOS plan B, T1.4b2) |
 | 5 | *(the allocator's)* | never returns for the caller — the arena exhaustion report |
 | 6 | `file_write(name, name_len, buf, len)` | the file named by the `name_len` bytes at `name` becomes the `len` bytes at `buf` (at most 2048); answers `len` |
 | 7 | `file_read(name, name_len, buf, cap)` | the file's bytes land at `buf`, at most `cap` of them; answers the file's size |
@@ -81,6 +81,88 @@ undocumented ever acts.
 | 33 | `win_shape(grant, radius, softness)` | the surface's shape recorded on its row — the radius and the softness the compositor's mask and shadow wear, the toplevels' 10 and 16 the rows carry unset and zero the bare rectangle every other role wears. Zero the radius is the words' own meaning (a toplevel stripped, a panel shaped), and a softness of zero is the mask without the ring; a value past 255 is reason 4, and the shape binds at its declaration — the second call is reason 4, the format's own rule (emo-desktop M30, A30.2, below) |
 | 34 | `clip_set(buf, len)` | the `len` bytes at `buf` replace the clipboard whole (0 clears it). The writer must be the focused surface's owner — the app the stream's copy key reaches; a background caller is reason 3. `len` past the clipboard page's 4096 is reason 4, a buffer outside the caller's memory reason 2, one in a segment that is not writable reason 3; the gate copies inside the trap, so the clipboard never holds half a selection (emo-desktop M34, EmoOS T15.1, below) |
 | 35 | `clip_get(buf, cap)` | as many of the clipboard's bytes as fit land at `buf`, at most `cap`; answers the count copied. Reading is any process's: a paste is the focused app's by the stream's routing, and the bytes are no secret (emo-desktop M34, EmoOS T15.1, below) |
+| 36 | `fd_open(fd, name, name_len, flags)` | the open-file table's open (EmoOS plan B, T1.1k): the caller's fd 3..15 names the handle the filesystem service records — the flag word (0 read, 1 write, 2 read+write; `O_CREAT` 64, `O_TRUNC` 512, `O_APPEND` 1024), the offset and the size, the name. A read of a missing name is reason 6; a bad fd, name or flag reason 4; a full table reason 5 |
+| 37 | `fd_close(fd)` | the handle is gone; a fd this process does not hold is reason 4 |
+| 38 | `fd_read(fd, buf, cap)` | the file's bytes at the handle's offset land at `buf`, at most `cap`; answers the bytes copied (0 at the end). The offset advances by the answer; a handle that is not this process's is reason 4 |
+| 39 | `fd_write(fd, buf, len)` | the `len` bytes at `buf` (at most 2048, the gate's staging) land at the handle's offset; answers `len`. `O_APPEND` writes at the size; a read-only handle is reason 4; a full disk reason 5 |
+| 40 | `fd_lseek(fd, off, whence)` | the handle's offset becomes `base + off` — `base` 0, the current offset (1) or the size (2); answers the new offset. A negative result or a whence past 2 is reason 4 |
+| 41 | `fd_fstat(fd)` | the handle's size and flags packed: the size in the high 32 bits, the flag word in the low; a handle that is not this process's is reason 4 |
+| 42 | `path_type(name, name_len)` | 1 a directory (a type entry or an implicit directory's prefix), 0 a file, reason 6 a missing name; a bad name reason 4 (EmoOS plan B, T1.2k) |
+| 43 | `mkdir(name, name_len)` | the name becomes an explicit directory — the type word at the entry's `+56`; the parent must be a directory, an existing name (file, directory or implicit prefix) is refused; answers 0 |
+| 44 | `rmdir(name, name_len)` | the explicit directory removed; it must be empty — a name under its prefix refuses; answers 0 |
+| 45 | `list_dir(name, name_len, buf, cap)` | the named directory's immediate children, each a type byte (0 file, 1 directory), a length byte and the name, deduped in the name table's order; the implicit directories are included, the root is the empty name; answers the bytes written (EmoOS plan B, T1.2d) |
+| 46 | `arena_info()` | the caller's arena, the base and end as page numbers — base in the high 20 bits, end in the low 20, the physical identities the image's own table maps; 0 for a process with none (the boot pass). The library's `brk`/`mmap` live inside it (EmoOS plan B, T1.3) |
+| 47 | `arena_grow(bytes)` | the caller's arena extends past its run by whole 64 KiB blocks, mapped at the pages after the cell's end; the answer is the new end's page number, a negative the refusal (a full growth list or no frames). The death reclaim walks the pid's rows home (EmoOS plan B, T1.3v) |
+| 48 | `exec_args(name, name_len, args, args_len)` | the name and the arguments' text (at most 512 bytes, split at spaces) on the execargs page; the child's first stack gets argc, argv (the name then the words), the argv's NULL and the envp's NULL; the same busy cell as `exec`. Answers the child's pid or a reason (EmoOS plan B, T1.4a) |
+| 49 | `getpid()` | the caller's own pid (EmoOS plan B, T1.4b1) |
+| 50 | `setpgid(pid, pgid)` | the target 0 is the caller and the group 0 the target; only the caller or its child, the parent cell the authority; the group lives in the pid's byte on the growth page's tail; answers 0 (EmoOS plan B, T1.4b1) |
+| 51 | `getpgid(pid)` | the group the pid carries, its own pid when the byte is 0; the same authority as `setpgid`; answers the group (EmoOS plan B, T1.4b1) |
+| 52 | `fork(ctx, entry)` | the caller's saved context and resume entry; the child's image, stack, arena and grown blocks are copied and mapped at the caller's virtual bases, and the child returns from `fork` with 0 — the parent with the child's pid. Only an exec'd image may fork; the entry must sit in an executable segment (EmoOS plan B, T1.4b2) |
+| 54 | `execve(name, name_len, args, args_len, env, env_len)` | the caller's image replaced in place: the name and both texts (args at most 512 bytes, env at most 256, split at spaces) stage, the process service loads the new image on a fresh stack and arena, and the runtime reaps the old image, stack, arena and grown blocks and starts the same pid at the new entry. `argv[0]` is the name; the envp is the text's words. Never returns on success; a refusal is a reason (EmoOS plan B, T1.4b3b) |
+| 55 | `pipe_bind(rfd, wfd)` | two fresh ends of a new pipe, bound to the caller's descriptors — `rfd` the read end, `wfd` the write end; whatever bindings the two fds carried are dropped first. Answers the pipe's id, or a reason (a full table); the library's `pipe` picks the numbers (EmoOS plan B, T1.5) |
+| 56 | `pipe_read(fd, buf, cap)` | the ring's bytes into the caller's buffer, at most `cap` (2048 the gate's bound); blocks on an empty ring a writer may still fill, and answers 0 the moment no writer is left — the last writer's close is EOF. A descriptor that is no read end is reason 4 (EmoOS plan B, T1.5) |
+| 57 | `pipe_probe(fd)` | 0 when the descriptor is no pipe, 1 the read end, 2 the write end — the gate's own peek of the binding map, no service between. The library asks once per fd and caches the answer, so an exec'd image's fresh table finds the low ends its predecessor redirected (EmoOS plan B, T1.5) |
+| 58 | `pipe_write(fd, buf, len)` | the caller's bytes into the ring, what its room takes this pass (the partial answer POSIX gives past a buffer); a full ring parks the writer until a read or a close frees room, and no reader at all answers the broken pipe (EmoOS plan B, T1.5) |
+| 59 | `pipe_dup(oldfd, newfd)` | the pipe end the old fd names, the new fd's — the binding at `newfd` dropped first, the pipe's count one higher. The library's `dup2` has already dropped whatever file the new fd held; answers 0 or a reason (EmoOS plan B, T1.5) |
+| 60 | `pipe_close(fd)` | one end's holder gone: the last writer's close is the readers' EOF, the last reader's the writers' broken pipe, and both ends' the pipe's own end. A descriptor that is no pipe end is reason 4 (EmoOS plan B, T1.5) |
+| 61 | `kill(pid, sig)` | the signal's pending bit raised on the target: a positive pid one process, 0 the caller's own group, a negative one the group it names; the authority is the caller's own body, its child, or a group it carries. Signal 0 is the permission probe; a signal outside the vocabulary is reason 4 (EmoOS plan B, T1.6) |
+| 62 | `sig_action(sig, disp)` | the disposition recorded — 0 the default, 1 ignored, an address inside one of the caller's executable segments; answers the old one. SIGKILL cannot be caught or ignored: its number is reason 4 (EmoOS plan B, T1.6) |
+| 63 | `sig_mask(how, set)` | the blocked word: 0 blocks the set, 1 unblocks it, 2 replaces the mask whole; answers the old mask. The bits are the signal numbers themselves (bit 2 is SIGINT); SIGKILL's bit and the vocabulary's outsiders are dropped (EmoOS plan B, T1.6) |
+| 64 | `sig_return()` | the trampoline's verb: the process slot's saved frame goes back into the caller's own — the one the handler interrupted — and the mask with it; the answer is the shim's special -105, so the frame resumes as it stands, no answer into a0 and no sepc bump. Outside a handler there is nothing to return to: reason 4 (EmoOS plan B, T1.6) |
+| 65 | `sig_pending()` | the caller's pending word, the signals a mask or a running handler still holds back (EmoOS plan B, T1.6) |
+
+The fd and path verbs share the filesystem's four request slots; the
+slot's `+88` marker selects the open-file table and the path calls,
+the whole-file verbs' own path otherwise.
+
+The process door's arguments ride per-pid cells on `.emo_procargs`
+(0x8700a000): the wait's target in the first half, the exit's code in
+the second (T1.4b2). A request staged behind another cannot overwrite
+its argument before the process service reads it.
+
+The exec doors' texts live on the execargs page's tail and the free
+tail at 0x8700b900: verb 48's args at the page's `+64` (512 bytes),
+verb 54's env at 0x8700b900 (256 bytes) — clear of the console's
+per-pid cells. The exec's use flag names the door: 0 plain, 1 args,
+2 replace.
+
+The pipe family (verbs 55..60, EmoOS plan B, T1.5) is the process
+service's second arm: the gate stages each request in the calling
+pid's record on `.emo_pipe`'s request page (op, fd, the second fd, the
+buffer, the length, the caller's space word) and routes op 40..44; the
+service — the one green thread that mutates the pipe tables — serves
+it, or holds the caller in gate-wait until a peer's read, write or
+close makes it servable. The verbs 55 and 57 answer inside the gate
+(the bind and the probe need no wake); 56, 58, 59 and 60 ride the
+route because every one of them can wake a parked peer, and the reply
+that wakes it is the service's to give. The binding map is one byte a
+descriptor: 0 no pipe, `0x10 | id` a read end, `0x20 | id` a write
+end; eight pipe blocks carry the two ends' counts, the ring's cursors
+and 768 bytes, and the four parked readers and four parked writers a
+block keeps.
+
+The signals are the gate's own (T1.6): no service sits between, the
+state is the fixed pages' and the trap that carries the verb does the
+work. The vocabulary is eight signals — SIGINT 2, SIGQUIT 3, SIGKILL
+9, SIGUSR1 10, SIGSEGV 11, SIGPIPE 13, SIGTERM 15, SIGCHLD 17 — with
+one disposition word a pid and signal slot (0 default, 1 ignored, an
+address a handler), one pending and one blocked word a pid, and one
+saved frame a process slot.
+
+Every return into U-mode asks the pending word before the anchor is
+armed: the lowest unmasked signal whose disposition is a handler
+rewrites the frame the resume is about to restore — `ra` to the
+trampoline page at `0x87ffd000` (every user table maps it RX with U),
+`a0` to the signal, `sepc` to the handler — after copying the
+interrupted frame and its sp slot to the slot's saved record. The
+handler runs with every signal masked, and its return is the
+trampoline's `sig_return` ecall, which puts the saved frame and mask
+back. A default disposition ends the process with the signal's number
+as its status (SIGCHLD's default is to ignore), and that death goes
+through the process service as any exit's does — the wait's answer,
+the parent's event, the pipe ends' walk. A signal raised on a parked
+process waits for its park to resolve: `kill` does not interrupt a
+blocked read yet.
 
 Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
@@ -341,7 +423,7 @@ owner's read — is the same.
 The disk ELFs' verb (T8.16, emo-desktop A11.1, verb 24) is
 `exec(name, name_len)`: the program the filesystem names becomes a
 process of its own. The name is judged like the filesystem's — inside
-one writable segment of the caller's own (the per-process check: a
+one readable segment of the caller's own (the per-process check: a
 disk ELF's caller is judged by its image's segments, the boot image's
 by its own) — copied into the exec page inside the trap, and routed to
 the process service, which reads the volume through the filesystem
@@ -465,12 +547,17 @@ segment table the loader parked when it staged this image (each
 `PT_LOAD`'s range and ELF `p_flags`): the whole range
 `[buf, buf + len)` must lie inside **one** segment — a call that spans
 segments is refused, not split — and that segment must carry the
-permission the access needs (`write` needs `W`). The range check is
-written overflow-safe (`len > end - buf`, never `buf + len > end`), a
-zero length inside a writable segment answers 0, and the
-range-versus-permission distinction is honest: a range that some
-segment covers but no writable segment covers is reason 3, a range
-nothing covers is reason 2. A write longer than the gate's staging
+permission the access needs: a destination the gate writes into (a
+read's buffer, the listing's) needs `W`, a source it lifts (the
+write's bytes, a name, the exec's texts) needs `R` only — since T1.0
+the image's own text and rodata serve `write`, and the C library's
+bounce copy is the stack buffer's fallback, not every write's road.
+The range check is written overflow-safe (`len > end - buf`, never
+`buf + len > end`), a zero length inside a segment that carries the
+permission answers 0, and the range-versus-permission distinction is
+honest: a range that some segment covers but no segment with the
+needed permission covers is reason 3, a range nothing covers is
+reason 2. A write longer than the gate's staging
 page carries (2048 bytes) is reason 4 before anything is copied.
 
 Since SV39's per-process tables (T6.2) the check and the use are one
@@ -535,6 +622,19 @@ The filesystem's pages (T7.2, `.emo_fs`, three pages from
 supervisor's pid cell the runtime's death notice posts to, the stash,
 and the four request slots the gate fills; the layout is in
 [`docs/fs.md`](fs.md).
+
+The signals' pages (T1.6, `.emo_sig`, nineteen pages from
+`0x87018000`): the trap shim's two staged cells (the ecall's frame base
+and slot index), the pending and blocked words, the dispositions, the
+active marks, and the saved frames (576 bytes a process slot). The
+trampoline page is not a section of its own: the boot stub writes its
+three words at `0x87ffd000`, and every table maps it RX with U.
+
+The pipes' pages (T1.5, `.emo_pipe`, six pages from `0x87010000`):
+the binding map (one byte per pid and fd, 256 pids of sixteen), the
+per-pid request records the gate stages (48 bytes each), and the eight
+pipe blocks of 1024 bytes (the counts, the cursors, the parked ends'
+pids, the 768-byte ring).
 
 The clipboard's page (T15.1, `.emo_clip`) sits a page above the
 notification service's at `0x87007000`, its bytes up to the page's

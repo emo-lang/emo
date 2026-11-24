@@ -40,6 +40,25 @@ const slots = page + 256
 const slot_size = 2304
 const slot_count = 4
 
+// The open-file table (EmoOS plan B, T1.1k): a page of its own above
+// the process page. A handle is the caller's fd, the flag word, the
+// offset and the size, and the name — 96 bytes, thirty-two of them,
+// the service's state and dropped by a restart (`handles_clear`).
+const handles = koff + 0x8700e000
+const handle_stride = 96
+const handle_count = 32
+const h_used = 0
+const h_pid = 8
+const h_fd = 16
+const h_flags = 24
+const h_off = 32
+const h_size = 40
+const h_nlen = 48
+const h_name = 64
+const o_creat = 64
+const o_trunc = 512
+const o_append = 1024
+
 // The disk (docs/fs.md): 512-byte sectors; the superblock in sector 0
 // — the magic, the generation, the size, the mount count, then the
 // mount table at 32 (a 64-byte entry: the name, the name table's first
@@ -65,6 +84,13 @@ const c_super = 0
 const c_names = 512
 const c_map = 4608
 const c_data = 8192
+
+// The name entry's type word (EmoOS plan B, T1.2k): the entry's last
+// eight bytes — 0 a file, 1 a directory. The volumes before this
+// field carry zero there, the file it always meant; the service writes
+// the word on mkdir and reads it on every path question.
+const c_type = 56
+const type_dir = 1
 
 // The request word's parts. A gate word is positive; a heap pointer
 // (a kernel client's tuple, the driver's boxed reply) is negative —
@@ -377,6 +403,11 @@ def write_file(me Pid, blk Pid, cache Int64, name Int64, nlen Int64, buf Int64, 
     return -4
   }
   var old = find(cache, name, nlen)
+  if old >= 0 {
+    if peek8(entry(cache, old) + c_type).to_int64() != 0 {
+      return -4
+    }
+  }
   var e = old
   if e < 0 {
     e = free_entry(cache)
@@ -548,12 +579,717 @@ def remove_file(me Pid, blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
     return -6
   }
   var a = entry(cache, e)
+  if peek8(a + c_type).to_int64() != 0 {
+    return -4
+  }
   var first = peek64(a + 32)
   var count = peek64(a + 40)
   zero(a, 64)
   commit_entry(me, blk, cache, e)
   map_run(cache, first, count, false)
   return 0
+}
+
+// ---- the real directory entries (EmoOS plan B, T1.2k) ----
+
+// The path's kind: 1 a directory (an entry with the type word, or a
+// name under its prefix — the implicit directory the flat years left),
+// 0 a file, -6 no name at all.
+def path_type(cache Int64, name Int64, nlen Int64) Int64 {
+  if !valid_name(name, nlen) {
+    return -4
+  }
+  var e = find(cache, name, nlen)
+  if e >= 0 {
+    if peek8(entry(cache, e) + c_type).to_int64() != 0 {
+      return 1
+    }
+    return 0
+  }
+  var i = 0
+  while i < entries {
+    var a = entry(cache, i)
+    var n = name_len_at(a)
+    if n > nlen {
+      var same = true
+      var j = 0
+      while j < nlen {
+        if peek8(a + j).to_int64() != peek8(name + j).to_int64() {
+          same = false
+        }
+        j = j + 1
+      }
+      if same {
+        if peek8(a + nlen).to_int64() == 47 {
+          return 1
+        }
+      }
+    }
+    i = i + 1
+  }
+  return -6
+}
+
+// The explicit directory: the name's entry with the type word, the
+// parent a directory (the root for a bare name), a name already there
+// refused. The bytes and the name table are the format's own.
+def make_dir(me Pid, blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
+  if !valid_name(name, nlen) {
+    return -4
+  }
+  if find(cache, name, nlen) >= 0 {
+    return -4
+  }
+  if path_type(cache, name, nlen) == 1 {
+    return -4
+  }
+  var k = nlen
+  while k > 0 && peek8(name + k - 1).to_int64() != 47 {
+    k = k - 1
+  }
+  if k > 0 {
+    if path_type(cache, name, k - 1) != 1 {
+      return -6
+    }
+  }
+  var free = free_entry(cache)
+  if free < 0 {
+    return -5
+  }
+  var a = entry(cache, free)
+  zero(a, 64)
+  var i = 0
+  while i < nlen {
+    poke8(a + i, peek8(name + i))
+    i = i + 1
+  }
+  poke8(a + c_type, type_dir.to_byte())
+  poke64(a + 48, peek64(cache + c_super + 8))
+  commit_entry(me, blk, cache, free)
+  return 0
+}
+
+// The directory's removal: the entry must carry the type word and no
+// name may sit under its prefix — an empty explicit directory, the
+// mkdir's own.
+def remove_dir(me Pid, blk Pid, cache Int64, name Int64, nlen Int64) Int64 {
+  if !valid_name(name, nlen) {
+    return -4
+  }
+  var e = find(cache, name, nlen)
+  if e < 0 {
+    return -4
+  }
+  var a = entry(cache, e)
+  if peek8(a + c_type).to_int64() == 0 {
+    return -4
+  }
+  var i = 0
+  while i < entries {
+    var b = entry(cache, i)
+    var n = name_len_at(b)
+    if n > nlen {
+      var same = true
+      var j = 0
+      while j < nlen {
+        if peek8(b + j).to_int64() != peek8(name + j).to_int64() {
+          same = false
+        }
+        j = j + 1
+      }
+      if same {
+        if peek8(b + nlen).to_int64() == 47 {
+          return -4
+        }
+      }
+    }
+    i = i + 1
+  }
+  zero(a, 64)
+  commit_entry(me, blk, cache, e)
+  return 0
+}
+
+// One entry's immediate child under `dir`, packed: kind (0 file, 1
+// directory) in bits 40.., the child's start in bits 8..15, its
+// length in bits 0..7; -1 when the entry is not the directory's
+// child. The root is the empty dir.
+def child_of(cache Int64, i Int64, dirp Int64, dlen Int64) Int64 {
+  var a = entry(cache, i)
+  var n = name_len_at(a)
+  if n == 0 {
+    return -1
+  }
+  var start = 0
+  var len = 0
+  var kind = 0
+  if dlen == 0 {
+    start = 0
+    var k = 0
+    while k < n {
+      if peek8(a + k).to_int64() == 47 {
+        k = n
+      } else {
+        k = k + 1
+      }
+    }
+    if k == n {
+      var j = 0
+      var slash = -1
+      while j < n {
+        if peek8(a + j).to_int64() == 47 {
+          slash = j
+          j = n
+        } else {
+          j = j + 1
+        }
+      }
+      if slash >= 0 {
+        len = slash
+        kind = 1
+      } else {
+        len = n
+        kind = peek8(a + c_type).to_int64()
+      }
+    } else {
+      len = k
+      kind = 1
+    }
+  } else {
+    if n <= dlen {
+      return -1
+    }
+    var same = true
+    var j = 0
+    while j < dlen {
+      if peek8(a + j).to_int64() != peek8(dirp + j).to_int64() {
+        same = false
+      }
+      j = j + 1
+    }
+    if !same {
+      return -1
+    }
+    if peek8(a + dlen).to_int64() != 47 {
+      return -1
+    }
+    start = dlen + 1
+    var k = start
+    while k < n {
+      if peek8(a + k).to_int64() == 47 {
+        k = n
+      } else {
+        k = k + 1
+      }
+    }
+    if k == n {
+      var j2 = start
+      var slash2 = -1
+      while j2 < n {
+        if peek8(a + j2).to_int64() == 47 {
+          slash2 = j2
+          j2 = n
+        } else {
+          j2 = j2 + 1
+        }
+      }
+      if slash2 >= 0 {
+        len = slash2 - start
+        kind = 1
+      } else {
+        len = n - start
+        kind = peek8(a + c_type).to_int64()
+      }
+    } else {
+      len = k - start
+      kind = 1
+    }
+  }
+  if len <= 0 {
+    return -1
+  }
+  return (kind << 40) | (start << 8) | len
+}
+
+// The immediate children of `dirp`, each as a type byte, a length
+// byte and the name — the desktop's typed view (T1.2d). Deduped in
+// the name table's order; the record the caller's buffer, the space
+// word the walk.
+def list_dir(cache Int64, dirp Int64, dlen Int64, buf Int64, cap Int64,
+             root Int64) Int64 {
+  if dlen < 0 || dlen > name_max || cap < 0 {
+    return -4
+  }
+  if dlen > 0 {
+    if path_type(cache, dirp, dlen) != 1 {
+      return -4
+    }
+  }
+  var pos = 0
+  var i = 0
+  while i < entries {
+    var c = child_of(cache, i, dirp, dlen)
+    if c >= 0 {
+      var len = c & 255
+      var start = (c >> 8) & 255
+      var kind = c >> 40
+      var seen = false
+      var j = 0
+      while j < i {
+        var p = child_of(cache, j, dirp, dlen)
+        if p >= 0 {
+          if (p & 255) == len {
+            var ps = (p >> 8) & 255
+            var a = entry(cache, i)
+            var b = entry(cache, j)
+            var same = true
+            var k = 0
+            while k < len {
+              if peek8(a + start + k).to_int64() != peek8(b + ps + k).to_int64() {
+                same = false
+              }
+              k = k + 1
+            }
+            if same {
+              seen = true
+            }
+          }
+        }
+        j = j + 1
+      }
+      if !seen {
+        if pos + 2 + len > cap {
+          return pos
+        }
+        var a2 = entry(cache, i)
+        poke8(buf_pa(buf + pos, root), kind.to_byte())
+        poke8(buf_pa(buf + pos + 1, root), len.to_byte())
+        var k = 0
+        while k < len {
+          poke8(buf_pa(buf + pos + 2 + k, root), peek8(a2 + start + k))
+          k = k + 1
+        }
+        pos = pos + 2 + len
+      }
+    }
+    i = i + 1
+  }
+  return pos
+}
+
+// ---- the open-file table (EmoOS plan B, T1.1k) ----
+
+def handle_at(i Int64) Int64 {
+  return handles + i * handle_stride
+}
+
+// The handle a (pid, fd) names, or 0: the caller's own, a fd another
+// process holds is nobody's.
+def handle_find(pid Int64, fd Int64) Int64 {
+  var i = 0
+  while i < handle_count {
+    var h = handle_at(i)
+    if peek64(h + h_used) != 0 {
+      if peek64(h + h_pid) == pid && peek64(h + h_fd) == fd {
+        return h
+      }
+    }
+    i = i + 1
+  }
+  return 0
+}
+
+def handle_take(pid Int64, fd Int64) Int64 {
+  var i = 0
+  while i < handle_count {
+    var h = handle_at(i)
+    if peek64(h + h_used) == 0 {
+      poke64(h + h_used, 1)
+      poke64(h + h_pid, pid)
+      poke64(h + h_fd, fd)
+      return h
+    }
+    i = i + 1
+  }
+  return 0
+}
+
+def handle_close(pid Int64, fd Int64) Int64 {
+  var h = handle_find(pid, fd)
+  if h == 0 {
+    return -4
+  }
+  poke64(h + h_used, 0)
+  return 0
+}
+
+// The exec's descriptor drop (EmoOS T1.4b3b): the calling pid's
+// handles go before its image is replaced — the new image's library
+// table is fresh and cannot name them, and a stale handle would block
+// the new image's own fd numbers. Execution closes every descriptor
+// the process had, the documented approximation until the service
+// hands a list to the new image.
+def drop_pid(pid Int64) Void {
+  var i = 0
+  while i < handle_count {
+    var h = handle_at(i)
+    if peek64(h + h_used) != 0 {
+      if peek64(h + h_pid) == pid {
+        poke64(h + h_used, 0)
+      }
+    }
+    i = i + 1
+  }
+}
+
+// A restart drops every handle: the fds the dead instance served are
+// nobody's, and the next instance must not inherit a half-written
+// offset. The supervisor calls this through abandon.
+def handles_clear() Void {
+  var i = 0
+  while i < handle_count {
+    poke64(handle_at(i) + h_used, 0)
+    i = i + 1
+  }
+}
+
+// The file's bytes at an offset into the caller's buffer: the sector
+// walk the whole-file read rides, one sector at a time, the caller's
+// memory through its own table. The answer is the bytes copied, 0 at
+// the file's end.
+def read_at(me Pid, blk Pid, cache Int64, name Int64, nlen Int64,
+            buf Int64, packed Int64, root Int64) Int64 {
+  var cap = packed & 4294967295
+  var off = packed >> 32
+  if !valid_name(name, nlen) || cap < 0 || off < 0 {
+    return -4
+  }
+  var e = find(cache, name, nlen)
+  if e < 0 {
+    return -6
+  }
+  var a = entry(cache, e)
+  var size = peek64(a + 24)
+  var first = peek64(a + 32)
+  if off >= size {
+    return 0
+  }
+  var want = size - off
+  if cap < want {
+    want = cap
+  }
+  var copied = 0
+  while copied < want {
+    var pos = off + copied
+    var s = pos / sector
+    var in_s = pos - s * sector
+    io(me, blk, 4, first + s, cache + c_data)
+    var k = sector - in_s
+    if want - copied < k {
+      k = want - copied
+    }
+    var j = 0
+    while j < k {
+      poke8(buf_pa(buf + copied + j, root), peek8(cache + c_data + in_s + j))
+      j = j + 1
+    }
+    copied = copied + k
+  }
+  return copied
+}
+
+// The bytes at an offset written into the file: the old sectors
+// merged under the new bytes, whole sectors the new bytes' when the
+// write covers them, the tail zeros past the old size. The new run is
+// allocated beside the old, written sector by sector, the name table
+// committed after the bytes, the old run freed last — the whole-file
+// write's commit order, at an offset.
+def write_at(me Pid, blk Pid, cache Int64, name Int64, nlen Int64,
+             src Int64, len Int64, off Int64) Int64 {
+  if !valid_name(name, nlen) || len < 0 || off < 0 || off + len > write_max {
+    return -4
+  }
+  var old = find(cache, name, nlen)
+  if old >= 0 {
+    if peek8(entry(cache, old) + c_type).to_int64() != 0 {
+      return -4
+    }
+  }
+  var e = old
+  if e < 0 {
+    e = free_entry(cache)
+  }
+  if e < 0 {
+    return -5
+  }
+  var old_size = 0
+  var old_first = 0
+  var old_count = 0
+  if old >= 0 {
+    var oa = entry(cache, old)
+    old_size = peek64(oa + 24)
+    old_first = peek64(oa + 32)
+    old_count = peek64(oa + 40)
+  }
+  var new_size = old_size
+  if off + len > new_size {
+    new_size = off + len
+  }
+  var n = (new_size + sector - 1) / sector
+  var first = 0
+  if n > 0 {
+    first = alloc(cache, n)
+    if first == 0 {
+      return -5
+    }
+  }
+  var s = 0
+  while s < n {
+    var sec_start = s * sector
+    var whole = false
+    if len > 0 {
+      if off <= sec_start && off + len >= sec_start + sector {
+        whole = true
+      }
+    }
+    if whole {
+      var k = 0
+      while k < sector {
+        poke8(cache + c_data + k, peek8(src + (sec_start - off) + k))
+        k = k + 1
+      }
+    } else {
+      if s < old_count && sec_start < old_size {
+        io(me, blk, 4, old_first + s, cache + c_data)
+        var z = old_size - sec_start
+        if z < 0 {
+          z = 0
+        }
+        if z > sector {
+          z = sector
+        }
+        while z < sector {
+          poke8(cache + c_data + z, 0B)
+          z = z + 1
+        }
+      } else {
+        zero(cache + c_data, sector)
+      }
+      var from = off
+      if from < sec_start {
+        from = sec_start
+      }
+      var to = off + len
+      if to > sec_start + sector {
+        to = sec_start + sector
+      }
+      var i = from
+      while i < to {
+        poke8(cache + c_data + (i - sec_start), peek8(src + (i - off)))
+        i = i + 1
+      }
+    }
+    io(me, blk, 3, first + s, cache + c_data)
+    s = s + 1
+  }
+  var a = entry(cache, e)
+  zero(a, 64)
+  var i = 0
+  while i < nlen {
+    poke8(a + i, peek8(name + i))
+    i = i + 1
+  }
+  poke64(a + 24, new_size)
+  poke64(a + 32, first)
+  poke64(a + 40, n)
+  poke64(a + 48, peek64(cache + c_super + 8))
+  commit_entry(me, blk, cache, e)
+  if old >= 0 {
+    map_run(cache, old_first, old_count, false)
+  }
+  return len
+}
+
+// The open: the existence check (a read's missing name is -6), the
+// create and the truncate (the whole-file write with no bytes), the
+// handle's state. O_APPEND starts at the file's size.
+def handle_open(me Pid, blk Pid, cache Int64, pid Int64, fd Int64,
+                name Int64, nlen Int64, flags Int64) Int64 {
+  if !valid_name(name, nlen) {
+    return -4
+  }
+  var mode = flags & 3
+  if mode > 2 {
+    return -4
+  }
+  var e = find(cache, name, nlen)
+  if e < 0 {
+    if mode == 0 || (flags & o_creat) == 0 {
+      return -6
+    }
+    var made = write_file(me, blk, cache, name, nlen, name, 0, 0)
+    if made < 0 {
+      return made
+    }
+    e = find(cache, name, nlen)
+  } else {
+    if mode != 0 && (flags & o_trunc) != 0 {
+      var tr = write_file(me, blk, cache, name, nlen, name, 0, 0)
+      if tr < 0 {
+        return tr
+      }
+      e = find(cache, name, nlen)
+    }
+  }
+  if e < 0 {
+    return -5
+  }
+  if handle_find(pid, fd) != 0 {
+    return -4
+  }
+  var h = handle_take(pid, fd)
+  if h == 0 {
+    return -5
+  }
+  var a = entry(cache, e)
+  var size = peek64(a + 24)
+  var off = 0
+  if (flags & o_append) != 0 {
+    off = size
+  }
+  poke64(h + h_flags, flags)
+  poke64(h + h_off, off)
+  poke64(h + h_size, size)
+  poke64(h + h_nlen, nlen)
+  var i = 0
+  while i < nlen {
+    poke8(h + h_name + i, peek8(name + i))
+    i = i + 1
+  }
+  return 0
+}
+
+// The descriptor's read and write: the handle's offset, the file's
+// size after the write, the append's size seat.
+def handle_read(me Pid, blk Pid, cache Int64, pid Int64, fd Int64,
+                buf Int64, cap Int64, root Int64) Int64 {
+  var h = handle_find(pid, fd)
+  if h == 0 {
+    return -4
+  }
+  var off = peek64(h + h_off)
+  var limit = cap
+  if limit > 4294967295 {
+    limit = 4294967295
+  }
+  var packed = (off << 32) | (limit & 4294967295)
+  var n = read_at(me, blk, cache, h + h_name, peek64(h + h_nlen), buf,
+    packed, root)
+  if n > 0 {
+    poke64(h + h_off, off + n)
+  }
+  return n
+}
+
+def handle_write(me Pid, blk Pid, cache Int64, pid Int64, fd Int64,
+                 src Int64, len Int64) Int64 {
+  var h = handle_find(pid, fd)
+  if h == 0 {
+    return -4
+  }
+  var flags = peek64(h + h_flags)
+  if (flags & 3) == 0 {
+    return -4
+  }
+  var off = peek64(h + h_off)
+  if (flags & o_append) != 0 {
+    off = peek64(h + h_size)
+  }
+  var n = write_at(me, blk, cache, h + h_name, peek64(h + h_nlen), src, len, off)
+  if n < 0 {
+    return n
+  }
+  poke64(h + h_off, off + len)
+  var size = peek64(h + h_size)
+  if off + len > size {
+    size = off + len
+  }
+  poke64(h + h_size, size)
+  return n
+}
+
+def handle_seek(pid Int64, fd Int64, off Int64, whence Int64) Int64 {
+  var h = handle_find(pid, fd)
+  if h == 0 {
+    return -4
+  }
+  if whence < 0 || whence > 2 {
+    return -4
+  }
+  var base = 0
+  if whence == 1 {
+    base = peek64(h + h_off)
+  }
+  if whence == 2 {
+    base = peek64(h + h_size)
+  }
+  var next = base + off
+  if next < 0 {
+    return -4
+  }
+  poke64(h + h_off, next)
+  return next
+}
+
+// The size above the flag word: one gate answer, the caller's decode.
+def handle_stat(pid Int64, fd Int64) Int64 {
+  var h = handle_find(pid, fd)
+  if h == 0 {
+    return -4
+  }
+  return (peek64(h + h_size) << 32) | (peek64(h + h_flags) & 4294967295)
+}
+
+// The fd verbs' service side: the slot's layout is the gate's —
+// fd at +16, arg1 at +32, arg2 at +48, flags at +56, the name at
+// +64, the write's bytes at +256.
+def serve_fd(me Pid, blk Pid, cache Int64, n Int64, s Int64) Int64 {
+  var pid = peek64(s + 8)
+  var fd = peek64(s + 16)
+  if n == 42 {
+    return path_type(cache, s + 64, peek64(s + 48))
+  }
+  if n == 43 {
+    return make_dir(me, blk, cache, s + 64, peek64(s + 48))
+  }
+  if n == 44 {
+    return remove_dir(me, blk, cache, s + 64, peek64(s + 48))
+  }
+  if n == 45 {
+    return list_dir(cache, s + 64, peek64(s + 48), peek64(s + 32),
+      peek64(s + 56), peek64(s + 40))
+  }
+  if n == 36 {
+    return handle_open(me, blk, cache, pid, fd, s + 64, peek64(s + 48),
+      peek64(s + 56))
+  }
+  if n == 37 {
+    return handle_close(pid, fd)
+  }
+  if n == 38 {
+    return handle_read(me, blk, cache, pid, fd, peek64(s + 32),
+      peek64(s + 48), peek64(s + 40))
+  }
+  if n == 39 {
+    return handle_write(me, blk, cache, pid, fd, s + 256, peek64(s + 48))
+  }
+  if n == 40 {
+    return handle_seek(pid, fd, peek64(s + 32), peek64(s + 48))
+  }
+  if n == 41 {
+    return handle_stat(pid, fd)
+  }
+  return -4
 }
 
 // The mount: sector 0 through the driver; no magic is the format (the
@@ -657,27 +1393,39 @@ def serve_client(me Pid, blk Pid, cache Int64, op Int64, name Int64, nlen Int64,
 
 def serve_gate(me Pid, blk Pid, cache Int64, w Int64) Void {
   var s = slots + slot_of(w) * slot_size
-  var op = verb_of(w)
-  var buf = s + 256
-  if op == 7 || op == 8 {
-    buf = peek64(s + 32)
+  // The fd verbs (T1.1k): the slot's +88 marker says the request is
+  // the open-file table's, the verb at +24 — the op stays in the 6..9
+  // family the shim routes to this service, so the route space needs
+  // no growth.
+  if peek64(s + 88) != 0 {
+    var fverb = peek64(s + 24)
+    var fanswer = serve_fd(me, blk, cache, fverb, s)
+    poke64(s + 88, 0)
+    poke64(s, 0)
+    gate_reply(caller_of(w), fanswer)
+  } else {
+    var op = verb_of(w)
+    var buf = s + 256
+    if op == 7 || op == 8 {
+      buf = peek64(s + 32)
+    }
+    var root = peek64(s + 40)
+    var answer = 0
+    if op == 6 {
+      answer = write_file(me, blk, cache, s + 64, peek64(s + 16), buf, peek64(s + 24), root)
+    }
+    if op == 7 || op == 10 {
+      answer = read_file(me, blk, cache, s + 64, peek64(s + 16), buf, peek64(s + 24), root)
+    }
+    if op == 8 {
+      answer = list_files(cache, buf, peek64(s + 24), root)
+    }
+    if op == 9 {
+      answer = remove_file(me, blk, cache, s + 64, peek64(s + 16))
+    }
+    poke64(s, 0)
+    gate_reply(caller_of(w), answer)
   }
-  var root = peek64(s + 40)
-  var answer = 0
-  if op == 6 {
-    answer = write_file(me, blk, cache, s + 64, peek64(s + 16), buf, peek64(s + 24), root)
-  }
-  if op == 7 || op == 10 {
-    answer = read_file(me, blk, cache, s + 64, peek64(s + 16), buf, peek64(s + 24), root)
-  }
-  if op == 8 {
-    answer = list_files(cache, buf, peek64(s + 24), root)
-  }
-  if op == 9 {
-    answer = remove_file(me, blk, cache, s + 64, peek64(s + 16))
-  }
-  poke64(s, 0)
-  gate_reply(caller_of(w), answer)
 }
 
 // The supervisor's part at a restart (docs/fs.md): every client the
@@ -695,6 +1443,7 @@ def abandon() Void {
     k = k + 1
   }
   poke64(stash_count, 0)
+  handles_clear()
 }
 
 // The service: the mount, the announce to the supervisor, then the
@@ -704,6 +1453,7 @@ def abandon() Void {
 def service(boss Pid, blk Pid, cache Int64) Void {
   var me = self_pid()
   mount(me, blk, cache)
+  handles_clear()
   boss <- me
   var running = true
   while running {

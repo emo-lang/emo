@@ -2838,29 +2838,24 @@ let emosh_golden_tests =
               let out, _, status =
                 Emo_test_support.run_cmd
                   (Printf.sprintf
-                     "exec 2>&1; EMO_STATE_DIR=%s EMOSH_ASSUME_TTY=1 printf %s | %s"
-                     (Filename.quote scratch)
-                     printf_args
-                     (Filename.quote bin))
+                     "exec 2>&1; printf %s | EMO_STATE_DIR=%s \
+                      EMOSH_ASSUME_TTY=1 %s"
+                     printf_args (Filename.quote scratch) (Filename.quote bin))
               in
               List.iter
                 (fun (what, needle) ->
-                  if what = "has" then begin
-                    if not (contains_sub out needle) then
-                      Alcotest.fail
-                        (tag ^ ": missing " ^ String.escaped needle)
-                  end
+                  if what = "has" then
+                    begin if not (contains_sub out needle) then
+                      Alcotest.fail (tag ^ ": missing " ^ String.escaped needle)
+                    end
                   else if contains_sub out needle then
-                    Alcotest.fail
-                      (tag ^ ": unexpected " ^ String.escaped needle))
+                    Alcotest.fail (tag ^ ": unexpected " ^ String.escaped needle))
                 checks;
               Alcotest.(check int)
                 (tag ^ " exit") want_exit
                 (match status with Unix.WEXITED n -> n | _ -> -1)
             in
-            ed "ed-eof" "'\004'"
-              [ ("has", "emosh> \027[2K\remosh> \n") ]
-              0;
+            ed "ed-eof" "'\004'" [ ("has", "emosh> \027[2K\remosh> \n") ] 0;
             ed "ed-run" "'echo hi\r\004'"
               [ ("has", "hi\n"); ("has", "\027[2K") ]
               0;
@@ -2870,13 +2865,11 @@ let emosh_golden_tests =
             ed "ed-ctrlc" "'echo bad\003echo good\r\004'"
               [ ("has", "good\n") ]
               0;
-            ed "ed-history-seed" "'echo past\r\004'"
-              [ ("has", "past\n") ]
-              0;
-            ed "ed-history-recall" "'\033[A\r\004'"
-              [ ("has", "past\n") ]
-              0;
-            let hist = Emo_project.read_file (Filename.concat scratch "state2/emosh-history") in
+            ed "ed-history-seed" "'echo past\r\004'" [ ("has", "past\n") ] 0;
+            ed "ed-history-recall" "'\027[A\r\004'" [ ("has", "past\n") ] 0;
+            let hist =
+              Emo_project.read_file (Filename.concat scratch "emosh-history")
+            in
             if not (contains_sub hist "echo past\n") then
               Alcotest.fail "the history file lost the session's line";
             run_args (tag ^ " positionals") bin
