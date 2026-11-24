@@ -46,7 +46,7 @@ corpus** (T48.8), the **GTK 4 `ui_gtk` backend** (T48.9), the **browser
 `ui_browser` backend with its DOM corpus** (T48.10, T48.11) and the
 **convergence corpus** of one shared application on every backend (T48.12)
 have landed — and the **framebuffer `ui_fb` backend**, the sixth runtime
-family, lives in [`projects/emo-desktop`](../../emo-desktop) and runs the
+family, lives in [`projects/emo-desktop`](../emo-desktop) and runs the
 same convergence corpus through the Elm loop on the pixel surface, on the
 five hosted targets and on the metal (emo-desktop A7–A10). So
 has terminal input itself (T48.5), as the
