@@ -271,7 +271,7 @@ gate 的 spawn 门(verb 48)现在把 envp 对暂存在 verb 54 替换所用的�
 
 - [x] **T4.1**——busybox 或 dash:第一个真正的 POSIX 程序,shell 自己的验收。
 - [x] **T4.2**——核心工具:第一套语料(文件、文本、进程),每个用金测钉住。
-- [ ] **T4.3**——构建系统:`make`,然后 autotools/CMake 与 `pkg-config`,让一个 Linux tarball 自己的构建能跑。
+- [x] **T4.3**——构建系统:`make`,然后 autotools/CMake 与 `pkg-config`,让一个 Linux tarball 自己的构建能跑。
 - [ ] **T4.4**——软件语料与 CI:什么能构建、什么能跑、各自需要什么;清单就是这个 tracker 诚实的答案。
 - [ ] **T4.5**——自举编译:EmoOS 自己上的 GCC/Clang 与工具。放最后,因为它需要上面一切。
 
@@ -290,6 +290,12 @@ port 扩了 sysroot 的 POSIX 面:ctype、strto*/bsearch、setjmp 对、fnmatch�
 `EMO_UTILS=1` 构建这个镜像并让两个 shell 为空;`user.S` 嵌入它,首次启动安装(39,560 字节),根的 shell 阶段 exec `uutils.elf selftest`——语料自己的金测:自检创建 `u.txt`,驱动 cat/wc/grep/cp/mv/rm/ls、pid/sleep/kill 对,打印钉住的行;金属启动逐项作答并断电。
 
 金属行:`cat: alpha`、`wc: 1 1 6 u.txt`、`grep: alpha`、`cp/mv/rm/ls/pid/sleep: ok`、`kill: miss`、`utils ok`。缺口:内核还没有进程列举动词,`ps` 缺席,进程族目前是 pid/信号对;T3.4 的 shell fork 外部命令缺口仍等 shell 把这些 applet 当子进程拉起。
+
+### T4.3 的记录(2026-11-24)
+
+第一条构建系统腿就是 dash tarball 自己的:T4.1 用它预生成的 `configure`,以 sysroot wrapper 为 `CC`、宿主 `cc` 为生成器,再 `make`;链接出的 shell 就是启动跑的那个镜像。`c/build-support` 的探针钉住通用把手:一个 `Makefile` 用 `CC=<sysroot>/bin/riscv64-emoos-gcc`;musl-port 构建在 `sysroot/lib/pkgconfig/emoos.pc` 生成的 `pkg-config` 文件(给 sysroot 的 Cflags/Libs);以及 `sysroot/riscv64-emoos.cmake` 的 CMake toolchain(wrapper、静态库 try-compile、find-root)。探针用 make 与 pkg-config 构建同一个程序,都是 RISC-V ELF。
+
+缺口:宿主没有 `cmake`(toolchain 文件已提供,这条腿在这里跳过),也没有 `automake`(tarball 预生成的 configure/make 就是 autotools 腿)。构建文件伸手要这些把手的 Linux tarball 现在有了各件;软件语料与 CI 是 T4.4。
 
 ## 边界
 

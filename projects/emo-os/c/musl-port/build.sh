@@ -200,6 +200,35 @@ cp ../chello.ld "$sysroot/lib/emo.ld"
 cp riscv64-emoos-gcc.in "$sysroot/bin/riscv64-emoos-gcc"
 chmod +x "$sysroot/bin/riscv64-emoos-gcc"
 
+# The build systems' handles (T4.3): a pkg-config file naming the
+# sysroot's headers and archive, and a CMake toolchain file whose
+# compiler is the wrapper. Both carry absolute paths, so they are
+# generated beside the sysroot, never committed.
+mkdir -p "$sysroot/lib/pkgconfig"
+cat > "$sysroot/lib/pkgconfig/emoos.pc" <<EOF
+prefix=$sysroot
+includedir=$sysroot/include
+libdir=$sysroot/lib
+
+Name: emoos
+Description: EmoOS C library (musl 1.2.6 + the T1 gate layer)
+Version: 1.2.6
+Cflags: -isystem $sysroot/include
+Libs: -L$sysroot/lib -lc -lgcc
+EOF
+cat > "$sysroot/riscv64-emoos.cmake" <<EOF
+# The EmoOS cross toolchain (T4.3): the sysroot's wrapper, absolute.
+set(CMAKE_SYSTEM_NAME Generic)
+set(CMAKE_SYSTEM_PROCESSOR riscv64)
+set(CMAKE_C_COMPILER "$sysroot/bin/riscv64-emoos-gcc")
+set(CMAKE_C_COMPILER_WORKS 1)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+set(CMAKE_FIND_ROOT_PATH "$sysroot")
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+EOF
+
 prog=${EMO_PROG:-hello.c}
 EMO_CROSS_CC="$emos_cc" "$sysroot/bin/riscv64-emoos-gcc" "$prog" \
   -o ../../muslhello.elf

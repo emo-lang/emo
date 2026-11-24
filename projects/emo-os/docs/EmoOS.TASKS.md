@@ -983,7 +983,7 @@ the desktop's exec are green; the door the two share is the one above.
   shell's own acceptance.
 - [x] **T4.2** — The core utilities: a first corpus (file, text,
   process), each pinned by a golden.
-- [ ] **T4.3** — Build systems: `make`, then autotools/CMake and
+- [x] **T4.3** — Build systems: `make`, then autotools/CMake and
   `pkg-config`, so a Linux tarball's own build runs.
 - [ ] **T4.4** — The package corpus and its CI: what builds, what
   runs, what each needs; the list is the tracker's honest answer.
@@ -1043,6 +1043,25 @@ The metal lines: `cat: alpha`, `wc: 1 1 6 u.txt`, `grep: alpha`,
 kernel process-listing verb yet; the process family is the pid/signal
 pair until one arrives, and the external-command fork+exec gap (T3.4)
 still waits for the shell to launch these applets as children.
+
+### T4.3's record (2026-11-24)
+
+The first build-system leg is the dash tarball's own: T4.1 ran its
+pre-generated `configure` with the sysroot wrapper as `CC` and the
+host's `cc` for the generators, then `make`; the linked shell is the
+image the boot runs. The probe at `c/build-support` pins the generic
+handles: a `Makefile` with `CC=<sysroot>/bin/riscv64-emoos-gcc`, a
+`pkg-config` file the musl-port build generates at
+`sysroot/lib/pkgconfig/emoos.pc` (Cflags/Libs for the sysroot), and a
+CMake toolchain file at `sysroot/riscv64-emoos.cmake` (the wrapper,
+the static-library try-compile, the find-root). The probe builds the
+same program through make and pkg-config; both are RISC-V ELFs.
+
+Gap: the host has no `cmake` (the toolchain file is provided, its leg
+skipped here) and no `automake` (the tarball's pre-generated
+configure/make is the autotools leg). A Linux tarball whose build
+files reach for these handles now has the pieces; the package corpus
+and its CI are T4.4.
 
 ## The bounds
 
