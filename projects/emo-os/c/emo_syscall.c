@@ -5,7 +5,7 @@
 
 #include "emo_syscall.h"
 
-#include "arch/riscv64/syscall_arch.h"
+#include "musl-port/arch/riscv64/syscall_arch.h"
 
 long emo_syscall(long n, long a, long b, long c, long d, long e, long f) {
   return __syscall6(n, a, b, c, d, e, f);
