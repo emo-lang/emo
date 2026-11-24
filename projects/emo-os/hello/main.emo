@@ -4915,6 +4915,21 @@ def lock_byte(f ui_fb.raster.Strike, b Int64) Void {
 // with the same exec door; the Emo shell remains the golden's fallback
 // when the image is absent.
 //
+// Since T4.2 the core utilities ride the same stage: when
+// `uutils.elf` is on the volume (the EMO_UTILS build installs it),
+// the root execs it with `selftest` as argv[1] — the file, text and
+// process corpus over the T1 gate's fd surface.
+if uutils_present() {
+  const un = put_uutils_name(buf + 18000)
+  const an = put_selftest_args(buf + 18064)
+  case syscall.execve(buf + 18000, un, buf + 18064, an, 0, 0) {
+    (R.error, why) then {
+      println("uutils: ${why}")
+      shell.desk_err(why)
+    }
+    (R.ok, _) then {}
+  }
+}
 // Since T4.1 the first real POSIX program rides the same stage: when
 // `dash.elf` is on the volume (the EMO_DASH build installs it), the
 // root execs it with the acceptance script as argv[1] — the shell's
@@ -4969,6 +4984,32 @@ def put_dash_name(a Int64) Int64 {
   return 8
 }
 
+def put_uutils_name(a Int64) Int64 {
+  poke8(a, 117B)      // u
+  poke8(a + 1, 117B)  // u
+  poke8(a + 2, 116B)  // t
+  poke8(a + 3, 105B)  // i
+  poke8(a + 4, 108B)  // l
+  poke8(a + 5, 115B)  // s
+  poke8(a + 6, 46B)   // .
+  poke8(a + 7, 101B)  // e
+  poke8(a + 8, 108B)  // l
+  poke8(a + 9, 102B)  // f
+  return 10
+}
+
+def put_selftest_args(a Int64) Int64 {
+  poke8(a, 115B)      // s
+  poke8(a + 1, 101B)  // e
+  poke8(a + 2, 108B)  // l
+  poke8(a + 3, 102B)  // f
+  poke8(a + 4, 116B)  // t
+  poke8(a + 5, 101B)  // e
+  poke8(a + 6, 115B)  // s
+  poke8(a + 7, 116B)  // t
+  return 8
+}
+
 def put_script_name(a Int64) Int64 {
   poke8(a, 100B)      // d
   poke8(a + 1, 97B)   // a
@@ -4997,6 +5038,21 @@ def put_base_env(a Int64) Int64 {
   return 5
 }
 
+
+// Whether the volume carries the core utilities (T4.2): the same
+// zero-capacity probe the shells use.
+def uutils_present() Bool {
+  const un = put_uutils_name(buf + 18000)
+  case syscall.file_read(buf + 18000, un, buf + 18032, 0) {
+    (R.ok, size) then {
+      if size > 0 {
+        return true
+      }
+    }
+    (R.error, _) then {}
+  }
+  return false
+}
 
 // Whether the volume carries the first real POSIX program (T4.1): the
 // same zero-capacity probe the C shell's test uses.

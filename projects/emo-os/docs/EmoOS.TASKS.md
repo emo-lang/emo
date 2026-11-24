@@ -981,7 +981,7 @@ the desktop's exec are green; the door the two share is the one above.
 
 - [x] **T4.1** — busybox or dash: the first real POSIX program, the
   shell's own acceptance.
-- [ ] **T4.2** — The core utilities: a first corpus (file, text,
+- [x] **T4.2** — The core utilities: a first corpus (file, text,
   process), each pinned by a golden.
 - [ ] **T4.3** — Build systems: `make`, then autotools/CMake and
   `pkg-config`, so a Linux tarball's own build runs.
@@ -1020,6 +1020,29 @@ conservative stub, sigsuspend returns EINTR), and the T3.4 shell-fork
 external-command gap still stands for a child exec'd from the shell;
 the script uses the shell's builtins and the redirections. The first
 external utilities are T4.2.
+
+### T4.2's record (2026-11-24)
+
+The first core-utilities corpus is one static applet binary,
+`uutils.elf`, built through the sysroot (`c/utils/uutils.c`). The file
+family is `cat`, `ls`, `wc`, `cp`, `mv`, `rm`; the text family `grep`
+and the standalone `echo`; the process family `pid`, `sleep` and
+`kill`; `true`/`false` close the POSIX status pair. The applet is
+argv[1] (`uutils.elf cat u.txt`), so the launcher and a shell reach the
+same image.
+
+`EMO_UTILS=1` builds the image and leaves the shells' empty; `user.S`
+embeds it, the first boot installs it (39,560 bytes), and the root's
+shell stage execs `uutils.elf selftest` — the corpus's own golden: the
+selftest creates `u.txt`, drives cat/wc/grep/cp/mv/rm/ls, the
+pid/sleep/kill pair, and prints the pinned lines; the metal boot
+answers each and powers off.
+
+The metal lines: `cat: alpha`, `wc: 1 1 6 u.txt`, `grep: alpha`,
+`cp/mv/rm/ls/pid/sleep: ok`, `kill: miss`, `utils ok`. Gap: `ps` has no
+kernel process-listing verb yet; the process family is the pid/signal
+pair until one arrives, and the external-command fork+exec gap (T3.4)
+still waits for the shell to launch these applets as children.
 
 ## The bounds
 

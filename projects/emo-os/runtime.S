@@ -124,6 +124,12 @@ emo_start:
     sd t0, 0(t1)
     la t0, emo_os_user_blob_t_end
     sd t0, 8(t1)
+    # the core utilities (T4.2)
+    la t0, emo_os_user_blob_u
+    li t1, 0xFFFFFFC087002260
+    sd t0, 0(t1)
+    la t0, emo_os_user_blob_u_end
+    sd t0, 8(t1)
     # the service handoff (T4.4): the service pids and the caller cell
     # start zeroed, filled by the kernel's own boot flow. The spawned
     # process's entry is the user image's own business — its stub parks

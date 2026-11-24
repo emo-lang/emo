@@ -98,6 +98,8 @@ for src in \
   "$musl"/src/stdio/puts.c \
   "$musl"/src/stdio/fputs.c \
   "$musl"/src/stdio/putc_unlocked.c \
+  "$musl"/src/stdio/putc.c \
+  "$musl"/src/stdio/putchar.c \
   "$musl"/src/stdio/fprintf.c \
   "$musl"/src/stdio/snprintf.c \
   "$musl"/src/stdio/vsnprintf.c \

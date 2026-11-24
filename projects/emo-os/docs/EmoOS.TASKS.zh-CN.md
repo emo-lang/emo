@@ -270,7 +270,7 @@ gate 的 spawn 门(verb 48)现在把 envp 对暂存在 verb 54 替换所用的�
 ### M4——生态
 
 - [x] **T4.1**——busybox 或 dash:第一个真正的 POSIX 程序,shell 自己的验收。
-- [ ] **T4.2**——核心工具:第一套语料(文件、文本、进程),每个用金测钉住。
+- [x] **T4.2**——核心工具:第一套语料(文件、文本、进程),每个用金测钉住。
 - [ ] **T4.3**——构建系统:`make`,然后 autotools/CMake 与 `pkg-config`,让一个 Linux tarball 自己的构建能跑。
 - [ ] **T4.4**——软件语料与 CI:什么能构建、什么能跑、各自需要什么;清单就是这个 tracker 诚实的答案。
 - [ ] **T4.5**——自举编译:EmoOS 自己上的 GCC/Clang 与工具。放最后,因为它需要上面一切。
@@ -282,6 +282,14 @@ dash 0.5.12 是机器上第一个真正的 POSIX 程序。pristine 源 vendor �
 port 扩了 sysroot 的 POSIX 面:ctype、strto*/bsearch、setjmp 对、fnmatch、stat 翻译、sigaction 与 sigset 助手、getpwnam/getrlimit/sysconf/umask、进程/tty/父进程的答案(getuid/getgid/geteuid/getegid/getgroups/getppid/getpgrp/killpg/tcgetpgrp/tcsetpgrp/vfork/wait3/sigsuspend)、十进制 strtod(T2.2 的 quad 切法)、fcntl 的 F_DUPFD,以及重定向需要的 fd 机制:dup2 的 console 槽位、库对 dup2 到 0/1/2 的 fd 的 reopen-under-a-copied-fd、gate 的 fd 动词放开到 0..15,让文件能坐在那里。
 
 金属启动:`dash ok`、`x=one123`、`if ok`、`printf ok`、`file ok`、`read file`、`dash done`;机器的退出路由断电。缺口:交互式作业控制(tty 前台组是保守桩,sigsuspend 返回 EINTR),以及 T3.4 的 shell fork 外部命令缺口仍适用于 shell 子进程;脚本用的是 shell 内建与重定向。第一批外部工具是 T4.2。
+
+### T4.2 的记录(2026-11-24)
+
+第一套核心工具语料是一个静态 applet 二进制 `uutils.elf`,经 sysroot 构建(`c/utils/uutils.c`)。文件族是 `cat`、`ls`、`wc`、`cp`、`mv`、`rm`;文本族是 `grep` 与独立的 `echo`;进程族是 `pid`、`sleep`、`kill`;`true`/`false` 收齐 POSIX 状态对。applet 由 argv[1] 选择(`uutils.elf cat u.txt`),启动器与 shell 到达同一镜像。
+
+`EMO_UTILS=1` 构建这个镜像并让两个 shell 为空;`user.S` 嵌入它,首次启动安装(39,560 字节),根的 shell 阶段 exec `uutils.elf selftest`——语料自己的金测:自检创建 `u.txt`,驱动 cat/wc/grep/cp/mv/rm/ls、pid/sleep/kill 对,打印钉住的行;金属启动逐项作答并断电。
+
+金属行:`cat: alpha`、`wc: 1 1 6 u.txt`、`grep: alpha`、`cp/mv/rm/ls/pid/sleep: ok`、`kill: miss`、`utils ok`。缺口:内核还没有进程列举动词,`ps` 缺席,进程族目前是 pid/信号对;T3.4 的 shell fork 外部命令缺口仍等 shell 把这些 applet 当子进程拉起。
 
 ## 边界
 

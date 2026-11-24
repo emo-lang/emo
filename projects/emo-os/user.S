@@ -90,3 +90,11 @@ emo_os_user_blob_t:
     .globl emo_os_user_blob_t_end
 emo_os_user_blob_t_end:
 
+    # The first core-utilities corpus (T4.2): one applet binary, the
+    # acceptance its own selftest.
+    .globl emo_os_user_blob_u
+emo_os_user_blob_u:
+    .incbin "uutils.elf"
+    .globl emo_os_user_blob_u_end
+emo_os_user_blob_u_end:
+

@@ -28,11 +28,17 @@ fi
 # The boot's foreground (T3.2/T4.1): the emosh C shell or dash, the
 # first real POSIX program. The mode names the image the build carries;
 # user.S embeds both slots, and an empty one is skipped at install.
-if [ "${EMO_DASH:-0}" = 1 ]; then
+if [ "${EMO_UTILS:-0}" = 1 ]; then
   : > "$PWD/../emosh.elf"
+  : > "$PWD/../dash.elf"
+  EMO_CROSS_CC="$emos_cc" bash "$PWD/utils/build.sh"
+elif [ "${EMO_DASH:-0}" = 1 ]; then
+  : > "$PWD/../emosh.elf"
+  : > "$PWD/../uutils.elf"
   EMO_CROSS_CC="$emos_cc" bash "$PWD/dash-port/build.sh"
 else
   : > "$PWD/../dash.elf"
+  : > "$PWD/../uutils.elf"
   if [ "${EMO_SHELL:-0}" = 1 ]; then
     here=$PWD
     root=$(cd "$here/../../.." && pwd)
