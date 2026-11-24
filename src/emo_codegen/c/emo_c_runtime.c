@@ -352,6 +352,12 @@ emo_value emo_vchar(int32_t v) {
   return ((uintptr_t)(uint32_t)v << 3) | 0b011;
 }
 
+/* A Byte is the 0b101 immediate, its eight bits in the top bits — the
+   Char's own shape. It rode an Int64 cell before, which made a Byte and
+   an Int64 one value at run time: `b == 7` answered true and `b + 1`
+   computed, where the checker refuses both. */
+emo_value emo_vbyte(uint8_t v) { return ((uintptr_t)v << 3) | 0b101; }
+
 emo_value emo_box_str(emo_str s) {
   /* The cell: [header][len][bytes...] — the bytes share the cell,
      which owns them from here on; an emo_str borrowed back out
@@ -642,6 +648,11 @@ int32_t emo_char_of(emo_value v) {
   return (int32_t)(uint32_t)(v >> 3);
 }
 
+uint8_t emo_byte_of(emo_value v) {
+  if ((v & 7) != 0b101) emo_fatal(emo_wrong_type);
+  return (uint8_t)(v >> 3);
+}
+
 emo_value emo_tuple_new(int64_t arity, emo_value *elems) {
   /* [header][arity][elements...] */
   emo_value v = emo_cell_new(EMO_TUPLE, arity + 1);
@@ -684,8 +695,7 @@ emo_value emo_array_append(emo_value arr, emo_value v) {
    static element type (the dynamic table infers the mode from the
    first element). Floats answer `<` twice, then the NaN rule — a NaN
    sorts after every number, two NaNs equal, a total order every
-   target agrees on. A Byte rides the dynamic world as an Int64 cell
-   carrying 0-255, so modes 0 and 3 share the arm. */
+   target agrees on. A Byte is the 0b101 immediate, its own mode. */
 static int64_t emo_sort_cmp(uintptr_t a, uintptr_t b, int64_t mode) {
   switch (mode) {
   case 1: {
@@ -708,7 +718,11 @@ static int64_t emo_sort_cmp(uintptr_t a, uintptr_t b, int64_t mode) {
     uintptr_t x = a >> 3, y = b >> 3;
     return x < y ? -1 : y < x ? 1 : 0;
   }
-  default: { /* Int64, and a Byte in its Int64 cell */
+  case 3: { /* Byte: the 0b101 immediate, its eight bits in the top */
+    uintptr_t x = a >> 3, y = b >> 3;
+    return x < y ? -1 : y < x ? 1 : 0;
+  }
+  default: { /* Int64 */
     int64_t x = emo_unbox_i64(a), y = emo_unbox_i64(b);
     return x < y ? -1 : y < x ? 1 : 0;
   }
@@ -1173,7 +1187,8 @@ static const char *emo_map_key_rule =
     "a map key must be a String, Int64, Byte, Bool, Char, or Float64";
 
 static bool emo_map_key_ok(emo_value k) {
-  if ((k & 7) == 0b001 || (k & 7) == 0b011) return true; /* Bool, Char */
+  if ((k & 7) == 0b001 || (k & 7) == 0b011 || (k & 7) == 0b101)
+    return true; /* Bool, Char, Byte */
   switch (emo_cell_kind(k)) {
   case EMO_INT64:
   case EMO_FLOAT64:
@@ -1193,6 +1208,7 @@ static uint64_t emo_hash_key(emo_value k) {
   if ((k & 7) == 0b001) return emo_hash_mix(0x1000ULL + (k >> 3));
   if ((k & 7) == 0b011)
     return emo_hash_mix(0x2000ULL + (uint64_t)(uint32_t)(k >> 3));
+  if ((k & 7) == 0b101) return emo_hash_mix(0x4000ULL + (k >> 3));
   switch (emo_cell_kind(k)) {
   case EMO_INT64:
     return emo_hash_mix((uint64_t)emo_unbox_i64(k) ^ 0x3000ULL);
@@ -1803,6 +1819,7 @@ static void emo_printf_spec(char *out, const char *flags, const char *width,
 static const char *emo_printf_kind_name(emo_value v) {
   if ((v & 7) == 0b001) return "Bool";
   if ((v & 7) == 0b011) return "Char";
+  if ((v & 7) == 0b101) return "Byte";
   switch (emo_cell_kind(v)) {
     case EMO_INT64: return "Int64";
     case EMO_FLOAT64: return "Float64";
@@ -2114,6 +2131,8 @@ emo_value emo_send(emo_value recv, const char *name, int64_t arity,
    float64, string with string for `+`), equality is structural. */
 
 emo_value emo_add_dyn(emo_value a, emo_value b) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101)
+    return emo_vbyte((uint8_t)(emo_byte_of(a) + emo_byte_of(b)));
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
   if (ka == EMO_STRING && kb == EMO_STRING)
     return emo_cell_concat_raw(a, b);
@@ -2128,6 +2147,16 @@ emo_value emo_add_dyn(emo_value a, emo_value b) {
 }
 
 static emo_value emo_arith_dyn(emo_value a, emo_value b, char op) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101) {
+    int x = emo_byte_of(a), y = emo_byte_of(b);
+    if ((op == '/' || op == '%') && y == 0) emo_fatal("division by zero");
+    switch (op) {
+    case '-': return emo_vbyte((uint8_t)(x - y));
+    case '*': return emo_vbyte((uint8_t)(x * y));
+    case '/': return emo_vbyte((uint8_t)(x / y));
+    default: return emo_vbyte((uint8_t)(x % y));
+    }
+  }
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
   if (ka == EMO_INT64 && kb == EMO_INT64) {
     int64_t x = emo_unbox_i64(a), y = emo_unbox_i64(b), r;
@@ -2290,6 +2319,10 @@ int64_t emo_str_cmp(emo_value a, emo_value b) {
 }
 
 static int emo_cmp_dyn(emo_value a, emo_value b) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101) {
+    int x = emo_byte_of(a), y = emo_byte_of(b);
+    return x < y ? -1 : (x > y ? 1 : 0);
+  }
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
   if (ka == EMO_STRING && kb == EMO_STRING) return emo_str_cmp(a, b);
   if (ka == EMO_INT64 && kb == EMO_INT64) {
@@ -2332,6 +2365,10 @@ static void emo_render_dyn(emo_value v, FILE *out) {
     char buf[4];
     int32_t n = emo_utf8_put(buf, emo_char_of(v));
     fwrite(buf, 1, (size_t)n, out);
+    return;
+  }
+  if ((v & 7) == 0b101) {
+    fprintf(out, "%u", (unsigned)emo_byte_of(v));
     return;
   }
   switch (emo_cell_kind(v)) {
@@ -5845,6 +5882,7 @@ static emo_value emo_bm_to_int64(emo_value recv, const emo_value *args) {
   (void)args;
   /* a Char immediate is not a cell: its code point is the answer */
   if ((recv & 7) == 0b011) return emo_box_i64((int64_t)emo_char_of(recv));
+  if ((recv & 7) == 0b101) return emo_box_i64((int64_t)emo_byte_of(recv));
   switch (emo_cell_kind(recv)) {
     case EMO_FLOAT64:
       return emo_box_i64((int64_t)emo_unbox_f64(recv));
@@ -6072,6 +6110,7 @@ static int64_t emo_sort_mode_of(emo_value arr) {
   uintptr_t v = emo_payload(arr)[1];
   if ((v & 7) == 0b001) return 5; /* Bool */
   if ((v & 7) == 0b011) return 4; /* Char */
+  if ((v & 7) == 0b101) return 3; /* Byte */
   if ((v & 7) == 0) {
     uintptr_t k = emo_cell_kind(v);
     if (k == EMO_FLOAT64) return 1;
@@ -6123,7 +6162,7 @@ static emo_value emo_bm_trunc(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_to_byte(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_i64(emo_unbox_i64(recv) & 255);
+  return emo_vbyte((uint8_t)(emo_unbox_i64(recv) & 255));
 }
 
 static const emo_builtin_method emo_builtin_methods[] = {

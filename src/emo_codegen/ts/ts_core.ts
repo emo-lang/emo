@@ -1445,31 +1445,31 @@ const E: any = {
   add(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return a + b;
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) + (b as bigint));
-    if (bothInt(a, b)) return (a as number) + (b as number);
+    if (bothInt(a, b)) return E.byteAdd(a as number, b as number);
     if (bothFloat(a, b)) return new EFloat(unfloat(a) + unfloat(b));
     return numMix("+", "two numbers or two strings", a, b);
   },
   sub(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) - (b as bigint));
-    if (bothInt(a, b)) return (a as number) - (b as number);
+    if (bothInt(a, b)) return E.byteSub(a as number, b as number);
     if (bothFloat(a, b)) return new EFloat(unfloat(a) - unfloat(b));
     return numMix("-", "two numbers", a, b);
   },
   mul(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) * (b as bigint));
-    if (bothInt(a, b)) return (a as number) * (b as number);
+    if (bothInt(a, b)) return E.byteMul(a as number, b as number);
     if (bothFloat(a, b)) return new EFloat(unfloat(a) * unfloat(b));
     return numMix("*", "two numbers", a, b);
   },
   div(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Div(a as bigint, b as bigint);
-    if (bothInt(a, b)) return Math.trunc((a as number) / (b as number));
+    if (bothInt(a, b)) return E.byteDiv(a as number, b as number);
     if (bothFloat(a, b)) return new EFloat(unfloat(a) / unfloat(b));
     return numMix("/", "two numbers", a, b);
   },
   mod(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Mod(a as bigint, b as bigint);
-    if (bothInt(a, b)) return (a as number) % (b as number);
+    if (bothInt(a, b)) return E.byteMod(a as number, b as number);
     if (bothFloat(a, b)) return new EFloat(unfloat(a) % unfloat(b));
     return numMix("%", "two numbers", a, b);
   },
@@ -1494,18 +1494,21 @@ const E: any = {
   },
   shl(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Shl(a as bigint, b as bigint);
+    if (isInt(a) && isInt(b)) return E.byteShl(a as number, b as number);
     const n = this.requireInt(b, "<<");
     if (n < 0) throw new EEmoException("shift count must be non-negative");
     return this.requireInt(a, "<<") << n;
   },
   shr(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Shr(a as bigint, b as bigint);
+    if (isInt(a) && isInt(b)) return E.byteShr(a as number, b as number);
     const n = this.requireInt(b, ">>");
     if (n < 0) throw new EEmoException("shift count must be non-negative");
     return this.requireInt(a, ">>") >> n;
   },
   bitNot(a: any) {
     if (isI64(a)) return wrap64(~(a as bigint));
+    if (isInt(a)) return E.byteBitNot(a as number);
     return ~this.requireInt(a, "~");
   },
   neg(a: any) {

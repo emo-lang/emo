@@ -509,8 +509,9 @@ let rec box_code (v : string) (ty : Emo_check.t) : string =
   | Emo_check.Float64 -> Printf.sprintf "emo_box_f64(%s)" v
   | Emo_check.Bool -> Printf.sprintf "emo_vbool(%s)" v
   | Emo_check.Char -> Printf.sprintf "emo_vchar(%s)" v
-  (* a Byte in the dynamic world is an Int64 cell carrying 0-255 *)
-  | Emo_check.Byte -> Printf.sprintf "emo_box_i64((int64_t)(%s))" v
+  (* a Byte is the 0b101 immediate — its own kind, so a Byte and an
+     Int64 are never one value at run time *)
+  | Emo_check.Byte -> Printf.sprintf "emo_vbyte(%s)" v
   | Emo_check.Pid -> Printf.sprintf "emo_box_pid(%s)" v
   | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket ->
       Printf.sprintf "emo_box_i64(%s)" v
@@ -528,7 +529,7 @@ and unbox_code (v : string) (ty : Emo_check.t) : string =
   (* the one String crossing left: a borrow for the duration of the
      call whose parameter takes it (a POSIX path, a C string) *)
   | Emo_check.String -> Printf.sprintf "emo_str_of(%s)" v
-  | Emo_check.Byte -> Printf.sprintf "(uint8_t)emo_unbox_i64(%s)" v
+  | Emo_check.Byte -> Printf.sprintf "emo_byte_of(%s)" v
   | Emo_check.Pid -> Printf.sprintf "emo_unbox_pid(%s)" v
   | Emo_check.TcpConn | Emo_check.TcpListener | Emo_check.UdpSocket ->
       Printf.sprintf "emo_unbox_i64(%s)" v
@@ -1173,9 +1174,8 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
      arrive with a Type_ref receiver. *)
   match self_.Emo_ir.desc with
   | Emo_ir.Type_ref t -> (
-      (* the checker types these calls Unknown — convert from the
-         method's static result; a Byte materializes as an Int64 cell
-         in the dynamic world *)
+      (* the checker types the constructor's result (2026-11-24); a
+         dynamic use site materializes the Byte immediate *)
       match (t, name, args) with
       | "Byte", "from_int64", [ x ] ->
           (* the checked constructor: the runtime range-checks and
@@ -1187,7 +1187,7 @@ and emit_method env (result_ty : Emo_check.t) (self_ : Emo_ir.expr)
               (as_native env x Emo_check.Int64)
           in
           if is_dyn result_ty then
-            wrap_owned result_ty (Printf.sprintf "emo_box_i64((int64_t)(%s))" v)
+            wrap_owned result_ty (Printf.sprintf "emo_vbyte(%s)" v)
           else v
       | "Float64", "from_bits", [ x ] ->
           let v =

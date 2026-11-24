@@ -272,7 +272,7 @@ let inst_str_source (program : Emo_ir.program) : string =
 let rec expr env (x : Emo_ir.expr) : unit =
   match x.Emo_ir.desc with
   | Const (L_int n) -> put env (Int64.to_string n)
-  | Const (L_byte n) -> put env (string_of_int n)
+  | Const (L_byte n) -> put env (Printf.sprintf "{'emo_byte', %d}" n)
   | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
   | Const (L_char c) -> put env (char_lit c)
@@ -974,10 +974,10 @@ and builtin_method_call env self_ name args =
   | "to_int64", [] when self_.Emo_ir.ety = Emo_check.String ->
       put env "apply 'emo_str_to_int64'/1 ";
       args_list env [ self_ ]
-  | "to_int64", []
-    when self_.Emo_ir.ety = Emo_check.Int64 || self_.Emo_ir.ety = Emo_check.Byte
-    ->
-      expr env self_
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Int64 -> expr env self_
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Byte ->
+      put env "apply 'emo_byte_to_int'/1 ";
+      args_list env [ self_ ]
   | "to_int64", [] ->
       (* the static type did not settle it: the runtime tells a binary
          (parsed), a float (truncated), and an integer (kept) apart *)
@@ -2171,7 +2171,8 @@ and emit_pattern env (p : Emo_ast.pattern) : unit =
       let v = fresh_var env name in
       put env v
   | Emo_ast.Pattern_literal (L_int n) -> put env (Int64.to_string n)
-  | Emo_ast.Pattern_literal (L_byte n) -> put env (string_of_int n)
+  | Emo_ast.Pattern_literal (L_byte n) ->
+      put env (Printf.sprintf "{'emo_byte', %d}" n)
   | Emo_ast.Pattern_literal (L_bool b) ->
       put env (if b then "'true'" else "'false'")
   | Emo_ast.Pattern_literal (L_char c) -> put env (char_lit c)
@@ -2310,6 +2311,8 @@ let rt_source =
 		#<105>(8,1,'integer',['unsigned'|['big']]),
 		#<99>(8,1,'integer',['unsigned'|['big']]),
 		#<62>(8,1,'integer',['unsigned'|['big']])}#
+	  <{'emo_byte', _x}> when 'true' ->
+	      call 'erlang':'integer_to_binary'(_x)
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_bytes_label'/1 ({'emo_bytes', _k})
 	  <_r> when call 'erlang':'is_reference'(_r) ->
@@ -2479,6 +2482,12 @@ let rt_source =
 'emo_add'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'+'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2503,6 +2512,12 @@ let rt_source =
 'emo_sub'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'-'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2521,6 +2536,12 @@ let rt_source =
 'emo_band'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'band'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2533,6 +2554,12 @@ let rt_source =
 'emo_bor'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bor'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2545,6 +2572,12 @@ let rt_source =
 'emo_bxor'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bxor'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2557,6 +2590,12 @@ let rt_source =
 'emo_shl'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bsl'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2569,6 +2608,12 @@ let rt_source =
 'emo_shr'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bsr'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2581,6 +2626,8 @@ let rt_source =
 'emo_bnot'/1 =
     fun (_a) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      {'emo_byte', call 'erlang':'band'(call 'erlang':'bnot'(_x), 255)}
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      apply 'emo_mask'/1 (call 'erlang':'bnot'(_x))
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
@@ -2589,6 +2636,12 @@ let rt_source =
 'emo_mul'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'*'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2607,6 +2660,12 @@ let rt_source =
 'emo_div'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'div'(_x, _y)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2625,6 +2684,12 @@ let rt_source =
 'emo_mod'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'rem'(_x, _y)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2653,10 +2718,10 @@ let rt_source =
 'emo_byte_add'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
+	  <{'emo_byte', _x}> when 'true' ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'band'(call 'erlang':'+'(_x, _y), 255)
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'+'(_x, _y), 255)}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2665,10 +2730,10 @@ let rt_source =
 'emo_byte_sub'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
+	  <{'emo_byte', _x}> when 'true' ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'band'(call 'erlang':'-'(_x, _y), 255)
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'-'(_x, _y), 255)}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2677,10 +2742,10 @@ let rt_source =
 'emo_byte_mul'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
+	  <{'emo_byte', _x}> when 'true' ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'band'(call 'erlang':'*'(_x, _y), 255)
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'*'(_x, _y), 255)}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2689,10 +2754,10 @@ let rt_source =
 'emo_byte_shl'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
+	  <{'emo_byte', _x}> when 'true' ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'band'(call 'erlang':'bsl'(_x, _y), 255)
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bsl'(_x, _y), 255)}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2701,8 +2766,19 @@ let rt_source =
 'emo_byte_bnot'/1 =
     fun (_a) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
-	      call 'erlang':'band'(call 'erlang':'bnot'(_x), 255)
+	  <{'emo_byte', _x}> when 'true' ->
+	      {'emo_byte', call 'erlang':'band'(call 'erlang':'bnot'(_x), 255)}
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
+	end
+
+%% A Byte is the {'emo_byte', N} tag — its own value, never the plain
+%%   integer an Int64 is, so `b == 7` is false and `b + 1` refuses the
+%%   way the checker refuses them when it can see the types.
+
+'emo_byte_to_int'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_byte', _x}> when 'true' -> _x
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 
@@ -2723,7 +2799,7 @@ let rt_source =
 		<'false'> when 'true' ->
 		    case call 'erlang':'>'(_x, 255) of
 		      <'true'> when 'true' -> call 'erlang':'error'({'emo_bad_byte', _x})
-		      <'false'> when 'true' -> _x
+		      <'false'> when 'true' -> {'emo_byte', _x}
 		    end
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
@@ -2733,7 +2809,7 @@ let rt_source =
     fun (_a) ->
 	case _a of
 	  <_x> when call 'erlang':'is_integer'(_x) ->
-	      call 'erlang':'band'(_x, 255)
+	      {'emo_byte', call 'erlang':'band'(_x, 255)}
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 
@@ -2812,6 +2888,12 @@ let rt_source =
 'emo_cmp'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {_x, _y}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) -> {_x, _y}
@@ -3553,12 +3635,16 @@ let rt_source =
 
 'emo_to_int64'/1 =
     fun (_v) ->
-	case call 'erlang':'is_binary'(_v) of
-	  <'true'> when 'true' -> apply 'emo_str_to_int64'/1 (_v)
-	  <'false'> when 'true' ->
-	      case call 'erlang':'is_float'(_v) of
-		<'true'> when 'true' -> call 'erlang':'trunc'(_v)
-		<'false'> when 'true' -> _v
+	case _v of
+	  <{'emo_byte', _x}> when 'true' -> _x
+	  <_other> when 'true' ->
+	      case call 'erlang':'is_binary'(_v) of
+		<'true'> when 'true' -> apply 'emo_str_to_int64'/1 (_v)
+		<'false'> when 'true' ->
+		    case call 'erlang':'is_float'(_v) of
+		      <'true'> when 'true' -> call 'erlang':'trunc'(_v)
+		      <'false'> when 'true' -> _v
+		    end
 	      end
 	end
 

@@ -70,6 +70,7 @@ let t_os_rename = 52
 let t_os_getcwd = 53
 let t_rand_bytes = 54
 let t_time_i64 = 55
+let t_vbyte = 56
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -220,6 +221,10 @@ let runtime_types : W.typ list =
     (* rand_bytes: (n) -> (tag, payload size) *)
     W.FuncT ([], [ W.I64 ]);
     (* time_now_ms / time_mono_ns: () -> the reading, i64 *)
+    W.StructT [ (W.I64, true) ];
+    (* $vbyte — the mutable field is what keeps this type distinct from
+       $vint: a Byte and an Int64 are one value at run time otherwise,
+       and `b == 7` answers true where the checker says false *)
   ]
 
 let i_print = 0
@@ -948,7 +953,25 @@ let mask_byte env =
   e env (W.Struct_get (t_vint, 0));
   e env (W.I64_const 255L);
   e env W.I64_and;
-  e env (W.Struct_new t_vint)
+  e env (W.Struct_new t_vbyte)
+
+(* A Byte operand's payload: the $vbyte field, an i64 like $vint's *)
+let i64_of_byte (l : int) : W.instr list =
+  [ W.Local_get l; W.Ref_cast t_vbyte; W.Struct_get (t_vbyte, 0) ]
+
+let both_byte (a : int) (b : int) : W.instr list =
+  [
+    W.Local_get a;
+    W.Ref_test t_vbyte;
+    W.Local_get b;
+    W.Ref_test t_vbyte;
+    W.I32_and;
+  ]
+
+(* The Byte answer: the operation's i64 on the stack, wrapped back into
+   0-255 and wearing its own kind *)
+let byte_answer : W.instr list =
+  [ W.I64_const 255L; W.I64_and; W.Struct_new t_vbyte ]
 
 let rec expr env (x : Emo_ir.expr) : unit =
   match x.Emo_ir.desc with
@@ -957,7 +980,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Struct_new t_vint)
   | Const (L_byte n) ->
       e env (W.I64_const (Int64.of_int n));
-      e env (W.Struct_new t_vint)
+      e env (W.Struct_new t_vbyte)
   | Const (L_float f) ->
       e env (W.F64_const f);
       e env (W.Struct_new t_vfloat)
@@ -1081,8 +1104,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       e env (W.Struct_new t_vbool)
   | Unary (Ast.Bit_not, operand) ->
       expr env operand;
-      e env (W.Call (rt "bnot"));
-      if x.Emo_ir.ety = Emo_check.Byte then mask_byte env
+      e env (W.Call (rt "bnot"))
   | Cond { c; t; e = else_ } ->
       es env
         (truthy (expr_block env c)
@@ -1103,7 +1125,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       let rcode = expr_block env r in
       e env (W.If (W.Result W.I32, [ W.I32_const 1 ], truthy rcode));
       e env (W.Struct_new t_vbool)
-  | Binary (op, l, r) -> (
+  | Binary (op, l, r) ->
       expr env l;
       expr env r;
       let fn =
@@ -1126,13 +1148,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
         | Ast.Shr -> "shr"
         | Ast.And | Ast.Or -> "add"
       in
-      e env (W.Call (rt fn));
-      (* A Byte stays inside 0-255, so only the operations that can
-         leave the range wrap back into it. *)
-      if x.Emo_ir.ety = Emo_check.Byte then
-        match op with
-        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Shl -> mask_byte env
-        | _ -> ())
+      e env (W.Call (rt fn))
   | Index (b, i) ->
       (* a tuple wraps its element array; an array is bare. Both the
          collection and the index go through locals: the arms of the
@@ -3029,10 +3045,21 @@ and builtin_method_call env self_ name args =
                      W.Struct_new t_vint;
                    ],
                    [
-                     W.Local_get recv;
-                     W.Ref_test t_vint;
-                     W.If (W.Void, [], [ W.Unreachable ]);
-                     W.Local_get recv;
+                     W.If_else
+                       ( W.Result W.Anyref,
+                         [ W.Local_get recv; W.Ref_test t_vbyte ],
+                         [
+                           W.Local_get recv;
+                           W.Ref_cast t_vbyte;
+                           W.Struct_get (t_vbyte, 0);
+                           W.Struct_new t_vint;
+                         ],
+                         [
+                           W.Local_get recv;
+                           W.Ref_test t_vint;
+                           W.If (W.Void, [], [ W.Unreachable ]);
+                           W.Local_get recv;
+                         ] );
                    ] );
              ] ))
   | "to_byte", [] ->
@@ -3062,7 +3089,7 @@ and builtin_method_call env self_ name args =
           e env W.I32_eqz;
           e env (W.If (W.Void, [ W.Unreachable ], []));
           e env (W.Local_get n);
-          e env (W.Struct_new t_vint))
+          e env (W.Struct_new t_vbyte))
   | "from_bits", [ v ] ->
       expr env v;
       e env (W.Ref_cast t_vint);
@@ -3640,11 +3667,11 @@ and pattern_test env (s : W.instr list) (p : Emo_ast.pattern) : W.instr list =
       [
         W.If_else
           ( W.Result W.I32,
-            s @ [ W.Ref_test t_vint ],
+            s @ [ W.Ref_test t_vbyte ],
             s
             @ [
-                W.Ref_cast t_vint;
-                W.Struct_get (t_vint, 0);
+                W.Ref_cast t_vbyte;
+                W.Struct_get (t_vbyte, 0);
                 W.I64_const (Int64.of_int n);
                 W.I64_eq;
               ],
@@ -3989,6 +4016,17 @@ let rt_to_str () : W.func_type =
       ]
       [ innermost ]
   in
+  let byte_branch =
+    branch (test_of t_vbyte)
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vbyte;
+        W.Struct_get (t_vbyte, 0);
+        W.Call (rt "int_str");
+        W.Struct_new t_vstring;
+      ]
+      [ box_branch ]
+  in
   let atomic_branch =
     branch (test_of t_vatomic)
       [
@@ -4003,7 +4041,7 @@ let rt_to_str () : W.func_type =
         W.Array_new_fixed (t_bytes, 8);
         W.Struct_new t_vstring;
       ]
-      [ box_branch ]
+      [ byte_branch ]
   in
   let char_branch =
     branch (test_of t_vchar)
@@ -4906,8 +4944,7 @@ let num_to_f64 (local : int) : W.instr list =
 
 (* arithmetic: int path via i64 op, float path via f64 op, a mixed pair
    traps *)
-let rt_arith (int_body : W.instr list) (float_body : W.instr list) : W.func_type
-    =
+let rt_arith (int_op : W.instr) (float_body : W.instr list) : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -4916,14 +4953,20 @@ let rt_arith (int_body : W.instr list) (float_body : W.instr list) : W.func_type
       [
         W.If_else
           ( W.Result W.Anyref,
-            both_int 0 1,
-            i64_of 0 @ i64_of 1 @ int_body,
+            both_byte 0 1,
+            i64_of_byte 0 @ i64_of_byte 1 @ [ int_op ] @ byte_answer,
             [
               W.If_else
                 ( W.Result W.Anyref,
-                  both_float 0 1,
-                  f64_of 0 @ f64_of 1 @ float_body,
-                  [ W.Unreachable ] );
+                  both_int 0 1,
+                  i64_of 0 @ i64_of 1 @ [ int_op; W.Struct_new t_vint ],
+                  [
+                    W.If_else
+                      ( W.Result W.Anyref,
+                        both_float 0 1,
+                        f64_of 0 @ f64_of 1 @ float_body,
+                        [ W.Unreachable ] );
+                  ] );
             ] );
       ];
   }
@@ -4939,46 +4982,38 @@ let rt_add () =
       [
         W.If_else
           ( W.Result W.Anyref,
-            both_int 0 1,
-            i64_of 0 @ i64_of 1 @ [ W.I64_add; W.Struct_new t_vint ],
+            both_byte 0 1,
+            i64_of_byte 0 @ i64_of_byte 1 @ [ W.I64_add ] @ byte_answer,
             [
               W.If_else
                 ( W.Result W.Anyref,
-                  both_string 0 1,
-                  bytes_of 0 @ bytes_of 1
-                  @ [ W.Call (rt "strcat"); W.Struct_new t_vstring ],
+                  both_int 0 1,
+                  i64_of 0 @ i64_of 1 @ [ W.I64_add; W.Struct_new t_vint ],
                   [
                     W.If_else
                       ( W.Result W.Anyref,
-                        both_float 0 1,
-                        f64_of 0 @ f64_of 1
-                        @ [ W.F64_add; W.Struct_new t_vfloat ],
-                        [ W.Unreachable ] );
+                        both_string 0 1,
+                        bytes_of 0 @ bytes_of 1
+                        @ [ W.Call (rt "strcat"); W.Struct_new t_vstring ],
+                        [
+                          W.If_else
+                            ( W.Result W.Anyref,
+                              both_float 0 1,
+                              f64_of 0 @ f64_of 1
+                              @ [ W.F64_add; W.Struct_new t_vfloat ],
+                              [ W.Unreachable ] );
+                        ] );
                   ] );
             ] );
       ];
   }
 
-let rt_sub () =
-  rt_arith
-    [ W.I64_sub; W.Struct_new t_vint ]
-    [ W.F64_sub; W.Struct_new t_vfloat ]
-
-let rt_mul () =
-  rt_arith
-    [ W.I64_mul; W.Struct_new t_vint ]
-    [ W.F64_mul; W.Struct_new t_vfloat ]
+let rt_sub () = rt_arith W.I64_sub [ W.F64_sub; W.Struct_new t_vfloat ]
+let rt_mul () = rt_arith W.I64_mul [ W.F64_mul; W.Struct_new t_vfloat ]
 
 (* div/mod: int division truncates *)
-let rt_div () =
-  rt_arith
-    [ W.I64_div_s; W.Struct_new t_vint ]
-    [ W.F64_div; W.Struct_new t_vfloat ]
-
-let rt_mod () =
-  rt_arith
-    [ W.I64_rem_s; W.Struct_new t_vint ]
-    [ W.F64_rem_s; W.Struct_new t_vfloat ]
+let rt_div () = rt_arith W.I64_div_s [ W.F64_div; W.Struct_new t_vfloat ]
+let rt_mod () = rt_arith W.I64_rem_s [ W.F64_rem_s; W.Struct_new t_vfloat ]
 
 (* neg *)
 let rt_neg () : W.func_type =
@@ -5007,9 +5042,15 @@ let rt_bit (op : W.instr) : W.func_type =
       [
         W.If_else
           ( W.Result W.Anyref,
-            both_int 0 1,
-            i64_of 0 @ i64_of 1 @ [ op; W.Struct_new t_vint ],
-            [ W.Unreachable ] );
+            both_byte 0 1,
+            i64_of_byte 0 @ i64_of_byte 1 @ [ op ] @ byte_answer,
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  both_int 0 1,
+                  i64_of 0 @ i64_of 1 @ [ op; W.Struct_new t_vint ],
+                  [ W.Unreachable ] );
+            ] );
       ];
   }
 
@@ -5028,10 +5069,16 @@ let rt_bnot () : W.func_type =
       [
         W.If_else
           ( W.Result W.Anyref,
-            [ W.Local_get 0; W.Ref_test t_vint ],
-            [ W.I64_const (-1L) ] @ i64_of 0
-            @ [ W.I64_xor; W.Struct_new t_vint ],
-            [ W.Unreachable ] );
+            [ W.Local_get 0; W.Ref_test t_vbyte ],
+            [ W.I64_const (-1L) ] @ i64_of_byte 0 @ [ W.I64_xor ] @ byte_answer,
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get 0; W.Ref_test t_vint ],
+                  [ W.I64_const (-1L) ] @ i64_of 0
+                  @ [ W.I64_xor; W.Struct_new t_vint ],
+                  [ W.Unreachable ] );
+            ] );
       ];
   }
 
@@ -5768,25 +5815,31 @@ let rt_cmp (int_body : W.instr list) (float_body : W.instr list)
       [
         W.If_else
           ( W.Result W.Anyref,
-            both_int 0 1,
-            i64_of 0 @ i64_of 1 @ int_body,
+            both_byte 0 1,
+            i64_of_byte 0 @ i64_of_byte 1 @ int_body,
             [
               W.If_else
                 ( W.Result W.Anyref,
-                  [
-                    W.Local_get 0;
-                    W.Ref_test t_vstring;
-                    W.Local_get 1;
-                    W.Ref_test t_vstring;
-                    W.I32_and;
-                  ],
-                  string_body,
+                  both_int 0 1,
+                  i64_of 0 @ i64_of 1 @ int_body,
                   [
                     W.If_else
                       ( W.Result W.Anyref,
-                        both_float 0 1,
-                        f64_of 0 @ f64_of 1 @ float_body,
-                        [ W.Unreachable ] );
+                        [
+                          W.Local_get 0;
+                          W.Ref_test t_vstring;
+                          W.Local_get 1;
+                          W.Ref_test t_vstring;
+                          W.I32_and;
+                        ],
+                        string_body,
+                        [
+                          W.If_else
+                            ( W.Result W.Anyref,
+                              both_float 0 1,
+                              f64_of 0 @ f64_of 1 @ float_body,
+                              [ W.Unreachable ] );
+                        ] );
                   ] );
             ] );
       ];
@@ -6160,6 +6213,7 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
   let arms =
     [
       (both t_vint 0 1, i64_of 0 @ i64_of 1 @ [ W.I64_eq ]);
+      (both t_vbyte 0 1, i64_of_byte 0 @ i64_of_byte 1 @ [ W.I64_eq ]);
       (both t_vfloat 0 1, prim t_vfloat @ [ W.F64_eq ]);
       (both t_vbool 0 1, prim t_vbool @ [ W.I32_eq ]);
       (both t_vchar 0 1, prim t_vchar @ [ W.I32_eq ]);
@@ -6803,15 +6857,15 @@ let rt_emo_cmp ~t_sig () : W.func_type =
              ~lt_ab:[ W.Local_get 15; W.Local_get 16; W.I32_lt_s ]
              ~lt_ba:[ W.Local_get 16; W.Local_get 15; W.I32_lt_s ]
        in
-       let int_arm () =
+       let word64_arm ~t () =
          [
            W.Local_get 0;
-           W.Ref_cast t_vint;
-           W.Struct_get (t_vint, 0);
+           W.Ref_cast t;
+           W.Struct_get (t, 0);
            W.Local_set 13;
            W.Local_get 1;
-           W.Ref_cast t_vint;
-           W.Struct_get (t_vint, 0);
+           W.Ref_cast t;
+           W.Struct_get (t, 0);
            W.Local_set 14;
          ]
          @ three_way
@@ -6838,7 +6892,13 @@ let rt_emo_cmp ~t_sig () : W.func_type =
                              ( W.Result W.I32,
                                mode_is 5,
                                word32_arm ~t:t_vbool (),
-                               int_arm () );
+                               [
+                                 W.If_else
+                                   ( W.Result W.I32,
+                                     mode_is 3,
+                                     word64_arm ~t:t_vbyte (),
+                                     word64_arm ~t:t_vint () );
+                               ] );
                          ] );
                    ] );
              ] );
@@ -9535,7 +9595,8 @@ let rt_map_str () : W.func_type =
 
 (* map_key_eq(a, b) -> i32: two boxed keys compare by content within a
    kind; different kinds never compare equal, so the scan walks past.
-   One integer kind here — a Byte key is a $vint. *)
+   A Byte key is the $vbyte kind, an Int64 key $vint — the two never
+   meet. *)
 let rt_map_key_eq () : W.func_type =
   let both t a b =
     [ W.Local_get a; W.Ref_test t; W.Local_get b; W.Ref_test t; W.I32_and ]
@@ -9559,30 +9620,36 @@ let rt_map_key_eq () : W.func_type =
       [
         W.If_else
           ( W.Result W.I32,
-            both t_vint 0 1,
-            prim t_vint W.I64_eq,
+            both t_vbyte 0 1,
+            prim t_vbyte W.I64_eq,
             [
               W.If_else
                 ( W.Result W.I32,
-                  both t_vfloat 0 1,
-                  prim t_vfloat W.F64_eq,
+                  both t_vint 0 1,
+                  prim t_vint W.I64_eq,
                   [
                     W.If_else
                       ( W.Result W.I32,
-                        both t_vbool 0 1,
-                        prim t_vbool W.I32_eq,
+                        both t_vfloat 0 1,
+                        prim t_vfloat W.F64_eq,
                         [
                           W.If_else
                             ( W.Result W.I32,
-                              both t_vchar 0 1,
-                              prim t_vchar W.I32_eq,
+                              both t_vbool 0 1,
+                              prim t_vbool W.I32_eq,
                               [
                                 W.If_else
                                   ( W.Result W.I32,
-                                    both t_vstring 0 1,
-                                    bytes_of 0 @ bytes_of 1
-                                    @ [ W.Call (rt "str_eq") ],
-                                    [ W.I32_const 0 ] );
+                                    both t_vchar 0 1,
+                                    prim t_vchar W.I32_eq,
+                                    [
+                                      W.If_else
+                                        ( W.Result W.I32,
+                                          both t_vstring 0 1,
+                                          bytes_of 0 @ bytes_of 1
+                                          @ [ W.Call (rt "str_eq") ],
+                                          [ W.I32_const 0 ] );
+                                    ] );
                               ] );
                         ] );
                   ] );

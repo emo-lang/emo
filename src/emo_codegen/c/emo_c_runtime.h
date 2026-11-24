@@ -189,6 +189,7 @@ emo_value emo_box_f64(double v);
 emo_value emo_box_str(emo_str s);
 emo_value emo_vbool(bool v);
 emo_value emo_vchar(int32_t v);
+emo_value emo_vbyte(uint8_t v);
 
 /* Unboxing: the dynamic world into a native scalar. A wrong-kind
    word is a runtime type error: printed like the interpreter's and
@@ -198,6 +199,7 @@ double emo_unbox_f64(emo_value v);
 emo_str emo_str_of(emo_value v); /* borrows the cell's bytes */
 bool emo_bool_of(emo_value v);
 int32_t emo_char_of(emo_value v);
+uint8_t emo_byte_of(emo_value v);
 
 /* Tuples, arrays, and Box. Tuples and arrays are value-semantic:
    the constructors copy the element words and equality is
