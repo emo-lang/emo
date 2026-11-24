@@ -1,0 +1,16 @@
+// The diff's one refusal, for the gate: two children under one key would
+// name one widget twice, so the diff raises instead of picking the first.
+// The gate pins the exit status and the message, on the interpreter and
+// on the `c` target.
+//
+//   emo run dup_key.emo   -> exits 1 with E3010
+
+def main() {
+  const p = ui.diff(ui.column([], ui.style()), ui.column([
+    ui.keyed("k", ui.text("1", ui.style())),
+    ui.keyed("k", ui.text("2", ui.style()))
+  ], ui.style()))
+  println(ui.debug.diff_text(p))
+}
+
+main()

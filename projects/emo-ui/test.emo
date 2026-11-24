@@ -1,6 +1,6 @@
-// The core's own test: the tag round-trip and the retained patch
-// (T48.2). It is a module of the package, not a package of its own, so
-// `emo check ui.emo` checks it and `./check.sh` runs it.
+// The core's own test: the tag round-trip, the retained patch (T48.2),
+// and the retained diff. It is a module of the package, not a package of
+// its own, so `emo check ui.emo` checks it and `./check.sh` runs it.
 //
 //   emo run test.emo
 //
@@ -277,7 +277,135 @@ def debug_checks() {
     "an event that undoes the one before it renders the tree it started from")
 }
 
+// ---- The retained diff ----------------------------------------------
+//
+// `ui.diff` is the matching every kept backend runs, and its text form
+// is `golden/`'s to pin byte for byte on every target. What is asserted
+// here is what the text cannot show: the old child a kept slot names, the
+// one a replaced slot displaces, and the children a container dropped.
+
+def t(body String) ui.Node {
+  return ui.text(body, ui.style())
+}
+
+def col(kids Array[ui.Node]) ui.Node {
+  return ui.column(kids, ui.style())
+}
+
+// Whether a slot names a node of the old tree — one it keeps, or one it
+// replaces. A new slot names none.
+def names_old(p ui.Patch) Bool {
+  case p.old() {
+    (R.ok, _) then { return true }
+    (R.error, _) then { return false }
+  }
+}
+
+// A node class the core does not know, the way a platform's own node is
+// one: it satisfies `ui.Node`, and no diff continues it.
+class Odd {
+  def init() {
+  }
+
+  def style() ui.Style {
+    return ui.style()
+  }
+
+  def children() Array[ui.Node] {
+    return []
+  }
+}
+
+def diff_checks() {
+  const root = ui.diff(col([t("a")]), col([t("b")]))
+  check(root.kept() && names_old(root), "a root of the same class is kept")
+  check(root.was() == -1 && root.path() == "" && root.from() == "",
+    "the root sits at the empty path, in both trees")
+  check(label(root.node()) == "b" && label(root.kids()[0].node()) == "b",
+    "a kept slot carries the new tree's node")
+  check(root.kids()[0].kept() && root.kids()[0].was() == 0,
+    "a child keeps its position when nothing moved")
+  check(root.kids()[0].path() == "/0" && root.kids()[0].from() == "/0",
+    "and a child's path is its index under its parent's")
+
+  const nested = ui.diff(col([col([t("x"), t("y")])]), col([col([t("x"), t("z")])]))
+  check(nested.kids()[0].kids()[1].path() == "/0/1",
+    "a path runs from the root down")
+
+  // A key is identity wherever the child moves.
+  const moved = ui.diff(
+    col([ui.keyed("a", t("1")), ui.keyed("b", t("2"))]),
+    col([ui.keyed("b", t("2")), ui.keyed("a", t("1"))]))
+  check(moved.kids()[0].kept() && moved.kids()[0].was() == 1,
+    "a keyed child continues the old child with its key, wherever it moved")
+  check(moved.kids()[0].path() == "/0" && moved.kids()[0].from() == "/1",
+    "and its two paths name both positions")
+  check(moved.kids()[1].kept() && moved.kids()[1].was() == 0,
+    "and the other keyed child follows it")
+  check(ui.gone(moved) == [], "a reorder drops nothing")
+
+  // A keyed sibling arriving leaves the unkeyed positions alone.
+  const arrived = ui.diff(col([t("u0"), t("u1")]),
+    col([ui.keyed("h", t("h")), t("u0"), t("u1")]))
+  check(!arrived.kids()[0].kept() && !names_old(arrived.kids()[0])
+    && arrived.kids()[0].was() == -1,
+    "a child with no old one is new, and names none")
+  check(arrived.kids()[1].kept() && arrived.kids()[1].was() == 0
+    && arrived.kids()[2].kept() && arrived.kids()[2].was() == 1,
+    "an unkeyed child is its position among the unkeyed")
+
+  // The child no new one names is dropped.
+  const shrunk = ui.diff(col([ui.keyed("h", t("h")), t("u0")]), col([t("u0")]))
+  check(ui.gone(shrunk) == [0] && shrunk.kids()[0].kept()
+    && shrunk.kids()[0].was() == 1,
+    "a dropped child is the old index no new child names")
+
+  // A position whose class changed is replaced, not continued.
+  const swapped = ui.diff(col([t("a"), ui.button("b", 3, ui.style())]),
+    col([t("a"), t("b")]))
+  const slot = swapped.kids()[1]
+  check(!slot.kept() && names_old(slot) && slot.was() == 1,
+    "a slot whose class changed names the child it displaces")
+  check(ui.gone(swapped) == [],
+    "and a replaced child is not dropped a second time")
+
+  // A key whose class changed is replaced the same way.
+  const retyped = ui.diff(col([ui.keyed("k", t("old"))]),
+    col([ui.keyed("k", ui.button("new", 3, ui.style()))]))
+  check(!retyped.kids()[0].kept() && names_old(retyped.kids()[0])
+    && retyped.kids()[0].was() == 0,
+    "a key continues a child only when the class is the same")
+
+  // A replaced slot is whole: nothing below it continues.
+  const replaced = ui.diff(col([col([t("x")]), t("a")]),
+    col([ui.row([t("x")], ui.style()), t("a")]))
+  check(!replaced.kids()[0].kept() && !names_old(replaced.kids()[0].kids()[0]),
+    "a node below a replaced one is new")
+  check(replaced.kids()[1].kept() && replaced.kids()[1].was() == 1,
+    "and its sibling is not")
+  check(ui.gone(replaced) == [], "a replaced container drops its sibling never")
+
+  // The key is the node's own, set through `keyed` alone.
+  const keyed = ui.keyed("row-7", t("a"))
+  check(ui.key_of(keyed) == "row-7" && ui.key_of(t("a")) == "",
+    "`keyed` sets the key, and a node otherwise has none")
+  check(label(keyed) == "a" && ui.same_kind(keyed, t("b")),
+    "and the keyed node is the node it was, prop for prop")
+  check(ui.key_of(ui.keyed("c", col([t("a")]))) == "c"
+    && ui.key_of(ui.keyed("c", col([t("a")])).children()[0]) == "",
+    "keying a container keys the container, not its children")
+
+  // A node class the core does not know is rebuilt every frame.
+  const odd = ui.diff(col([Odd.new()]), col([Odd.new()]))
+  check(odd.kept() && !odd.kids()[0].kept() && names_old(odd.kids()[0])
+    && odd.kids()[0].was() == 0,
+    "a node the core does not know is never continued")
+  check(!ui.same_kind(Odd.new(), Odd.new()) && ui.key_of(Odd.new()) == "",
+    "it is of no kind the diff knows, and carries no key")
+}
+
 tag_checks()
 retained_checks()
 rebuild_checks()
 debug_checks()
+diff_checks()

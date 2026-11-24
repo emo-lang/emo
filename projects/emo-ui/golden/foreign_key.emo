@@ -1,0 +1,26 @@
+// `ui.keyed` on a node class the core does not know — the shape of a
+// platform's own node — has no key to set, so it raises rather than
+// handing the node back unkeyed. The gate pins the exit status and the
+// message, on the interpreter and on the `c` target.
+//
+//   emo run foreign_key.emo   -> exits 1 with E3010
+
+class Odd {
+  def init() {
+  }
+
+  def style() ui.Style {
+    return ui.style()
+  }
+
+  def children() Array[ui.Node] {
+    return []
+  }
+}
+
+def main() {
+  const n = ui.keyed("k", Odd.new())
+  println("keyed ${ui.key_of(n)}")
+}
+
+main()

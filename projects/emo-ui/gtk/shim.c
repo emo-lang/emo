@@ -1,4 +1,4 @@
-// shim.c — the nine-verb GTK 4 vocabulary `ui_gtk.emo` declares.
+// shim.c — the ten-verb GTK 4 vocabulary `ui_gtk.emo` declares.
 //
 // Every verb is one C symbol. GTK is already C, so this file is thinner
 // than the AppKit shim: two things still need it — the "clicked" signal
@@ -10,6 +10,10 @@
 // Frames are placed from the window's top-left, the same origin the box
 // model in `box.emo` measures from, and GtkFixed's own origin, so
 // `ui_place` applies x and y unchanged.
+//
+// A frame keeps the widgets the diff continues — `ui_place` moves a
+// widget already on the canvas — and `ui_set_text` and `ui_remove` are
+// the two verbs a kept frame needs beside it.
 //
 //   EMO_GUI_AUTOTEST=1 ./app    clicks the script's tags in order,
 //                               then quits — the corpus gate runs with
@@ -27,6 +31,12 @@ static GtkWidget *g_window = NULL;
 static GtkWidget *g_canvas = NULL;
 static GMainLoop *g_loop = NULL;
 
+// The widgets this process made. A frame keeps the widgets the diff
+// continues, and the number is how a gate sees it: EMO_GUI_COUNT names a
+// file the autotest writes it to as the run leaves — never one of the
+// program's own streams, whose bytes are the program's.
+static int g_made = 0;
+
 typedef void (*emo_sink_fn)(int64_t tag, void *userdata);
 static emo_sink_fn g_sink = NULL;
 static void *g_sink_data = NULL;
@@ -34,8 +44,9 @@ static void *g_sink_data = NULL;
 static int g_autotest_requested = 0;
 static gboolean emo_autotest_tick(gpointer data);
 
-// The tag table is the tree itself: a frame is rebuilt on every event,
-// so a button is whichever canvas child carries the tag now.
+// The tag table is the tree itself: a button carries whatever tag the
+// last frame gave it, so a button is whichever canvas child carries the
+// tag now.
 static GtkWidget *emo_button_with_tag(int64_t tag) {
   for (GtkWidget *w = gtk_widget_get_first_child(g_canvas); w != NULL;
        w = gtk_widget_get_next_sibling(w)) {
@@ -58,9 +69,18 @@ static gboolean emo_close_request(GtkWindow *window, gpointer data) {
   return FALSE;
 }
 
-// ---- The nine verbs -----------------------------------------------------
+// ---- The ten verbs -----------------------------------------------------
 
 int64_t ui_window_make(const char *title, double w, double h) {
+  // The count's file is emptied with the window, so a run that never
+  // reaches its end leaves none of a run before's.
+  const char *count_path = getenv("EMO_GUI_COUNT");
+  if (count_path != NULL) {
+    FILE *count = fopen(count_path, "w");
+    if (count != NULL) {
+      fclose(count);
+    }
+  }
   gtk_init();
   g_window = gtk_window_new();
   gtk_window_set_title(GTK_WINDOW(g_window), title);
@@ -73,45 +93,68 @@ int64_t ui_window_make(const char *title, double w, double h) {
 }
 
 int64_t ui_label_make(const char *text) {
+  g_made++;
   GtkWidget *label = gtk_label_new(text);
   gtk_label_set_xalign(GTK_LABEL(label), 0.0);
   return (int64_t)(intptr_t)label;
 }
 
 int64_t ui_button_make(const char *text) {
+  g_made++;
   return (int64_t)(intptr_t)gtk_button_new_with_label(text);
 }
 
+// Place a widget at a frame: one already on the canvas moves, and a new
+// one is put there.
 void ui_place(int64_t child, double x, double y, double w, double h) {
   GtkWidget *widget = (GtkWidget *)(intptr_t)child;
   gtk_widget_set_size_request(widget, (int)w, (int)h);
-  gtk_fixed_put(GTK_FIXED(g_canvas), widget, (int)x, (int)y);
+  if (gtk_widget_get_parent(widget) == g_canvas) {
+    gtk_fixed_move(GTK_FIXED(g_canvas), widget, (int)x, (int)y);
+  } else {
+    gtk_fixed_put(GTK_FIXED(g_canvas), widget, (int)x, (int)y);
+  }
 }
 
-// Retire every child of the canvas. The widgets are unparented, not just
-// hidden — a full repaint happens per event, and leaking one widget tree
-// per click would add up.
-void ui_clear(void) {
-  GtkWidget *child = gtk_widget_get_first_child(g_canvas);
-  while (child != NULL) {
-    GtkWidget *next = gtk_widget_get_next_sibling(child);
-    gtk_fixed_remove(GTK_FIXED(g_canvas), child);
-    child = next;
+// A kept widget shows the frame's text: a button's label, a label's own.
+void ui_set_text(int64_t child, const char *text) {
+  GtkWidget *widget = (GtkWidget *)(intptr_t)child;
+  if (GTK_IS_BUTTON(widget)) {
+    gtk_button_set_label(GTK_BUTTON(widget), text);
+  } else {
+    gtk_label_set_text(GTK_LABEL(widget), text);
   }
+}
+
+// A widget no frame keeps leaves the canvas, unparented rather than
+// hidden, and nothing else is touched: that is what lets the others keep
+// their state.
+void ui_remove(int64_t child) {
+  gtk_fixed_remove(GTK_FIXED(g_canvas), (GtkWidget *)(intptr_t)child);
 }
 
 static void emo_clicked(GtkButton *button, gpointer user_data) {
-  (void)button;
+  (void)user_data;
   if (g_sink != NULL) {
-    g_sink((int64_t)(intptr_t)user_data, g_sink_data);
+    // The tag is read as the click lands, so a kept button can take a
+    // new one between frames.
+    g_sink(
+        (int64_t)(intptr_t)g_object_get_data(G_OBJECT(button), "emo-tag"),
+        g_sink_data);
   }
 }
 
+// A button's tag is whatever the frame gave it last, and its handler is
+// connected once: the verb runs again for a kept button whose event
+// changed, and a second handler would deliver one click twice.
 void ui_connect(int64_t child, int64_t tag) {
   GtkWidget *widget = (GtkWidget *)(intptr_t)child;
   g_object_set_data(G_OBJECT(widget), "emo-tag", (gpointer)(intptr_t)tag);
-  g_signal_connect(G_OBJECT(widget), "clicked", G_CALLBACK(emo_clicked),
-                   (gpointer)(intptr_t)tag);
+  if (g_object_get_data(G_OBJECT(widget), "emo-connected") == NULL) {
+    g_object_set_data(G_OBJECT(widget), "emo-connected", GINT_TO_POINTER(1));
+    g_signal_connect(G_OBJECT(widget), "clicked", G_CALLBACK(emo_clicked),
+                     NULL);
+  }
 }
 
 int64_t ui_root(void) { return (int64_t)(intptr_t)g_canvas; }
@@ -150,6 +193,14 @@ static gboolean emo_autotest_tick(gpointer data) {
       g_signal_emit_by_name(G_OBJECT(button), "clicked");
     }
     return G_SOURCE_CONTINUE;
+  }
+  const char *count_path = getenv("EMO_GUI_COUNT");
+  if (count_path != NULL) {
+    FILE *count = fopen(count_path, "w");
+    if (count != NULL) {
+      fprintf(count, "ui: made %d widgets\n", g_made);
+      fclose(count);
+    }
   }
   fflush(stdout);
   if (g_loop != NULL) {

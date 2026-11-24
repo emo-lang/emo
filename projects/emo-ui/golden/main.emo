@@ -1,6 +1,7 @@
 // The debug backend's golden (T48.3): one screen through the portable
 // core and out as stable text, byte-identical on every hosted target
-// that can run it.
+// that can run it — and, below the screen, the retained diff in the
+// same form, so the matching is pinned the way the rendering is.
 //
 // The screen is a consumer of the core, not a module of it — it declares
 // `emo/ui` as a dependency exactly as an application would — which
@@ -59,8 +60,57 @@ def screen(reg ui.Registry, name String) ui.Node {
   ], ui.style().with_padding(16.0).with_gap(12.0).with_grow(true))
 }
 
+// ---- The retained diff, as text ----
+//
+// The matching every kept backend runs, pinned the way the screen is:
+// the same bytes from every target. One line per slot — `=` a node the
+// old tree's continues, `+` a new one, `-` an old one no new node
+// continues — and each pair of trees below is one rule of it.
+
+def t(body String) ui.Node {
+  return ui.text(body, ui.style())
+}
+
+def k(key String, n ui.Node) ui.Node {
+  return ui.keyed(key, n)
+}
+
+def col(kids Array[ui.Node]) ui.Node {
+  return ui.column(kids, ui.style())
+}
+
+def b(label String) ui.Node {
+  return ui.button(label, 3, ui.style())
+}
+
+def change(old ui.Node, next ui.Node) {
+  println(ui.debug.diff_text(ui.diff(old, next)))
+}
+
 def main() {
   println(ui.debug.render(screen(ui.Registry.new(), "Ada Lovelace")))
+
+  // A changed prop keeps the node.
+  change(col([t("a"), t("b")]), col([t("a"), t("c")]))
+  // Without a key a child is its position: one inserted at the front
+  // takes the first slot, and the last is new.
+  change(col([t("a"), t("b")]), col([t("x"), t("a"), t("b")]))
+  // A key is identity wherever the child moves.
+  change(col([k("a", t("1")), k("b", t("2"))]),
+    col([k("b", t("2")), k("a", t("1"))]))
+  // A keyed sibling arriving leaves the unkeyed positions alone.
+  change(col([t("u0"), t("u1")]), col([k("h", t("h")), t("u0"), t("u1")]))
+  // The child no new one names is dropped.
+  change(col([k("h", t("h")), t("u0"), t("u1")]), col([t("u0"), t("u1")]))
+  // A position whose class changed is replaced, not continued.
+  change(col([t("a"), b("b")]), col([t("a"), t("b")]))
+  // So is a key whose class changed.
+  change(col([k("k", t("old"))]), col([k("k", b("new"))]))
+  // A replaced root is whole: nothing below it continues.
+  change(col([t("a")]), ui.row([t("a")], ui.style()))
+  // A replaced container is whole too, and its sibling is not.
+  change(col([col([t("x"), t("y")]), t("a")]),
+    col([ui.row([t("z")], ui.style()), t("a")]))
 }
 
 main()

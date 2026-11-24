@@ -678,16 +678,17 @@ trampoline as any other callback. Landed as `ui.Backend`/`ui.Events`
 Each platform implements it:
 
 - **macOS (landed, T48.8):** an Emo class whose methods call `foreign
-  def` shims, and an AppKit shim on the other side of the C ABI. The nine
-  verbs are `window_make`, `label_make`, `button_make`, `place`, `clear`,
-  `connect`, `root`, `run` and `autotest_arm`; the Emo side measures the
-  tree in points (`box.emo`), walks it, and maps nodes to native handles.
+  def` shims, and an AppKit shim on the other side of the C ABI. The ten
+  verbs are `window_make`, `label_make`, `button_make`, `set_text`,
+  `place`, `remove`, `connect`, `root`, `run` and `autotest_arm`; the Emo
+  side measures the tree in points (`box.emo`), walks it, and maps nodes
+  to native handles.
   `projects/emo-ui/macos/` is the package, and `corpus/` its entry into
   the convergence corpus (T48.12) — the shared application on one
   screen, driven by a comma-separated tag script the shim clicks under
   `EMO_GUI_AUTOTEST` before terminating, so its bytes are checked
   without a keyboard or a screenshot.
-- **GTK 4 (landed, T48.9):** the same nine-verb `ui_*` contract and the
+- **GTK 4 (landed, T48.9):** the same ten-verb `ui_*` contract and the
   same point box model as the macOS backend, on the other side of the C
   ABI. `projects/emo-ui/gtk/` is the package and `corpus/` its entry
   into the convergence corpus — the same shared application, script and
@@ -750,13 +751,20 @@ hosted target their manifests declare; the macOS, GTK 4 and browser
 entries are checked by their packages' gates, under the same
 self-driving script and against the same pinned bytes.
 
-`patch` is the growth edge. The spike did a full rebuild per event
+`patch` was the growth edge. The spike did a full rebuild per event
 (`clear` plus re-place), which is fine for a terminal and a static HTML
 render but wrong for a retained toolkit (it loses focus, selection, and
-scroll position) and wasteful for the DOM. v1 can start full-rebuild for
-TUI/SSR and retained for native/DOM; reconciliation with keys is a
-follow-up, and the compiler's "statically decidable targeted refresh" is
-the long-term form of it.
+scroll position) and wasteful for the DOM. **Reconciliation landed
+2026-11-24.** `ui.diff` matches the tree a backend last saw against the
+next one, once for every backend: identity is position and kind — a child
+continues the unkeyed child at its position among its unkeyed siblings —
+and `ui.keyed` overrides position for a child that moves, arrives or
+leaves. AppKit, GTK and the DOM keep what it keeps, a continued node's
+widget or element staying where it is; the terminal and the framebuffer
+still repaint whole, which is right for a surface with nothing to keep.
+The rule is the package reference's to state
+(`projects/emo-ui/docs/ui.md`), and the compiler's "statically decidable
+targeted refresh" remains the long-term form of it.
 
 ## Evaluating the requirement
 
@@ -1095,9 +1103,17 @@ reasoning behind them.
 
 ## Remaining open questions
 
-1. **Reconciliation** — when the retained backends get a keyed diff
-   instead of a full rebuild, and whether the compiler's targeted
-   refresh lands with it.
+**Status (2026-11-24).** 2 and 3 are open — 3 only as the
+typed-callback question, its `c` half having closed in T48.8. 1 has
+landed. 4 has landed in full. 5 is settled, with the reopen trigger the
+composition record names.
+
+1. **Reconciliation — landed 2026-11-24.** The retained backends keep
+   what `ui.diff` keeps instead of rebuilding: identity is position and
+   kind, `ui.keyed` overrides position, and the matching is pinned as
+   text on every target (Layer 6; `projects/emo-ui/docs/ui.md`). What
+   the question's second half named — the compiler's targeted refresh —
+   did not land with it, and stays the long-term form.
 2. **The two-event-loop integration** — how a UI process and a toolkit
    loop coexist, and whether events become real process messages in v1
    or later.

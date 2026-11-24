@@ -141,6 +141,36 @@ expect 0 "the corpus's page run exits 0" "$rc"
 expect_same_file "$C/expected.txt" "$COUT/run.txt" \
   "and prints the file it is pinned to"
 
+# --- the backend's own golden: the page read back ------------------------
+#
+# `retained/` drives the backend by hand — one `mount`, then a `patch` a
+# frame — and reads the page back through `dom_child`, marking each
+# element `=` when the frame before already had it and `+` when the frame
+# made it. That is the reconciliation seen from the page: a continued node
+# keeps its element, a reorder moves, and a node below a replaced one is
+# new. There is no script to click; the program steps its own frames.
+
+R=$PWD/retained
+ROUT=$PWD/.emo-build/check/retained
+mkdir -p "$ROUT"
+
+( cd "$R" && EMO_REGISTRY="$REG" "$EMO" build main.emo --target browser -o \
+    "$ROUT/out" ) >"$OUT.log" 2>&1 && rc=0 || rc=$?
+expect 0 "the retained frames build for browser" "$rc"
+# A failed build leaves the last run's bundle where the page would read
+# it, so the run is not attempted and its file emptied: nothing of a run
+# before's can pass for this one's.
+: >"$ROUT/run.txt"
+if [ "$rc" = 0 ]; then
+  perl -e 'alarm 30; exec @ARGV' node page.mjs "$ROUT/out.js" \
+    >"$ROUT/run.txt" 2>"$ROUT/run.err" && rc=0 || rc=$?
+else
+  rc=99
+fi
+expect 0 "the retained frames' page run exits 0" "$rc"
+expect_same_file "$R/expected.txt" "$ROUT/run.txt" \
+  "and prints the file it is pinned to"
+
 # The dependency's manifest is reached before any emitter, so the
 # corpus's refusal is `ui_browser`'s target list, not the DOM family.
 why "$C" main.emo typescript "does not declare the \`typescript\` target" \

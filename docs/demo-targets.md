@@ -128,7 +128,7 @@ built app.js
 ```
 
 - The artifact is a plain script: no `import`, no `require`, no `process`. Including it with a `<script>` tag runs it.
-- The page host supplies `document`/`window`, line-buffered `console` output, and the thirteen `dom_*` calls. The mount point is `#emo-root`, falling back to `document.body`.
+- The page host supplies `document`/`window`, line-buffered `console` output, and the sixteen `dom_*` calls. The mount point is `#emo-root`, falling back to `document.body`.
 - Building needs Node >= 22.13, whose `module.stripTypeScriptTypes` strips the bundle's types. The browser itself needs nothing.
 - Processes (`do`, `<-`, `receive`) and every runtime capability outside `dom_*` are refused at emission with a diagnostic that names the capability. Server-side rendering uses `ui_ssr` and does not need this target.
 

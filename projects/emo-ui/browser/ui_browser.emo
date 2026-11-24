@@ -12,6 +12,12 @@ require "emo/ui"
 // `run()` returns. A page owns the event loop, so `mount` installs the
 // listeners and hands control back; the loop runs again when the
 // browser calls one of them, not because the backend blocks.
+//
+// `patch` keeps what `ui.diff` keeps. A continued node's element stays
+// in the page — its focus, its selection and its scroll position with
+// it — and takes the new node's props and styles where it stands; a new
+// or replaced node gets the element its node builds. Only a root that is
+// not continued is rebuilt whole, as every frame once was.
 
 // The tag rides the button's `name`/`value` pair — the same markup
 // contract `ui_ssr` emits — so the page, and a test driving it, can see
@@ -23,6 +29,22 @@ def apply_styles(handle Int64, kind String, s ui.Style) {
     const pair = ds[i]
     dom_set_style(handle, pair[0], pair[1])
   }
+}
+
+// Whether a list of declarations carries a property.
+def has(ds Array[(String, String)], name String) Bool {
+  for var i = 0; i < ds.length(); i = i + 1 {
+    if ds[i][0] == name {
+      return true
+    }
+  }
+  return false
+}
+
+// Whether a node's children are elements under its own: the three
+// containers. A leaf's element holds its text and nothing below it.
+def carries(n ui.Node) Bool {
+  return n.is(ui.Column) || n.is(ui.Row) || n.is(ui.Scroll)
 }
 
 // The sink before `mount`. A backend is built before the loop hands it
@@ -44,6 +66,7 @@ class Dom {
     self.title = title
     self.sink = Box.new(unmounted())
     self.root = Box.new(0)
+    self.top = Box.new(0)
   }
 
   def mount(root ui.Node, events ui.Events) {
@@ -59,69 +82,168 @@ class Dom {
     dom_sink() -> (tag Int64) {
       self.sink.read().deliver(tag)
     }
-    dom_append(point, self.render(root))
+    const top = self.build(root)
+    dom_append(point, top)
+    self.top.replace(top)
   }
 
-  // Every frame is a full rebuild, as it is on the other backends:
-  // `old` is an offer, and a retained DOM diff is the reconciliation
-  // work docs/emo-ui.md leaves open. The listeners are rebuilt with the
-  // elements, so the tree a click delivers from is always the tree the
-  // loop last rendered.
+  // A frame keeps what the diff keeps. `top` is the root's element, the
+  // one `mount` attached, for as long as the root is continued.
   def patch(old ui.Node, next ui.Node) {
-    const point = self.root.read()
-    dom_clear(point)
-    dom_append(point, self.render(next))
+    const p = ui.diff(old, next)
+    if p.kept() {
+      self.update(self.top.read(), p)
+    } else {
+      const point = self.root.read()
+      dom_clear(point)
+      const top = self.build(next)
+      dom_append(point, top)
+      self.top.replace(top)
+    }
   }
 
-  def render(n ui.Node) Int64 {
+  // One continued slot: the element stays and shows the new node, and a
+  // container's children are then placed under it.
+  def update(el Int64, p ui.Patch) {
+    const n = p.node()
+    self.paint(el, n)
+    const before = p.old()
+    case before {
+      (R.error, _) then { }
+      (R.ok, was_node) then { self.unstyle(el, was_node, n) }
+    }
+    if carries(n) {
+      self.place(el, p)
+    }
+  }
+
+  // The children of a continued container. Each continued child keeps the
+  // element it had, and a new or replaced one gets the element its node
+  // builds. The elements that leave go first, from the highest old index
+  // down so each index still names the element it did; then every child
+  // stands where the new tree has it.
+  def place(el Int64, p ui.Patch) {
+    const kids = p.kids()
+
+    // Read before anything moves: each continued child's element, by the
+    // index the child had.
+    const els = ArrayBuilder.new()
+    for var j = 0; j < kids.length(); j = j + 1 {
+      if self.continues(kids[j]) {
+        els.push(dom_child(el, kids[j].was()))
+      } else {
+        els.push(0 - 1)
+      }
+    }
+    const kept = els.to_array()
+
+    // The old indexes that leave: the children no new node names, and the
+    // ones a new node replaces.
+    const out = ArrayBuilder.new()
+    const gone = ui.gone(p)
+    for var i = 0; i < gone.length(); i = i + 1 {
+      out.push(gone[i])
+    }
+    for var j = 0; j < kids.length(); j = j + 1 {
+      if !self.continues(kids[j]) {
+        if self.names_old(kids[j]) {
+          out.push(kids[j].was())
+        }
+      }
+    }
+    const leaving = out.to_array().sort()
+    for var i = leaving.length() - 1; i >= 0; i = i - 1 {
+      dom_remove(el, dom_child(el, leaving[i]))
+    }
+
+    // Left to right. The slots before a child are final by its turn, so
+    // the element at its index is either its own or the one it goes
+    // ahead of — and 0, when it is the last, is the end.
+    for var j = 0; j < kids.length(); j = j + 1 {
+      const here = dom_child(el, j)
+      if kept[j] >= 0 {
+        if here != kept[j] {
+          dom_insert_before(el, kept[j], here)
+        }
+        self.update(kept[j], kids[j])
+      } else {
+        dom_insert_before(el, self.build(kids[j].node()), here)
+      }
+    }
+  }
+
+  // Whether a slot's element goes on. It was kept, and a button is the
+  // same button only while it raises the same event: the listener an
+  // element carries is the one it was given.
+  def continues(p ui.Patch) Bool {
+    if !p.kept() {
+      return false
+    }
+    const n = p.node()
+    if n.is(ui.Button) {
+      const before = p.old()
+      case before {
+        (R.error, _) then { }
+        (R.ok, was_node) then {
+          if was_node.is(ui.Button) {
+            if was_node.event() != n.event() {
+              return false
+            }
+          }
+        }
+      }
+    }
+    return true
+  }
+
+  // Whether a slot names a node of the old tree — one it keeps, or one it
+  // replaces. A new slot names none.
+  def names_old(p ui.Patch) Bool {
+    case p.old() {
+      (R.ok, _) then { return true }
+      (R.error, _) then { return false }
+    }
+  }
+
+  // The declarations a continued node no longer has — a width or a height
+  // the old style set and the new one leaves to the page — come off its
+  // element: a style set inline stays until something clears it.
+  def unstyle(el Int64, was_node ui.Node, n ui.Node) {
+    const olds = css.declarations(self.kind_of(was_node), was_node.style())
+    const news = css.declarations(self.kind_of(n), n.style())
+    for var i = 0; i < olds.length(); i = i + 1 {
+      const name = olds[i][0]
+      if !has(news, name) {
+        dom_set_style(el, name, "")
+      }
+    }
+  }
+
+  // The stylesheet's word for a node: its kind.
+  def kind_of(n ui.Node) String {
     if n.is(ui.Text) {
-      const h = dom_element("span")
-      dom_set_text(h, n.body())
-      apply_styles(h, "text", n.style())
-      return h
+      return "text"
     }
     if n.is(ui.Button) {
-      const h = dom_element("button")
-      dom_set_text(h, n.label())
-      dom_set_prop(h, "type", "button")
-      dom_set_prop(h, "name", "event")
-      dom_set_prop(h, "value", n.event().to_string())
-      dom_connect(h, "click", n.event())
-      apply_styles(h, "button", n.style())
-      return h
+      return "button"
     }
     if n.is(ui.TextInput) {
-      // The core's text input shows the model's value and carries no
-      // event tag, so it is read-only here for the same reason `ui_ssr`
-      // renders it read-only: typing has nowhere to go until a node
-      // with an event of its own exists.
-      const h = dom_element("input")
-      dom_set_prop(h, "type", "text")
-      dom_set_prop(h, "value", n.value())
-      dom_set_prop(h, "readOnly", true)
-      apply_styles(h, "input", n.style())
-      return h
+      return "input"
     }
     if n.is(ui.Image) {
-      const h = dom_element("img")
-      dom_set_prop(h, "src", n.src())
-      dom_set_prop(h, "alt", "")
-      apply_styles(h, "image", n.style())
-      return h
+      return "image"
     }
     if n.is(ui.Spacer) {
-      const h = dom_element("div")
-      apply_styles(h, "spacer", n.style())
-      return h
+      return "spacer"
     }
     if n.is(ui.Column) {
-      return self.container("column", n)
+      return "column"
     }
     if n.is(ui.Row) {
-      return self.container("row", n)
+      return "row"
     }
     if n.is(ui.Scroll) {
-      return self.container("scroll", n)
+      return "scroll"
     }
     // An unknown node class is a broken contract, not data: a renderer
     // that does not know a node cannot guess an element for it.
@@ -129,14 +251,72 @@ class Dom {
       "ui_browser: this renderer does not know the node class")
   }
 
-  def container(kind String, n ui.Node) Int64 {
-    const h = dom_element("div")
-    apply_styles(h, kind, n.style())
-    const kids = n.children()
-    for var i = 0; i < kids.length(); i = i + 1 {
-      dom_append(h, self.render(kids[i]))
+  // An element showing a node's own props and styles, and nothing of its
+  // children: what a new element is given, and what a continued one is
+  // given again.
+  def paint(h Int64, n ui.Node) {
+    if n.is(ui.Text) {
+      dom_set_text(h, n.body())
+    }
+    if n.is(ui.Button) {
+      dom_set_text(h, n.label())
+      dom_set_prop(h, "type", "button")
+      dom_set_prop(h, "name", "event")
+      dom_set_prop(h, "value", n.event().to_string())
+    }
+    if n.is(ui.TextInput) {
+      // The core's text input shows the model's value and carries no
+      // event tag, so it is read-only here for the same reason `ui_ssr`
+      // renders it read-only: typing has nowhere to go until a node
+      // with an event of its own exists.
+      dom_set_prop(h, "type", "text")
+      dom_set_prop(h, "value", n.value())
+      dom_set_prop(h, "readOnly", true)
+    }
+    if n.is(ui.Image) {
+      dom_set_prop(h, "src", n.src())
+      dom_set_prop(h, "alt", "")
+    }
+    apply_styles(h, self.kind_of(n), n.style())
+  }
+
+  // A node's element with everything below it: a first render's whole
+  // work, and what a new or replaced slot still costs.
+  def build(n ui.Node) Int64 {
+    const h = self.make(n)
+    self.paint(h, n)
+    if n.is(ui.Button) {
+      dom_connect(h, "click", n.event())
+    }
+    if carries(n) {
+      const kids = n.children()
+      for var i = 0; i < kids.length(); i = i + 1 {
+        dom_append(h, self.build(kids[i]))
+      }
     }
     return h
+  }
+
+  // The element a node is: a span for a text, the control itself for a
+  // button, an input and an image, a div for the rest.
+  def make(n ui.Node) Int64 {
+    if n.is(ui.Text) {
+      return dom_element("span")
+    }
+    if n.is(ui.Button) {
+      return dom_element("button")
+    }
+    if n.is(ui.TextInput) {
+      return dom_element("input")
+    }
+    if n.is(ui.Image) {
+      return dom_element("img")
+    }
+    if n.is(ui.Spacer) || carries(n) {
+      return dom_element("div")
+    }
+    raise Exception.new(message:
+      "ui_browser: this renderer does not know the node class")
   }
 
   def run() {

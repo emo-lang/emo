@@ -1341,6 +1341,30 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
+        ( "dom_child",
+          {
+            vtype = FuncType ([ ("parent", Int64); ("index", Int64) ], Int64);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "dom_remove",
+          {
+            vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "dom_insert_before",
+          {
+            vtype =
+              FuncType
+                ( [ ("parent", Int64); ("child", Int64); ("before", Int64) ],
+                  Void );
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
         ( "dom_clear",
           {
             vtype = FuncType ([ ("node", Int64) ], Void);

@@ -60,5 +60,37 @@ package references beside this file.
   tree exactly as it is, the working answer to "what would D look
   like", kept green by its own demo gate. It becomes the seed of a
   shipped D only when Q1's named trigger fires (a real screen whose
-  builder statements outnumber its widget calls), at which point this
+  builder statements outnumber widget calls), at which point this
   verdict is the first thing to revisit.
+
+## The open questions (recorded 2026-11-24)
+
+- [x] **Q3** — How a backend that keeps its widgets tells which old node
+  a new one continues, and what names a node across renders — the
+  assessment's first remaining question, reconciliation
+  ([`docs/emo-ui.md`](../../../docs/emo-ui.md)). Settled 2026-11-24:
+  **position and kind, with a key on the node to override position.**
+  The decision, in three parts. *The diff is the core's, once:*
+  `ui.diff(old, next)` matches the tree a backend last saw against the
+  next one and answers a `Patch` for every slot of the new tree, so the
+  rule is written one time and — rendered as text by the debug backend
+  — pinned byte for byte on every hosted target, the way the tree itself
+  is. *Identity is position and kind:* a child without a key continues
+  the unkeyed child that held its position among its unkeyed siblings
+  when the two are of the same class, so an unkeyed list keeps its
+  widgets while nothing moves and a keyed sibling arriving or leaving
+  leaves the unkeyed positions alone. A key overrides position:
+  `ui.keyed(key, node)` names a child across a reorder, an arrival or a
+  leave. A slot whose class changed is replaced, not continued, whatever
+  its key; two children under one key raise rather than pick the first.
+  *The key is the node's own:* a field on each of the core's eight node
+  classes, set through `ui.keyed`, which answers the node it is given
+  carrying the key — not a slot on `Style`, because identity is not a
+  layout property, and not a wrapper node class, because every backend's
+  `is()` walk (the framebuffer's included) would have had to learn to
+  unwrap it. The backends that keep widgets — AppKit, GTK, the DOM —
+  keep what the diff keeps; the terminal and the framebuffer repaint
+  whole, as before. The rule is the package reference's
+  ([`ui.md`](ui.md), "Keys and the diff"). What the question's other
+  half named, the compiler's targeted refresh, did not land with it and
+  stays the long-term form. This line checks off.

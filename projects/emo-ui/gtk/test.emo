@@ -118,4 +118,62 @@ def layout_checks() {
     "a spacer paints nothing")
 }
 
+// ---- a diff's frames stand beside their slots ------------------------
+//
+// `layout` lays a tree out; `layout_of` lays a diff out, and every frame
+// it emits carries the slot its leaf fills. A first render's slots are
+// all new; a continued leaf's slot names where it stood.
+
+def slot_checks() {
+  const first = box.layout_of(ui.fresh(padded()), 100.0, 100.0)
+  check(first.length() == 2 && !first[0].slot().kept()
+    && !first[1].slot().kept(), "a first render keeps nothing")
+  check(first[0].draw().text() == "ab" && first[0].draw().w() == 16.0,
+    "and lays the tree out as `layout` does")
+  check(first[0].slot().path() == "/0" && first[1].slot().path() == "/1",
+    "a leaf's slot is its place in the tree")
+
+  const changed = ui.column([
+    ui.text("ab", ui.style()),
+    ui.text("zz", ui.style())
+  ], ui.style().with_padding(10.0).with_gap(5.0))
+  const kept = box.layout_of(ui.diff(padded(), changed), 100.0, 100.0)
+  check(kept[1].slot().kept() && kept[1].slot().from() == "/1"
+    && kept[1].slot().path() == "/1", "a changed text keeps its slot")
+  check(kept[1].draw().text() == "zz" && kept[1].draw().w() == 16.0,
+    "and the frame is the new node's")
+
+  const before = ui.row([
+    ui.keyed("a", ui.text("x", ui.style())),
+    ui.keyed("b", ui.button("go", 7, ui.style()))
+  ], ui.style())
+  const after = ui.row([
+    ui.keyed("b", ui.button("go", 7, ui.style())),
+    ui.keyed("a", ui.text("x", ui.style()))
+  ], ui.style())
+  const moved = box.layout_of(ui.diff(before, after), 200.0, 60.0)
+  check(moved[0].slot().kept() && moved[0].slot().from() == "/1"
+    && moved[0].slot().path() == "/0"
+    && moved[0].draw().kind() == box.Kind.button,
+    "a reordered leaf keeps its slot, and both of its places")
+  check(moved[0].draw().x() == 0.0 && moved[1].draw().x() == 48.0,
+    "and stands where the new tree has it")
+
+  const plain = ui.row([
+    ui.text("go", ui.style()),
+    ui.text("x", ui.style())
+  ], ui.style())
+  const swapped = box.layout_of(ui.diff(controls(), plain), 200.0, 60.0)
+  check(!swapped[0].slot().kept() && swapped[0].slot().was() == 0,
+    "a leaf whose class changed is not kept, and names the one it displaces")
+
+  const blank = box.layout_of(ui.fresh(ui.column([
+    ui.spacer(ui.style()),
+    ui.text("x", ui.style())
+  ], ui.style())), 200.0, 60.0)
+  check(blank.length() == 1 && blank[0].slot().path() == "/1",
+    "a leaf that paints nothing leaves no frame, and the next one's slot is its own")
+}
+
 layout_checks()
+slot_checks()

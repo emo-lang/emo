@@ -1,4 +1,4 @@
-// shim.m — the nine-verb AppKit vocabulary `ui_macos.emo` declares.
+// shim.m — the ten-verb AppKit vocabulary `ui_macos.emo` declares.
 //
 // Every verb is one C symbol. Emo cannot name an Objective-C selector,
 // a struct parameter, or a method chain (E4200: Foreign, Int64,
@@ -15,6 +15,10 @@
 // Frames are placed from the window's top-left, the same origin the box
 // model in `box.emo` measures from; AppKit's content view is
 // bottom-left, so `ui_place` flips y.
+//
+// A frame keeps the widgets the diff continues — `ui_place` moves a view
+// as readily as it places a new one — and `ui_set_text` and `ui_remove`
+// are the two verbs a kept frame needs beside it.
 //
 //   EMO_GUI_AUTOTEST=1 ./app    clicks the script's tags in order,
 //                               then terminates — the corpus gate runs
@@ -40,6 +44,12 @@ static inline int64_t id_to_handle(id o) {
 static NSWindow *g_window = nil;
 static double g_height = 0.0;
 
+// The widgets this process made. A frame keeps the widgets the diff
+// continues, and the number is how a gate sees it: EMO_GUI_COUNT names a
+// file the autotest writes it to as the run leaves — never one of the
+// program's own streams, whose bytes are the program's.
+static int g_made = 0;
+
 typedef void (*emo_sink_fn)(int64_t tag, void *userdata);
 static emo_sink_fn g_sink = NULL;
 static void *g_sink_data = NULL;
@@ -52,9 +62,18 @@ static void *g_sink_data = NULL;
 @end
 static EmoSink *g_delegate = nil;
 
-// ---- The nine verbs -----------------------------------------------------
+// ---- The ten verbs -----------------------------------------------------
 
 int64_t ui_window_make(const char *title_utf8, double w, double h) {
+  // The count's file is emptied with the window, so a run that never
+  // reaches its end leaves none of a run before's.
+  const char *count_path = getenv("EMO_GUI_COUNT");
+  if (count_path != NULL) {
+    FILE *count = fopen(count_path, "w");
+    if (count != NULL) {
+      fclose(count);
+    }
+  }
   @autoreleasepool {
     NSWindow *win = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, w, h)
@@ -70,6 +89,7 @@ int64_t ui_window_make(const char *title_utf8, double w, double h) {
 }
 
 int64_t ui_label_make(const char *text_utf8) {
+  g_made++;
   @autoreleasepool {
     NSTextField *label = [[NSTextField alloc] initWithFrame:NSZeroRect];
     label.stringValue = [NSString stringWithUTF8String:text_utf8];
@@ -84,6 +104,7 @@ int64_t ui_label_make(const char *text_utf8) {
 }
 
 int64_t ui_button_make(const char *text_utf8) {
+  g_made++;
   @autoreleasepool {
     NSButton *btn = [[NSButton alloc] initWithFrame:NSZeroRect];
     btn.title = [NSString stringWithUTF8String:text_utf8];
@@ -100,15 +121,31 @@ void ui_place(int64_t child, double x, double y, double w, double h) {
   }
 }
 
-void ui_clear(void) {
+// A kept widget shows the frame's text: a button's title, a label's
+// string.
+void ui_set_text(int64_t child, const char *text_utf8) {
   @autoreleasepool {
-    NSView *content = g_window.contentView;
-    for (NSView *view in [content.subviews copy]) {
-      [view removeFromSuperview];
+    id view = handle_to_id(child);
+    NSString *text = [NSString stringWithUTF8String:text_utf8];
+    if ([view isKindOfClass:[NSButton class]]) {
+      ((NSButton *)view).title = text;
+    } else {
+      ((NSTextField *)view).stringValue = text;
     }
   }
 }
 
+// A widget no frame keeps leaves the content view, and nothing else is
+// touched: that is what lets the others keep their state.
+void ui_remove(int64_t child) {
+  @autoreleasepool {
+    [handle_to_id(child) removeFromSuperview];
+  }
+}
+
+// A button's tag is whatever the frame gave it last: the verb runs again
+// for a kept button whose event changed, and the target and action are
+// the same ones every time.
 void ui_connect(int64_t child, int64_t tag) {
   @autoreleasepool {
     NSButton *btn = handle_to_id(child);
@@ -171,8 +208,9 @@ void ui_autotest_arm(const char *script) {
   }
 }
 
-// The tag table is the tree itself: a frame is rebuilt on every event,
-// so the button for a tag is whichever subview carries it now.
+// The tag table is the tree itself: a button carries whatever tag the
+// last frame gave it, so the button for a tag is whichever subview
+// carries it now.
 static NSButton *emo_button_with_tag(int64_t tag) {
   for (NSView *view in g_window.contentView.subviews) {
     if ([view isKindOfClass:[NSButton class]] && ((NSButton *)view).tag == tag) {
@@ -197,6 +235,14 @@ static NSButton *emo_button_with_tag(int64_t tag) {
   }
   [timer invalidate];
   g_timer = nil;
+  const char *count_path = getenv("EMO_GUI_COUNT");
+  if (count_path != NULL) {
+    FILE *count = fopen(count_path, "w");
+    if (count != NULL) {
+      fprintf(count, "ui: made %d widgets\n", g_made);
+      fclose(count);
+    }
+  }
   fflush(stdout);
   [NSApp terminate:nil];
 }

@@ -101,7 +101,7 @@ expect 0 "the box model and its test type-check" "$rc"
 EMO_REGISTRY="$REG" "$EMO" run test.emo >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the box model's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 20 "all twenty assertions pass" "$n"
+expect 29 "all twenty-nine assertions pass" "$n"
 
 # --- the shim and the package -------------------------------------------
 #
@@ -150,7 +150,7 @@ if [ "$MODE" = native ]; then
   # DRI3) and off the accessibility bus (no session bus); the renderer's
   # warnings are the environment's, not the program's bytes.
   GSK_RENDERER=cairo GTK_A11Y=none EGL_LOG_LEVEL=fatal EMO_GUI_AUTOTEST=1 \
-    perl -e 'alarm 30; exec @ARGV' \
+    EMO_GUI_COUNT="$COUT/count.txt" perl -e 'alarm 30; exec @ARGV' \
     ${DISPLAY_RUN:+"$DISPLAY_RUN" -a} "$COUT/out" \
     >"$COUT/run.txt" 2>"$COUT/run.err" && rc=0 || rc=$?
   expect 0 "the corpus's window run exits 0" "$rc"
@@ -189,6 +189,7 @@ else
 
   docker run --rm -v "$PWD:/work" -w /work "$IMAGE" sh -c '
     GSK_RENDERER=cairo GTK_A11Y=none EGL_LOG_LEVEL=fatal EMO_GUI_AUTOTEST=1 \
+      EMO_GUI_COUNT=.emo-build/check/corpus/count.txt \
       perl -e "alarm 30; exec @ARGV" xvfb-run -a \
       .emo-build/check/corpus/out
   ' >"$COUT/run.txt" 2>"$COUT/run.err" && rc=0 || rc=$?
@@ -197,6 +198,15 @@ fi
 
 expect_same_file "$C/expected.txt" "$COUT/run.txt" \
   "and prints the file it is pinned to"
+
+# The window keeps what the diff keeps: the corpus's tree changes no node
+# from one event to the next, so a retained frame makes the first frame's
+# eight widgets and not one more — a full rebuild per event would make
+# forty. `EMO_GUI_COUNT` names a file the shim writes the number into as
+# it leaves (never a stream: `xvfb-run` folds stderr into stdout).
+got=$(cat "$COUT/count.txt" 2>/dev/null || true)
+expect "ui: made 8 widgets" \
+  "and the window keeps its widgets across the four events" "$got"
 
 # The dependency's manifest is reached before any emitter, so the
 # corpus's refusal is `ui_gtk`'s target list, not the FFI.

@@ -94,10 +94,13 @@ In dependency order, each gate with its evidence:
    blocks do not cross the FFI. This item proposed the opposite —
    blocks across the FFI (E4200) plus `emo_closure_fn` — which the
    settled contract rejected. No longer a gate.
-4. **Rendering depth** — full repaint per event is fine at demo
-   scale; reconciliation, style-key validation (today style maps are
-   stringly Float64 pairs), and struct marshaling for toolkit-native
-   layouts are the growth path after the package exists.
+4. **Rendering depth — reconciliation landed (2026-11-24).** A full
+   repaint per event is right for the terminal, a static HTML render and
+   the framebuffer, and the retained backends — AppKit, GTK, the DOM —
+   now keep what `ui.diff` keeps: a continued node keeps its widget or
+   its element, identity is position and kind, and `ui.keyed` overrides
+   position (`projects/emo-ui/docs/ui.md`). Style-key validation and
+   struct marshaling for toolkit-native layouts remain the growth path.
 
 ## What is deliberately out
 

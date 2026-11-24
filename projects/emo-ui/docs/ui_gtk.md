@@ -32,16 +32,18 @@ class Gtk {
   def init(title String, width Float64, height Float64, script String)
   def mount(root ui.Node, events ui.Events)
   def patch(old ui.Node, next ui.Node)
-  def paint(root ui.Node)
+  def paint(p ui.Patch)
   def run()
 }
 ```
 
 `backend` is the entry point an application passes to `ui.run`. The
 window is `width` by `height` points, taken as arguments; reading the
-screen size and reflowing on resize is not wired yet. Every frame is a
-full rebuild — `patch` clears the window and places fresh widgets — so
-the old tree is an offer this backend does not use.
+screen size and reflowing on resize is not wired yet. Every frame keeps
+what [`ui.diff`](ui.md) keeps, the way `ui_macos` keeps it: a leaf the
+diff continues keeps its widget — its focus with it — and is given the
+new node's text and frame where it stands; a leaf that is new or
+replaced gets a fresh widget, and the widgets no leaf keeps leave.
 
 `script` is the self-driving input, the counterpart of the terminal's
 `Script`: a comma-separated list of event tags clicked in order. It is
@@ -54,27 +56,33 @@ The core's `Style` is measured in points by `box.emo`:
 
 ```emo
 def layout(root ui.Node, width Float64, height Float64) Array[Draw]
+def layout_of(p ui.Patch, width Float64, height Float64) Array[Frame]
 ```
 
 `layout` returns the leaves that will be drawn and where; the arithmetic
 runs in the interpreter without a display, so a test can read the frame
 a window would paint. `place` applies x and y unchanged, because
 GtkFixed's origin is already the top left — the one difference from
-`ui_macos`'s box model, which flips y.
+`ui_macos`'s box model, which flips y. `layout_of` is the walk for a
+diff, each frame beside the slot its leaf fills; [`ui_macos`](ui_macos.md)
+describes it, and the two box models are the same module.
 
-The exported names `Extent`, `Draw`, `Kind`, `measure`, `place` and the
-`place_column`/`place_row` cases are the box model's own; `layout` is
-the entry point.
+The exported names `Extent`, `Draw`, `Frame`, `Kind`, `measure`, `place`
+and the `place_column`/`place_row` cases are the box model's own;
+`layout` and `layout_of` are the entry points.
 
 ## The native shim
 
-`ui_gtk.emo` declares the same nine foreign defs as `ui_macos`:
-`ui_window_make`, `ui_label_make`, `ui_button_make`, `ui_place`,
-`ui_clear`, `ui_connect`, `ui_root`, `ui_run` and `ui_autotest_arm`.
-GTK is already C, so `shim.c` is thinner than the AppKit shim — the
-signal handler and the self-driving script are what Emo cannot name.
-The loop's sink crosses the FFI as the same `ui.Events` trampoline and
-userdata pair; a click carries only its tag back.
+`ui_gtk.emo` declares the same ten foreign defs as `ui_macos`:
+`ui_window_make`, `ui_label_make`, `ui_button_make`, `ui_set_text`,
+`ui_place`, `ui_remove`, `ui_connect`, `ui_root`, `ui_run` and
+`ui_autotest_arm`. GTK is already C, so `shim.c` is thinner than the
+AppKit shim — the signal handler and the self-driving script are what
+Emo cannot name. `ui_place` moves a widget already on the canvas, and
+`ui_connect` connects a button's handler once and leaves the tag to be
+read as the click lands, so a kept button can take a new one between
+frames. The loop's sink crosses the FFI as the same `ui.Events`
+trampoline and userdata pair; a click carries only its tag back.
 
 ## The gate
 
@@ -82,4 +90,6 @@ userdata pair; a click carries only its tag back.
 `pkg-config gtk4` answers; otherwise it compiles and runs the same
 generated C in the `emo-ui-gtk-build` container (GTK 4 plus Xvfb),
 which is how a macOS host checks it. With neither it says so and
-passes.
+passes. The run pins the corpus's bytes, and — through `EMO_GUI_COUNT`,
+a file the shim writes its widget count into — that the window kept its
+widgets: the first frame's eight, and no more.

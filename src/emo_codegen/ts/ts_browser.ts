@@ -39,16 +39,26 @@ function browserCurrentPid(): number | null {
 // ---- DOM ----
 
 // A DOM node crosses into Emo as an Int64 handle into this table; the
-// page's own objects stay on the host side, like the networking
-// section's sockets. Handles are never reused, so a stale one names no
-// node and raises rather than touching the wrong element.
+// page's own objects stay on the host side, like the networking section's
+// sockets. A node's handle is handed out once and answered again for as
+// long as the node lives — the retained diff tells two references to one
+// element apart from two elements by comparing handles — and is never
+// given to another node. 0 is no node's handle: it is what `dom_child`
+// answers for an index the parent does not reach, and what
+// `dom_insert_before` takes for "at the end".
 let _domNext = 1;
 const _domNodes = new Map<number, any>();
+const _domHandles = new WeakMap<object, bigint>();
 let _domSink: ((tag: bigint) => any) | null = null;
 
 function domHandle(node: any): bigint {
+  if (typeof node === "object" && node !== null) {
+    const known = _domHandles.get(node);
+    if (known !== undefined) return known;
+  }
   const id = _domNext++;
   _domNodes.set(id, node);
+  if (typeof node === "object" && node !== null) _domHandles.set(node, id);
   return BigInt(id);
 }
 
@@ -99,6 +109,24 @@ function domSetProp(handle: any, name: any, value: any): void {
 
 function domAppend(parent: any, child: any): void {
   domNode(parent).appendChild(domNode(child));
+}
+
+// The child at an index, as its handle; 0 when the parent has none there.
+function domChild(handle: any, index: any): bigint {
+  const node = domNode(handle).children[Number(index)];
+  return node === undefined ? 0n : domHandle(node);
+}
+
+function domRemove(parent: any, child: any): void {
+  domNode(parent).removeChild(domNode(child));
+}
+
+// The child under the parent, ahead of `before` — at the end when
+// `before` is 0. A child that already sits under the parent moves.
+function domInsertBefore(parent: any, child: any, before: any): void {
+  const node = domNode(parent);
+  const ref = Number(before) === 0 ? null : domNode(before);
+  node.insertBefore(domNode(child), ref);
 }
 
 function domClear(handle: any): void {
@@ -182,6 +210,12 @@ function browserRuntimeImpl(name: string, args: any[]): any {
       return domSetProp(args[0], args[1], args[2]);
     case "dom_append":
       return domAppend(args[0], args[1]);
+    case "dom_child":
+      return domChild(args[0], args[1]);
+    case "dom_remove":
+      return domRemove(args[0], args[1]);
+    case "dom_insert_before":
+      return domInsertBefore(args[0], args[1], args[2]);
     case "dom_clear":
       return domClear(args[0]);
     case "dom_connect":

@@ -91,7 +91,7 @@ expect 0 "the box model and its test type-check" "$rc"
 EMO_REGISTRY="$REG" "$EMO" run test.emo >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the box model's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 20 "all twenty assertions pass" "$n"
+expect 29 "all twenty-nine assertions pass" "$n"
 
 # --- the shim and the package -------------------------------------------
 #
@@ -123,6 +123,12 @@ done
 # `EMO_GUI_AUTOTEST` makes the shim click the tags in the script and
 # then terminate, so the run needs no one at the keyboard and no
 # screenshot. The alarm is a hung run's failure, not a wait forever.
+#
+# `EMO_GUI_COUNT` names a file the shim writes the number of widgets the
+# run made into, as it leaves. The corpus's tree changes no node from one
+# event to the next, so a window that keeps what the diff keeps makes the
+# first frame's eight and not one more; a full rebuild per event would
+# make forty.
 
 C=$PWD/corpus
 COUT=$PWD/.emo-build/check/corpus
@@ -131,11 +137,15 @@ mkdir -p "$COUT"
     "$COUT/out" ) >"$OUT.log" 2>&1 && rc=0 || rc=$?
 expect 0 "the corpus builds for c" "$rc"
 
-EMO_GUI_AUTOTEST=1 perl -e 'alarm 30; exec @ARGV' "$COUT/out" \
-  >"$COUT/run.txt" 2>&1 && rc=0 || rc=$?
+EMO_GUI_AUTOTEST=1 EMO_GUI_COUNT="$COUT/count.txt" \
+  perl -e 'alarm 30; exec @ARGV' "$COUT/out" >"$COUT/run.txt" 2>&1 \
+  && rc=0 || rc=$?
 expect 0 "the corpus's window run exits 0" "$rc"
 expect_same_file "$C/expected.txt" "$COUT/run.txt" \
   "and prints the file it is pinned to"
+got=$(cat "$COUT/count.txt" 2>/dev/null || true)
+expect "ui: made 8 widgets" \
+  "and the window keeps its widgets across the four events" "$got"
 
 # The dependency's manifest is reached before any emitter, so the
 # corpus's refusal is `ui_macos`'s target list, not the FFI.

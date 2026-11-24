@@ -69,34 +69,37 @@ def render(n ui.Node) String {
 }
 
 def render_at(n ui.Node, depth Int64) String {
-  const pad = indent(depth)
+  return indent(depth) + head(n) + kids_text(n, depth)
+}
+
+// A node as one line: its own props, then the style summary. The diff
+// form prints the same line under its own mark, so the two forms never
+// disagree about what a node looks like.
+def head(n ui.Node) String {
   if n.is(ui.Text) {
-    return pad + "Text \"" + n.body() + "\" " + brief(n.style()) + "\n"
+    return "Text \"" + n.body() + "\" " + brief(n.style()) + "\n"
   }
   if n.is(ui.Button) {
-    return pad + "Button \"" + n.label() + "\" #" + n.event().to_string()
-      + " " + brief(n.style()) + "\n"
+    return "Button \"" + n.label() + "\" #" + n.event().to_string() + " "
+      + brief(n.style()) + "\n"
   }
   if n.is(ui.TextInput) {
-    return pad + "Input \"" + n.value() + "\" " + brief(n.style()) + "\n"
+    return "Input \"" + n.value() + "\" " + brief(n.style()) + "\n"
   }
   if n.is(ui.Image) {
-    return pad + "Image \"" + n.src() + "\" " + brief(n.style()) + "\n"
+    return "Image \"" + n.src() + "\" " + brief(n.style()) + "\n"
   }
   if n.is(ui.Spacer) {
-    return pad + "Spacer " + brief(n.style()) + "\n"
+    return "Spacer " + brief(n.style()) + "\n"
   }
   if n.is(ui.Column) {
-    return pad + "Column " + brief(n.style()) + "\n"
-      + render_kids(n.children(), depth + 1)
+    return "Column " + brief(n.style()) + "\n"
   }
   if n.is(ui.Row) {
-    return pad + "Row " + brief(n.style()) + "\n"
-      + render_kids(n.children(), depth + 1)
+    return "Row " + brief(n.style()) + "\n"
   }
   if n.is(ui.Scroll) {
-    return pad + "Scroll " + brief(n.style()) + "\n"
-      + render_kids(n.children(), depth + 1)
+    return "Scroll " + brief(n.style()) + "\n"
   }
   // A node class this walk does not know. It is not a slot for a
   // non-node: `is()` raises on a value that is not an instance, so an
@@ -104,7 +107,67 @@ def render_at(n ui.Node, depth Int64) String {
   // rendering as Unknown (spike/emo-ui-spelling, naive_crash.emo). The
   // line interpolates the value, so how it reads is the target's own
   // `to_string` — a diagnostic, never golden material.
-  return pad + "Unknown ${n}\n"
+  return "Unknown ${n}\n"
+}
+
+// The children a container shows below itself, one level deeper. Any
+// other node shows none: its line is the whole of what this walk knows
+// about it.
+def kids_text(n ui.Node, depth Int64) String {
+  if n.is(ui.Column) || n.is(ui.Row) || n.is(ui.Scroll) {
+    return render_kids(n.children(), depth + 1)
+  }
+  return ""
+}
+
+// A diff as text — the second form, for the matching itself. One line
+// per node, two spaces per level, in the new tree's order: `=` a node
+// the old tree's continues, `+` a new one, `-` an old one no new node
+// continues. A kept container lists the children it dropped after the
+// ones it has; a replaced node shows the one it displaces above itself.
+def diff_text(p ui.Patch) String {
+  return diff_at(p, 0)
+}
+
+def diff_at(p ui.Patch, depth Int64) String {
+  const pad = indent(depth)
+  if p.kept() {
+    return pad + "= " + head(p.node()) + diff_kids(p.kids(), depth + 1)
+      + gone_text(p, depth + 1)
+  }
+  const before = p.old()
+  var out = ""
+  case before {
+    (R.error, _) then { }
+    (R.ok, was_node) then { out = pad + "- " + head(was_node) }
+  }
+  return out + pad + "+ " + head(p.node()) + diff_kids(p.kids(), depth + 1)
+}
+
+def diff_kids(kids Array[ui.Patch], depth Int64) String {
+  var out = ""
+  for var i = 0; i < kids.length(); i = i + 1 {
+    out = out + diff_at(kids[i], depth)
+  }
+  return out
+}
+
+// The old children a kept container dropped, each as its own line: the
+// subtree under one went with it.
+def gone_text(p ui.Patch, depth Int64) String {
+  const gone = ui.gone(p)
+  const before = p.old()
+  var out = ""
+  case before {
+    (R.error, _) then { }
+    (R.ok, was_node) then {
+      const olds = was_node.children()
+      for var i = 0; i < gone.length(); i = i + 1 {
+        out = out + indent(depth) + "- " + head(olds[gone[i]])
+      }
+    }
+  }
+  return out
 }
 
 // The sink before `mount`. A backend is built before the loop hands it
