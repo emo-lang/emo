@@ -15,7 +15,6 @@ static char *heap_base;
 static char *heap_cur;
 static char *heap_end;
 static int heap_ready;
-static char bounce[2048];
 
 static void mem_init(void) {
   if (heap_ready) {
@@ -172,128 +171,6 @@ void *__mremap(void *old, size_t old_len, size_t new_len, int flags, ...) {
   size_t n = old_len < new_len ? old_len : new_len;
   memcpy(p, old, n);
   return p;
-}
-
-static int gate_errno(long answer) {
-  if (answer == -2) {
-    return EFAULT;
-  }
-  if (answer == -3) {
-    return EACCES;
-  }
-  if (answer == -4) {
-    return EINVAL;
-  }
-  if (answer == -5) {
-    return ENOSPC;
-  }
-  if (answer == -6) {
-    return ENOENT;
-  }
-  return EIO;
-}
-
-static long console_write(const char *buf, unsigned long n) {
-  unsigned long done = 0;
-  while (done < n) {
-    unsigned long chunk = n - done;
-    if (chunk > sizeof(bounce)) {
-      chunk = sizeof(bounce);
-    }
-    long answer = emo_write(buf + done, chunk);
-    if (answer == -2) {
-      unsigned long i = 0;
-      while (i < chunk) {
-        bounce[i] = buf[done + i];
-        i = i + 1;
-      }
-      answer = emo_write(bounce, chunk);
-    }
-    if (answer < 0) {
-      return answer;
-    }
-    done = done + (unsigned long)answer;
-  }
-  return (long)n;
-}
-
-ssize_t write(int fd, const void *buf, size_t n) {
-  if (fd != 1 && fd != 2) {
-    if (fd > 2) {
-      long answer = emo_fd_write(fd, buf, n);
-      if (answer < 0) {
-        errno = gate_errno(answer);
-        return -1;
-      }
-      return answer;
-    }
-    errno = EBADF;
-    return -1;
-  }
-  long answer = console_write(buf, n);
-  if (answer < 0) {
-    errno = gate_errno(answer);
-    return -1;
-  }
-  return answer;
-}
-
-ssize_t read(int fd, void *buf, size_t n) {
-  if (fd == 0) {
-    long b = emo_console_read();
-    if (b < 0) {
-      errno = gate_errno(b);
-      return -1;
-    }
-    if (n == 0) {
-      return 0;
-    }
-    ((char *)buf)[0] = (char)b;
-    return 1;
-  }
-  if (fd > 2) {
-    long answer = emo_fd_read(fd, buf, n);
-    if (answer < 0) {
-      errno = gate_errno(answer);
-      return -1;
-    }
-    return answer;
-  }
-  errno = EBADF;
-  return -1;
-}
-
-int close(int fd) {
-  if (fd >= 0 && fd <= 2) {
-    return 0;
-  }
-  long answer = emo_fd_close(fd);
-  if (answer < 0) {
-    errno = gate_errno(answer);
-    return -1;
-  }
-  return 0;
-}
-
-off_t lseek(int fd, off_t off, int whence) {
-  if (fd >= 0 && fd <= 2) {
-    errno = ESPIPE;
-    return -1;
-  }
-  long answer = emo_fd_seek(fd, off, whence);
-  if (answer < 0) {
-    errno = gate_errno(answer);
-    return -1;
-  }
-  return answer;
-}
-
-pid_t getpid(void) {
-  return (pid_t)emo_getpid();
-}
-
-void _exit(int code) {
-  emo_exit(code);
 }
 
 void __lock(volatile int *l) {

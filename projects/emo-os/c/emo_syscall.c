@@ -32,13 +32,13 @@ long emo_wait(long pid) {
   return __syscall1(EMO_SYS_WAIT, pid);
 }
 
-long emo_file_write(const void *name, unsigned long nlen, const void *buf,
+long emo_gate_file_write(const void *name, unsigned long nlen, const void *buf,
                     unsigned long len) {
   return __syscall4(EMO_SYS_FILE_WRITE, (long)name, (long)nlen, (long)buf,
                     (long)len);
 }
 
-long emo_file_read(const void *name, unsigned long nlen, void *buf,
+long emo_gate_file_read(const void *name, unsigned long nlen, void *buf,
                    unsigned long cap) {
   return __syscall4(EMO_SYS_FILE_READ, (long)name, (long)nlen, (long)buf,
                     (long)cap);

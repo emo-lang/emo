@@ -234,10 +234,18 @@ musl 的主体在 `projects/emo-os/c/musl-port/`。移植的 crt(`crt0.s`)接内
 
 ### M3——emosh 作为默认 shell
 
-- [ ] **T3.1**——emosh 对着 sysroot 构建。移植被迫改的每一处源码都列出来;目标是零。
+- [x] **T3.1**——emosh 对着 sysroot 构建。移植被迫改的每一处源码都列出来;目标是零。
 - [ ] **T3.2**——emosh 成为启动前台——行编辑、历史、补全——替换 `hello/shell.emo` 作为机器的 shell。
 - [ ] **T3.3**——控制台交接:串口字节进 fd 0,写走 fd 1/2,`poweroff` 仍是引导自己拥有的 exit 路由。
 - [ ] **T3.4**——桌面的 `exec` 把 `argv`/`envp` 交给子进程;启动器与 shell 共用一扇门。
+
+### T3.1 的记录(2026-11-24)
+
+C target 的编译器现在是 `EMO_CC`(sysroot 的 `riscv64-emoos-gcc`),对象带函数段,交叉链接能丢掉运行时没用到的 POSIX 面。构建是 `EMO_CC=<sysroot>/bin/riscv64-emoos-gcc emo build main.emo --target c -o emosh.elf`;shell 的 Emo 源码没有改动(目标)。
+
+sysroot 的 `libc.a` 在 musl 头文件下长出 T1 C 门的门层:fd/路径/进程/管道/信号、`fork.s`、T1 的 `open`/read/write,以及 `posix_bridge.c`:musl 的 `DIR` 套在 T1 列举上、`execvp`、termios/控制台那对、`calloc`/`exit`/`abort`、`clock_gettime`、`fcntl`,和编译器运行时没用到的网络/ucontext 面的桩。T2.1 的整文件包装改名 `emo_gate_file_*`(编译器运行时占着 `emo_file_*`),errno 桥把 musl 的 `__errno_location`/`___errno_location` 指到 T1 的全局,链接拉到的 musl stdio/stdlib/math 片段(`fprintf`、`snprintf`、`open_memstream`、`stderr`、`qsort` 等)进档案。档案每次全新生成。
+
+shell 链接通过:302,040 字节,入口 `0x87100000`,两个 `PT_LOAD` 段都在镜像窗口里。T1 的 `chello.elf` 仍能构建,T2.4 一致性探针仍答宿主与金属逐字节相同。缺口:编译器运行时的 Emo 轻进程/ucontext 与网络方法在 EmoOS 上是桩(shell 走 OS 的 `fork`/`exec`);shell 的启动前台与控制台是 T3.2/T3.3。
 
 ### M4——生态
 

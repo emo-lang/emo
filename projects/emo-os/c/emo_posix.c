@@ -940,7 +940,7 @@ int stat(const char *path, struct emo_stat *st) {
   if (put_name(full, nlen) != 0) {
     return -1;
   }
-  long answer = emo_file_read(name_buf, nlen, list_buf, 0);
+  long answer = emo_gate_file_read(name_buf, nlen, list_buf, 0);
   if (answer < 0) {
     errno = reason_errno(answer);
     return -1;

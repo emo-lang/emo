@@ -75,11 +75,11 @@ long emo_wait(long pid);
 
 // Verb 6: the name becomes the len bytes at buf (at most 2048). The
 // name and the bytes are the caller's staged sources (T1.0).
-long emo_file_write(const void *name, unsigned long nlen,
+long emo_gate_file_write(const void *name, unsigned long nlen,
                     const void *buf, unsigned long len);
 
 // Verb 7: the file's bytes land at buf, at most cap; answers the size.
-long emo_file_read(const void *name, unsigned long nlen, void *buf,
+long emo_gate_file_read(const void *name, unsigned long nlen, void *buf,
                    unsigned long cap);
 
 // Verb 8: the names, each followed by a newline, land at buf.

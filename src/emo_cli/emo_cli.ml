@@ -255,6 +255,14 @@ let ocaml_target_ok () : bool =
    latch-era gotcha, hit for real by the cross-module fix). *)
 let compiler_key = lazy (Digest.to_hex (Digest.file Sys.executable_name))
 
+(* The c target's compiler: `EMO_CC` names a cross compiler or a wrapper
+   (the EmoOS sysroot's `riscv64-emoos-gcc`), the host's `cc` otherwise.
+   The OCaml target's stub compiler and `emo doctor` stay the host's. *)
+let c_target_cc () =
+  match Sys.getenv_opt "EMO_CC" with
+  | Some c when String.trim c <> "" -> c
+  | _ -> "cc"
+
 (* pkg-config answers in shell-word form: whitespace separates words, and
    quotes or backslashes protect a space inside one. Splitting here keeps
    the answer out of the shell as a fragment; the words are re-quoted when
@@ -613,7 +621,10 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
             | "c" ->
                 (* Emit one main.c plus the Emo runtime sources, compile
                with the system cc: a standalone binary with no OCaml
-               runtime (step 23). *)
+               runtime (step 23). `EMO_CC` swaps in a cross compiler or
+               the EmoOS sysroot's wrapper; the function sections let a
+               cross link drop the runtime's unused POSIX surface. *)
+                let cc = c_target_cc () in
                 let write path contents =
                   let oc = open_out_bin path in
                   output_string oc contents;
@@ -654,6 +665,8 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                      rides the list, so it enters the cache digest and
                      no cached binary outlives it. *)
                   "-fno-strict-aliasing"
+                  :: "-ffunction-sections"
+                  :: "-fdata-sections"
                   :: ((if
                          List.exists
                            (fun src -> Filename.check_suffix src ".m")
@@ -698,9 +711,9 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                 let digest =
                   Digest.to_hex
                     (Digest.string
-                       (Printf.sprintf "%s|%s|%s|%s|%s|%s" main_c_contents
+                       (Printf.sprintf "%s|%s|%s|%s|%s|%s|%s" main_c_contents
                           Emo_codegen.C.runtime_c Emo_codegen.C.runtime_h
-                          cclib_key (String.concat "," cflags)
+                          cclib_key (String.concat "," cflags) cc
                           (Lazy.force compiler_key)))
                 in
                 let cache_binary =
@@ -754,11 +767,11 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                       in
                       let probe_cmd =
                         Printf.sprintf
-                          "cc -std=c11 -DEMO_HAS_TLS -I %s %s %s %s -lm -o %s \
+                          "%s -std=c11 -DEMO_HAS_TLS -I %s %s %s %s -lm -o %s \
                            >/dev/null 2>&1"
-                          (Filename.quote build_dir) (Filename.quote runtime_c)
-                          (Filename.quote probe_c) cclib_flags
-                          (Filename.quote probe_bin)
+                          (Filename.quote cc) (Filename.quote build_dir)
+                          (Filename.quote runtime_c) (Filename.quote probe_c)
+                          cclib_flags (Filename.quote probe_bin)
                       in
                       Emo_tool.run_status probe_cmd = 0
                     end
@@ -785,12 +798,13 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                     in
                     let cmd =
                       Printf.sprintf
-                        "cc -O2 -ffp-contract=off -std=c11 -Wall \
+                        "%s -O2 -ffp-contract=off -std=c11 -Wall \
                          -Wno-deprecated-declarations -I %s %s %s \
                          %s              %s -lm -o %s"
-                        (Filename.quote build_dir) cflag_flags
-                        (Filename.quote main_c) (Filename.quote runtime_c)
-                        cclib_flags (Filename.quote output)
+                        (Filename.quote cc) (Filename.quote build_dir)
+                        cflag_flags (Filename.quote main_c)
+                        (Filename.quote runtime_c) cclib_flags
+                        (Filename.quote output)
                     in
                     let exit_code = Emo_tool.run_status cmd in
                     if exit_code <> 0 then begin

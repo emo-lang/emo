@@ -870,7 +870,7 @@ not the T2.2 body's), no `%f`/`%Lf` (the quad cut), and no
 
 ### M3 — emosh as the default shell
 
-- [ ] **T3.1** — emosh builds against the sysroot. Every source edit
+- [x] **T3.1** — emosh builds against the sysroot. Every source edit
   forced by the port is listed; the goal is none.
 - [ ] **T3.2** — emosh becomes the boot foreground — the line
   editor, history and completion — replacing `hello/shell.emo` as
@@ -880,6 +880,33 @@ not the T2.2 body's), no `%f`/`%Lf` (the quad cut), and no
   owns.
 - [ ] **T3.4** — The desktop's `exec` hands `argv`/`envp` to the
   child; the launcher and the shell share one door.
+
+### T3.1's record (2026-11-24)
+
+The C target's compiler is `EMO_CC` now (the sysroot's
+`riscv64-emoos-gcc`), and its objects carry function sections so the
+cross link drops the runtime's unused POSIX surface. The build is
+`EMO_CC=<sysroot>/bin/riscv64-emoos-gcc emo build main.emo --target c
+-o emosh.elf`; the shell's Emo source needed no edits (the goal).
+
+The sysroot's `libc.a` grew the T1 C door's gate layer under musl's
+headers: fd/path/process/pipe/signal, `fork.s`, the T1 `open`/read/
+write, and `posix_bridge.c` for musl's `DIR` over the T1 listing,
+`execvp`, the termios/console pair, `calloc`/`exit`/`abort`,
+`clock_gettime`, `fcntl`, and the compiler runtime's unused
+network/ucontext surface stubbed. The T2.1 whole-file wrappers renamed
+`emo_gate_file_*` (the compiler runtime owns `emo_file_*`), the errno
+bridge points musl's `__errno_location`/`___errno_location` at the T1
+global, and the musl stdio/stdlib/math pieces the link pulls
+(`fprintf`, `snprintf`, `open_memstream`, `stderr`, `qsort`, ...) join
+the archive. The archive is built fresh each run.
+
+The shell links: 302,040 bytes, entry `0x87100000`, two `PT_LOAD`
+segments in the image window. The T1 `chello.elf` still builds, and
+the T2.4 conformance probe still answers host and metal byte-identical.
+Gaps: the compiler runtime's Emo lightweight-process/ucontext and its
+network methods are stubs on EmoOS (the shell uses the OS `fork`/
+`exec`); the shell's boot foreground and console are T3.2/T3.3.
 
 ### M4 — the ecosystem
 
