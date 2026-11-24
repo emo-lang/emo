@@ -101,6 +101,14 @@ In dependency order, each gate with its evidence:
    its element, identity is position and kind, and `ui.keyed` overrides
    position (`projects/emo-ui/docs/ui.md`). Style-key validation and
    struct marshaling for toolkit-native layouts remain the growth path.
+5. **A real application — the calculator landed (2026-11-24).** The
+   convergence corpus proves that the backends agree; an application a
+   person uses proves what the vocabulary can say. The first one under
+   `projects/emo-ui/apps/` is a four-function calculator, written once
+   and gated on every backend — the same display after every key — and
+   its README records what it could not say: a length with a unit, a
+   node's equal share, a color, a keyboard. Each is a question for the
+   core's next round.
 
 ## What is deliberately out
 

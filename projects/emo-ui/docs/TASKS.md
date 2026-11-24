@@ -94,3 +94,28 @@ package references beside this file.
   ([`ui.md`](ui.md), "Keys and the diff"). What the question's other
   half named, the compiler's targeted refresh, did not land with it and
   stays the long-term form. This line checks off.
+
+## The open questions (recorded 2026-11-24, from the first application)
+
+- [ ] **Q4** — what the first application could not say. The calculator
+  ([`apps/calculator`](../apps/calculator/README.md)) is the smallest
+  application a person uses, and it needed four things EmoUI has no
+  word for. Each is a question for the core; the application works
+  around it and decides nothing. *A length with a unit:* a `Style`
+  number is a cell on a terminal, a point in a window and a pixel on
+  the web, so the calculator takes its gaps as an argument and each
+  entry passes its platform's number. *A node's equal share:* `grow`
+  divides what is left after each child's own width, so keys are one
+  width only where a label is measured in characters — in a browser an
+  operator's key is 40 px against a digit's 46. *A label by code
+  point:* the terminal measures and the framebuffer paints a label a
+  byte at a time, so no key can read `×`, `÷`, `±` or `⌫`. *A leaf's own
+  height:* a key is one line tall wherever a cell grid or a glyph's
+  line box is the unit, and a `height` in a `Style` would be as many
+  cells as pixels. The application's README carries each with its
+  evidence, beside two gaps the assessment
+  ([`docs/emo-ui-missing.md`](../../../docs/emo-ui-missing.md)) already
+  named and the calculator confirmed: no keyboard, and a `Style` that
+  says layout and nothing else. Like Q1 and Q2 this is a design
+  decision and not a scheduled task; it settles in the core's package
+  references and blocks nothing.

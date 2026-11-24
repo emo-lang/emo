@@ -233,6 +233,38 @@ payload; keyboard events and focus; pointer and scroll events; resize;
 color and typography in `Style`; widget-local state; recovering from a
 failed event; Windows.
 
+## What the first application confirmed (2026-11-24)
+
+The calculator, the first application under `apps/` — its README is
+[`apps/calculator/README.md`](../projects/emo-ui/apps/calculator/README.md)
+— is the smallest application a person uses, and it needs only the one
+event every backend delivers.
+Writing it confirmed two items above and found four that were on no
+list.
+
+Confirmed: a window takes clicks and nothing else, the terminal entry
+replays a script because the backend has no key source (§1); and a
+`Style` says layout and nothing else, so the display has no size, color
+or alignment (§3).
+
+New, with what the calculator did instead:
+
+1. **A `Style` number has no unit.** One gap is a cell on a terminal, a
+   point in a window and a pixel on the web; the application takes its
+   gaps as an argument, and each entry passes its platform's number.
+2. **A node cannot ask for an equal share.** `grow` divides what is left
+   after each child's own width, so keys come out one width only where a
+   label is measured in characters. In a browser an operator's key came
+   out 40 px against a digit's 46.
+3. **A label is bytes.** The terminal measures a button's label and the
+   framebuffer paints it a byte at a time, so no key can read `×`, `÷`,
+   `±` or `⌫`.
+4. **A leaf has no height of its own.** A key is one line tall wherever a
+   cell grid or a glyph's line box is the unit, and a `height` in a
+   `Style` would be the same number of cells and pixels.
+
+Its README carries each with its evidence. None is decided here.
+
 ## What follows
 
 One recommendation, so that the next step has a name. It is not a decision.
