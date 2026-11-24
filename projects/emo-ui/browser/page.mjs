@@ -9,7 +9,12 @@
 // `value` pair the backend sets (the same markup contract `ui_ssr`
 // emits), which is how the script finds the element an event belongs to.
 // Everything the program prints comes from the loop's `update`; this
-// harness prints nothing on success.
+// harness prints nothing on success. A bundle with no script steps its
+// own frames (`../retained/`) and is run for what it prints.
+//
+// The element model carries what the retained patch uses: `children` by
+// index, `removeChild`, and an `insertBefore` that moves a child already
+// under the parent.
 
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -49,6 +54,14 @@ function element(tagName) {
     removeChild(child) {
       el.children = el.children.filter((x) => x !== child);
       child.parentNode = null;
+      return child;
+    },
+    // A child that already sits here moves: it leaves its place first.
+    insertBefore(child, ref) {
+      child.parentNode = el;
+      el.children = el.children.filter((x) => x !== child);
+      const at = ref === null ? -1 : el.children.indexOf(ref);
+      el.children.splice(at < 0 ? el.children.length : at, 0, child);
       return child;
     },
   };

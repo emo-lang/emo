@@ -1,0 +1,24 @@
+require "emo/ui"
+require "emo/ui_browser"
+require "emo/ui_calculator"
+
+// The gate's entry of the same page: the application on the same
+// backend, mounted the same way, and printing each frame's display as
+// the loop hands the backend its tree. A page has no input source of its
+// own — the loop runs when the browser calls a listener — so the session
+// is clicked into it: the harness finds the element a tag rides and
+// calls its listener, which is the path a person's click takes — the
+// listener, the sink, the loop, the patch. The run's stdout is
+// `../expected.txt`, the same bytes every other entry is pinned to.
+
+def view(reg ui.Registry, m ui_calculator.Model) ui.Node {
+  println("display ${ui_calculator.display(m)}")
+  return ui_calculator.view_at(reg, m, mount.unit())
+}
+
+def main() {
+  ui.run(view, ui_calculator.update, ui_calculator.initial(),
+    ui_browser.backend(mount.title()))
+}
+
+main()

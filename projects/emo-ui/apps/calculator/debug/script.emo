@@ -1,0 +1,10 @@
+require "emo/ui_calculator"
+
+// The hosted session as one line of tags — the form the page's harness
+// takes (`../../../browser/page.mjs`), which clicks a page's keys for it.
+// The gate reads it from this module's stdout, so no tag is ever written
+// down in a script.
+//
+//   emo run script.emo   -> 3,17,4,10,12,18,0,...
+
+println(ui_calculator.script())

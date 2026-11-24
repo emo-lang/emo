@@ -1,0 +1,21 @@
+require "emo/ui"
+require "emo/ui_macos"
+require "emo/ui_calculator"
+
+// The calculator as a macOS application: the shared application on an
+// AppKit window, and no script — a person drives it with the pointer.
+// This module and `mount.emo` are the only platform-specific code there
+// is: the backend, and the unit its layout is measured in.
+//
+//   EMO_REGISTRY=<a staged registry> emo build main.emo --target c -o calculator
+
+def view(reg ui.Registry, m ui_calculator.Model) ui.Node {
+  return ui_calculator.view_at(reg, m, mount.unit())
+}
+
+def main() {
+  ui.run(view, ui_calculator.update, ui_calculator.initial(),
+    ui_macos.backend(mount.title(), mount.width(), mount.height(), ""))
+}
+
+main()

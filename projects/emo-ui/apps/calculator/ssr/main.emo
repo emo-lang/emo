@@ -1,0 +1,29 @@
+require "emo/ui"
+require "emo/ui_ssr"
+require "emo/ui_calculator"
+
+// The calculator's server-rendered entry: the application on the SSR
+// backend, where `mount` prints the page and every event a fragment —
+// the whole tree again, as a server would send it back. The page session
+// is the hosted session's first keys: a document a frame is this
+// backend's own cost, and six keys take the display through a number
+// being typed, an operand and a result. Each frame's display is printed
+// beside the markup, so the trace is `../expected.txt`'s first lines.
+// The interpreter's output is `expected.txt`, and every hosted target
+// has to produce those bytes exactly.
+
+def view(reg ui.Registry, m ui_calculator.Model) ui.Node {
+  println("display ${ui_calculator.display(m)}")
+  return ui_calculator.view_at(reg, m, 6.0)
+}
+
+def main() {
+  const backend = ui_ssr.backend("Calculator")
+  ui.run(view, ui_calculator.update, ui_calculator.initial(), backend)
+  const script = ui_calculator.page_tags()
+  for var i = 0; i < script.length(); i = i + 1 {
+    backend.deliver(script[i])
+  }
+}
+
+main()

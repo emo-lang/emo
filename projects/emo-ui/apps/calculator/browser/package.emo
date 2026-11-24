@@ -1,0 +1,11 @@
+package {
+  name = "emo/ui_calculator_browser"
+  version = "0.1.0"
+  targets = ["browser"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+    "emo/ui_browser" = "0.1.0"
+    "emo/ui_calculator" = "0.1.0"
+  }
+}

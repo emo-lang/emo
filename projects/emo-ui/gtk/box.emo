@@ -1,13 +1,16 @@
 // The native backends' box model, in points.
 //
 // The toolkits have layout engines, but a tree that is rebuilt on every
-// event is not what they are for: the backend clears its canvas and
-// places every leaf at an absolute frame, exactly as the terminal
-// backend repaints its grid. So the measurement is the same arithmetic
-// as `ui_tui`'s, in points instead of cells — `padding`, `gap`, `align`,
-// `grow`, `width` and `height` mean what the core says they mean — and
-// this module stays pure, so a test reads it without a window server
-// (docs/emo-ui.md, Layer 3).
+// event is not what they are for: the backend places every leaf at an
+// absolute frame, exactly as the terminal backend repaints its grid. So
+// the measurement is the same arithmetic as `ui_tui`'s, in points instead
+// of cells — `padding`, `gap`, `align`, `grow`, `width` and `height` mean
+// what the core says they mean — and this module stays pure, so a test
+// reads it without a display (docs/emo-ui.md, Layer 3).
+//
+// The walk follows a diff, never a bare tree, so every frame it emits
+// stands beside the slot its leaf fills: the backend keeps the widget a
+// continued slot already has, and makes one for a slot that is new.
 //
 // It is a module of its own because the interpreter refuses a foreign
 // def at load time (E3009): the package's test can require the layout
@@ -73,6 +76,25 @@ class Draw {
 
   def event() Int64 {
     return self.event
+  }
+}
+
+// One leaf's frame and the slot the leaf fills. The slot is the diff's:
+// kept when the widget a backend holds for it goes on, and `from` naming
+// where it stood in the old frame — what a backend that keeps its
+// widgets needs to know, frame by frame.
+class Frame {
+  def init(draw Draw, slot ui.Patch) {
+    self.draw = draw
+    self.slot = slot
+  }
+
+  def draw() Draw {
+    return self.draw
+  }
+
+  def slot() ui.Patch {
+    return self.slot
   }
 }
 
@@ -209,24 +231,25 @@ def measure_row(n ui.Node, s ui.Style, fw Float64, fh Float64) Extent {
   return Extent.new(w: w, h: h)
 }
 
-// Lay one node into `(x, y, w, h)` from the window's top-left and
-// append its leaves to `out`. The builder is threaded back as the
-// return value, the same shape the terminal backend uses.
-def place(n ui.Node, x Float64, y Float64, w Float64, h Float64,
+// Lay one slot into `(x, y, w, h)` from the window's top-left and append
+// its leaf's frame to `out`. The builder is threaded back as the return
+// value, the same shape the terminal backend uses.
+def place(p ui.Patch, x Float64, y Float64, w Float64, h Float64,
           out ArrayBuilder) ArrayBuilder {
+  const n = p.node()
   if n.is(ui.Column) {
-    return place_column(n, x, y, w, h, out)
+    return place_column(p, x, y, w, h, out)
   }
   if n.is(ui.Scroll) {
-    return place_column(n, x, y, w, h, out)
+    return place_column(p, x, y, w, h, out)
   }
   if n.is(ui.Row) {
-    return place_row(n, x, y, w, h, out)
+    return place_row(p, x, y, w, h, out)
   }
   const text = line_of(n)
   if text.length() > 0 {
-    out.push(Draw.new(x: x, y: y, w: w, h: h, kind: kind_of(n), text: text,
-      event: event_of(n)))
+    out.push(Frame.new(draw: Draw.new(x: x, y: y, w: w, h: h,
+      kind: kind_of(n), text: text, event: event_of(n)), slot: p))
   }
   return out
 }
@@ -234,17 +257,18 @@ def place(n ui.Node, x Float64, y Float64, w Float64, h Float64,
 // A column's children stack downward inside its padding, one gap apart.
 // A child with `grow` takes an equal share of the height left over; the
 // last one takes the remainder so the box stays flush.
-def place_column(n ui.Node, x Float64, y Float64, w Float64, h Float64,
+def place_column(p ui.Patch, x Float64, y Float64, w Float64, h Float64,
                  out ArrayBuilder) ArrayBuilder {
+  const n = p.node()
   const s = n.style()
   const pad = s.padding()
   const gap = s.gap()
-  const kids = n.children()
+  const kids = p.kids()
   const inner_w = w - pad * 2.0
   const inner_h = h - pad * 2.0
   var total = 0.0
   for var i = 0; i < kids.length(); i = i + 1 {
-    total = total + measure(kids[i], inner_w).h()
+    total = total + measure(kids[i].node(), inner_w).h()
   }
   if kids.length() > 0 {
     total = total + gap * (kids.length() - 1).to_float64()
@@ -252,7 +276,7 @@ def place_column(n ui.Node, x Float64, y Float64, w Float64, h Float64,
   var growers = 0
   var last_grower = 0 - 1
   for var i = 0; i < kids.length(); i = i + 1 {
-    if kids[i].style().grow() {
+    if kids[i].node().style().grow() {
       growers = growers + 1
       last_grower = i
     }
@@ -262,9 +286,9 @@ def place_column(n ui.Node, x Float64, y Float64, w Float64, h Float64,
   const align = s.align()
   var cursor = y + pad
   for var i = 0; i < kids.length(); i = i + 1 {
-    const e = measure(kids[i], inner_w)
+    const e = measure(kids[i].node(), inner_w)
     var ch = e.h()
-    if growers > 0 && kids[i].style().grow() {
+    if growers > 0 && kids[i].node().style().grow() {
       ch = ch + share
       if i == last_grower {
         ch = ch + leftover - share * growers.to_float64()
@@ -290,17 +314,18 @@ def place_column(n ui.Node, x Float64, y Float64, w Float64, h Float64,
 // A row's children line up to the right inside its padding, one gap
 // apart, with `grow` and the leftover share working across the width
 // and `align` placing each child down the row's height.
-def place_row(n ui.Node, x Float64, y Float64, w Float64, h Float64,
+def place_row(p ui.Patch, x Float64, y Float64, w Float64, h Float64,
               out ArrayBuilder) ArrayBuilder {
+  const n = p.node()
   const s = n.style()
   const pad = s.padding()
   const gap = s.gap()
-  const kids = n.children()
+  const kids = p.kids()
   const inner_w = w - pad * 2.0
   const inner_h = h - pad * 2.0
   var total = 0.0
   for var i = 0; i < kids.length(); i = i + 1 {
-    total = total + measure(kids[i], 0.0 - 1.0).w()
+    total = total + measure(kids[i].node(), 0.0 - 1.0).w()
   }
   if kids.length() > 0 {
     total = total + gap * (kids.length() - 1).to_float64()
@@ -308,7 +333,7 @@ def place_row(n ui.Node, x Float64, y Float64, w Float64, h Float64,
   var growers = 0
   var last_grower = 0 - 1
   for var i = 0; i < kids.length(); i = i + 1 {
-    if kids[i].style().grow() {
+    if kids[i].node().style().grow() {
       growers = growers + 1
       last_grower = i
     }
@@ -318,9 +343,9 @@ def place_row(n ui.Node, x Float64, y Float64, w Float64, h Float64,
   const align = s.align()
   var cursor = x + pad
   for var i = 0; i < kids.length(); i = i + 1 {
-    const e = measure(kids[i], 0.0 - 1.0)
+    const e = measure(kids[i].node(), 0.0 - 1.0)
     var cw = e.w()
-    if growers > 0 && kids[i].style().grow() {
+    if growers > 0 && kids[i].node().style().grow() {
       cw = cw + share
       if i == last_grower {
         cw = cw + leftover - share * growers.to_float64()
@@ -343,11 +368,23 @@ def place_row(n ui.Node, x Float64, y Float64, w Float64, h Float64,
   return out
 }
 
-// The frame as data: every leaf with its absolute frame, in points from
-// the window's top-left. The pure half of painting, and what a test
-// reads instead of a window.
-def layout(root ui.Node, width Float64, height Float64) Array[Draw] {
+// The frame as data for a diff: every leaf with its absolute frame, in
+// points from the window's top-left, beside the slot it fills. The pure
+// half of painting, the same for a first render and a kept one.
+def layout_of(p ui.Patch, width Float64, height Float64) Array[Frame] {
   const out = ArrayBuilder.new()
-  place(root, 0.0, 0.0, width, height, out)
+  place(p, 0.0, 0.0, width, height, out)
+  return out.to_array()
+}
+
+// The frame as data for a tree: every leaf with its absolute frame, in
+// points from the window's top-left. What a test reads instead of a
+// window.
+def layout(root ui.Node, width Float64, height Float64) Array[Draw] {
+  const frames = layout_of(ui.fresh(root), width, height)
+  const out = ArrayBuilder.new()
+  for var i = 0; i < frames.length(); i = i + 1 {
+    out.push(frames[i].draw())
+  }
   return out.to_array()
 }

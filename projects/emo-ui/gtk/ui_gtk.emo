@@ -1,6 +1,6 @@
 require "emo/ui"
 
-// The GTK 4 backend (T48.9): the nine-verb GTK shim over the callback
+// The GTK 4 backend (T48.9): the ten-verb GTK shim over the callback
 // contract.
 //
 // `shim.c` is the C half. Every verb below is one `foreign def` naming a
@@ -17,8 +17,9 @@ require "emo/ui"
 foreign def ui_window_make(title String, w Float64, h Float64) Int64 = "ui_window_make"
 foreign def ui_label_make(text String) Int64 = "ui_label_make"
 foreign def ui_button_make(text String) Int64 = "ui_button_make"
+foreign def ui_set_text(child Int64, text String) Void = "ui_set_text"
 foreign def ui_place(child Int64, x Float64, y Float64, w Float64, h Float64) Void = "ui_place"
-foreign def ui_clear() Void = "ui_clear"
+foreign def ui_remove(child Int64) Void = "ui_remove"
 foreign def ui_connect(child Int64, tag Int64) Void = "ui_connect"
 foreign def ui_root() Int64 = "ui_root"
 foreign def ui_run(events ui.Events) Void = "ui_run"
@@ -37,6 +38,17 @@ def unmounted() ui.Events {
   return Unmounted.new()
 }
 
+// Whether a handle is among the ones a frame keeps.
+def has(xs Array[Int64], x Int64, i Int64) Bool {
+  if i >= xs.length() {
+    return false
+  }
+  if xs[i] == x {
+    return true
+  }
+  return has(xs, x, i + 1)
+}
+
 // The backend itself. A window is a size in points, which this backend
 // takes as an argument today; reading it from the screen and reflowing
 // on resize is the same interaction work `ui_tui` leaves to T48.5.
@@ -45,6 +57,12 @@ def unmounted() ui.Events {
 // `Script`: a comma-separated list of event tags clicked in order. It is
 // honored only when `EMO_GUI_AUTOTEST` is set, so a real application
 // passes `""` and a person drives the window.
+//
+// The widgets on screen are kept in two lists of a kind: the slot each
+// one's leaf fills, and its handle. A frame looks each of its slots up
+// in the lists before it changes anything, so a continued leaf keeps its
+// widget — its focus with it — and only a slot that is new costs a
+// widget.
 class Gtk {
   def init(title String, width Float64, height Float64, script String) {
     self.title = title
@@ -52,35 +70,85 @@ class Gtk {
     self.height = height
     self.script = script
     self.sink = Box.new(unmounted())
+    self.slots = Box.new([])
+    self.widgets = Box.new([])
   }
 
   def mount(root ui.Node, events ui.Events) {
     self.sink.replace(events)
     ui_window_make(self.title, self.width, self.height)
-    self.paint(root)
+    self.paint(ui.fresh(root))
   }
 
-  // Every frame is a full rebuild: `old` is an offer, and a clear plus
-  // fresh widgets is the one policy both the terminal and GTK 4 can
-  // honor (docs/emo-ui.md, Layer 6). A retained diff is T48.12's.
+  // A frame keeps what the diff keeps: a full rebuild is what a terminal
+  // and a one-shot render can afford, and a window that holds the focus
+  // cannot (docs/emo-ui.md, Layer 6).
   def patch(old ui.Node, next ui.Node) {
-    self.paint(next)
+    self.paint(ui.diff(old, next))
   }
 
-  def paint(root ui.Node) {
-    const draws = box.layout(root, self.width, self.height)
-    ui_clear()
-    for var i = 0; i < draws.length(); i = i + 1 {
-      const d = draws[i]
-      var handle = 0
-      if d.kind() == box.Kind.button {
-        handle = ui_button_make(d.text())
-        ui_connect(handle, d.event())
+  // One frame. The handles are read first, every slot's, while the lists
+  // still describe the frame before; the widgets no slot keeps leave; and
+  // then each slot gets its widget, kept or made, where the frame wants it.
+  def paint(p ui.Patch) {
+    const frames = box.layout_of(p, self.width, self.height)
+    const slots = self.slots.read()
+    const widgets = self.widgets.read()
+    const found = ArrayBuilder.new()
+    for var i = 0; i < frames.length(); i = i + 1 {
+      found.push(self.widget_at(slots, widgets, frames[i], 0))
+    }
+    const kept = found.to_array()
+    for var i = 0; i < widgets.length(); i = i + 1 {
+      if !has(kept, widgets[i], 0) {
+        ui_remove(widgets[i])
+      }
+    }
+    const next_slots = ArrayBuilder.new()
+    const next_widgets = ArrayBuilder.new()
+    for var i = 0; i < frames.length(); i = i + 1 {
+      const f = frames[i]
+      const d = f.draw()
+      var handle = kept[i]
+      if handle < 0 {
+        handle = self.make(d)
       } else {
-        handle = ui_label_make(d.text())
+        ui_set_text(handle, d.text())
+        if d.kind() == box.Kind.button {
+          ui_connect(handle, d.event())
+        }
       }
       ui_place(handle, d.x(), d.y(), d.w(), d.h())
+      next_slots.push(f.slot().path())
+      next_widgets.push(handle)
     }
+    self.slots.replace(next_slots.to_array())
+    self.widgets.replace(next_widgets.to_array())
+  }
+
+  // The widget a frame's slot already has, by the slot it came from; -1
+  // when the slot is new or the widget is gone.
+  def widget_at(slots Array[String], widgets Array[Int64], f box.Frame,
+                i Int64) Int64 {
+    if !f.slot().kept() {
+      return -1
+    }
+    if i >= slots.length() {
+      return -1
+    }
+    if slots[i] == f.slot().from() {
+      return widgets[i]
+    }
+    return self.widget_at(slots, widgets, f, i + 1)
+  }
+
+  def make(d box.Draw) Int64 {
+    if d.kind() == box.Kind.button {
+      const handle = ui_button_make(d.text())
+      ui_connect(handle, d.event())
+      return handle
+    }
+    return ui_label_make(d.text())
   }
 
   def run() {

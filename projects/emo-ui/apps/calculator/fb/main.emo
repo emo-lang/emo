@@ -1,0 +1,23 @@
+require "emo/ui"
+require "emo/ui_fb"
+require "emo/ui_calculator"
+
+// The calculator's framebuffer entry (the hosted twin of the desktop's
+// window): the application run through `ui_fb` on a canvas the size it
+// measures to, with the window session's tags in the input's seat. Every frame's digest
+// prints as the backend presents it, beside the state its display shows,
+// so the trace is `../expected.txt`'s first lines. The interpreter's
+// bytes are `expected.txt`, and the four targets this entry runs on
+// print the same; `beam` runs `page.emo`, the page session on the same
+// canvas. The metal's own pass — a window of its own, the seat's keys
+// and pointer — is the desktop's to wire.
+//
+//   emo run main.emo
+
+def main() {
+  ui.run(screen.view, ui_calculator.update, ui_calculator.initial(),
+    ui_fb.backend(screen.screen(), ui_fb.script(ui_calculator.window_tags()),
+      screen.strike()))
+}
+
+main()

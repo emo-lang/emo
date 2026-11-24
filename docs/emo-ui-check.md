@@ -94,10 +94,21 @@ In dependency order, each gate with its evidence:
    blocks do not cross the FFI. This item proposed the opposite —
    blocks across the FFI (E4200) plus `emo_closure_fn` — which the
    settled contract rejected. No longer a gate.
-4. **Rendering depth** — full repaint per event is fine at demo
-   scale; reconciliation, style-key validation (today style maps are
-   stringly Float64 pairs), and struct marshaling for toolkit-native
-   layouts are the growth path after the package exists.
+4. **Rendering depth — reconciliation landed (2026-11-24).** A full
+   repaint per event is right for the terminal, a static HTML render and
+   the framebuffer, and the retained backends — AppKit, GTK, the DOM —
+   now keep what `ui.diff` keeps: a continued node keeps its widget or
+   its element, identity is position and kind, and `ui.keyed` overrides
+   position (`projects/emo-ui/docs/ui.md`). Style-key validation and
+   struct marshaling for toolkit-native layouts remain the growth path.
+5. **A real application — the calculator landed (2026-11-24).** The
+   convergence corpus proves that the backends agree; an application a
+   person uses proves what the vocabulary can say. The first one under
+   `projects/emo-ui/apps/` is a four-function calculator, written once
+   and gated on every backend — the same display after every key — and
+   its README records what it could not say: a length with a unit, a
+   node's equal share, a color, a keyboard. Each is a question for the
+   core's next round.
 
 ## What is deliberately out
 

@@ -11,6 +11,13 @@
    term.emo; the numbers themselves are not part of the package's
    surface. */
 
+/* The one feature macro this file needs, and it must stand before
+   every include: cfmakeraw is a BSD extension, which glibc declares
+   only under _DEFAULT_SOURCE — musl and macOS declare it whatever the
+   level — and the c target compiles this file with a strict -std=c11,
+   under which the declaration would otherwise be implicit. */
+#define _DEFAULT_SOURCE
+
 #include <errno.h>
 #include <poll.h>
 #include <stdbool.h>

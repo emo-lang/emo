@@ -1,0 +1,37 @@
+mount
++ Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Text "a" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Text "b" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+a keyed child arrives, another leaves
+= Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Text "c" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "b" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+a reorder
+= Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "b" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "c" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+a key whose class changed
+= Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Button "b" #3 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "c" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+a replaced container
+= Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    + Text "b" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "c" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+unkeyed children
+= Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Text "x" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Text "y" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+an unkeyed child arrives at the end
+= Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "x" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "y" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Text "z" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+an unkeyed child arrives at the front
+= Column pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "w" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "x" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  = Text "y" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  + Text "z" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+

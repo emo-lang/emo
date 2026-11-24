@@ -1,0 +1,250 @@
+// A number as the calculator holds it and shows it: the decimal string a
+// person types on its way in, the plain or scientific string the display
+// shows on its way out, and the four operations guarded where Emo's
+// targets disagree with each other.
+//
+// Everything here is arithmetic a target cannot spell two ways. The
+// formatting is Int64 digits, never `printf` (which `wasm` and `riscv64`
+// do not carry) and never `Float64.to_string()` (six significant digits
+// — `0.333333` for a third). The walk of an entry is by byte, never by
+// `chars()`, which `riscv64` does not lower; an entry is digits, a dot
+// and a sign, so its bytes are its characters.
+
+// The calculator's range. A result outside it is the error a ten-digit
+// pocket calculator makes of an overflow, and the bound is what keeps
+// the operations from reaching for a number no target can hold: `beam`
+// raises on a float that overflows (`badarith`) and Emo has no catch,
+// so an unguarded `1e200 * 1e200` would end the application instead of
+// putting a word on its display. Every value the model holds is inside
+// the range — an entry is fifteen digits at most, and every operation
+// checks its answer — so no operation below can overflow on the way
+// there: a product of two values inside it stays below `1e200`.
+def limit() Float64 {
+  return 1.0e100
+}
+
+def inside(x Float64) Bool {
+  return x < limit() && x > 0.0 - limit()
+}
+
+// ---- on its way in: the typed decimal ----
+
+// The digit a one-character string names, 0.0 for "0" and for anything
+// that is not a digit.
+def digit(c String) Float64 {
+  if c == "1" {
+    return 1.0
+  }
+  if c == "2" {
+    return 2.0
+  }
+  if c == "3" {
+    return 3.0
+  }
+  if c == "4" {
+    return 4.0
+  }
+  if c == "5" {
+    return 5.0
+  }
+  if c == "6" {
+    return 6.0
+  }
+  if c == "7" {
+    return 7.0
+  }
+  if c == "8" {
+    return 8.0
+  }
+  if c == "9" {
+    return 9.0
+  }
+  return 0.0
+}
+
+def pow10(k Int64) Float64 {
+  var out = 1.0
+  for var i = 0; i < k; i = i + 1 {
+    out = out * 10.0
+  }
+  return out
+}
+
+// The value of an entry — "12", "12.", "12.5", "-0.5" — its digits
+// accumulated as a Float64 and scaled by one division. Fifteen digits
+// are exact in a double, and so is every power of ten up to `10^22`, so
+// the one division at the end is a correctly rounded result and not an
+// accumulated error.
+def parse(entry String) Float64 {
+  var out = 0.0
+  var after = 0
+  var seen = false
+  for var i = 0; i < entry.length(); i = i + 1 {
+    const c = entry.substring(i, 1)
+    if c == "." {
+      seen = true
+    } else {
+      if seen {
+        after = after + 1
+      }
+      out = out * 10.0 + digit(c)
+    }
+  }
+  out = out / pow10(after)
+  if entry.substring(0, 1) == "-" {
+    out = 0.0 - out
+  }
+  return out
+}
+
+// ---- the four operations, guarded ----
+
+// Each answers `(R.ok, value)` or `(R.error, why)`. The two failures are
+// the ones a person can make from the keypad — a division by zero and a
+// result past the range — and both are checked before the arithmetic
+// that would raise: the interpreter and `ocaml` make `x / 0.0` a runtime
+// error (E3005) where `c`, `typescript` and `wasm` make it an infinity.
+def add(a Float64, b Float64) (R, Float64) {
+  const out = a + b
+  if !inside(out) {
+    return (R.error, "past the range")
+  }
+  return (R.ok, out)
+}
+
+def sub(a Float64, b Float64) (R, Float64) {
+  const out = a - b
+  if !inside(out) {
+    return (R.error, "past the range")
+  }
+  return (R.ok, out)
+}
+
+def mul(a Float64, b Float64) (R, Float64) {
+  const out = a * b
+  if !inside(out) {
+    return (R.error, "past the range")
+  }
+  return (R.ok, out)
+}
+
+// A divisor below one in size can lift a value past what a double holds
+// (`1e100 / 1e-250`), so the quotient's size is read off the operands
+// before it is taken: past the range is a refusal here, not an overflow
+// there.
+def div(a Float64, b Float64) (R, Float64) {
+  if b == 0.0 {
+    return (R.error, "division by zero")
+  }
+  var size_b = b
+  if size_b < 0.0 {
+    size_b = 0.0 - size_b
+  }
+  if size_b < 1.0 {
+    var size_a = a
+    if size_a < 0.0 {
+      size_a = 0.0 - size_a
+    }
+    if size_a >= size_b * limit() {
+      return (R.error, "past the range")
+    }
+  }
+  return (R.ok, a / b)
+}
+
+// ---- on its way out: the display ----
+
+def zeros(n Int64) String {
+  var out = ""
+  for var i = 0; i < n; i = i + 1 {
+    out = out + "0"
+  }
+  return out
+}
+
+// `digits` with the point `e` places in: `e` of 0 or less puts it in
+// front, behind `-e` zeros.
+def plain(digits String, e Int64) String {
+  const len = digits.length()
+  if e <= 0 {
+    return "0." + zeros(0 - e) + digits
+  }
+  if len > e {
+    return digits.substring(0, e) + "." + digits.substring(e, len - e)
+  }
+  return digits + zeros(e - len)
+}
+
+// One digit, the rest behind a point, and the power of ten: `1.5e+16`.
+def sci(digits String, e Int64) String {
+  var out = digits.substring(0, 1)
+  if digits.length() > 1 {
+    out = out + "." + digits.substring(1, digits.length() - 1)
+  }
+  const power = e - 1
+  if power < 0 {
+    return out + "e-" + (0 - power).to_string()
+  }
+  return out + "e+" + power.to_string()
+}
+
+// The value as the display shows it: twelve significant digits, rounded
+// and with the trailing zeros gone. A number is written plain while its
+// plain form is short — up to twelve places in front of the point, up to
+// thirteen after — and in powers of ten beyond that, in ASCII (`1e+15`,
+// not `10¹⁵`) because the terminal and the framebuffer draw ASCII
+// certain and a superscript nowhere. Zero has no sign and no point.
+//
+// The digits are an integer: the value is scaled into `[1, 10)`, that is
+// multiplied into a twelve-digit `Int64`, and rounded by adding a half —
+// so every target prints the same twelve digits, `to_string()` being
+// byte-identical where a float's is not.
+def format(x Float64) String {
+  var sign = ""
+  var v = x
+  if v < 0.0 {
+    sign = "-"
+    v = 0.0 - v
+  }
+  if v == 0.0 {
+    return "0"
+  }
+  if !inside(v) {
+    return "Error"
+  }
+  var m = v
+  var e = 1
+  while m >= 10.0 {
+    m = m / 10.0
+    e = e + 1
+  }
+  while m < 1.0 {
+    m = m * 10.0
+    e = e - 1
+  }
+  const scaled = m * 100000000000.0
+  var n = (scaled + 0.5).to_int64()
+  // A value that rounded up to the next power of ten carries one place
+  // more.
+  if n >= 1000000000000 {
+    n = n / 10
+    e = e + 1
+  }
+  var len = 12
+  while len > 1 {
+    if n % 10 == 0 {
+      n = n / 10
+      len = len - 1
+    } else {
+      break
+    }
+  }
+  const digits = n.to_string()
+  var out = ""
+  if e >= 13 || (e <= 0 && len - e > 13) {
+    out = sci(digits, e)
+  } else {
+    out = plain(digits, e)
+  }
+  return sign + out
+}

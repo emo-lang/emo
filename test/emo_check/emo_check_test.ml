@@ -2272,6 +2272,18 @@ def probe(n Int64) Int64 {
 }|}
         in
         Alcotest.(check bool) "E4003" true (has_code diagnostics "E4003"));
+    tc "foreach binds the element read-only" (fun () ->
+        let diagnostics =
+          check
+            {|
+def probe() Int64 {
+  :foreach x in [1, 2] {
+    x = 3
+  }
+  return 0
+}|}
+        in
+        Alcotest.(check bool) "E4007" true (has_code diagnostics "E4007"));
     tc "break and continue refuse outside a loop" (fun () ->
         let diagnostics = check {|
 def probe() Int64 {

@@ -1,0 +1,129 @@
+require "emo/ui"
+require "emo/ui_browser"
+
+// The DOM backend's own golden: the page read back, frame by frame. The
+// backend is driven the way the loop drives it — one `mount`, then a
+// `patch` per frame — and after each one the page is walked through
+// `dom_child`, every element marked `=` when the frame before already had
+// it (it answers the same handle) and `+` when this frame made it. What
+// is pinned is the reconciliation itself: a continued node keeps its
+// element, a new or replaced one gets a new one, a reorder moves instead
+// of rebuilding, and a node below a replaced one is new.
+//
+//   node page.mjs <this bundle>   -> the golden; there is no script to click
+
+def t(body String) ui.Node {
+  return ui.text(body, ui.style())
+}
+
+def k(key String, n ui.Node) ui.Node {
+  return ui.keyed(key, n)
+}
+
+def col(kids Array[ui.Node]) ui.Node {
+  return ui.column(kids, ui.style())
+}
+
+def carries(n ui.Node) Bool {
+  return n.is(ui.Column) || n.is(ui.Row) || n.is(ui.Scroll)
+}
+
+def has(xs Array[Int64], x Int64, i Int64) Bool {
+  if i >= xs.length() {
+    return false
+  }
+  if xs[i] == x {
+    return true
+  }
+  return has(xs, x, i + 1)
+}
+
+def indent(depth Int64) String {
+  if depth <= 0 {
+    return ""
+  }
+  return "  " + indent(depth - 1)
+}
+
+// The page under one element, in document order: the node each element
+// was built for, and whether the frame before already had the element.
+def show(n ui.Node, el Int64, depth Int64, was Array[Int64], lines Box,
+         seen Box) {
+  var mark = "+"
+  if has(was, el, 0) {
+    mark = "="
+  }
+  lines.replace(lines.read().append(indent(depth) + mark + " "
+    + ui.debug.head(n)))
+  seen.replace(seen.read().append(el))
+  if carries(n) {
+    const kids = n.children()
+    for var j = 0; j < kids.length(); j = j + 1 {
+      show(kids[j], dom_child(el, j), depth + 1, was, lines, seen)
+    }
+  }
+}
+
+// The page as it stands, under the root's element — the mount point's
+// only child — against the elements the frame before had.
+def read_page(next ui.Node, was Array[Int64], lines Box, seen Box) {
+  show(next, dom_child(dom_root(), 0), 0, was, lines, seen)
+}
+
+def main() {
+  const be = ui_browser.backend("Retained")
+  const lines = Box.new([])
+  const seen = Box.new([])
+  const first = col([k("a", t("a")), k("b", t("b"))])
+  be.mount(first, ui.debug.unmounted())
+  const held = Box.new(first)
+  lines.replace(lines.read().append("mount\n"))
+  read_page(first, [], lines, seen)
+
+  // A keyed child arrives in front and another leaves; the one that
+  // stays keeps its element.
+  frame("a keyed child arrives, another leaves", be, held,
+    col([k("c", t("c")), k("b", t("b"))]), lines, seen)
+  // A reorder moves the elements; neither is made again.
+  frame("a reorder", be, held, col([k("b", t("b")), k("c", t("c"))]),
+    lines, seen)
+  // A key whose class changed is a different element.
+  frame("a key whose class changed", be, held,
+    col([k("b", ui.button("b", 3, ui.style())), k("c", t("c"))]), lines,
+    seen)
+  // A node below a replaced container is new, and the container's
+  // sibling is not.
+  frame("a replaced container", be, held,
+    col([col([k("b", t("b"))]), k("c", t("c"))]), lines, seen)
+  // Children without keys do not take the place of keyed ones.
+  frame("unkeyed children", be, held, col([t("x"), t("y")]), lines, seen)
+  // Without a key a child is its position among the unkeyed: one
+  // arriving at the end leaves the others alone.
+  frame("an unkeyed child arrives at the end", be, held,
+    col([t("x"), t("y"), t("z")]), lines, seen)
+  // One arriving at the front takes the first position, and every
+  // position after it is the next one's.
+  frame("an unkeyed child arrives at the front", be, held,
+    col([t("w"), t("x"), t("y"), t("z")]), lines, seen)
+
+  var out = ""
+  const all = lines.read()
+  for var i = 0; i < all.length(); i = i + 1 {
+    out = out + all[i]
+  }
+  println(out)
+}
+
+// One frame: the backend patches from the tree it holds to the next one,
+// and the page is read back.
+def frame(title String, be ui.Backend, held Box, next ui.Node, lines Box,
+          seen Box) {
+  be.patch(held.read(), next)
+  held.replace(next)
+  lines.replace(lines.read().append(title + "\n"))
+  const was = seen.read()
+  seen.replace([])
+  read_page(next, was, lines, seen)
+}
+
+main()

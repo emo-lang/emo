@@ -36,6 +36,7 @@ def button(label String, event Int64, style Style) Node
 def text_input(value String, style Style) Node
 def image(src String, style Style) Node
 def spacer(style Style) Node
+def keyed(key String, n Node) Node
 ```
 
 The concrete classes are `Column`, `Row`, `Scroll`, `Text`, `Button`,
@@ -94,6 +95,80 @@ decides. The slot is never read on the error branch. The properties are
 the portable layout vocabulary, the intersection every backend can map
 onto its own native layout; the TUI and the two native backends keep a
 box model that measures this style in cells or points.
+
+## Keys and the diff
+
+```emo
+def keyed(key String, n Node) Node
+def key_of(n Node) String
+def same_kind(a Node, b Node) Bool
+
+def diff(old Node, next Node) Patch
+def fresh(next Node) Patch
+def gone(p Patch) Array[Int64]
+```
+
+```emo
+class Patch {
+  def node() Node
+  def old() (R, Node)
+  def kept() Bool
+  def was() Int64
+  def path() String
+  def from() String
+  def kids() Array[Patch]
+}
+```
+
+A tree is rebuilt on every event, and a backend that keeps its widgets —
+AppKit, GTK, the DOM — has to know which old node each new one continues.
+`diff` answers that once, for every backend: a `Patch` for each slot of
+the new tree, beside the node that fills it. It is pure, and
+[`debug`](debug.md) renders it as text, so the matching is pinned byte
+for byte on every target the way the tree itself is.
+
+**Identity is position and kind.** A child without a key continues the
+unkeyed child that held its position among its unkeyed siblings — the
+n-th unkeyed child of the old list — when the two are of the same class.
+A key overrides position: a keyed child continues the old child with the
+same key wherever it moved, and a keyed sibling arriving or leaving
+leaves the unkeyed positions alone. A slot whose class changed is
+*replaced*, not continued, whatever its key. Two children of one node
+under one key is a mistake rather than a choice, and `diff` raises
+instead of picking the first.
+
+```emo
+// Position: the first slot keeps its widget and takes the new text; the
+// last child is new.
+[a, b] -> [x, a, b]
+
+// Keys: both keep theirs.
+[keyed("a", …), keyed("b", …)] -> [keyed("b", …), keyed("a", …)]
+```
+
+A `Patch` reads as:
+
+- `kept` — the widget a backend holds for `old` goes on as this node's.
+- `old` — `(R.ok, node)` for a slot that keeps or replaces a node of the
+  old tree; `(R.error, _)` for a new one.
+- `was` — the old child's index among the old children; `-1` for a new
+  child.
+- `path` and `from` — the slot's address in the new tree and in the old
+  one: the root is `""`, and a child appends its index (`/0/2`).
+- `kids` — the new children, in order.
+
+A slot that is not kept is *whole*: every node below it is new. `gone`
+lists the old children of a kept container that no new child keeps or
+replaces, ascending — a backend removes them from the last index up, so
+each index still names the child it did.
+
+`fresh` is a tree as its own diff, every slot new: what a first render is
+laid out against. `keyed` is the node it is given, prop for prop, carrying
+the key; `key_of` reads it back, `""` when there is none. Both know the
+core's classes and no others — `keyed` raises on any other class, since a
+platform's own node has no key to set — and `same_kind` is false for a
+node the core does not know, so no diff ever continues one: a backend
+rebuilds it every frame.
 
 ## The loop
 
@@ -204,7 +279,10 @@ interface Backend {
 
 `mount` receives the first tree and the sink; `patch` receives the tree
 the backend last saw and the next one, so a backend may diff or ignore
-the old tree. `run` is the backend's own loop: the TUI pulls a scripted
-or terminal input and delivers each tag, the native backends enter the
-toolkit loop, and the debug, SSR and DOM backends return immediately
-because the caller or the page owns the loop.
+the old tree: AppKit, GTK and the DOM call `diff` in `patch` and keep
+what it keeps, and a backend that repaints whole — the terminal, the
+framebuffer, the debug log, a one-shot HTML render — ignores it. `run`
+is the backend's own loop: the TUI pulls a scripted or terminal input
+and delivers each tag, the native backends enter the toolkit loop, and
+the debug, SSR and DOM backends return immediately because the caller or
+the page owns the loop.

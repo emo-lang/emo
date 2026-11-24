@@ -1,0 +1,25 @@
+require "emo/ui"
+require "emo/ui_browser"
+require "emo/ui_calculator"
+
+// The calculator as a page: the shared application on the DOM backend,
+// mounted into `index.html`'s `#emo-root`. The page owns the event loop
+// — `ui.run` returns as soon as the first frame is in the document — and
+// a click on a key is what runs the loop again. This module and
+// `mount.emo` are the only platform-specific code there is: the backend,
+// and the unit its layout is measured in.
+//
+//   EMO_REGISTRY=<a staged registry> emo build main.emo --target browser -o out.js
+//
+// then open `index.html` beside the bundle.
+
+def view(reg ui.Registry, m ui_calculator.Model) ui.Node {
+  return ui_calculator.view_at(reg, m, mount.unit())
+}
+
+def main() {
+  ui.run(view, ui_calculator.update, ui_calculator.initial(),
+    ui_browser.backend(mount.title()))
+}
+
+main()

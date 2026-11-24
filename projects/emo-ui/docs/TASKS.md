@@ -60,5 +60,62 @@ package references beside this file.
   tree exactly as it is, the working answer to "what would D look
   like", kept green by its own demo gate. It becomes the seed of a
   shipped D only when Q1's named trigger fires (a real screen whose
-  builder statements outnumber its widget calls), at which point this
+  builder statements outnumber widget calls), at which point this
   verdict is the first thing to revisit.
+
+## The open questions (recorded 2026-11-24)
+
+- [x] **Q3** — How a backend that keeps its widgets tells which old node
+  a new one continues, and what names a node across renders — the
+  assessment's first remaining question, reconciliation
+  ([`docs/emo-ui.md`](../../../docs/emo-ui.md)). Settled 2026-11-24:
+  **position and kind, with a key on the node to override position.**
+  The decision, in three parts. *The diff is the core's, once:*
+  `ui.diff(old, next)` matches the tree a backend last saw against the
+  next one and answers a `Patch` for every slot of the new tree, so the
+  rule is written one time and — rendered as text by the debug backend
+  — pinned byte for byte on every hosted target, the way the tree itself
+  is. *Identity is position and kind:* a child without a key continues
+  the unkeyed child that held its position among its unkeyed siblings
+  when the two are of the same class, so an unkeyed list keeps its
+  widgets while nothing moves and a keyed sibling arriving or leaving
+  leaves the unkeyed positions alone. A key overrides position:
+  `ui.keyed(key, node)` names a child across a reorder, an arrival or a
+  leave. A slot whose class changed is replaced, not continued, whatever
+  its key; two children under one key raise rather than pick the first.
+  *The key is the node's own:* a field on each of the core's eight node
+  classes, set through `ui.keyed`, which answers the node it is given
+  carrying the key — not a slot on `Style`, because identity is not a
+  layout property, and not a wrapper node class, because every backend's
+  `is()` walk (the framebuffer's included) would have had to learn to
+  unwrap it. The backends that keep widgets — AppKit, GTK, the DOM —
+  keep what the diff keeps; the terminal and the framebuffer repaint
+  whole, as before. The rule is the package reference's
+  ([`ui.md`](ui.md), "Keys and the diff"). What the question's other
+  half named, the compiler's targeted refresh, did not land with it and
+  stays the long-term form. This line checks off.
+
+## The open questions (recorded 2026-11-24, from the first application)
+
+- [ ] **Q4** — what the first application could not say. The calculator
+  ([`apps/calculator`](../apps/calculator/README.md)) is the smallest
+  application a person uses, and it needed four things EmoUI has no
+  word for. Each is a question for the core; the application works
+  around it and decides nothing. *A length with a unit:* a `Style`
+  number is a cell on a terminal, a point in a window and a pixel on
+  the web, so the calculator takes its gaps as an argument and each
+  entry passes its platform's number. *A node's equal share:* `grow`
+  divides what is left after each child's own width, so keys are one
+  width only where a label is measured in characters — in a browser an
+  operator's key is 40 px against a digit's 46. *A label by code
+  point:* the terminal measures and the framebuffer paints a label a
+  byte at a time, so no key can read `×`, `÷`, `±` or `⌫`. *A leaf's own
+  height:* a key is one line tall wherever a cell grid or a glyph's
+  line box is the unit, and a `height` in a `Style` would be as many
+  cells as pixels. The application's README carries each with its
+  evidence, beside two gaps the assessment
+  ([`docs/emo-ui-missing.md`](../../../docs/emo-ui-missing.md)) already
+  named and the calculator confirmed: no keyboard, and a `Style` that
+  says layout and nothing else. Like Q1 and Q2 this is a design
+  decision and not a scheduled task; it settles in the core's package
+  references and blocks nothing.

@@ -15,7 +15,7 @@ set -e
 cd "$(dirname "$0")"
 EMO=${EMO:-../../../_build/default/src/emo_cli/emo.exe}
 case "$EMO" in /*) ;; *) EMO="$PWD/$EMO" ;; esac
-STAGE=$(cd "$(dirname "$0")/../../.." && pwd)/scripts/stage-registry.sh
+STAGE=$(cd ../../.. && pwd)/scripts/stage-registry.sh
 
 UP=$(cd .. && pwd)
 mkdir -p .emo-build/check

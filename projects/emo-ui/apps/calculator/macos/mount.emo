@@ -1,0 +1,20 @@
+// What the two entries of this package share: the window and the unit
+// the calculator's gaps are measured in. A `Style` number is a point
+// here and a cell on a terminal, so the entry — the one module that
+// names the platform — is where that number is chosen.
+
+def title() String {
+  return "Calculator"
+}
+
+def width() Float64 {
+  return 240.0
+}
+
+def height() Float64 {
+  return 240.0
+}
+
+def unit() Float64 {
+  return 8.0
+}

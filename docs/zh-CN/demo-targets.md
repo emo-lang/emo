@@ -127,7 +127,7 @@ built app.js
 ```
 
 - 产物是普通脚本：没有 `import`、没有 `require`、不碰 `process`。用 `<script>` 引入即执行。
-- 页面宿主提供 `document`/`window`、按行缓冲的 `console` 输出，以及十三个 `dom_*` 调用。挂载点是 `#emo-root`，没有则退回 `document.body`。
+- 页面宿主提供 `document`/`window`、按行缓冲的 `console` 输出，以及十六个 `dom_*` 调用。挂载点是 `#emo-root`，没有则退回 `document.body`。
 - 构建需要 Node >= 22.13，用 `module.stripTypeScriptTypes` 剥掉 bundle 里的类型；浏览器本身不需要任何东西。
 - 进程（`do`、`<-`、`receive`）和 `dom_*` 之外的 runtime 能力都会在发射时以点名诊断拒绝。服务端渲染走 `ui_ssr`，不需要这个 target。
 

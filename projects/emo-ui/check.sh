@@ -52,7 +52,7 @@ expect 0 "the core and its test type-check" "$rc"
 "$EMO" run test.emo >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the loop's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 17 "all seventeen assertions pass" "$n"
+expect 41 "all forty-one assertions pass" "$n"
 
 # --- which targets can compile the package -------------------------------
 #
@@ -218,10 +218,10 @@ expect_same_file golden/expected.txt "$G/interp.txt" \
   "and prints the file it is pinned to"
 
 # Every hosted target, `c` and `wasm` included: this golden calls the
-# renderer directly rather than handing `ui.run` two defs, so no target
-# refuses it. The wasm artifact runs under the host boundary in
-# `wasm-runner.mjs`; the loop's own spelling is what `c` refuses, and
-# `probe/` pins that separately.
+# renderer directly rather than handing `ui.run` two defs, so it never
+# depended on the loop's spelling lowering. The wasm artifact runs under
+# the host boundary in `wasm-runner.mjs`; the loop's own spelling —
+# which `c` refused until T48.8 — is what `probe/` pins separately.
 for t in ocaml c typescript wasm beam; do
   mkdir -p "$G/$t"
   golden_build "$t" "$G/$t" && rc=0 || rc=$?
@@ -231,6 +231,35 @@ for t in ocaml c typescript wasm beam; do
   expect_same_file golden/expected.txt "$G/$t.txt" \
     "the golden's bytes on $t are the interpreter's"
 done
+
+# --- the diff's two refusals --------------------------------------------
+#
+# Both are raises — an uncaught exception ends the program — so each is
+# pinned by its exit status and its message rather than by output bytes,
+# on the interpreter and on the `c` target: a refusal only one of them
+# makes is not a rule.
+
+# expect_refusal <entry> <message> — the entry raises with the message.
+expect_refusal() {
+  ( cd golden && EMO_REGISTRY="$REG" "$EMO" run "$1.emo" ) >"$G/$1.interp" \
+    2>&1 && rc=0 || rc=$?
+  expect 1 "$1 -- emo run exits on the raise" "$rc"
+  got=$(grep -o -m1 -F "$2" "$G/$1.interp" || true)
+  expect "$2" "$1 -- and says why" "$got"
+
+  mkdir -p "$G/$1"
+  ( cd golden && EMO_REGISTRY="$REG" "$EMO" build "$1.emo" --target c -o \
+      "$G/$1/out" ) >"$G/$1.log" 2>&1 && rc=0 || rc=$?
+  expect 0 "$1 --target c builds" "$rc"
+  "$G/$1/out" >"$G/$1.c.txt" 2>&1 && rc=0 || rc=$?
+  expect 1 "$1 -- the c binary exits on the raise" "$rc"
+  got=$(grep -o -m1 -F "$2" "$G/$1.c.txt" || true)
+  expect "$2" "$1 -- and the c binary says why" "$got"
+}
+
+expect_refusal dup_key 'ui.diff: two children of one node share the key "k"'
+expect_refusal foreign_key \
+  "ui.keyed: this node class is not one of the core's"
 
 # --- the backends' package gates ----------------------------------------
 #
@@ -244,12 +273,14 @@ done
 # `corpus/` is the convergence corpus's gate (T48.12): the shared
 # application on the debug, SSR and terminal backends on every host they
 # declare; the macOS, GTK 4 and browser entries are run by their packages'
-# gates above.
+# gates above. `apps/calculator/` is the first application's gate: the
+# same displays from every backend, each through its own entry.
 EMO="$EMO" ./tui/check.sh || fail=1
 EMO="$EMO" ./ssr/check.sh || fail=1
 EMO="$EMO" ./macos/check.sh || fail=1
 EMO="$EMO" ./gtk/check.sh || fail=1
 EMO="$EMO" ./browser/check.sh || fail=1
 EMO="$EMO" ./corpus/check.sh || fail=1
+EMO="$EMO" ./apps/calculator/check.sh || fail=1
 
 exit $fail

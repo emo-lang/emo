@@ -1,0 +1,11 @@
+package {
+  name = "emo/ui_calculator_ssr"
+  version = "0.1.0"
+  targets = ["ocaml", "c", "typescript", "wasm", "beam"]
+
+  deps {
+    "emo/ui" = "0.1.0"
+    "emo/ui_ssr" = "0.1.0"
+    "emo/ui_calculator" = "0.1.0"
+  }
+}

@@ -156,7 +156,7 @@ This note does not re-open what earlier work closed.
 | macOS (AppKit) | `c` target + Objective-C shim via `foreign def` | **landed** (T48.8), package `emo/ui_macos` | reclamation landed (step 49) |
 | GTK 4 | `c` target + C shim via `foreign def` | **landed** (T48.9), package `emo/ui_gtk` | reclamation landed (step 49) |
 | TUI | pure Emo, ANSI escape output; `term` for input | **landed** (T48.4, T48.5) | wiring `term` into `ui_tui`'s input source |
-| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); the browser path and its DOM backend landed (T48.10, T48.11) | the `typescript` target's share-on-send remains open |
+| Web | HTML/CSS (SSR) → DOM (browser TS) → wasm + DOM | **SSR landed** (T48.6); the browser path and its DOM backend landed (T48.10, T48.11) | none open: the `typescript` target's share-on-send closed 2026-10-17 |
 
 ### macOS and GTK 4
 
@@ -623,8 +623,9 @@ The facts that bound this layer are honest caveats, not design choices:
   snapshotted — both closed 2026-10-15 (`CHECK.md`, step 50). A GUI was
   the consumer that made both visible; a UI that raises while holding
   the toolkit must not take the window down silently, and now it does
-  not. The `typescript` target's share-on-send is the same gap on the
-  Web path.
+  not. The `typescript` target shared on `send` the same way — the gap
+  on the Web path — and closed 2026-10-17, when `send` began to
+  deep-copy its message (`CHECK.md`, cross-target invariants).
 - **The loop's shape on the hosted targets.** *Closed.* The loop is
   landed (`projects/emo-ui/`, T48.2) and runs on the interpreter; the
   shape above — the application's `update` and `view` passed in as
@@ -642,15 +643,15 @@ The facts that bound this layer are honest caveats, not design choices:
   (`projects/emo-ui/probe/`). The choice between the two was settled in
   favour of growing the target: def-as-value was a backend gap, not new
   syntax, and it keeps the landed `ui.run` spelling.
-- **Long-running memory.** The `c` target does not reclaim the value
-  families a render allocates, and a UI re-renders per event, so this is
-  the caveat that bounds the platform rather than the design:
-  `spike/arena-scope` measured ~1 MB and ~820 objects per render at 400
-  nodes, both unbounded. A region does not fix it — it reclaims the
-  bytes and none of the objects, and strands those refcounts — so the
-  native backends' demo-scale note is retired — step 49 landed
-  (2026-10-17) and a render drops everything it builds; the working
-  set stays flat (`CHECK.md`).
+- **Long-running memory.** *Retired.* The `c` target did not reclaim
+  the value families a render allocated, and a UI re-renders per event,
+  so this was the caveat that bounded the platform rather than the
+  design: `spike/arena-scope` measured ~1 MB and ~820 objects per
+  render at 400 nodes, both unbounded. A region did not fix it — it
+  reclaims the bytes and none of the objects, and strands those
+  refcounts. Step 49 landed (2026-10-17): a render drops everything it
+  builds and the working set stays flat, so the native backends'
+  demo-scale note is retired (`CHECK.md`).
 
 ### Layer 6 — the backend seam
 
@@ -677,16 +678,17 @@ trampoline as any other callback. Landed as `ui.Backend`/`ui.Events`
 Each platform implements it:
 
 - **macOS (landed, T48.8):** an Emo class whose methods call `foreign
-  def` shims, and an AppKit shim on the other side of the C ABI. The nine
-  verbs are `window_make`, `label_make`, `button_make`, `place`, `clear`,
-  `connect`, `root`, `run` and `autotest_arm`; the Emo side measures the
-  tree in points (`box.emo`), walks it, and maps nodes to native handles.
+  def` shims, and an AppKit shim on the other side of the C ABI. The ten
+  verbs are `window_make`, `label_make`, `button_make`, `set_text`,
+  `place`, `remove`, `connect`, `root`, `run` and `autotest_arm`; the Emo
+  side measures the tree in points (`box.emo`), walks it, and maps nodes
+  to native handles.
   `projects/emo-ui/macos/` is the package, and `corpus/` its entry into
   the convergence corpus (T48.12) — the shared application on one
   screen, driven by a comma-separated tag script the shim clicks under
   `EMO_GUI_AUTOTEST` before terminating, so its bytes are checked
   without a keyboard or a screenshot.
-- **GTK 4 (landed, T48.9):** the same nine-verb `ui_*` contract and the
+- **GTK 4 (landed, T48.9):** the same ten-verb `ui_*` contract and the
   same point box model as the macOS backend, on the other side of the C
   ABI. `projects/emo-ui/gtk/` is the package and `corpus/` its entry
   into the convergence corpus — the same shared application, script and
@@ -749,13 +751,20 @@ hosted target their manifests declare; the macOS, GTK 4 and browser
 entries are checked by their packages' gates, under the same
 self-driving script and against the same pinned bytes.
 
-`patch` is the growth edge. The spike did a full rebuild per event
+`patch` was the growth edge. The spike did a full rebuild per event
 (`clear` plus re-place), which is fine for a terminal and a static HTML
 render but wrong for a retained toolkit (it loses focus, selection, and
-scroll position) and wasteful for the DOM. v1 can start full-rebuild for
-TUI/SSR and retained for native/DOM; reconciliation with keys is a
-follow-up, and the compiler's "statically decidable targeted refresh" is
-the long-term form of it.
+scroll position) and wasteful for the DOM. **Reconciliation landed
+2026-11-24.** `ui.diff` matches the tree a backend last saw against the
+next one, once for every backend: identity is position and kind — a child
+continues the unkeyed child at its position among its unkeyed siblings —
+and `ui.keyed` overrides position for a child that moves, arrives or
+leaves. AppKit, GTK and the DOM keep what it keeps, a continued node's
+widget or element staying where it is; the terminal and the framebuffer
+still repaint whole, which is right for a surface with nothing to keep.
+The rule is the package reference's to state
+(`projects/emo-ui/docs/ui.md`), and the compiler's "statically decidable
+targeted refresh" remains the long-term form of it.
 
 ## Evaluating the requirement
 
@@ -835,8 +844,8 @@ A bare def is a value — locally and module-qualified (probe 5) — so
 parameters, which are `Unknown`, so the entry's wiring is the same
 unchecked-callback boundary as Layer 1. `view` takes the loop's
 `Registry` first because the table is the loop's (Layer 5). This is the
-shape `ui.run` landed with (T48.2) — and the one `c` cannot compile yet
-(`wasm` closed in T48.6), which is the open item Layer 5 records.
+shape `ui.run` landed with (T48.2); it compiles on every hosted target
+since `wasm` closed it in T48.6 and `c` in T48.8, which Layer 5 records.
 
 `app.emo` is the same file for all three; only the entry module differs,
 and it is a handful of lines. A platform-specific app that wants
@@ -913,8 +922,9 @@ mid-implementation:
    not be silently shared — both are what `docs/intro/concurrency.md`
    and `docs/intro/syntax.md` already say. The `c` target was the one
    implementation that diverged; a child's `raise` now ends only that
-   child and `send` snapshots. The `typescript` target's share-on-send is
-   the same gap on the Web path below.
+   child and `send` snapshots. The `typescript` target shared on `send`
+   the same way — the Web path's gap — and closed 2026-10-17
+   (`CHECK.md`, cross-target invariants).
 6. **A browser path for the Web (T1) — settled 2026-10-15 to the split
    route:** a browser-safe subset of the TypeScript runtime, a `dom_*`
    family, and a bundling step, rather than new wasm host imports
@@ -1093,30 +1103,45 @@ reasoning behind them.
 
 ## Remaining open questions
 
-1. **Reconciliation** — when the retained backends get a keyed diff
-   instead of a full rebuild, and whether the compiler's targeted
-   refresh lands with it.
+**Status (2026-11-24).** 2 and 3 are open — 3 only as the
+typed-callback question, its `c` half having closed in T48.8. 1 has
+landed. 4 has landed in full. 5 is settled, with the reopen trigger the
+composition record names.
+
+1. **Reconciliation — landed 2026-11-24.** The retained backends keep
+   what `ui.diff` keeps instead of rebuilding: identity is position and
+   kind, `ui.keyed` overrides position, and the matching is pinned as
+   text on every target (Layer 6; `projects/emo-ui/docs/ui.md`). What
+   the question's second half named — the compiler's targeted refresh —
+   did not land with it, and stays the long-term form.
 2. **The two-event-loop integration** — how a UI process and a toolkit
    loop coexist, and whether events become real process messages in v1
    or later.
 3. **The checked block/function type** — whether the component API
-   earns it after a first package shows the friction. The loop has now
-   shown the friction's other face: its `Block`-valued `view`/`update`
-   is what `c` alone cannot compile (`wasm` closed in T48.6;
-   `CHECK.md`, the Elm loop's shape), so the alternative to a checked
-   function type — putting the application's two functions behind an
-   interface — is also the alternative to giving `c` def-as-value.
+   earns it after a first package shows the friction. The loop once
+   showed the friction's other face: its `Block`-valued `view`/`update`
+   was what `c` alone could not compile (`wasm` closed in T48.6), so
+   the alternative to a checked function type — putting the
+   application's two functions behind an interface — was also the
+   alternative to giving `c` def-as-value. T48.8 (2026-10-18) closed
+   that face by growing the target (`CHECK.md`, the Elm loop's shape);
+   the interface shape stays in `projects/emo-ui/probe/` as the
+   alternative not taken.
 4. **The Web T1 boundary** — route settled 2026-10-15: a browser-safe
    subset of the TypeScript runtime plus a `dom_*` family, not a
    browser-specific runtime variant (`CHECK.md`); landed 2026-10-18
    (T48.10–T48.11), with the bundling step as `emo build --target
-   browser` and `emo/ui_browser` over the `dom_*` calls. What stays
-   open is the `typescript` target's share-on-send (`CHECK.md`,
-   cross-target invariants), which the browser target does not carry.
+   browser` and `emo/ui_browser` over the `dom_*` calls. Its last open
+   half, the `typescript` target's share-on-send, closed 2026-10-17
+   (`CHECK.md`, cross-target invariants); nothing on this one remains
+   open.
 5. **The tree spelling** — whether the array child form gets a literal
    spelling at all, and if so whether it belongs in Emo's own grammar or
-   in an external translator that emits `.emo`. The mechanisms that are
-   *closed* (emission, self-rebinding, an ambient collector, and a
-   template engine with its own evaluation) are recorded in
-   [`emo-ui-composition.md`](emo-ui-composition.md), which also names
-   the evidence that would settle this one.
+   in an external translator that emits `.emo`. **Settled 2026-11-06
+   (Q1): neither earns its place** — the array form is the spelling,
+   the `.emoui` translator stays a prototype, and the question reopens
+   only on the trigger the composition record names. The mechanisms
+   that are *closed* (emission, self-rebinding, an ambient collector,
+   and a template engine with its own evaluation) are recorded in
+   [`emo-ui-composition.md`](emo-ui-composition.md), which holds that
+   decision and the trigger.

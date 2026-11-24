@@ -46,7 +46,7 @@ corpus** (T48.8), the **GTK 4 `ui_gtk` backend** (T48.9), the **browser
 `ui_browser` backend with its DOM corpus** (T48.10, T48.11) and the
 **convergence corpus** of one shared application on every backend (T48.12)
 have landed — and the **framebuffer `ui_fb` backend**, the sixth runtime
-family, lives in [`projects/emo-desktop`](../../emo-desktop) and runs the
+family, lives in [`projects/emo-desktop`](../emo-desktop) and runs the
 same convergence corpus through the Elm loop on the pixel surface, on the
 five hosted targets and on the metal (emo-desktop A7–A10). So
 has terminal input itself (T48.5), as the
@@ -64,6 +64,17 @@ with no platform and no FFI, and it declares all five hosted targets.
 the framebuffer's selection highlight, the one property a backend is allowed to
 ignore, because a selection is the painter's concern and no layout depends on
 it.
+
+A tree is rebuilt on every event, and `ui.diff` (2026-11-24) is how a backend
+that keeps its widgets knows which old node each new one continues: it lays the
+old tree against the new one and answers a `Patch` for every slot of the new
+tree. Identity is position and kind — a child continues the unkeyed child that
+held its position among its unkeyed siblings, when the two are of the same class
+— and `ui.keyed(key, node)` overrides position for a child that reorders,
+arrives or leaves. A slot whose class changed is replaced, and two children
+under one key raise. `debug.diff_text` renders a diff as text, so `golden/` pins
+the matching on every target the way it pins the tree. The package reference is
+[`docs/ui.md`](docs/ui.md).
 
 An application is a model, a pure `update`, a pure `view`, and a backend:
 
@@ -148,12 +159,17 @@ site. Operand order itself is no longer a cross-target variable — the language
 states left to right, and every target obeys it — and `probe/eval_order` pins
 the rule.
 
-`./check.sh` is the gate: the package type-checks, the loop's seventeen
+`./check.sh` is the gate: the package type-checks, the loop's forty-one
 assertions run, every target's build — and every refusal — is pinned there, and
-the golden's bytes are compared on all five hosted targets (the `wasm`
-artifact under the host boundary in `wasm-runner.mjs`). It ends by running
-`tui/check.sh`, `ssr/check.sh`, `macos/check.sh`, `gtk/check.sh` and
-`browser/check.sh`, so the project keeps one entry point.
+the golden's bytes — the screen, then the diffs — are compared on all five
+hosted targets (the `wasm` artifact under the host boundary in
+`wasm-runner.mjs`, which is the compiler's own `wasm_host.mjs` reached through
+the import object it exports). The diff's two refusals, a duplicate key and a
+key on a node the core does not know, are pinned by their exit status and
+message on the interpreter and on `c`. It ends by running `tui/check.sh`,
+`ssr/check.sh`, `macos/check.sh`, `gtk/check.sh`, `browser/check.sh`,
+`corpus/check.sh` and `apps/calculator/check.sh`, so the project keeps one
+entry point.
 
 `tui/` is the terminal backend (T48.4), a package of its own — `emo/ui_tui`,
 pinned against `emo/ui` — because it carries a platform the core does not. The
@@ -216,28 +232,38 @@ pinned against `emo/ui`, declaring the `c` target and the `AppKit` framework.
 The window has no layout engine the core can reach either, so the box model
 lives here as `box.emo`: the core's `Style` measured in points, and
 `layout(root, w, h)` returning the `Array[Draw]` whose positions `place`
-applies — arithmetic the interpreter runs without a session. `shim.m` is the
-AppKit side of the nine verbs `ui_macos.emo` declares as foreign defs:
-`window_make`, `label_make` and `button_make`, `place`, `clear`, `connect`,
-`root`, `run` and `autotest_arm`. The loop's sink crosses the FFI as
-`ui.Events`, a single-method interface, which the C ABI hands over as a
-trampoline and a userdata pair; a click carries its tag back through that pair.
-`place` flips y, because AppKit's origin is the bottom left. `autotest_arm`
+applies — arithmetic the interpreter runs without a session — and
+`layout_of(diff, w, h)` returning the same frames beside the slots their leaves
+fill. `shim.m` is the AppKit side of the ten verbs `ui_macos.emo` declares as
+foreign defs: `window_make`, `label_make` and `button_make`, `set_text`,
+`place`, `remove`, `connect`, `root`, `run` and `autotest_arm`. The loop's sink
+crosses the FFI as `ui.Events`, a single-method interface, which the C ABI
+hands over as a trampoline and a userdata pair; a click carries its tag back
+through that pair. `place` flips y, because AppKit's origin is the bottom left.
+A frame keeps what the diff keeps — a continued leaf keeps its widget and is
+given the new text and frame where it stands — and `set_text`, `place` and
+`remove` are all a kept frame needs. `autotest_arm`
 takes a comma-separated tag script and, only under `EMO_GUI_AUTOTEST`, an
 `NSTimer` clicks each tag in turn and terminates, so the gate needs no one at
 the keyboard and no screenshot. `corpus/` is the macOS entry into the
 convergence corpus — the shared application on one screen, the script
-`0,0,1,2`, and `expected.txt` holding the loop's bytes. `macos/check.sh` is the package's gate and runs only on Darwin;
-the shim is the project's only Objective-C outside `spike/`. Reclamation
+`0,0,1,2`, and `expected.txt` holding the loop's bytes. `macos/check.sh` is the
+package's gate and runs only on Darwin; it also reads, from the file the shim
+writes under `EMO_GUI_COUNT`, that the window made the first frame's eight
+widgets and no more across the corpus's four events. The shim is the project's
+only Objective-C outside `spike/`. Reclamation
 on the `c` target landed with step 49 (`CHECK.md`).
 
 `gtk/` is the GTK 4 backend (T48.9), a package of its own — `emo/ui_gtk`,
 pinned against `emo/ui`, declaring the `c` target and the `gtk4` pkg-config
 module. It is the same shape as the macOS package: `box.emo` carries the point
-model, `ui_gtk.emo` the nine foreign verbs and the `Gtk` class, and `shim.c`
-the C side. GTK is already C, so the shim is thinner — the signal handler and
-the self-driving script are what Emo cannot name — and `place` applies x and y
-unchanged, because GtkFixed's origin is already the top left. The loop's sink
+model, `ui_gtk.emo` the same ten foreign verbs and the `Gtk` class, and
+`shim.c` the C side. GTK is already C, so the shim is thinner — the signal
+handler and the self-driving script are what Emo cannot name — and `place`
+applies x and y unchanged, because GtkFixed's origin is already the top left.
+A kept frame keeps its widgets as on macOS: `place` moves a widget already on
+the canvas, and a button's handler is connected once and reads its tag as the
+click lands. The loop's sink
 crosses the FFI as the same `ui.Events` pair. `corpus/` is the GTK 4 entry
 into the convergence corpus — the same shared application, `0,0,1,2` script
 and `expected.txt` as macOS. `gtk/check.sh` is
@@ -252,16 +278,24 @@ reached through the runtime path T48.10 added. The browser has a layout engine,
 so the package carries no box model: `css.emo` maps a `Style` to the
 declarations the page's own layout consumes, and it is pure Emo, so the
 interpreter runs `test.emo`'s twenty-seven assertions. `ui_browser.emo` is the
-`Dom` class over the thirteen `dom_*` calls: `mount` sets the title, the
-page-root declarations and the sink; `render` builds one element per node — a
+`Dom` class over sixteen `dom_*` calls: `mount` sets the title, the
+page-root declarations and the sink; `build` makes one element per node — a
 `text` is a span, a `button` carries its tag as the `name`/`value` pair
 `ui_ssr`'s markup uses, an `input` is a read-only view, an `image` is an `img`
-— and `patch` rebuilds the tree, as every backend does. `run()` returns,
+— and `patch` keeps what `ui.diff` keeps: a continued node's element stays in
+the page and takes the new node's props and styles where it stands, a new or
+replaced one gets a fresh element, and only a root that is not continued is
+rebuilt whole. `dom_child`, `dom_remove` and `dom_insert_before` are the three
+calls that work needed, and a node's handle is handed out once, so the backend
+tells one element from two by comparing them. `run()` returns,
 because the page owns the loop. `corpus/` is the browser entry into the
 convergence corpus — the same shared application, `0,0,1,2` script and
 `expected.txt` — and `page.mjs` is the stub page the gate runs it in: a
 `document`/`window` just large enough for the host, then the script's tags
-clicked in order. `browser/check.sh` is the package's gate; it needs Node >=
+clicked in order. `retained/` is the backend's own golden: the backend driven
+by hand, a frame at a time, and the page read back through `dom_child`, each
+element marked `=` when the frame before had it and `+` when the frame made it.
+`browser/check.sh` is the package's gate; it needs Node >=
 22.13 for `emo build --target browser`'s bundling step, and says so and passes
 where that is missing.
 
@@ -280,6 +314,19 @@ name. The shared entry also found a `wasm` codegen defect: a def named as a
 value is a `ref.func`, and only the hidden closures were in the declarative
 element segment, so the validator rejected the corpus until every defined
 function was declared (`CHECK.md`).
+
+`apps/` is where the applications live. Each is a project of its own — an
+independent application, written once and run on every backend — and from
+here they are how EmoUI's design moves: what an application cannot say is
+the next question for the core. The first is
+[`apps/calculator`](apps/calculator/README.md) (2026-11-24): a
+four-function calculator of nineteen keys, one application package and
+one entry a platform, whose gate pins the same display after every key on
+the headless, server-rendered, terminal, framebuffer, AppKit, GTK 4 and
+browser backends. It needs only the one event every backend delivers, a
+click; what it needed and EmoUI has no word for — a length with a unit, a
+node's equal share, a color, a keyboard — its README records as questions
+for the core.
 
 Still to come: wiring `term` into `ui_tui`'s input source. The package
 references are in [`docs/`](docs/README.md), one page per package. The

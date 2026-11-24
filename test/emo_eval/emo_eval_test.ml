@@ -425,6 +425,33 @@ println(host_exp(1.0))|}
         Alcotest.(check bool)
           "the message names the definition" true
           (contains_substring diagnostic.Diagnostic.message "host_exp"));
+    tc "a function body evaluates operands left to right" (fun () ->
+        Alcotest.(check string)
+          "order" "b1\nb2\nb3\nbase\nindex\nkey\nvalue\nb1b2b3x\n"
+          (run_program
+             {|def tag(name String) String {
+  println(name)
+  return name
+}
+
+def index() Int64 {
+  println("index")
+  return 0
+}
+
+def probe() String {
+  const sum = tag("b1") + tag("b2") + tag("b3")
+  const item = base()[index()]
+  const table = { tag("key"): tag("value").length() }
+  return "${sum}${item}"
+}
+
+def base() Array[String] {
+  println("base")
+  return ["x"]
+}
+
+println(probe())|}));
   ]
 
 let tail_call_tests =

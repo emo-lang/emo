@@ -647,14 +647,20 @@ let collect ctx (items : Ast.item list) : unit =
              2026-11-12, emo-db D10): the C side gets {data, len} for the
              duration of the call and never retains it; a Bytes return
              stays refused — a read takes a caller-owned out-parameter.
-             Every other backend takes Float64/String/Bool only. *)
+             Every other backend takes Float64/String/Bool only. The
+             interpreter takes a declaration the way the c target does:
+             a run checks as the interpreter target (the GC heap family
+             admits there and nowhere else), and a foreign def is inert
+             there until a call reaches it, refused at the call (E3009) —
+             checked as any other target, a package holding one native
+             module could not run a module that never reaches it. *)
+          let native = ctx.target = "c" || ctx.target = "interpreter" in
           let ffi_ok = function
             | Ast.Named_type "Float64"
             | Ast.Named_type "String"
             | Ast.Named_type "Bool" ->
                 true
-            | Ast.Named_type "Int64" | Ast.Named_type "Bytes" ->
-                ctx.target = "c"
+            | Ast.Named_type "Int64" | Ast.Named_type "Bytes" -> native
             | _ -> false
           in
           let ffi_return_ok = function
@@ -662,7 +668,7 @@ let collect ctx (items : Ast.item list) : unit =
             | Ast.Named_type "String"
             | Ast.Named_type "Bool" ->
                 true
-            | Ast.Named_type "Int64" | Ast.Named_type "Void" -> ctx.target = "c"
+            | Ast.Named_type "Int64" | Ast.Named_type "Void" -> native
             | _ -> false
           in
           (* The struct shape tier: a field is a marshaling scalar or a
@@ -679,14 +685,14 @@ let collect ctx (items : Ast.item list) : unit =
             | _ -> false
           in
           let allowed =
-            if ctx.target = "c" then
+            if native then
               "Float64, String, Bool, Int64, Bytes, a single-method interface, \
                or a struct shape (a tuple of marshaling types, or a carrier \
                class)"
             else "Float64, String, or Bool"
           in
           let allowed_return =
-            if ctx.target = "c" then
+            if native then
               "Float64, String, Bool, Int64, Void, or a tuple of marshaling \
                types"
             else "Float64, String, or Bool"
@@ -776,7 +782,7 @@ let collect ctx (items : Ast.item list) : unit =
                  reference does — `Greeter` written in module `main` is
                  `main.Greeter` — so the contract is looked up under the
                  qualified name the declaration registered. *)
-              | Ast.Named_type name when ctx.target = "c" -> (
+              | Ast.Named_type name when native -> (
                   match resolve_type_ref ctx span name with
                   | Some (InterfaceType q) -> callback_ok span q
                   | Some (ClassType q) -> struct_class_ok span q
@@ -786,7 +792,7 @@ let collect ctx (items : Ast.item list) : unit =
                           (Printf.sprintf
                              "foreign parameter `%s` must be %s on this target"
                              p.Ast.param_name allowed))
-              | Ast.Tuple_type _ as desc when ctx.target = "c" ->
+              | Ast.Tuple_type _ as desc when native ->
                   struct_tuple_ok span desc
               | desc ->
                   if not (ffi_ok desc) then
@@ -798,14 +804,13 @@ let collect ctx (items : Ast.item list) : unit =
           ignore (decl_to_type ctx f.Ast.foreign_return);
           let rspan = f.Ast.foreign_return.Ast.type_span in
           (match f.Ast.foreign_return.Ast.type_desc with
-          | Ast.Named_type "Bytes" when ctx.target = "c" ->
+          | Ast.Named_type "Bytes" when native ->
               report ctx rspan "E4200"
                 "a Bytes foreign return is refused — take an out-parameter (a \
                  Bytes the C side writes into) instead"
-          | Ast.Tuple_type _ as desc when ctx.target = "c" ->
-              struct_tuple_ok rspan desc
+          | Ast.Tuple_type _ as desc when native -> struct_tuple_ok rspan desc
           | Ast.Named_type name
-            when ctx.target = "c"
+            when native
                  && (Hashtbl.mem ctx.interfaces name
                     || Hashtbl.mem ctx.classes name) ->
               report ctx rspan "E4200"
@@ -1332,6 +1337,30 @@ let empty_env =
         ( "dom_append",
           {
             vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "dom_child",
+          {
+            vtype = FuncType ([ ("parent", Int64); ("index", Int64) ], Int64);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "dom_remove",
+          {
+            vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
+            is_var = false;
+            depth = 0;
+            span = Emo_support.Span.zero;
+          } );
+        ( "dom_insert_before",
+          {
+            vtype =
+              FuncType
+                ( [ ("parent", Int64); ("child", Int64); ("before", Int64) ],
+                  Void );
             is_var = false;
             depth = 0;
             span = Emo_support.Span.zero;

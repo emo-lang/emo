@@ -104,9 +104,10 @@ interface Node {
 }
 
 class Column {
-  def init(style Style, children Array[Node]) {
+  def init(style Style, children Array[Node], key String) {
     self.style = style
     self.children = children
+    self.key = key
   }
 
   def style() Style {
@@ -115,13 +116,18 @@ class Column {
 
   def children() Array[Node] {
     return self.children
+  }
+
+  def key() String {
+    return self.key
   }
 }
 
 class Row {
-  def init(style Style, children Array[Node]) {
+  def init(style Style, children Array[Node], key String) {
     self.style = style
     self.children = children
+    self.key = key
   }
 
   def style() Style {
@@ -130,13 +136,18 @@ class Row {
 
   def children() Array[Node] {
     return self.children
+  }
+
+  def key() String {
+    return self.key
   }
 }
 
 class Scroll {
-  def init(style Style, children Array[Node]) {
+  def init(style Style, children Array[Node], key String) {
     self.style = style
     self.children = children
+    self.key = key
   }
 
   def style() Style {
@@ -146,13 +157,18 @@ class Scroll {
   def children() Array[Node] {
     return self.children
   }
+
+  def key() String {
+    return self.key
+  }
 }
 
 class Text {
-  def init(body String, style Style, mark Int64) {
+  def init(body String, style Style, mark Int64, key String) {
     self.body = body
     self.style = style
     self.mark = mark
+    self.key = key
   }
 
   def style() Style {
@@ -161,6 +177,10 @@ class Text {
 
   def children() Array[Node] {
     return []
+  }
+
+  def key() String {
+    return self.key
   }
 
   def body() String {
@@ -183,10 +203,11 @@ class Text {
 // only ever sees the `Int64` the tag registry handed out
 // (docs/emo-ui.md, Layer 5).
 class Button {
-  def init(label String, event Int64, style Style) {
+  def init(label String, event Int64, style Style, key String) {
     self.label = label
     self.event = event
     self.style = style
+    self.key = key
   }
 
   def style() Style {
@@ -195,6 +216,10 @@ class Button {
 
   def children() Array[Node] {
     return []
+  }
+
+  def key() String {
+    return self.key
   }
 
   def label() String {
@@ -207,9 +232,10 @@ class Button {
 }
 
 class TextInput {
-  def init(value String, style Style) {
+  def init(value String, style Style, key String) {
     self.value = value
     self.style = style
+    self.key = key
   }
 
   def style() Style {
@@ -218,6 +244,10 @@ class TextInput {
 
   def children() Array[Node] {
     return []
+  }
+
+  def key() String {
+    return self.key
   }
 
   def value() String {
@@ -226,9 +256,10 @@ class TextInput {
 }
 
 class Image {
-  def init(src String, style Style) {
+  def init(src String, style Style, key String) {
     self.src = src
     self.style = style
+    self.key = key
   }
 
   def style() Style {
@@ -237,6 +268,10 @@ class Image {
 
   def children() Array[Node] {
     return []
+  }
+
+  def key() String {
+    return self.key
   }
 
   def src() String {
@@ -245,8 +280,9 @@ class Image {
 }
 
 class Spacer {
-  def init(style Style) {
+  def init(style Style, key String) {
     self.style = style
+    self.key = key
   }
 
   def style() Style {
@@ -256,6 +292,10 @@ class Spacer {
   def children() Array[Node] {
     return []
   }
+
+  def key() String {
+    return self.key
+  }
 }
 
 // The primitives are lowercase defs and take their children positionally;
@@ -263,19 +303,19 @@ class Spacer {
 // platform packages, so a component built from these compiles on all of
 // them (docs/emo-ui.md, C3–C4).
 def column(children Array[Node], style Style) Node {
-  return Column.new(style: style, children: children)
+  return Column.new(style: style, children: children, key: "")
 }
 
 def row(children Array[Node], style Style) Node {
-  return Row.new(style: style, children: children)
+  return Row.new(style: style, children: children, key: "")
 }
 
 def scroll(children Array[Node], style Style) Node {
-  return Scroll.new(style: style, children: children)
+  return Scroll.new(style: style, children: children, key: "")
 }
 
 def text(body String, style Style) Node {
-  return Text.new(body: body, style: style, mark: 0 - 1)
+  return Text.new(body: body, style: style, mark: 0 - 1, key: "")
 }
 
 // A text whose byte span `[start, start + len)` a backend may paint
@@ -285,23 +325,356 @@ def text(body String, style Style) Node {
 // framebuffer's.
 def marked_text(body String, start Int64, len Int64, style Style) Node {
   return Text.new(body: body, style: style,
-    mark: (start << 32) | (len & 4294967295))
+    mark: (start << 32) | (len & 4294967295), key: "")
 }
 
 def button(label String, event Int64, style Style) Node {
-  return Button.new(label: label, event: event, style: style)
+  return Button.new(label: label, event: event, style: style, key: "")
 }
 
 def text_input(value String, style Style) Node {
-  return TextInput.new(value: value, style: style)
+  return TextInput.new(value: value, style: style, key: "")
 }
 
 def image(src String, style Style) Node {
-  return Image.new(src: src, style: style)
+  return Image.new(src: src, style: style, key: "")
 }
 
 def spacer(style Style) Node {
-  return Spacer.new(style: style)
+  return Spacer.new(style: style, key: "")
+}
+
+// ---- Keys and the retained diff ----
+//
+// A tree is rebuilt on every event, so a backend that keeps its widgets
+// — AppKit, GTK, the DOM — has to know which old node each new node
+// continues; that is what lets a control keep its focus, and a list its
+// scroll position, across a render. `diff` answers that once, for every
+// backend: a `Patch` for each slot of the new tree, beside the node that
+// fills it.
+//
+// Identity is position and kind. A child without a key continues the
+// unkeyed child that held its position among its unkeyed siblings — the
+// n-th unkeyed child of the old list — when the two are of the same
+// class; a key overrides position, continuing the old child with the
+// same key wherever it moved. The key is the node's own, set with
+// `keyed`: identity is not a style, and a platform's own nodes carry no
+// key and are never the same kind as anything, so they are rebuilt every
+// frame — as every node was before the diff existed.
+
+// The node it is given, carrying a key. The core's classes are the ones
+// it knows, each by its own fields; the children are the same array the
+// node held.
+def keyed(key String, n Node) Node {
+  if n.is(Text) {
+    return Text.new(body: n.body(), style: n.style(), mark: n.mark(), key: key)
+  }
+  if n.is(Button) {
+    return Button.new(label: n.label(), event: n.event(), style: n.style(),
+      key: key)
+  }
+  if n.is(TextInput) {
+    return TextInput.new(value: n.value(), style: n.style(), key: key)
+  }
+  if n.is(Image) {
+    return Image.new(src: n.src(), style: n.style(), key: key)
+  }
+  if n.is(Spacer) {
+    return Spacer.new(style: n.style(), key: key)
+  }
+  if n.is(Column) {
+    return Column.new(style: n.style(), children: n.children(), key: key)
+  }
+  if n.is(Row) {
+    return Row.new(style: n.style(), children: n.children(), key: key)
+  }
+  if n.is(Scroll) {
+    return Scroll.new(style: n.style(), children: n.children(), key: key)
+  }
+  // A node class this walk does not know cannot be copied, and handing
+  // it back unkeyed would be a silent fallback: the key would not exist.
+  raise Exception.new(message: "ui.keyed: this node class is not one of the core's")
+}
+
+// The same core class, which is what a kept widget can show again.
+def same_kind(a Node, b Node) Bool {
+  if a.is(Text) {
+    return b.is(Text)
+  }
+  if a.is(Button) {
+    return b.is(Button)
+  }
+  if a.is(TextInput) {
+    return b.is(TextInput)
+  }
+  if a.is(Image) {
+    return b.is(Image)
+  }
+  if a.is(Spacer) {
+    return b.is(Spacer)
+  }
+  if a.is(Column) {
+    return b.is(Column)
+  }
+  if a.is(Row) {
+    return b.is(Row)
+  }
+  if a.is(Scroll) {
+    return b.is(Scroll)
+  }
+  return false
+}
+
+// A node's key; "" when it has none or is not one of the core's.
+def key_of(n Node) String {
+  if n.is(Text) {
+    return n.key()
+  }
+  if n.is(Button) {
+    return n.key()
+  }
+  if n.is(TextInput) {
+    return n.key()
+  }
+  if n.is(Image) {
+    return n.key()
+  }
+  if n.is(Spacer) {
+    return n.key()
+  }
+  if n.is(Column) {
+    return n.key()
+  }
+  if n.is(Row) {
+    return n.key()
+  }
+  if n.is(Scroll) {
+    return n.key()
+  }
+  return ""
+}
+
+// One slot of a retained diff: a node of the new tree and where it came
+// from. `kept` says the widget a backend holds for `old` continues as
+// this node's — the same class at the same identity. A slot that is not
+// kept is new, when `old` is an error, or replaced, when `old` is the
+// node it displaces. `was` is the old child's index among the old
+// children (-1 for a new one). `path` and `from` are the slot's address
+// in the new tree and in the old one — the root is "", a child appends
+// its index — so a backend that holds its widgets in a flat table has a
+// name to keep them under. `kids` is the new children, in order.
+class Patch {
+  def init(node Node, old (R, Node), kept Bool, was Int64, path String,
+           from String, kids Array[Patch]) {
+    self.node = node
+    self.old = old
+    self.kept = kept
+    self.was = was
+    self.path = path
+    self.from = from
+    self.kids = kids
+  }
+
+  def node() Node {
+    return self.node
+  }
+
+  def old() (R, Node) {
+    return self.old
+  }
+
+  def kept() Bool {
+    return self.kept
+  }
+
+  def was() Int64 {
+    return self.was
+  }
+
+  def path() String {
+    return self.path
+  }
+
+  def from() String {
+    return self.from
+  }
+
+  def kids() Array[Patch] {
+    return self.kids
+  }
+}
+
+// The old children a diff's node no longer names, ascending by their old
+// index — the children of a kept container that no new child keeps or
+// replaces. A backend removes them in the reverse order, so each index
+// still names the child it did.
+def gone(p Patch) Array[Int64] {
+  const before = p.old()
+  case before {
+    (R.error, _) then { return [] }
+    (R.ok, was_node) then {
+      const olds = was_node.children()
+      const out = ArrayBuilder.new()
+      for var i = 0; i < olds.length(); i = i + 1 {
+        if !named_at(p.kids(), i) {
+          out.push(i)
+        }
+      }
+      return out.to_array()
+    }
+  }
+}
+
+// Whether one of a diff's children names the old child at `i`: the child
+// it keeps, or the one it replaces and so drops there itself.
+def named_at(kids Array[Patch], i Int64) Bool {
+  for var j = 0; j < kids.length(); j = j + 1 {
+    if kids[j].was() == i {
+      return true
+    }
+  }
+  return false
+}
+
+// The old tree against the new one: a `Patch` for the root, its children
+// below it.
+def diff(old Node, next Node) Patch {
+  return diff_at((R.ok, old), next, -1, "", "")
+}
+
+// A tree as its own diff, every slot new: what a first render is laid
+// out against, which is nothing.
+def fresh(next Node) Patch {
+  return diff_at((R.error, next), next, -1, "", "")
+}
+
+// One slot. A kept container plans its children against the old ones; a
+// slot that is not kept is whole — every node below it is new, whatever
+// stood there.
+def diff_at(old (R, Node), next Node, was Int64, path String,
+            from String) Patch {
+  const kids = next.children()
+  case old {
+    (R.ok, was_node) then {
+      if same_kind(was_node, next) {
+        const olds = was_node.children()
+        const plan = plan_kids(olds, kids)
+        return Patch.new(node: next, old: old, kept: true, was: was,
+          path: path, from: from, kids: diff_kids(olds, kids, plan, path,
+            from))
+      }
+      return Patch.new(node: next, old: old, kept: false, was: was,
+        path: path, from: "", kids: diff_kids([], kids, plan_kids([], kids),
+          path, ""))
+    }
+    (R.error, _) then { }
+  }
+  return Patch.new(node: next, old: old, kept: false, was: -1, path: path,
+    from: "", kids: diff_kids([], kids, plan_kids([], kids), path, ""))
+}
+
+def diff_kids(olds Array[Node], kids Array[Node], plan Array[Int64],
+              path String, from String) Array[Patch] {
+  const out = ArrayBuilder.new()
+  for var j = 0; j < kids.length(); j = j + 1 {
+    const i = plan[j]
+    const at = path + "/" + j.to_string()
+    if i >= 0 {
+      out.push(diff_at((R.ok, olds[i]), kids[j], i, at,
+        from + "/" + i.to_string()))
+    } else {
+      out.push(diff_at((R.error, kids[j]), kids[j], -1, at, ""))
+    }
+  }
+  return out.to_array()
+}
+
+// Which old child each new child names, by identity: one entry per new
+// child, the old child's index or -1 for a child that is new. The keyed
+// children claim theirs first, by key; the unkeyed then take their
+// position among the unkeyed, which a keyed sibling's arrival or
+// departure leaves alone. Whether the child named continues — the same
+// class — is `diff_at`'s to say: a position whose class changed names
+// the child it displaces.
+def plan_kids(olds Array[Node], kids Array[Node]) Array[Int64] {
+  const out = ArrayBuilder.new()
+  const taken = ArrayBuilder.new()
+  for var j = 0; j < kids.length(); j = j + 1 {
+    const k = key_of(kids[j])
+    if k == "" {
+      out.push(-1)
+    } else {
+      // Two children under one key would name one widget twice.
+      if has_key_before(kids, j, k, 0) {
+        raise Exception.new(message:
+          "ui.diff: two children of one node share the key \"${k}\"")
+      }
+      const i = keyed_at(olds, k, taken.to_array(), 0)
+      out.push(i)
+      if i >= 0 {
+        taken.push(i)
+      }
+    }
+  }
+  const plan = out.to_array()
+  var u = 0
+  for var j = 0; j < kids.length(); j = j + 1 {
+    if key_of(kids[j]) == "" {
+      plan[j] = unkeyed_at(olds, u, 0, 0)
+      u = u + 1
+    }
+  }
+  return plan
+}
+
+// Whether a key appears among the children before `j`.
+def has_key_before(kids Array[Node], j Int64, k String, i Int64) Bool {
+  if i >= j {
+    return false
+  }
+  if key_of(kids[i]) == k {
+    return true
+  }
+  return has_key_before(kids, j, k, i + 1)
+}
+
+// The old child that carries the key, the first one not yet named; -1
+// when there is none.
+def keyed_at(olds Array[Node], k String, taken Array[Int64],
+             i Int64) Int64 {
+  if i >= olds.length() {
+    return -1
+  }
+  if key_of(olds[i]) == k {
+    if !has(taken, i, 0) {
+      return i
+    }
+  }
+  return keyed_at(olds, k, taken, i + 1)
+}
+
+// The index of the `u`-th unkeyed old child; -1 when there is none.
+def unkeyed_at(olds Array[Node], u Int64, seen Int64, i Int64) Int64 {
+  if i >= olds.length() {
+    return -1
+  }
+  if key_of(olds[i]) == "" {
+    if seen == u {
+      return i
+    }
+    return unkeyed_at(olds, u, seen + 1, i + 1)
+  }
+  return unkeyed_at(olds, u, seen, i + 1)
+}
+
+def has(xs Array[Int64], x Int64, i Int64) Bool {
+  if i >= xs.length() {
+    return false
+  }
+  if xs[i] == x {
+    return true
+  }
+  return has(xs, x, i + 1)
 }
 
 // ---- The raw loop's key vocabulary ----
