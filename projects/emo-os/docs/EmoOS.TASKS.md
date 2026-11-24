@@ -878,7 +878,7 @@ not the T2.2 body's), no `%f`/`%Lf` (the quad cut), and no
 - [x] **T3.3** — The console's handoff: the serial bytes on fd 0,
   writes on fd 1/2, `poweroff` as the exit route the boot still
   owns.
-- [ ] **T3.4** — The desktop's `exec` hands `argv`/`envp` to the
+- [x] **T3.4** — The desktop's `exec` hands `argv`/`envp` to the
   child; the launcher and the shell share one door.
 
 ### T3.1's record (2026-11-24)
@@ -955,6 +955,27 @@ The metal run typed `poweroff now` (the fd 2 refusal) and `poweroff`
 the SBI call, no host signal. The console's handoff is the root's own
 exec: the same pid keeps its three streams across `execve`, so the
 prompt after `desk 0` is the serial the desktop's ride left.
+
+### T3.4's record (2026-11-24)
+
+The gate's spawn door (verb 48) now stages the envp pair on the same
+`execargs` page verb 54's replace uses; `syscall.exec_args_env` names
+it, and both doors feed `build_args` — the launcher and the shell share
+one builder. The desktop's dock launcher and its `exec` command hand
+the child the line's argv and the base env `PWD=/`; the C shell's
+`execvp` stages its own `environ` on verb 54. The C door's `chello`
+grew an `envshow` probe (`argv[1] == "envshow"`, `PWD=/`), and the C
+build now carries chello in either EMO_SHELL mode. `start.sh` treats
+the EMO_SHELL mode and the shell sources as build inputs; the C
+library's `execvp` resolves a `./` name on the flat volume.
+
+The metal run (EMO_SHELL=0): at `emo-os>`, `desktop` opens the era and
+`exec chello.elf envshow` answers `image 41712 bytes, 1 blocks` and
+`envshow ok`; `poweroff` leaves through the boot's route. Gap: the C
+shell's fork child of the musl image did not reach the door on metal —
+its `execvp` returns before the gate, so external commands through the
+shell's fork are the M4 corpus's first need. The shell's builtins and
+the desktop's exec are green; the door the two share is the one above.
 
 ### M4 — the ecosystem
 

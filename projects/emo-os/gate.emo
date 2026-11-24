@@ -1293,12 +1293,17 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
   if n == 48 {
     // exec_args(name, nlen, args, alen) (T1.4a): the name and the
     // arguments text on the execargs page, the use flag naming the
-    // door the process service's pickup reads. The same busy cell —
-    // one exec at a time.
+    // door the process service's pickup reads. T3.4 rides the envp
+    // pair (r4/r5) on the same page verb 54 uses, so the launcher's
+    // spawn and the shell's replace share one builder. The same busy
+    // cell — one exec at a time.
     if r1 < 1 || r1 > name_max {
       return -reason_argument
     }
     if r3 < 0 || r3 > execargs_cap {
+      return -reason_argument
+    }
+    if r5 < 0 || r5 > execargs_env_cap {
       return -reason_argument
     }
     var vn2 = check_read(r0, r1)
@@ -1309,6 +1314,12 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
       var va = check_read(r2, r3)
       if va != 0 {
         return -va
+      }
+    }
+    if r5 > 0 {
+      var ve2 = check_read(r4, r5)
+      if ve2 != 0 {
+        return -ve2
       }
     }
     if peek64(handoff_caller) >= img_bound {
@@ -1323,7 +1334,10 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
       copy_to(execargs_args, r2, r3)
     }
     poke64(execargs_alen, r3)
-    poke64(execargs_elen, 0)
+    if r5 > 0 {
+      copy_to(execargs_env, r4, r5)
+    }
+    poke64(execargs_elen, r5)
     poke64(execargs_use, 1)
     poke64(exec_busy, 1)
     return route_process_exec

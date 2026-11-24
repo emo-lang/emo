@@ -237,7 +237,7 @@ musl 的主体在 `projects/emo-os/c/musl-port/`。移植的 crt(`crt0.s`)接内
 - [x] **T3.1**——emosh 对着 sysroot 构建。移植被迫改的每一处源码都列出来;目标是零。
 - [x] **T3.2**——emosh 成为启动前台——行编辑、历史、补全——替换 `hello/shell.emo` 作为机器的 shell。
 - [x] **T3.3**——控制台交接:串口字节进 fd 0,写走 fd 1/2,`poweroff` 仍是引导自己拥有的 exit 路由。
-- [ ] **T3.4**——桌面的 `exec` 把 `argv`/`envp` 交给子进程;启动器与 shell 共用一扇门。
+- [x] **T3.4**——桌面的 `exec` 把 `argv`/`envp` 交给子进程;启动器与 shell 共用一扇门。
 
 ### T3.1 的记录(2026-11-24)
 
@@ -260,6 +260,12 @@ shell 链接通过:302,040 字节,入口 `0x87100000`,两个 `PT_LOAD` 段都在
 控制台就是 C 门的三条流:fd 0 一次一字节读串口(`emo_console_read`,T1 门的 read 动词),fd 1 与 fd 2 写控制台(`emo_write`);shell 的提示符、错误行与命令输出都走它们——`echo hi`/`pwd` 走 fd 1,提示符与 `poweroff` 的拒绝走 fd 2。shell 的 `poweroff` builtin 进入名册,以状态 0 结束会话;根的 exit 动词(pid 1,verb 0)就是引导自己的路由——`route_poweroff`、DMA/帧账目,然后 SBI poweroff。`exit` 走同一条路由。
 
 金属运行键入 `poweroff now`(fd 2 的拒绝)与 `poweroff`(机器的终点):内核账目打印,QEMU 在 SBI 调用上自己退出,没有宿主信号。控制台的交接就是根自己的 exec:同一个 pid 带着三条流穿过 `execve`,所以 `desk 0` 之后的提示符仍是桌面 ride 留下的那条串口。
+
+### T3.4 的记录(2026-11-24)
+
+gate 的 spawn 门(verb 48)现在把 envp 对暂存在 verb 54 替换所用的同一张 `execargs` 页上;`syscall.exec_args_env` 命名它,两扇门都喂 `build_args`——启动器与 shell 共用一个 builder。桌面的 dock 启动器与它的 `exec` 命令把行里的 argv 和基准环境 `PWD=/` 交给子进程;C shell 的 `execvp` 在 verb 54 上暂存自己的 `environ`。C 门的 `chello` 长出 `envshow` 探针(`argv[1] == "envshow"`、`PWD=/`),C 构建现在在两种 EMO_SHELL 模式下都带上 chello。`start.sh` 把 EMO_SHELL 模式与 shell 源码当作构建输入;C 库的 `execvp` 在扁平卷上解析 `./` 名字。
+
+金属运行(EMO_SHELL=0):在 `emo-os>` 输入 `desktop` 打开 era,`exec chello.elf envshow` 答 `image 41712 bytes, 1 blocks` 与 `envshow ok`;`poweroff` 走引导的路由退出。缺口:C shell 从 musl 镜像 fork 出的子进程在金属上没有到达门——它的 `execvp` 在 gate 之前就返回,所以经 shell fork 的外部命令是 M4 语料的第一项需求。shell 的内建与桌面的 exec 是绿的;两者共用的门就是上面这扇。
 
 ### M4——生态
 

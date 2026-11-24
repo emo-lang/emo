@@ -70,6 +70,16 @@ int execvp(const char *file, char *const argv[]) {
     errno = ENOENT;
     return -1;
   }
+  // The volume is one flat namespace; the root is its only directory,
+  // so a `./` path names the root's entry itself, never a PATH search.
+  if (file[0] == '.' && file[1] == '/') {
+    const char *bare = file;
+    while (bare[0] == '.' && bare[1] == '/') {
+      bare += 2;
+    }
+    execve(bare, argv, environ);
+    return -1;
+  }
   if (strchr(file, '/') != 0) {
     execve(file, argv, environ);
     return -1;

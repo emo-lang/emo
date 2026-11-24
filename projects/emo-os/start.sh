@@ -142,13 +142,26 @@ if [ ! -f wallpaper.rle ] || [ "$wall_src" -nt wallpaper.rle ]; then
   python3 "$wall_src" --out wallpaper.rle
 fi
 
+# The shell mode is a build input (T3.4): switching EMO_SHELL with every
+# file older than the kernel would otherwise keep the previous image —
+# the zero-length placeholder and the C shell are different builds of
+# user.S's tail.
+mode_stale=no
+if [ "$EMO_SHELL" = 1 ]; then
+  if [ ! -s emosh.elf ]; then mode_stale=yes; fi
+else
+  if [ -s emosh.elf ]; then mode_stale=yes; fi
+fi
+
 # shellcheck disable=SC2086
-if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src $notify_src "$hash_dir"/package.emo "$hash_dir"/*.emo "$hash_dir"/internal/*.emo ||
+if [ "$mode_stale" = yes ] ||
+   stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_src $ui_src $fb_src $frame_src $win_src $desktop_src $apps_src $winbuf_src $notify_src "$hash_dir"/package.emo "$hash_dir"/*.emo "$hash_dir"/internal/*.emo ||
    stale counter.elf $counter_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale files.elf $files_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale spin.elf $spin_src ||
    stale chello.elf c/hello.c c/emo_syscall.h c/emo_posix.c c/emo_posix.h c/crt0.s c/fork.s c/chello.ld c/build.sh ||
+   stale emosh.elf ../emo-shell/*.emo ../emo-shell/package.emo ../emo-shell/package.lock ||
    stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf emosh.elf wallpaper.rle; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo

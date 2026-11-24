@@ -124,6 +124,15 @@ int main(int argc, char **argv, char **envp) {
     write(2, execve_child_bad, sizeof(execve_child_bad) - 1);
     return 1;
   }
+  if (argc >= 2 && streq(argv[1], "envshow")) {
+    const char *pwd = getenv("PWD");
+    if (pwd != 0 && streq(pwd, "/")) {
+      write(1, "envshow ok\n", 11);
+      return 0;
+    }
+    write(2, "envshow bad\n", 12);
+    return 1;
+  }
   (void)envp;
   char head[3];
   char buf[64];

@@ -433,6 +433,18 @@ def exec_args(name Int64, name_len Int64, args Int64, args_len Int64) (R, Int64)
   return (R.error, why_of(answer))
 }
 
+// The spawn with the environment (EmoOS plan B, T3.4): verb 48's
+// staging gains the envp text on the same execargs page verb 54's
+// replace uses — the launcher and the shell share one builder.
+def exec_args_env(name Int64, name_len Int64, args Int64, args_len Int64,
+                  env Int64, env_len Int64) (R, Int64) {
+  var answer = ecall(48, name, name_len, args, args_len, env, env_len)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The caller's image replaced in place (EmoOS plan B, T1.4b3b): the
 // name, the argv text and the envp text stage on the same door the C
 // library's `execve` rides; the caller's process keeps its pid and

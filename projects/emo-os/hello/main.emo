@@ -3022,7 +3022,9 @@ def desk_launch(f ui_fb.raster.Strike, slot Int64, labels Array[String]) Void {
       (R.ok, _) then {}
     }
   } else {
-    case syscall.exec(name, desk_flen(slot)) {
+    var envp = buf + 18080
+    var envn = put_base_env(envp)
+    case syscall.exec_args_env(name, desk_flen(slot), 0, 0, envp, envn) {
       (R.error, why) then { shell.desk_err(why) }
       (R.ok, child) then {
         poke64(buf + desk_pids + (slot * 8), child)
@@ -3053,7 +3055,9 @@ def desk_exec_cmd(f ui_fb.raster.Strike, e Int64, n Int64, labels Array[String])
     if slot >= 0 && peek64(buf + desk_pids + (slot * 8)) != 0 {
       desk_running_line(buf + desk_names + (slot * 12), desk_nlen(slot))
     } else {
-      case syscall.exec_args(name, nlen, args, alen) {
+      var envp = buf + 18080
+      var envn = put_base_env(envp)
+      case syscall.exec_args_env(name, nlen, args, alen, envp, envn) {
         (R.error, why) then { shell.desk_err(why) }
         (R.ok, child) then {
           if slot >= 0 {
@@ -4935,6 +4939,18 @@ def put_emosh_name(a Int64) Int64 {
   poke8(a + 7, 108B) // l
   poke8(a + 8, 102B) // f
   return 9
+}
+
+// The child's base environment (T3.4): the launcher and the desktop's
+// exec both hand it to the spawn door, and the shell's own children
+// carry the same one through the execve staging.
+def put_base_env(a Int64) Int64 {
+  poke8(a, 80B)     // P
+  poke8(a + 1, 87B) // W
+  poke8(a + 2, 68B) // D
+  poke8(a + 3, 61B) // =
+  poke8(a + 4, 47B) // /
+  return 5
 }
 
 
