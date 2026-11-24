@@ -754,7 +754,7 @@ not share).
 
 - [x] **T2.1** — The syscall layer: musl's `arch/riscv64` stubs over
   the gate, one function per documented verb.
-- [ ] **T2.2** — `crt`, TLS, `malloc`, `stdio`, `string`, `errno`;
+- [x] **T2.2** — `crt`, TLS, `malloc`, `stdio`, `string`, `errno`;
   static `hello`, `printf`, `malloc`, `getenv`.
 - [ ] **T2.3** — The sysroot and the compiler wrapper: `libc.a`, the
   headers, the link script; `riscv64-emos-gcc`.
@@ -764,9 +764,9 @@ not share).
 
 ### T2.1's record (2026-11-24)
 
-The C library's crossing is one file: `c/arch/riscv64/syscall_arch.h`,
-the musl 1.2.6 `arch/riscv64` stubs (MIT; the notice rides
-`c/arch/riscv64/COPYRIGHT`) with the gate's verb in a7 and the six
+The C library's crossing is one file:
+`c/musl-port/arch/riscv64/syscall_arch.h`, the musl 1.2.6
+`arch/riscv64` stubs (MIT; the notice rides `c/musl-port/COPYRIGHT`) with the gate's verb in a7 and the six
 words in a0..a5. `c/emo_syscall.c` carries the typed wrappers — one
 per documented verb the library speaks (0..4, 6..9, 36..52, 54..65) —
 and the generic `emo_syscall` entry; `c/emo_syscall.h` names the verb
@@ -783,6 +783,44 @@ ok` right after `rodata ok`, then every earlier T1 line through
 `@emo_os` scratch tree too (`c/emo_syscall.c` and the arch header ride
 the file list), and the leg stayed green. The musl body — `crt`, TLS,
 `malloc`, `stdio`, `string`, `errno` — is T2.2.
+
+### T2.2's record (2026-11-24)
+
+The musl body is in `projects/emo-os/c/musl-port/`. The port's crt
+(`crt0.s`) takes the kernel's args page and stack, clears `.bss`, sets
+`__environ`, and calls `__emo_tls_init`, `main`, `fflush(0)` and
+`emo_exit`; `tls.c` puts one `struct pthread` in `.bss` with `tp`
+above it (`TLS_ABOVE_TP`), `libc.threaded`/`need_locks` zeroed and an
+empty `auxv`, so musl's `errno`, `__lockfile`'s tid and the locale
+pointer have a block without a thread. `gate.c` is the gate side:
+console `write`/`read`, `close`/`lseek` over the fd verbs, the arena's
+`brk`/`__mmap`/`munmap`/`mprotect`/`madvise`/`mremap`, the lock
+no-ops, and the `__syscall` seam the mallocng `glue.h` uses —
+`SYS_brk` is the port's own number, so the kernel still sees only the
+T2.1 verbs. `stdio.c` replaces musl's `writev`/`ioctl` writers with
+the console `write` and makes the single-threaded locks no-ops.
+
+The body itself is the vendored musl source: `mallocng` (over the
+arena's `brk`/`mmap`), `printf`/`vfprintf`/`fflush`/`stdout`/`fwrite`
+and the string, env, errno, locale and math pieces the link pulls.
+`getenv`/`setenv`/`putenv`/`unsetenv` are musl's; the static hello
+(`hello.c`) prints `hello from musl: musl body 42` and `getenv yes`.
+
+The cuts: the crt/TLS are the port's static single-process block, not
+musl's `__libc_start_main`/`__init_tls` (the kernel's start has no
+auxv and no dynamic TLS); the user image lives past 2 GiB, where the
+host libgcc's medlow quad objects cannot relocate, so `vfprintf`'s
+quad helpers are stubs and `%f`/`%Lf` wait for a medany soft-float (the
+integer and string formats are the proof); `munmap`/`madvise` are
+no-ops and `mremap` copies, so a freed mapping leaks until a later
+pass. The build is `c/musl-port/build.sh` (the manifest, not the whole
+tree); `EMO_MUSL=1` makes `c/build.sh`/`start.sh` put the proof image in
+the `chello.elf` slot, while the default stays the T1 program, and
+`c/build.sh` rebuilds it after the proof.
+
+The metal proof: `EMO_MUSL=1 start.sh --fresh`, then `exec chello.elf`,
+printed `hello from musl: musl body 42` and `getenv yes`; the machine
+exited clean and the proof image is 33,864 bytes.
 
 ### M3 — emosh as the default shell
 

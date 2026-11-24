@@ -198,15 +198,25 @@ C 库的 `execve` 复制路径(没有路径层——卷的平面名字),把 `arg
 ### M2——C 库(源自 musl)
 
 - [x] **T2.1**——syscall 层:musl 的 `arch/riscv64` 桩接到门上,每个函数对一个已记录的动词。
-- [ ] **T2.2**——`crt`、TLS、`malloc`、`stdio`、`string`、`errno`;静态 `hello`、`printf`、`malloc`、`getenv`。
+- [x] **T2.2**——`crt`、TLS、`malloc`、`stdio`、`string`、`errno`;静态 `hello`、`printf`、`malloc`、`getenv`。
 - [ ] **T2.3**——sysroot 与编译器包装器:`libc.a`、头文件、链接脚本;`riscv64-emos-gcc`。
 - [ ] **T2.4**——一致性探针:一小套 C 测试钉住本里程碑的调用,在金属和宿主解释器上(都适用时)逐字节相同。
 
 ### T2.1 的记录(2026-11-24)
 
-C 库的越界只剩一处:`c/arch/riscv64/syscall_arch.h`——musl 1.2.6 的 `arch/riscv64` 桩(MIT;声明在 `c/arch/riscv64/COPYRIGHT`),verb 在 a7、六个字在 a0..a5。`c/emo_syscall.c` 载着类型化包装——库说的每个已记录动词一个(0..4、6..9、36..52、54..65)——以及通用的 `emo_syscall` 入口;`c/emo_syscall.h` 命名动词编号与 API。桌面与通知家族(10..35)留给 Emo 一侧,直到某个 C 程序需要;动词 5(分配器的死亡)留给运行时,这是契约的「按需」切法。`c/emo_posix.c` 最后一个裸 `emo_ecall`(控制台读)换成了 `emo_console_read`,库里的每次门调用都走那一个桩文件。
+C 库的越界只剩一处:`c/musl-port/arch/riscv64/syscall_arch.h`——musl 1.2.6 的 `arch/riscv64` 桩(MIT;声明在 `c/musl-port/COPYRIGHT`),verb 在 a7、六个字在 a0..a5。`c/emo_syscall.c` 载着类型化包装——库说的每个已记录动词一个(0..4、6..9、36..52、54..65)——以及通用的 `emo_syscall` 入口;`c/emo_syscall.h` 命名动词编号与 API。桌面与通知家族(10..35)留给 Emo 一侧,直到某个 C 程序需要;动词 5(分配器的死亡)留给运行时,这是契约的「按需」切法。`c/emo_posix.c` 最后一个裸 `emo_ecall`(控制台读)换成了 `emo_console_read`,库里的每次门调用都走那一个桩文件。
 
 金属证明:`chello.elf`(41,696 字节)在 `rodata ok` 之后立刻打出 `syscall layer ok`,然后打出此前每一行 T1 结果直到 `signal kill ok`;机器干净退出。C 应用也能在 `@emo_os` 的临时树里构建(`c/emo_syscall.c` 与 arch 头进了文件清单),那条腿保持全绿。musl 的主体——`crt`、TLS、`malloc`、`stdio`、`string`、`errno`——是 T2.2。
+
+### T2.2 的记录(2026-11-24)
+
+musl 的主体在 `projects/emo-os/c/musl-port/`。移植的 crt(`crt0.s`)接内核的参数页与栈,清 `.bss`,设 `__environ`,然后调 `__emo_tls_init`、`main`、`fflush(0)` 与 `emo_exit`;`tls.c` 把一个 `struct pthread` 放进 `.bss`,`tp` 在其上(`TLS_ABOVE_TP`),`libc.threaded`/`need_locks` 归零,`auxv` 空,于是 musl 的 `errno`、`__lockfile` 的 tid 与 locale 指针在没有线程时也有块。`gate.c` 是门的一侧:控制台 `write`/`read`,`close`/`lseek` 走 fd 动词,arena 的 `brk`/`__mmap`/`munmap`/`mprotect`/`madvise`/`mremap`,锁的空操作,以及 mallocng 的 `glue.h` 用的 `__syscall` 缝——`SYS_brk` 是移植自己的编号,内核仍只看到 T2.1 的动词。`stdio.c` 用控制台 `write` 换掉 musl 的 `writev`/`ioctl` 写者,并把单线程的锁变成空操作。
+
+主体本身是 vendor 的 musl 源码:`mallocng`(走 arena 的 `brk`/`mmap`)、`printf`/`vfprintf`/`fflush`/`stdout`/`fwrite`,以及链接拉进来的 string、env、errno、locale、math 片段。`getenv`/`setenv`/`putenv`/`unsetenv` 是 musl 的;静态 hello(`hello.c`)打出 `hello from musl: musl body 42` 与 `getenv yes`。
+
+切法:crt/TLS 是移植的静态单进程块,不是 musl 的 `__libc_start_main`/`__init_tls`(内核的启动没有 auxv,也没有动态 TLS);用户镜像在 2 GiB 之上,宿主 libgcc 的 medlow quad 目标无法重定位,所以 `vfprintf` 的 quad 辅助是桩,`%f`/`%Lf` 等一个 medany 的软浮点(整数与字符串格式就是证明);`munmap`/`madvise` 是空操作,`mremap` 拷贝,所以释放的映射会漏到后续的 pass。构建是 `c/musl-port/build.sh`(清单,不是整树);`EMO_MUSL=1` 让 `c/build.sh`/`start.sh` 把证明镜像放进 `chello.elf` 槽,默认仍是 T1 程序,证明后 `c/build.sh` 重建它。
+
+金属证明:`EMO_MUSL=1 start.sh --fresh`,再 `exec chello.elf`,打出 `hello from musl: musl body 42` 与 `getenv yes`;机器干净退出,证明镜像 33,864 字节。
 
 ### M3——emosh 作为默认 shell
 

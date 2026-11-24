@@ -6,6 +6,7 @@ examples/*/*.tmp
 *.emo-bin-nospec
 *.c-bin
 *.elf
+projects/emo-os/c/musl-port/.build/
 
 # Benchmark baselines
 benchmarks/baselines/build/
