@@ -985,7 +985,7 @@ the desktop's exec are green; the door the two share is the one above.
   process), each pinned by a golden.
 - [x] **T4.3** — Build systems: `make`, then autotools/CMake and
   `pkg-config`, so a Linux tarball's own build runs.
-- [ ] **T4.4** — The package corpus and its CI: what builds, what
+- [x] **T4.4** — The package corpus and its CI: what builds, what
   runs, what each needs; the list is the tracker's honest answer.
 - [ ] **T4.5** — Self-hosted compilation: GCC/Clang and the tools on
   EmoOS itself. Last, because it needs everything above.
@@ -1062,6 +1062,22 @@ skipped here) and no `automake` (the tarball's pre-generated
 configure/make is the autotools leg). A Linux tarball whose build
 files reach for these handles now has the pieces; the package corpus
 and its CI are T4.4.
+
+### T4.4's record (2026-11-24)
+
+`c/corpus.sh` is the package CI's build half: it builds the sysroot and
+every port and prints the corpus's honest list. The table is the
+tracker's answer to "what builds, what runs, what each needs":
+
+| package | build | needs | builds | runs on metal |
+| dash 0.5.12 | autotools configure + make | the sysroot, the host cc, the tarball's generated configure | yes, 184,456 B | yes (T4.1) |
+| uutils | the sysroot wrapper | the sysroot | yes, 39,560 B | yes (T4.2) |
+| build probe | make, pkg-config, the CMake toolchain | the sysroot | yes (make + pkg-config; CMake skipped on this host) | host-built |
+| emosh | the Emo C target | the sysroot, the Emo compiler | yes | yes (T3.2/T3.3) |
+
+The CI is two legs: `@emo_os` is the OS's own (gc/parity/smoke), and
+`c/corpus.sh` is the package build's. The metal legs are the records
+above. T4.5's self-hosted compiler is the corpus's remaining need.
 
 ## The bounds
 

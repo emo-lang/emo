@@ -272,7 +272,7 @@ gate 的 spawn 门(verb 48)现在把 envp 对暂存在 verb 54 替换所用的�
 - [x] **T4.1**——busybox 或 dash:第一个真正的 POSIX 程序,shell 自己的验收。
 - [x] **T4.2**——核心工具:第一套语料(文件、文本、进程),每个用金测钉住。
 - [x] **T4.3**——构建系统:`make`,然后 autotools/CMake 与 `pkg-config`,让一个 Linux tarball 自己的构建能跑。
-- [ ] **T4.4**——软件语料与 CI:什么能构建、什么能跑、各自需要什么;清单就是这个 tracker 诚实的答案。
+- [x] **T4.4**——软件语料与 CI:什么能构建、什么能跑、各自需要什么;清单就是这个 tracker 诚实的答案。
 - [ ] **T4.5**——自举编译:EmoOS 自己上的 GCC/Clang 与工具。放最后,因为它需要上面一切。
 
 ### T4.1 的记录(2026-11-24)
@@ -296,6 +296,18 @@ port 扩了 sysroot 的 POSIX 面:ctype、strto*/bsearch、setjmp 对、fnmatch�
 第一条构建系统腿就是 dash tarball 自己的:T4.1 用它预生成的 `configure`,以 sysroot wrapper 为 `CC`、宿主 `cc` 为生成器,再 `make`;链接出的 shell 就是启动跑的那个镜像。`c/build-support` 的探针钉住通用把手:一个 `Makefile` 用 `CC=<sysroot>/bin/riscv64-emoos-gcc`;musl-port 构建在 `sysroot/lib/pkgconfig/emoos.pc` 生成的 `pkg-config` 文件(给 sysroot 的 Cflags/Libs);以及 `sysroot/riscv64-emoos.cmake` 的 CMake toolchain(wrapper、静态库 try-compile、find-root)。探针用 make 与 pkg-config 构建同一个程序,都是 RISC-V ELF。
 
 缺口:宿主没有 `cmake`(toolchain 文件已提供,这条腿在这里跳过),也没有 `automake`(tarball 预生成的 configure/make 就是 autotools 腿)。构建文件伸手要这些把手的 Linux tarball 现在有了各件;软件语料与 CI 是 T4.4。
+
+### T4.4 的记录(2026-11-24)
+
+`c/corpus.sh` 是包 CI 的构建半边:它构建 sysroot 与每个 port,打印语料诚实的清单。表就是这个 tracker 对"什么能构建、什么能跑、各自需要什么"的回答:
+
+| 包 | 构建 | 需要 | 构建结果 | 金属运行 |
+| dash 0.5.12 | autotools configure + make | sysroot、宿主 cc、tarball 预生成的 configure | 是,184,456 B | 是(T4.1) |
+| uutils | sysroot wrapper | sysroot | 是,39,560 B | 是(T4.2) |
+| build probe | make、pkg-config、CMake toolchain | sysroot | 是(make + pkg-config;本机 CMake 跳过) | 宿主构建 |
+| emosh | Emo C target | sysroot、Emo 编译器 | 是 | 是(T3.2/T3.3) |
+
+CI 两条腿:`@emo_os` 是 OS 自己的(gc/parity/smoke),`c/corpus.sh` 是包构建的。金属腿就是上面的记录。T4.5 的自举编译器是语料剩下的需求。
 
 ## 边界
 
