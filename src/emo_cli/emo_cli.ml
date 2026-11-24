@@ -664,8 +664,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                      strict -O1/-O2 crash deterministically). The flag
                      rides the list, so it enters the cache digest and
                      no cached binary outlives it. *)
-                  "-fno-strict-aliasing"
-                  :: "-ffunction-sections"
+                  "-fno-strict-aliasing" :: "-ffunction-sections"
                   :: "-fdata-sections"
                   :: ((if
                          List.exists

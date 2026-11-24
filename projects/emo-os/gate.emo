@@ -1363,9 +1363,11 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     if me6 >= img_bound {
       return -reason_resource
     }
-    if peek64(img_for + (me6 * 8)) == 0 {
-      return -reason_argument
-    }
+    // The boot root carries the boot image, not an exec record: its
+    // cell is zero, and the replace's reap reads exactly that cell
+    // (`image_home` no-ops) before the new image's build writes the
+    // fresh record. A process with a slot may replace itself; the
+    // record's presence is not the door's condition.
     if peek64(exec_busy) != 0 {
       return -reason_resource
     }

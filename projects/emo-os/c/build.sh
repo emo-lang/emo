@@ -13,6 +13,33 @@ if [ "${EMO_MUSL:-0}" = 1 ]; then
   exit 0
 fi
 
+# The emosh boot shell (T3.2): the Emo shell's C build through the
+# sysroot, put in the C door's `chello.elf` slot for the boot's
+# `exec` beat.
+if [ "${EMO_SHELL:-0}" = 1 ]; then
+  here=$PWD
+  root=$(cd "$here/../../.." && pwd)
+  sysroot="$here/musl-port/sysroot/bin/riscv64-emoos-gcc"
+  emo="$root/_build/default/src/emo_cli/emo.exe"
+  if [ ! -x "$emo" ]; then
+    echo "c/build.sh: the Emo compiler is missing: $emo" >&2
+    exit 1
+  fi
+  # The wrapper's own compiler is read before EMO_CC becomes the wrapper:
+  # in one command's assignments bash applies them left to right, so a
+  # later `${EMO_CC}` would see the wrapper and exec itself forever.
+  cross_cc=${EMO_CROSS_CC:-${EMO_CC:-riscv64-elf-gcc}}
+  (cd "$root/projects/emo-shell" && \
+    EMO_CC="$sysroot" EMO_CROSS_CC="$cross_cc" \
+    "$emo" build main.emo --target c -o "$here/../emosh.elf")
+  exit 0
+fi
+
+# The kernel's user.S embeds emosh.elf whatever the boot; a build
+# without the shell writes the empty placeholder and the kernel skips
+# its install, so the golden keeps the Emo desktop.
+: > "$PWD/../emosh.elf"
+
 emos_cc=${EMO_CC:-riscv64-elf-gcc}
 if ! command -v "$emos_cc" >/dev/null 2>&1; then
   echo "c/build.sh: $emos_cc not found (macOS: brew install riscv64-elf-gcc)" >&2

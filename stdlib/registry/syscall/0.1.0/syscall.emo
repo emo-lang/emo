@@ -433,6 +433,19 @@ def exec_args(name Int64, name_len Int64, args Int64, args_len Int64) (R, Int64)
   return (R.error, why_of(answer))
 }
 
+// The caller's image replaced in place (EmoOS plan B, T1.4b3b): the
+// name, the argv text and the envp text stage on the same door the C
+// library's `execve` rides; the caller's process keeps its pid and
+// becomes the new image. Never returns on success.
+def execve(name Int64, name_len Int64, args Int64, args_len Int64,
+           env Int64, env_len Int64) (R, Int64) {
+  var answer = ecall(54, name, name_len, args, args_len, env, env_len)
+  if answer >= 0 {
+    return (R.ok, answer)
+  }
+  return (R.error, why_of(answer))
+}
+
 // The exit of the child with that pid number, blocking until it
 // happens; 0 or a negative pid the first of the caller's children
 // (T1.4b2). The answer is (R.ok, the child's status word) or

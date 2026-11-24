@@ -4905,7 +4905,53 @@ def lock_byte(f ui_fb.raster.Strike, b Int64) Void {
 // The desktop is a command now, not the boot's own act: the line's
 // `desktop` word opens it (the era's surfaces, its launcher and its
 // loop), and until then the machine is the shell.
+//
+// Since T3.2, when the volume carries the C shell's image (`emosh.elf`
+// — the EMO_SHELL build installs it), the root hands it the foreground
+// with the same exec door; the Emo shell remains the golden's fallback
+// when the image is absent.
+if emosh_present() {
+  const en = put_emosh_name(buf + 18000)
+  case syscall.execve(buf + 18000, en, 0, 0, 0, 0) {
+    (R.error, why) then {
+      println("emosh: ${why}")
+      shell.desk_err(why)
+    }
+    (R.ok, _) then {}
+  }
+}
 shell_mode()
+
+// The C shell's name, written into the scratch page; the proof chain's
+// buffers are done with it by now.
+def put_emosh_name(a Int64) Int64 {
+  poke8(a, 101B)     // e
+  poke8(a + 1, 109B) // m
+  poke8(a + 2, 111B) // o
+  poke8(a + 3, 115B) // s
+  poke8(a + 4, 104B) // h
+  poke8(a + 5, 46B)  // .
+  poke8(a + 6, 101B) // e
+  poke8(a + 7, 108B) // l
+  poke8(a + 8, 102B) // f
+  return 9
+}
+
+
+// Whether the volume carries the C shell: the file's size through the
+// read verb's zero-capacity probe, the desktop's own file test shape.
+def emosh_present() Bool {
+  const en = put_emosh_name(buf + 18000)
+  case syscall.file_read(buf + 18000, en, buf + 18032, 0) {
+    (R.ok, size) then {
+      if size > 0 {
+        return true
+      }
+    }
+    (R.error, _) then {}
+  }
+  return false
+}
 
 // The shell's own loop: the banner and the first prompt, then the
 // merged stream's bytes fed to the line; a line that names `desktop`

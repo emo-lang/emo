@@ -104,6 +104,11 @@ fi
 
 fresh=no
 hand=no
+# The machine's shell (T3.2): the `EMO_SHELL` build installs the C
+# shell's image and the root execs it; `EMO_SHELL=0` keeps the Emo
+# desktop's shell for the legacy ride.
+: "${EMO_SHELL:=1}"
+export EMO_SHELL
 for arg in "$@"; do
   case $arg in
     --fresh) fresh=yes ;;
@@ -144,7 +149,7 @@ if stale "$user_elf" hello/*.emo hello/package.emo hello/package.lock $syscall_s
    stale editor.elf $editor_src $syscall_src $ui_src $fb_src $apps_src $winbuf_src ||
    stale spin.elf $spin_src ||
    stale chello.elf c/hello.c c/emo_syscall.h c/emo_posix.c c/emo_posix.h c/crt0.s c/fork.s c/chello.ld c/build.sh ||
-   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf wallpaper.rle; then
+   stale "$elf" *.emo *.S link.ld "$user_elf" counter.elf files.elf editor.elf spin.elf chello.elf emosh.elf wallpaper.rle; then
   if command -v emo >/dev/null 2>&1; then
     emo=emo
   else
@@ -314,13 +319,23 @@ ride() {
   ride_wait 'desk range 32767 32767' || return 1
   sleep 3 && ride_type 'q'
   ride_wait 'desk 0' || return 1
-  ride_wait 'emo-os>'
+  if [ "$EMO_SHELL" = 1 ]; then
+    ride_wait 'emosh>'
+  else
+    ride_wait 'emo-os>'
+  fi
 }
 
 if ride; then
-  echo 'EmoOS: the shell is up — this terminal is the REPL'"'"'s console now.' >&2
-  echo '  type `desktop` for the desktop; poweroff ends the machine,' >&2
-  echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+  if [ "$EMO_SHELL" = 1 ]; then
+    echo 'EmoOS: emosh is up — this terminal is its console now.' >&2
+    echo '  type commands; exit ends the machine (the boot poweroff),' >&2
+    echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+  else
+    echo 'EmoOS: the shell is up — this terminal is the REPL'"'"'s console now.' >&2
+    echo '  type `desktop` for the desktop; poweroff ends the machine,' >&2
+    echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+  fi
 else
   echo 'EmoOS: the auto-ride stalled — drive the remaining windows by hand;' >&2
   echo '  docs/how-to-start-emoos.md lists them in order.' >&2

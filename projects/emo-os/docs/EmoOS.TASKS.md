@@ -872,7 +872,7 @@ not the T2.2 body's), no `%f`/`%Lf` (the quad cut), and no
 
 - [x] **T3.1** — emosh builds against the sysroot. Every source edit
   forced by the port is listed; the goal is none.
-- [ ] **T3.2** — emosh becomes the boot foreground — the line
+- [x] **T3.2** — emosh becomes the boot foreground — the line
   editor, history and completion — replacing `hello/shell.emo` as
   the machine's shell.
 - [ ] **T3.3** — The console's handoff: the serial bytes on fd 0,
@@ -907,6 +907,36 @@ the T2.4 conformance probe still answers host and metal byte-identical.
 Gaps: the compiler runtime's Emo lightweight-process/ucontext and its
 network methods are stubs on EmoOS (the shell uses the OS `fork`/
 `exec`); the shell's boot foreground and console are T3.2/T3.3.
+
+### T3.2's record (2026-11-24)
+
+`EMO_SHELL=1` builds the shell's C image through the sysroot into
+`emosh.elf`; `user.S` embeds it beside the C door's `chello.elf`, the
+first boot installs it when the blob is not empty, and the root's shell
+stage execs it in place through verb 54 — the door the C library's
+`execve` rides. `EMO_SHELL=0` writes the zero-length placeholder, the
+kernel skips the install, and the existing desktop golden keeps
+`hello/shell.emo`.
+
+Two fixes the metal run forced. Verb 54 refused the boot root with
+`bad argument` because its `img_for` cell is zero: the root carries the
+boot image, not an exec record, and the replace's reap reads exactly
+that cell as a no-op before the new image's build writes the fresh
+record — the record's presence is not the door's condition, so the
+check is gone. The C runtime's root fiber never ran because EmoOS's
+ucontext is the T3.1 stub: `swapcontext` answered ENOSYS and the
+scheduler deadlocked with the root unfinished. The scheduler now runs
+the root entry on the C entry's own stack when the switch fails; the
+shell's jobs are OS processes, not fibers.
+
+The metal boot: `emosh>` after `desk 0`, `echo hi` answers `hi`, `pwd`
+answers `/`, the up-arrow replays the last line, Tab completes `ec` to
+`echo`, and `exit` leaves through the kernel's exit route (the
+DMA/frame account). The shell is `projects/emo-shell` compiled to C; no
+shell source edit was needed for the boot. `ls` is not a builtin (the
+builtins are cd/pwd/echo/exit/export/unset/true/false) — the M4 corpus
+brings the utilities. Gaps: the console's ownership is T3.3; the
+desktop's argv/envp is T3.4.
 
 ### M4 — the ecosystem
 

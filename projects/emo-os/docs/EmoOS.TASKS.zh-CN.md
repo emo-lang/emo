@@ -235,7 +235,7 @@ musl 的主体在 `projects/emo-os/c/musl-port/`。移植的 crt(`crt0.s`)接内
 ### M3——emosh 作为默认 shell
 
 - [x] **T3.1**——emosh 对着 sysroot 构建。移植被迫改的每一处源码都列出来;目标是零。
-- [ ] **T3.2**——emosh 成为启动前台——行编辑、历史、补全——替换 `hello/shell.emo` 作为机器的 shell。
+- [x] **T3.2**——emosh 成为启动前台——行编辑、历史、补全——替换 `hello/shell.emo` 作为机器的 shell。
 - [ ] **T3.3**——控制台交接:串口字节进 fd 0,写走 fd 1/2,`poweroff` 仍是引导自己拥有的 exit 路由。
 - [ ] **T3.4**——桌面的 `exec` 把 `argv`/`envp` 交给子进程;启动器与 shell 共用一扇门。
 
@@ -246,6 +246,14 @@ C target 的编译器现在是 `EMO_CC`(sysroot 的 `riscv64-emoos-gcc`),对象�
 sysroot 的 `libc.a` 在 musl 头文件下长出 T1 C 门的门层:fd/路径/进程/管道/信号、`fork.s`、T1 的 `open`/read/write,以及 `posix_bridge.c`:musl 的 `DIR` 套在 T1 列举上、`execvp`、termios/控制台那对、`calloc`/`exit`/`abort`、`clock_gettime`、`fcntl`,和编译器运行时没用到的网络/ucontext 面的桩。T2.1 的整文件包装改名 `emo_gate_file_*`(编译器运行时占着 `emo_file_*`),errno 桥把 musl 的 `__errno_location`/`___errno_location` 指到 T1 的全局,链接拉到的 musl stdio/stdlib/math 片段(`fprintf`、`snprintf`、`open_memstream`、`stderr`、`qsort` 等)进档案。档案每次全新生成。
 
 shell 链接通过:302,040 字节,入口 `0x87100000`,两个 `PT_LOAD` 段都在镜像窗口里。T1 的 `chello.elf` 仍能构建,T2.4 一致性探针仍答宿主与金属逐字节相同。缺口:编译器运行时的 Emo 轻进程/ucontext 与网络方法在 EmoOS 上是桩(shell 走 OS 的 `fork`/`exec`);shell 的启动前台与控制台是 T3.2/T3.3。
+
+### T3.2 的记录(2026-11-24)
+
+`EMO_SHELL=1` 通过 sysroot 把 shell 的 C 镜像构建成 `emosh.elf`;`user.S` 把它嵌在 C 门的 `chello.elf` 旁边,首次启动在 blob 非空时把它装进卷,根的 shell 阶段用 verb 54(与 C 库 `execve` 同一扇门)原地 exec 它。`EMO_SHELL=0` 写零长度占位符,内核跳过安装,已有的桌面 golden 继续用 `hello/shell.emo`。
+
+金属运行逼出两处修复。verb 54 以 `bad argument` 拒绝启动根,因为它的 `img_for` 单元是零:根承载的是 boot image,不是 exec 记录,而替换的回收正是把这个单元读成 no-op,随后新镜像的 build 才写入新记录——记录的有无不是这扇门的条件,所以这条检查删掉了。C runtime 的根 fiber 从未运行,因为 EmoOS 的 ucontext 是 T3.1 的桩:`swapcontext` 答 ENOSYS,scheduler 在根未完成时死锁。现在切换失败时 scheduler 直接在 C entry 的栈上跑根 entry;shell 的作业是 OS 进程,不是 fiber。
+
+金属启动:`desk 0` 之后出现 `emosh>`;`echo hi` 答 `hi`;`pwd` 答 `/`;上箭头重放上一行;Tab 把 `ec` 补成 `echo`;`exit` 走内核的退出路由(DMA/帧账目)。shell 是 `projects/emo-shell` 编译到 C,启动不需要改 shell 源码。`ls` 不是内建(builtin 是 cd/pwd/echo/exit/export/unset/true/false)——M4 的语料带来这些工具。缺口:控制台归属是 T3.3;桌面的 argv/envp 是 T3.4。
 
 ### M4——生态
 

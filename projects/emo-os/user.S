@@ -65,3 +65,12 @@ emo_os_user_blob_x:
     .globl emo_os_user_blob_x_end
 emo_os_user_blob_x_end:
 
+    # The emosh boot shell (T3.2): the Emo shell's C build, installed
+    # on the volume when the image carries it. An empty placeholder
+    # leaves the length zero and the kernel skips the install.
+    .globl emo_os_user_blob_m
+emo_os_user_blob_m:
+    .incbin "emosh.elf"
+    .globl emo_os_user_blob_m_end
+emo_os_user_blob_m_end:
+

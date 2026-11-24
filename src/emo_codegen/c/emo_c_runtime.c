@@ -3067,7 +3067,15 @@ void emo_scheduler_run(void) {
     emo_current = p;
     if (getenv("EMO_TRACE"))
       fprintf(stderr, "[trace] dispatch %lld\n", (long long)p->pid);
-    swapcontext(&emo_sched_ctx, &p->ctx);
+    if (swapcontext(&emo_sched_ctx, &p->ctx) != 0) {
+      /* The platform has no context switch (the EmoOS C library's
+         ucontext is a stub): the root runs on the stack the C entry was
+         handed. Its body exits the program; a return here is the end. */
+      p->entry();
+      p->finished = 1;
+      emo_current = NULL;
+      return;
+    }
     emo_current = NULL;
     if (p->finished && p->pid == emo_root_pid) {
       /* the entry process ended: the program is over (a long-running
