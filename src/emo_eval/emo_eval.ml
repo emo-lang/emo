@@ -5440,7 +5440,9 @@ and compile_expr d scope e : code =
       let cindex = compile_expr d scope index in
       fun env ->
         count_step ();
-        index_value env span (cbase env) (cindex env)
+        let b = cbase env in
+        let i = cindex env in
+        index_value env span b i
   | Ast.Tuple es ->
       let cs = List.map (compile_expr d scope) es in
       fun env ->
@@ -5460,7 +5462,12 @@ and compile_expr d scope e : code =
       fun env ->
         count_step ();
         let m = fresh_map () in
-        List.iter (fun (ck, cv) -> map_set span m (ck env) (cv env)) cs;
+        List.iter
+          (fun (ck, cv) ->
+            let key = ck env in
+            let value = cv env in
+            map_set span m key value)
+          cs;
         Map m
   | Ast.Arrow_block (params, body) ->
       fun env ->
@@ -5502,7 +5509,14 @@ and compile_expr d scope e : code =
       let cr = compile_expr d scope r in
       fun env ->
         count_step ();
-        binary_value env span op (cl env) (cr env)
+        (* The operands bind in source order before the operator sees
+           them. OCaml evaluates a call's arguments right to left, so
+           passed inline the right operand would run first — the host's
+           rule reaching Emo's, as the emitter's once did (CHECK.md,
+           operand evaluation order). *)
+        let left = cl env in
+        let right = cr env in
+        binary_value env span op left right
   | Ast.If_expr { cond; then_expr; else_expr } -> (
       let ccond = compile_expr d scope cond in
       let cthen = compile_expr d scope then_expr in
