@@ -5,12 +5,16 @@
    behind _XOPEN_SOURCE; 700 is the level that declares
    open_memstream. _DARWIN_C_SOURCE rides beside it: without it macOS
    hides the CMSG_* macros (the fd passage's ancillary data) from a
-   strict-ANSI translation unit. */
+   strict-ANSI translation unit. _DEFAULT_SOURCE rides beside
+   _POSIX_C_SOURCE on the same account: cfmakeraw — the door tty_raw
+   goes through — is a BSD extension glibc hides at every POSIX level,
+   where musl and macOS declare it whatever the level. */
 #if defined(__APPLE__)
 #define _XOPEN_SOURCE 700
 #define _DARWIN_C_SOURCE
 #else
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
 #endif
 
 #include "emo_c_runtime.h"

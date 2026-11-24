@@ -94,9 +94,11 @@ mkdir -p "$DEST/emo/record/0.1.0/internal"
 cp "$DB/record/package.emo" "$DB/record/record.emo" "$DEST/emo/record/0.1.0/"
 cp "$DB"/record/internal/*.emo "$DEST/emo/record/0.1.0/internal/"
 mkfamily emo/engine
-cp "$DB"/engine/package.emo "$DB"/engine/*.emo "$DEST/emo/engine/0.1.0/"
+# The manifest rides in the glob — `package.emo` ends in `.emo`; naming
+# it beside the glob is the same file twice, which GNU `cp` warns of.
+cp "$DB"/engine/*.emo "$DEST/emo/engine/0.1.0/"
 mkfamily emo/wire
-cp "$DB"/wire/package.emo "$DB"/wire/*.emo "$DEST/emo/wire/0.1.0/"
+cp "$DB"/wire/*.emo "$DEST/emo/wire/0.1.0/"
 
 # the bundled standard library, whole directories — EMO_REGISTRY replaces
 # it, so every package a project pins must be reachable here

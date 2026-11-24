@@ -124,10 +124,7 @@ install` links it onto the PATH as `emo`. `libgtk-4-dev` is the GTK 4
 half — the headers, the pkg-config file and the library — and is all the
 GTK entry needs: `emo build` finds GTK 4 through the backend's manifest.
 A released `emo`, from the one-line installer, is no substitute: it may
-not speak the tree's language yet. On Linux two warnings of the
-toolchain's own appear on the way — `scripts/stage-registry.sh` names a
-file twice under GNU `cp`, and the generated C declares `cfmakeraw`
-implicitly — and neither is the calculator's.
+not speak the tree's language yet.
 
 **The registry.** The application's packages are reached through a
 registry staged from the sources under test, the way every gate stages

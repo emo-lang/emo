@@ -56,7 +56,7 @@ cd <仓库目录>
 dune build src/emo_cli/emo.exe
 ```
 
-最后一行得到的就是编译器,在 `_build/default/src/emo_cli/emo.exe`;`just build` 以 release profile 编同一个文件,`just install` 把它链接到 PATH 上,成为 `emo`。`libgtk-4-dev` 是 GTK 4 的那一半——头文件、pkg-config 文件和库——GTK 入口需要的就只有它:`emo build` 经后端的清单找到 GTK 4。一键安装得来的发布版 `emo` 替代不了它:它可能还说不了这棵源码树的语言。在 Linux 上,路上会出现两个工具链自己的告警——`scripts/stage-registry.sh` 在 GNU `cp` 上把一个文件列了两次,生成的 C 里 `cfmakeraw` 是隐式声明的——两个都不是计算器的。
+最后一行得到的就是编译器,在 `_build/default/src/emo_cli/emo.exe`;`just build` 以 release profile 编同一个文件,`just install` 把它链接到 PATH 上,成为 `emo`。`libgtk-4-dev` 是 GTK 4 的那一半——头文件、pkg-config 文件和库——GTK 入口需要的就只有它:`emo build` 经后端的清单找到 GTK 4。一键安装得来的发布版 `emo` 替代不了它:它可能还说不了这棵源码树的语言。
 
 **注册表。** 应用的各个包要经由一份从被测源码暂存出来的注册表才能取到,和每个门禁暂存注册表的方式一样:
 
