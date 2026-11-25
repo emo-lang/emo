@@ -183,15 +183,30 @@ let expression_tests =
     tc "the if expression's condition must be a Bool at runtime" (fun () ->
         let diagnostic = eval_err "if 1 { 2 } else { 3 }" in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic));
-    tc "arithmetic respects precedence and promotion" (fun () ->
+    tc "arithmetic respects precedence and one kind" (fun () ->
         check_value "ints" (Emo_eval.Int64 7L) "1 + 2 * 3";
-        check_value "promoted" (Emo_eval.Float 3.5) "1 + 2.5";
-        check_value "float math" (Emo_eval.Float 2.0) "1.5 * 4 / 3";
-        check_value "unary minus" (Emo_eval.Int64 (-3L)) "-3");
+        check_value "floats" (Emo_eval.Float 3.5) "1.0 + 2.5";
+        check_value "float math" (Emo_eval.Float 2.0) "1.5 * 4.0 / 3.0";
+        check_value "unary minus" (Emo_eval.Int64 (-3L)) "-3";
+        (* The width rule: through the gradual path an arithmetic operator
+           takes two values of one fixed-width kind, and a mixed pair is a
+           loud refusal naming both kinds — never a promotion (CHECK.md, the
+           gradual operator's width rule). *)
+        List.iter
+          (fun source ->
+            let diagnostic = eval_err source in
+            Alcotest.(check string) source "E3001" (code_of diagnostic))
+          [ "1 + 2.5"; "2.5 + 1"; "1 - 0.5"; "1.5 * 4"; "4 / 1.5"; "1.0 % 1" ];
+        let diagnostic = eval_err "1 + 2.5" in
+        Alcotest.(check string)
+          "names both kinds"
+          "operator `+` expects two numbers or two strings, got Int64 and \
+           Float64"
+          diagnostic.Diagnostic.message);
     tc "division and modulo" (fun () ->
         check_value "int div" (Emo_eval.Int64 3L) "7 / 2";
         check_value "int mod" (Emo_eval.Int64 1L) "7 % 2";
-        check_value "float div" (Emo_eval.Float 3.5) "7.0 / 2";
+        check_value "float div" (Emo_eval.Float 3.5) "7.0 / 2.0";
         let diagnostic = eval_err "1 / 0" in
         Alcotest.(check string) "code" "E3005" (code_of diagnostic));
     tc "float math and conversion methods" (fun () ->
@@ -212,9 +227,15 @@ let expression_tests =
           diagnostic.Diagnostic.message);
     tc "comparisons order numbers and strings" (fun () ->
         check_value "less" (Emo_eval.Bool true) "1 < 2";
-        check_value "promoted" (Emo_eval.Bool true) "1.5 >= 1";
+        check_value "floats" (Emo_eval.Bool true) "1.5 >= 1.0";
         check_value "strings" (Emo_eval.Bool true) "\"a\" < \"b\"";
         check_value "prefix first" (Emo_eval.Bool true) "\"ab\" > \"a\"";
+        (* Equality is total and never coerces: two values of different
+           kinds are unequal; ordering, like arithmetic, takes one kind. *)
+        check_value "kinds apart" (Emo_eval.Bool false) "2 == 2.0";
+        check_value "kinds apart, not equal" (Emo_eval.Bool true) "2 != 2.0";
+        let diagnostic = eval_err "1.5 >= 1" in
+        Alcotest.(check string) "code" "E3001" (code_of diagnostic);
         let diagnostic = eval_err "\"a\" < 1" in
         Alcotest.(check string) "code" "E3001" (code_of diagnostic);
         let diagnostic = eval_err "true < false" in
