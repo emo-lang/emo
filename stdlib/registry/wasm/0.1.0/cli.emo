@@ -9,7 +9,7 @@
 // the golden, never silent.
 
 def run(list_path String) Int64 {
-  const (R.ok, text) = file_read(list_path)
+  const (R.ok, text) = emo.file_read(list_path)
   return walk_lines(text.split("\n"), 0, 0, 0, 0)
 }
 

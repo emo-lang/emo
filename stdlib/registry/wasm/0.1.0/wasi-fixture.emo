@@ -98,7 +98,7 @@ def yesno(b Bool) String {
 // The sandbox's directory: an existing one is the normal second-run
 // shape, so the mkdir verdict goes either way.
 def ensure_dir(path String) Int64 {
-  case os_mkdir(path) {
+  case emo.os_mkdir(path) {
     (R.error, _) then {
       return 0
     }
@@ -222,20 +222,20 @@ def run() Int64 {
   ensure_dir(".emo-deps-cache")
   const root = ".emo-deps-cache/wasi-files"
   ensure_dir(root)
-  case os_open_write(root + "/note.txt") {
+  case emo.os_open_write(root + "/note.txt") {
     (R.error, why) then {
       println("mknote " + why)
       failed = failed + 1
     }
     (R.ok, fd) then {
-      case os_write(fd, "hello wasi") {
+      case emo.os_write(fd, "hello wasi") {
         (R.error, why) then {
           println("wrnote " + why)
           failed = failed + 1
         }
         (R.ok, _) then {}
       }
-      case os_close(fd) {
+      case emo.os_close(fd) {
         (R.error, why) then {
           println("clnote " + why)
           failed = failed + 1
@@ -408,13 +408,13 @@ def run() Int64 {
       }
     }
   }
-  case os_open_read(root + "/hello.txt") {
+  case emo.os_open_read(root + "/hello.txt") {
     (R.error, why) then {
       println("reread " + why)
       failed = failed + 1
     }
     (R.ok, fd) then {
-      case os_read(fd, 8) {
+      case emo.os_read(fd, 8) {
         (R.error, why) then {
           println("reread " + why)
           failed = failed + 1
@@ -423,7 +423,7 @@ def run() Int64 {
           println("content " + text)
         }
       }
-      case os_close(fd) {
+      case emo.os_close(fd) {
         (R.error, why) then {
           println("recl " + why)
           failed = failed + 1
@@ -625,20 +625,20 @@ def run() Int64 {
       }
     }
   }
-  case os_open_write(root + "/wasi-dir/inner.txt") {
+  case emo.os_open_write(root + "/wasi-dir/inner.txt") {
     (R.error, why) then {
       println("mkin " + why)
       failed = failed + 1
     }
     (R.ok, fd) then {
-      case os_write(fd, "in") {
+      case emo.os_write(fd, "in") {
         (R.error, why) then {
           println("wrin " + why)
           failed = failed + 1
         }
         (R.ok, _) then {}
       }
-      case os_close(fd) {
+      case emo.os_close(fd) {
         (R.error, why) then {
           println("clin " + why)
           failed = failed + 1
@@ -746,9 +746,9 @@ def run() Int64 {
   wasm.set_wasi_preopens([])
 
   // The sandbox goes away with the probe.
-  os_unlink(root + "/note.txt")
-  os_unlink(root + "/hello.txt")
-  os_rmdir(root)
+  emo.os_unlink(root + "/note.txt")
+  emo.os_unlink(root + "/hello.txt")
+  emo.os_rmdir(root)
 
   // The clock answers. Realtime must sit inside the host's own wall
   // bracket — a time.now() reading taken before the call and one taken

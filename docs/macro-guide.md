@@ -188,7 +188,7 @@ The pilot lives in [`examples/derive_shared_macro_demo`](../examples/derive_shar
 ## Rules and limits
 
 - **Macro bodies are self-contained**: they name only their parameters, the `Syntax` namespace, and the builtins. A helper is itself `// #macro` (erased with the rest) or the logic moves inline.
-- **Determinism is by construction**: the compile-time profile refuses every effect and every host-touching builtin (`rand_bytes`, the `os_*` family), and printing. A step budget bounds the run.
+- **Determinism is by construction**: the compile-time profile refuses every effect and every host-touching builtin (`emo.rand_bytes`, the `emo.os_*` family), and printing. A step budget bounds the run.
 - **Splices are checked**: generated code fails the build like hand-written code — a wrong-arity forwarder dies with the ordinary checker errors.
 - **Recursion in a decorated def refers to the final, decorated binding** — the generated wrapper is what exists, so it is what the body sees (this differs from Python on purpose).
 - **Declaration structure is constructor-owned**: holes splice expression trees; a def's name, parameters, and result are built with the API. Field trees carry names, not types, so a type-aware derivation (JSON) waits on that gap.

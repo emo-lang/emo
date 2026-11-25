@@ -710,9 +710,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 do serve(listener)
-case net_connect("127.0.0.1", listener.port(), 0.0) {
+case emo.net_connect("127.0.0.1", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("ping\n")
@@ -730,7 +730,7 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
         let output, _events =
           run_det
             {|
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 println(listener.port() > 0)
 println(listener.port() < 65536)
 |}
@@ -750,9 +750,9 @@ def once(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 do once(listener)
-case net_connect("127.0.0.1", listener.port(), 0.0) {
+case emo.net_connect("127.0.0.1", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     case conn.read_all() {
@@ -775,7 +775,7 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
           run_det
             (Printf.sprintf
                {|
-const result = net_connect("127.0.0.1", %d, 0.0)
+const result = emo.net_connect("127.0.0.1", %d, 0.0)
 case result {
   (R.error, why) then { println(why) }
   (R.ok, _)      then { println("connected?!") }
@@ -798,9 +798,9 @@ def silent(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 do silent(listener)
-case net_connect("127.0.0.1", listener.port(), 0.0) {
+case emo.net_connect("127.0.0.1", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.set_timeout(0.2)
@@ -823,8 +823,8 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
         let output, _events =
           run_det
             {|
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
-case net_connect("127.0.0.1", listener.port(), 0.0) {
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
+case emo.net_connect("127.0.0.1", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.close()
@@ -847,8 +847,8 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
         let output, _events =
           run_det
             {|
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
-case net_connect("127.0.0.1", listener.port(), 0.0) {
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
+case emo.net_connect("127.0.0.1", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.close()
@@ -881,9 +881,9 @@ def cut(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 do cut(listener)
-case net_connect("127.0.0.1", listener.port(), 0.0) {
+case emo.net_connect("127.0.0.1", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     case conn.read_line() {
@@ -906,8 +906,8 @@ case net_connect("127.0.0.1", listener.port(), 0.0) {
         let output, _events =
           run_det
             {|
-const (R.ok, a) = net_udp_bind("127.0.0.1", 0)
-const (R.ok, b) = net_udp_bind("127.0.0.1", 0)
+const (R.ok, a) = emo.net_udp_bind("127.0.0.1", 0)
+const (R.ok, b) = emo.net_udp_bind("127.0.0.1", 0)
 a.send_to("127.0.0.1", b.port(), "datagram")
 case b.recv_from() {
   (R.ok, (data, host, port)) then {
@@ -924,7 +924,7 @@ case b.recv_from() {
         let output, _events =
           run_det
             {|
-const (R.ok, a) = net_udp_bind("127.0.0.1", 0)
+const (R.ok, a) = emo.net_udp_bind("127.0.0.1", 0)
 a.set_timeout(0.1)
 case a.recv_from() {
   (R.ok, _)      then { println("received") }
@@ -960,9 +960,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_unix("%s")
+const (R.ok, listener) = emo.net_listen_unix("%s")
 do serve(listener)
-case net_connect_unix("%s", 0.0) {
+case emo.net_connect_unix("%s", 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("hello unix\n")
@@ -983,7 +983,7 @@ case net_connect_unix("%s", 0.0) {
           run_det_raised
             (Printf.sprintf
                {|
-const (R.ok, listener) = net_listen_unix("%s")
+const (R.ok, listener) = emo.net_listen_unix("%s")
 listener.port()
 |}
                path)
@@ -998,7 +998,7 @@ listener.port()
         let output, _events =
           run_det
             (Printf.sprintf
-               {|case net_connect_unix("%s", 0.0) {
+               {|case emo.net_connect_unix("%s", 0.0) {
   (R.error, why) then { println(why) }
   (R.ok, _)      then { println("connected?!") }
 }
@@ -1016,7 +1016,7 @@ listener.port()
         let output, _events =
           run_det
             {|
-const (R.ok, addrs) = net_resolve("localhost")
+const (R.ok, addrs) = emo.net_resolve("localhost")
 println(addrs.length() > 0)
 |}
         in
@@ -1040,9 +1040,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 do serve(listener)
-case net_connect("localhost", listener.port(), 0.0) {
+case emo.net_connect("localhost", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("by name\n")
@@ -1060,7 +1060,7 @@ case net_connect("localhost", listener.port(), 0.0) {
         let output, _events =
           run_det
             {|
-case net_resolve("definitely not a host") {
+case emo.net_resolve("definitely not a host") {
   (R.error, why) then { println(why) }
   (R.ok, _)      then { println("resolved?!") }
 }
@@ -1074,8 +1074,8 @@ case net_resolve("definitely not a host") {
             {|
 // Both sockets and the send resolve `localhost` the same way, so the
 // first resolved address serves bind and send alike.
-const (R.ok, a) = net_udp_bind("localhost", 0)
-const (R.ok, b) = net_udp_bind("localhost", 0)
+const (R.ok, a) = emo.net_udp_bind("localhost", 0)
+const (R.ok, b) = emo.net_udp_bind("localhost", 0)
 a.send_to("localhost", b.port(), "named")
 case b.recv_from() {
   (R.ok, (data, _host, _port)) then { println(data) }
@@ -1103,9 +1103,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
 do serve(listener)
-case net_tls_connect("localhost", listener.port(), 0.0) {
+case emo.net_tls_connect("localhost", listener.port(), 0.0) {
   (R.error, why) then { println(why) }
   (R.ok, conn)   then {
     conn.write("no\n")
@@ -1141,9 +1141,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "fixtures/tls-cert.pem", "fixtures/tls-key.pem")
 do serve(listener)
-case net_tls_connect_insecure("localhost", listener.port(), 0.0) {
+case emo.net_tls_connect_insecure("localhost", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("secret over tls\n")
@@ -1183,9 +1183,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
-case net_tls_connect("localhost", listener.port(), 0.0) {
+case emo.net_tls_connect("localhost", listener.port(), 0.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("hello\n")
@@ -1234,9 +1234,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
-case net_tls_connect("localhost", listener.port(), 5.0) {
+case emo.net_tls_connect("localhost", listener.port(), 5.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("loopback\n")
@@ -1259,7 +1259,7 @@ case net_tls_connect("localhost", listener.port(), 5.0) {
         let output, _events =
           run_det
             {|
-case net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent-key.pem") {
+case emo.net_listen_tls("127.0.0.1", 0, "fixtures/absent-cert.pem", "fixtures/absent-key.pem") {
   (R.error, why) then { println(why) }
   (R.ok, _)      then { println("listening?!") }
 }
@@ -1294,9 +1294,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
-case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "", false) {
+case emo.net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "", false) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("hello\n")
@@ -1332,9 +1332,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
-case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "localhost", false) {
+case emo.net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "localhost", false) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("hello\n")
@@ -1364,9 +1364,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem")
 do serve(listener)
-case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "wrong.example", false) {
+case emo.net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "wrong.example", false) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     println("unexpected success")
@@ -1390,7 +1390,7 @@ case net_tls_connect_with("127.0.0.1", listener.port(), 5.0, "fixtures/tls-ca.pe
         let output, _events =
           run_det
             {|
-case net_tls_connect("127.0.0.1", 9, 1.0) {
+case emo.net_tls_connect("127.0.0.1", 9, 1.0) {
   (R.error, why) then { println(why) }
   (R.ok, _)      then { println("connected?!") }
 }
@@ -1423,9 +1423,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls_with("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem", "fixtures/tls-cert.pem", true)
+const (R.ok, listener) = emo.net_listen_tls_with("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem", "fixtures/tls-cert.pem", true)
 do serve(listener)
-case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "fixtures/tls-cert.pem", "fixtures/tls-key.pem", "", false) {
+case emo.net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "fixtures/tls-cert.pem", "fixtures/tls-key.pem", "", false) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("hello\n")
@@ -1459,9 +1459,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls_with("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem", "fixtures/tls-cert.pem", true)
+const (R.ok, listener) = emo.net_listen_tls_with("127.0.0.1", 0, "fixtures/tls-server-cert.pem", "fixtures/tls-server-key.pem", "fixtures/tls-cert.pem", true)
 do serve(listener)
-case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "", false) {
+case emo.net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pem", "", "", "", false) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     case conn.read_line() {
@@ -1485,7 +1485,7 @@ case net_tls_connect_with("localhost", listener.port(), 5.0, "fixtures/tls-ca.pe
             Emo_eval.run_without_scheduler (fun () ->
                 let items =
                   Emo_parser.parse_program ~file:"<test>"
-                    ~source:{|const c = net_connect("127.0.0.1", 1, 0.0)|}
+                    ~source:{|const c = emo.net_connect("127.0.0.1", 1, 0.0)|}
                 in
                 let env = Emo_eval.global_env () in
                 List.iter (Emo_eval.eval_item env) items)

@@ -91,7 +91,7 @@ class LiveEye {
   }
 
   def present() {
-    case os_pwrite(self.pool_fd, self.canvas.bytes().to_string(), 0) {
+    case emo.os_pwrite(self.pool_fd, self.canvas.bytes().to_string(), 0) {
       (R.error, why) then { println("face: pwrite " + why) }
       (R.ok, _) then { }
     }
@@ -713,10 +713,10 @@ def make_window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64,
                                 (R.ok, _) then {
                               const stride = w * 4
                               const pool_path = "/tmp/emo-app-" + title + "-" + os.getpid().to_string() + ".tmp"
-                              case os_shm_open(pool_path) {
+                              case emo.os_shm_open(pool_path) {
                                 (R.error, why) then { return (R.error, "pool " + why) }
                                 (R.ok, pool_fd) then {
-                                  case os_ftruncate(pool_fd, stride * h) {
+                                  case emo.os_ftruncate(pool_fd, stride * h) {
                                     (R.error, why) then { return (R.error, "ftruncate " + why) }
                                     (R.ok, _) then {
                                       case wayland.shm_create_pool(c, shm_id, pool_fd, stride * h) {
@@ -1015,14 +1015,14 @@ def seat_half(c wayland.Conn, globals wayland.Globals, shm_id Int64) (R, (Int64,
                     (R.error, why) then { return (R.error, why) }
                     (R.ok, vkb) then {
                       const map_path = "/tmp/emo-face-map-" + os.getpid().to_string() + ".tmp"
-                      case os_shm_open(map_path) {
+                      case emo.os_shm_open(map_path) {
                         (R.error, why) then { return (R.error, "face: map " + why) }
                         (R.ok, map_fd) then {
                           const text = "xkb_keymap {\n  xkb_keycodes { include \"evdev\" };\n  xkb_types { include \"complete\" };\n  xkb_compat { include \"complete\" };\n  xkb_symbols { include \"pc+us\" };\n};\n"
-                          case os_ftruncate(map_fd, text.length()) {
+                          case emo.os_ftruncate(map_fd, text.length()) {
                             (R.error, why) then { return (R.error, "face: ftruncate " + why) }
                             (R.ok, _) then {
-                              case os_pwrite(map_fd, text, 0) {
+                              case emo.os_pwrite(map_fd, text, 0) {
                                 (R.error, why) then { return (R.error, "face: pwrite " + why) }
                                 (R.ok, _) then {
                                   case wayland.virtual_keyboard_keymap(c, vkb, map_fd, text.length()) {
@@ -1148,10 +1148,10 @@ def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
   const h = 720
   const stride = w * 4
   const pool_path = "/tmp/emo-face-" + os.getpid().to_string() + ".tmp"
-  case os_shm_open(pool_path) {
+  case emo.os_shm_open(pool_path) {
     (R.error, why) then { println("face: pool " + why) }
     (R.ok, pool_fd) then {
-      case os_ftruncate(pool_fd, stride * h) {
+      case emo.os_ftruncate(pool_fd, stride * h) {
         (R.error, why) then { println("face: ftruncate " + why) }
         (R.ok, _) then {
           case wayland.shm_create_pool(c, shm_id, pool_fd, stride * h) {

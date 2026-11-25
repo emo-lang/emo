@@ -31,6 +31,10 @@ String naming the path and what the kernel said:
 `contents`, and answers how many were written — always all of them,
 or the failure as the error tuple. Unwritable paths fail the same way.
 
+Both are one-line wrappers over the compiler's runtime doors:
+`read` is `return emo.file_read(path)`, `write` is
+`return emo.file_write(path, contents)`.
+
 ## Paths
 
 Paths are taken as given: a relative path resolves against the

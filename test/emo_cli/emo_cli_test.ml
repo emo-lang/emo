@@ -1357,8 +1357,8 @@ let check_run what (out, err, status) expected =
       Alcotest.fail (Printf.sprintf "%s stopped on signal %d" what n)
 
 (* The file-system syscalls, end to end: a scratch program calls the
-   bare file_read/file_write the checker types on every target — the
-   package manifests follow in the step's own task — writing a file,
+   `emo.file_read`/`emo.file_write` doors the checker types on every
+   target — the package manifests follow in the step's own task — writing a file,
    reading it back, and pinning the reason for the missing path. The
    run stands in the scratch dir so the probe's file lands there. *)
 let wasm_file_probe_test =
@@ -1366,11 +1366,11 @@ let wasm_file_probe_test =
       if not (Lazy.force node_available) then Alcotest.skip ();
       let source =
         {|
-const (R.ok, written) = file_write("emo-wasm-probe.txt", "hello from the syscalls\n")
+const (R.ok, written) = emo.file_write("emo-wasm-probe.txt", "hello from the syscalls\n")
 println(written)
-const (R.ok, text) = file_read("emo-wasm-probe.txt")
+const (R.ok, text) = emo.file_read("emo-wasm-probe.txt")
 println(text)
-case file_read("emo-wasm-probe-missing.txt") {
+case emo.file_read("emo-wasm-probe-missing.txt") {
   (R.error, why) then { println(why) }
   (R.ok, _)      then { println("unexpected ok") }
 }
@@ -2274,9 +2274,9 @@ let c_net_tests =
   }
 }
 
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 do serve(listener)
-case net_connect("127.0.0.1", listener.port(), 5.0) {
+case emo.net_connect("127.0.0.1", listener.port(), 5.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn) then {
     var big = "x"
@@ -2311,15 +2311,15 @@ case net_connect("127.0.0.1", listener.port(), 5.0) {
   case l.accept() {
     (R.error, why) then { println("accept failed: ${why}") }
     (R.ok, conn) then {
-      time_sleep_ms(2000)
+      emo.time_sleep_ms(2000)
       conn.close()
     }
   }
 }
 
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 do serve(listener)
-case net_connect("127.0.0.1", listener.port(), 5.0) {
+case emo.net_connect("127.0.0.1", listener.port(), 5.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn) then {
     conn.set_timeout(0.1)
@@ -2470,9 +2470,9 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
 do serve(listener)
-case net_tls_connect("localhost", listener.port(), 5.0) {
+case emo.net_tls_connect("localhost", listener.port(), 5.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("loopback\n")
@@ -2565,7 +2565,7 @@ def use(d Dialer, port Int64) (R, TcpConn) {
   return d.dial(port)
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
 do serve(listener)
 case use(TlsDialer.new(), listener.port()) {
   (R.error, why) then { println("connect failed: ${why}") }
@@ -2658,7 +2658,7 @@ class Dialer {
   }
 }
 
-const (R.ok, listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+const (R.ok, listener) = emo.net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
 do serve(listener)
 Dialer.new(listener.port())
 |}
@@ -2724,15 +2724,15 @@ def serve(listener TcpListener) Void {
   }
 }
 
-const (R.ok, ca_listener) = net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
-const (R.ok, self_listener) = net_listen_tls("127.0.0.1", 0, "%stls-cert.pem", "%stls-key.pem")
+const (R.ok, ca_listener) = emo.net_listen_tls("127.0.0.1", 0, "%stls-server-cert.pem", "%stls-server-key.pem")
+const (R.ok, self_listener) = emo.net_listen_tls("127.0.0.1", 0, "%stls-cert.pem", "%stls-key.pem")
 do serve(ca_listener)
 do serve(self_listener)
-case net_tls_connect("127.0.0.1", self_listener.port(), 5.0) {
+case emo.net_tls_connect("127.0.0.1", self_listener.port(), 5.0) {
   (R.error, why) then { println("verify failed as expected") }
   (R.ok, conn)   then { println("handshook?!") }
 }
-case net_tls_connect_insecure("127.0.0.1", self_listener.port(), 5.0) {
+case emo.net_tls_connect_insecure("127.0.0.1", self_listener.port(), 5.0) {
   (R.error, why) then { println("insecure failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("insecure\n")
@@ -5629,10 +5629,10 @@ let browser_tests =
         if not (Lazy.force node_strip_available) then Alcotest.skip ();
         let entry =
           scratch_entry "browser-page"
-            {|const root = dom_root()
-const label = dom_text("hello")
-dom_append(root, label)
-dom_title("Page title")
+            {|const root = emo.dom_root()
+const label = emo.dom_text("hello")
+emo.dom_append(root, label)
+emo.dom_title("Page title")
 println("ready")
 |}
         in
@@ -5657,12 +5657,12 @@ println("ready")
         if not (Lazy.force node_strip_available) then Alcotest.skip ();
         let entry =
           scratch_entry "browser-event"
-            {|const root = dom_root()
-const button = dom_element("button")
-dom_set_text(button, "press")
-dom_append(root, button)
-dom_connect(button, "click", 7)
-dom_sink() -> (tag Int64) { println("event ${tag}") }
+            {|const root = emo.dom_root()
+const button = emo.dom_element("button")
+emo.dom_set_text(button, "press")
+emo.dom_append(root, button)
+emo.dom_connect(button, "click", 7)
+emo.dom_sink() -> (tag Int64) { println("event ${tag}") }
 |}
         in
         let dir = Filename.dirname entry in
@@ -5675,7 +5675,7 @@ dom_sink() -> (tag Int64) { println("event ${tag}") }
           "event 7\nfired\n");
     tc "browser refuses Node's runtime capabilities by name" (fun () ->
         match
-          browser_emit_refusal "const x = file_read(\"a\")\nprintln(x)\n"
+          browser_emit_refusal "const x = emo.file_read(\"a\")\nprintln(x)\n"
             Emo_codegen.Ts.emit_browser
         with
         | None -> Alcotest.fail "expected a refusal"
@@ -5687,7 +5687,7 @@ dom_sink() -> (tag Int64) { println("event ${tag}") }
                   browser target"));
     tc "typescript refuses the DOM capabilities by name" (fun () ->
         match
-          browser_emit_refusal "const root = dom_root()\n"
+          browser_emit_refusal "const root = emo.dom_root()\n"
             Emo_codegen.Ts.emit_ts
         with
         | None -> Alcotest.fail "expected a refusal"
@@ -6082,9 +6082,9 @@ println("abc".substring(1, 2))
   }
 }
 
-const (R.ok, listener) = net_listen("127.0.0.1", 0)
+const (R.ok, listener) = emo.net_listen("127.0.0.1", 0)
 do serve(listener)
-case net_connect("127.0.0.1", listener.port(), 5.0) {
+case emo.net_connect("127.0.0.1", listener.port(), 5.0) {
   (R.error, why) then { println("connect failed: ${why}") }
   (R.ok, conn)   then {
     conn.write("hello\n")

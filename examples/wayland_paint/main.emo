@@ -263,10 +263,10 @@ def window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64, globals way
 def frame(c wayland.Conn, surface_id Int64, shm_id Int64, xdg_surface_id Int64, toplevel_id Int64, wm_id Int64, globals wayland.Globals) {
   const stride = w * 4
   const pool_path = "/tmp/emo-paint-" + os.getpid().to_string() + ".tmp"
-  case os_shm_open(pool_path) {
+  case emo.os_shm_open(pool_path) {
     (R.error, why) then { println("paint: pool " + why) }
     (R.ok, pool_fd) then {
-      case os_ftruncate(pool_fd, stride * h) {
+      case emo.os_ftruncate(pool_fd, stride * h) {
         (R.error, why) then { println("paint: ftruncate " + why) }
         (R.ok, _) then {
           paint_rows(pool_fd)
@@ -312,12 +312,12 @@ def paint_rows(pool_fd Int64) {
   var r = 0
   while r < h {
     if r < h / 2 {
-      case os_pwrite(pool_fd, red, r * (w * 4)) {
+      case emo.os_pwrite(pool_fd, red, r * (w * 4)) {
         (R.error, why) then { println("paint: pwrite " + why) }
         (R.ok, _) then { }
       }
     } else {
-      case os_pwrite(pool_fd, blue, r * (w * 4)) {
+      case emo.os_pwrite(pool_fd, blue, r * (w * 4)) {
         (R.error, why) then { println("paint: pwrite " + why) }
         (R.ok, _) then { }
       }
@@ -433,14 +433,14 @@ def inject_create(c wayland.Conn, vp_mgr Int64, vk_mgr Int64, seat_id Int64, sur
           // The map: a minimal xkb_v1 keymap, painted through the
           // shm tier, the fd riding the sendmsg tier.
           const map_path = "/tmp/emo-paint-map-" + os.getpid().to_string() + ".tmp"
-          case os_shm_open(map_path) {
+          case emo.os_shm_open(map_path) {
             (R.error, why) then { println("inject: map " + why) }
             (R.ok, map_fd) then {
               const keymap_text = "xkb_keymap {\n  xkb_keycodes { include \"evdev\" };\n  xkb_types { include \"complete\" };\n  xkb_compat { include \"complete\" };\n  xkb_symbols { include \"pc+us\" };\n};\n"
-              case os_ftruncate(map_fd, keymap_text.length()) {
+              case emo.os_ftruncate(map_fd, keymap_text.length()) {
                 (R.error, why) then { println("inject: ftruncate " + why) }
                 (R.ok, _) then {
-                  case os_pwrite(map_fd, keymap_text, 0) {
+                  case emo.os_pwrite(map_fd, keymap_text, 0) {
                     (R.error, why) then { println("inject: pwrite " + why) }
                     (R.ok, _) then {
                       case wayland.virtual_keyboard_keymap(c, vkb, map_fd, keymap_text.length()) {

@@ -34,32 +34,32 @@ const sig_pipe = 13
 const sig_term = 15
 
 def getpid() Int64 {
-  return os_getpid()
+  return emo.os_getpid()
 }
 
 def getppid() Int64 {
-  return os_getppid()
+  return emo.os_getppid()
 }
 
 // The process environment, read-only: the one name asked for, or
 // `(R.error, reason)` when the environment does not carry it — a
 // missing name is expected data, not a failure to dress up.
 def getenv(name String) (R, String) {
-  return os_getenv(name)
+  return emo.os_getenv(name)
 }
 
 // The pause: the milliseconds a caller waits, nanoseconds off the
 // host's clock.
 def sleep_ms(ms Int64) (R, Int64) {
-  return os_sleep_ms(ms)
+  return emo.os_sleep_ms(ms)
 }
 
 def fork() (R, Int64) {
-  return os_fork()
+  return emo.os_fork()
 }
 
 def waitpid(pid Int64) (Int64, Int64) {
-  return os_waitpid(pid)
+  return emo.os_waitpid(pid)
 }
 
 // The polling half of waitpid: the caller keeps going when no child
@@ -69,7 +69,7 @@ def waitpid(pid Int64) (Int64, Int64) {
 // (0, 0); a pid that is nobody's child refuses, the same errno reason
 // on every target.
 def waitpid_nohang(pid Int64) (R, (Int64, Int64)) {
-  return os_waitpid_nohang(pid)
+  return emo.os_waitpid_nohang(pid)
 }
 
 // The child process half of waitpid: true when the child exited through
@@ -107,7 +107,7 @@ def wait_stop_signal(status Int64) Int64 {
 // out-of-range signal refuses ahead of the call, the same fixed reason
 // on every target.
 def kill(pid Int64, sig Int64) (R, Int64) {
-  return os_kill(pid, sig)
+  return emo.os_kill(pid, sig)
 }
 
 // Moves pid into the process group pgid (pgid 0 means pid's own). The
@@ -115,7 +115,7 @@ def kill(pid Int64, sig Int64) (R, Int64) {
 // is the discipline a shell lives by: the parent can then end the
 // whole group with one kill of the negative pid.
 def setpgid(pid Int64, pgid Int64) (R, Int64) {
-  return os_setpgid(pid, pgid)
+  return emo.os_setpgid(pid, pgid)
 }
 
 // Puts the descriptor's terminal into raw mode and answers the state
@@ -126,7 +126,7 @@ def setpgid(pid Int64, pgid Int64) (R, Int64) {
 // line editor's own reading. The caller restores before any command
 // runs, so children keep the classic cooked terminal.
 def tty_raw(fd Int64) (R, Array[Int64]) {
-  return os_tty_raw(fd)
+  return emo.os_tty_raw(fd)
 }
 
 // Hands the terminal its saved words back. The blob answers to the
@@ -134,11 +134,11 @@ def tty_raw(fd Int64) (R, Array[Int64]) {
 // read outside the pair — and a foreign descriptor refuses with the
 // errno reason as a value.
 def tty_restore(fd Int64, saved Array[Int64]) (R, Int64) {
-  return os_tty_restore(fd, saved)
+  return emo.os_tty_restore(fd, saved)
 }
 
 def pipe() (R, (Int64, Int64)) {
-  return os_pipe()
+  return emo.os_pipe()
 }
 
 // Replaces the calling process. argv[0] is conventionally the program
@@ -147,7 +147,7 @@ def pipe() (R, (Int64, Int64)) {
 // the fork child's cue to `_exit` (a raise here would run the parent's
 // cleanup a second time).
 def execv(path String, argv Array[String]) Void {
-  os_execv(path, argv)
+  emo.os_execv(path, argv)
 }
 
 // Replaces the calling process with `file`, searched through the PATH
@@ -161,41 +161,41 @@ def execv(path String, argv Array[String]) Void {
 // the fork child's cue to `_exit` (a raise here would run the
 // parent's cleanup a second time).
 def execvp(file String, argv Array[String]) (R, Int64) {
-  return os_execvp(file, argv)
+  return emo.os_execvp(file, argv)
 }
 
 // Copies old_fd onto new_fd, closing new_fd first if it was open — the
 // plumbing a shell uses to point a child's stdin or stdout at a pipe
 // end or a file before the exec.
 def dup2(old_fd Int64, new_fd Int64) (R, Int64) {
-  return os_dup2(old_fd, new_fd)
+  return emo.os_dup2(old_fd, new_fd)
 }
 
 // Whether fd is attached to a terminal.
 def isatty(fd Int64) Bool {
-  return os_isatty(fd)
+  return emo.os_isatty(fd)
 }
 
 // The process's own argument vector, argv[0] the name the process was
 // started with.
 def argv() Array[String] {
-  return os_argv()
+  return emo.os_argv()
 }
 
 // The environment: unset is a value like every other data-driven
 // failure — (R.error, `os: getenv NAME: is not set`).
 def getenv(name String) (R, String) {
-  return os_getenv(name)
+  return emo.os_getenv(name)
 }
 
 // Sets or replaces name in this process's environment; the fork child
 // inherits it across the exec.
 def setenv(name String, value String) (R, Int64) {
-  return os_setenv(name, value)
+  return emo.os_setenv(name, value)
 }
 
 def unsetenv(name String) (R, Int64) {
-  return os_unsetenv(name)
+  return emo.os_unsetenv(name)
 }
 
 // The discipline a shell lives by: ignore a signal in the shell's own
@@ -203,70 +203,70 @@ def unsetenv(name String) (R, Int64) {
 // disposition of ignored survives the exec — that is why the child
 // undoes it — a handler's does not.
 def signal_ignore(sig Int64) (R, Int64) {
-  return os_signal_ignore(sig)
+  return emo.os_signal_ignore(sig)
 }
 
 def signal_default(sig Int64) (R, Int64) {
-  return os_signal_default(sig)
+  return emo.os_signal_default(sig)
 }
 
 // Exits immediately without unwinding — the fork child's way out. Ordinary
 // cleanup such as flush handlers does not run, which is exactly what makes
 // a forked child safe: it cannot run its parent's cleanup a second time.
 def _exit(status Int64) Void {
-  os__exit(status)
+  emo.os__exit(status)
 }
 
 def open_read(path String) (R, Int64) {
-  return os_open_read(path)
+  return emo.os_open_read(path)
 }
 
 def open_write(path String) (R, Int64) {
-  return os_open_write(path)
+  return emo.os_open_write(path)
 }
 
 def open_append(path String) (R, Int64) {
-  return os_open_append(path)
+  return emo.os_open_append(path)
 }
 
 // Reads up to n bytes; the empty string means end of file.
 def read(fd Int64, n Int64) (R, String) {
-  return os_read(fd, n)
+  return emo.os_read(fd, n)
 }
 
 def write(fd Int64, data String) (R, Int64) {
-  return os_write(fd, data)
+  return emo.os_write(fd, data)
 }
 
 def close(fd Int64) (R, Int64) {
-  return os_close(fd)
+  return emo.os_close(fd)
 }
 
 // The entry names of a directory, byte-order sorted, excluding "." and "..".
 def list_dir(path String) (R, Array[String]) {
-  return os_list_dir(path)
+  return emo.os_list_dir(path)
 }
 
 def mkdir(path String) (R, Int64) {
-  return os_mkdir(path)
+  return emo.os_mkdir(path)
 }
 
 def rmdir(path String) (R, Int64) {
-  return os_rmdir(path)
+  return emo.os_rmdir(path)
 }
 
 def unlink(path String) (R, Int64) {
-  return os_unlink(path)
+  return emo.os_unlink(path)
 }
 
 def rename(old_path String, new_path String) (R, Int64) {
-  return os_rename(old_path, new_path)
+  return emo.os_rename(old_path, new_path)
 }
 
 def getcwd() String {
-  return os_getcwd()
+  return emo.os_getcwd()
 }
 
 def chdir(path String) (R, Int64) {
-  return os_chdir(path)
+  return emo.os_chdir(path)
 }

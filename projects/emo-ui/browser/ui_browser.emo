@@ -1,7 +1,7 @@
 require "emo/ui"
 
 // The DOM backend (T48.11): the portable tree rendered into the page,
-// over the browser runtime's `dom_*` family.
+// over the browser runtime's `emo.dom_*` family.
 //
 // There is no shim here and no C ABI. The runtime's browser host already
 // owns the `document`, and a DOM node crosses into Emo as an Int64
@@ -27,7 +27,7 @@ def apply_styles(handle Int64, kind String, s ui.Style) {
   const ds = css.declarations(kind, s)
   for var i = 0; i < ds.length(); i = i + 1 {
     const pair = ds[i]
-    dom_set_style(handle, pair[0], pair[1])
+    emo.dom_set_style(handle, pair[0], pair[1])
   }
 }
 
@@ -71,19 +71,19 @@ class Dom {
 
   def mount(root ui.Node, events ui.Events) {
     self.sink.replace(events)
-    const point = dom_root()
+    const point = emo.dom_root()
     self.root.replace(point)
-    dom_title(self.title)
+    emo.dom_title(self.title)
     const rs = css.root_declarations()
     for var i = 0; i < rs.length(); i = i + 1 {
       const pair = rs[i]
-      dom_set_style(point, pair[0], pair[1])
+      emo.dom_set_style(point, pair[0], pair[1])
     }
-    dom_sink() -> (tag Int64) {
+    emo.dom_sink() -> (tag Int64) {
       self.sink.read().deliver(tag)
     }
     const top = self.build(root)
-    dom_append(point, top)
+    emo.dom_append(point, top)
     self.top.replace(top)
   }
 
@@ -95,9 +95,9 @@ class Dom {
       self.update(self.top.read(), p)
     } else {
       const point = self.root.read()
-      dom_clear(point)
+      emo.dom_clear(point)
       const top = self.build(next)
-      dom_append(point, top)
+      emo.dom_append(point, top)
       self.top.replace(top)
     }
   }
@@ -130,7 +130,7 @@ class Dom {
     const els = ArrayBuilder.new()
     for var j = 0; j < kids.length(); j = j + 1 {
       if self.continues(kids[j]) {
-        els.push(dom_child(el, kids[j].was()))
+        els.push(emo.dom_child(el, kids[j].was()))
       } else {
         els.push(0 - 1)
       }
@@ -153,21 +153,21 @@ class Dom {
     }
     const leaving = out.to_array().sort()
     for var i = leaving.length() - 1; i >= 0; i = i - 1 {
-      dom_remove(el, dom_child(el, leaving[i]))
+      emo.dom_remove(el, emo.dom_child(el, leaving[i]))
     }
 
     // Left to right. The slots before a child are final by its turn, so
     // the element at its index is either its own or the one it goes
     // ahead of — and 0, when it is the last, is the end.
     for var j = 0; j < kids.length(); j = j + 1 {
-      const here = dom_child(el, j)
+      const here = emo.dom_child(el, j)
       if kept[j] >= 0 {
         if here != kept[j] {
-          dom_insert_before(el, kept[j], here)
+          emo.dom_insert_before(el, kept[j], here)
         }
         self.update(kept[j], kids[j])
       } else {
-        dom_insert_before(el, self.build(kids[j].node()), here)
+        emo.dom_insert_before(el, self.build(kids[j].node()), here)
       }
     }
   }
@@ -214,7 +214,7 @@ class Dom {
     for var i = 0; i < olds.length(); i = i + 1 {
       const name = olds[i][0]
       if !has(news, name) {
-        dom_set_style(el, name, "")
+        emo.dom_set_style(el, name, "")
       }
     }
   }
@@ -256,26 +256,26 @@ class Dom {
   // given again.
   def paint(h Int64, n ui.Node) {
     if n.is(ui.Text) {
-      dom_set_text(h, n.body())
+      emo.dom_set_text(h, n.body())
     }
     if n.is(ui.Button) {
-      dom_set_text(h, n.label())
-      dom_set_prop(h, "type", "button")
-      dom_set_prop(h, "name", "event")
-      dom_set_prop(h, "value", n.event().to_string())
+      emo.dom_set_text(h, n.label())
+      emo.dom_set_prop(h, "type", "button")
+      emo.dom_set_prop(h, "name", "event")
+      emo.dom_set_prop(h, "value", n.event().to_string())
     }
     if n.is(ui.TextInput) {
       // The core's text input shows the model's value and carries no
       // event tag, so it is read-only here for the same reason `ui_ssr`
       // renders it read-only: typing has nowhere to go until a node
       // with an event of its own exists.
-      dom_set_prop(h, "type", "text")
-      dom_set_prop(h, "value", n.value())
-      dom_set_prop(h, "readOnly", true)
+      emo.dom_set_prop(h, "type", "text")
+      emo.dom_set_prop(h, "value", n.value())
+      emo.dom_set_prop(h, "readOnly", true)
     }
     if n.is(ui.Image) {
-      dom_set_prop(h, "src", n.src())
-      dom_set_prop(h, "alt", "")
+      emo.dom_set_prop(h, "src", n.src())
+      emo.dom_set_prop(h, "alt", "")
     }
     apply_styles(h, self.kind_of(n), n.style())
   }
@@ -286,12 +286,12 @@ class Dom {
     const h = self.make(n)
     self.paint(h, n)
     if n.is(ui.Button) {
-      dom_connect(h, "click", n.event())
+      emo.dom_connect(h, "click", n.event())
     }
     if carries(n) {
       const kids = n.children()
       for var i = 0; i < kids.length(); i = i + 1 {
-        dom_append(h, self.build(kids[i]))
+        emo.dom_append(h, self.build(kids[i]))
       }
     }
     return h
@@ -301,19 +301,19 @@ class Dom {
   // button, an input and an image, a div for the rest.
   def make(n ui.Node) Int64 {
     if n.is(ui.Text) {
-      return dom_element("span")
+      return emo.dom_element("span")
     }
     if n.is(ui.Button) {
-      return dom_element("button")
+      return emo.dom_element("button")
     }
     if n.is(ui.TextInput) {
-      return dom_element("input")
+      return emo.dom_element("input")
     }
     if n.is(ui.Image) {
-      return dom_element("img")
+      return emo.dom_element("img")
     }
     if n.is(ui.Spacer) || carries(n) {
-      return dom_element("div")
+      return emo.dom_element("div")
     }
     raise Exception.new(message:
       "ui_browser: this renderer does not know the node class")

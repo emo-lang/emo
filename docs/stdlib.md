@@ -51,6 +51,17 @@ Two conventions hold across every package:
   implementations too — POSIX-backed on `ocaml` and `c`, Node-backed on
   `typescript`.
 
+## The `emo` runtime namespace
+
+The compiler ships one namespace no package owns: `emo`, the runtime's
+doors. A package that needs the host wraps one door and nothing else —
+`file.read` is `return emo.file_read(path)`, and its `write` is the same
+shape; `os`, `net`, `rand`, and `time` call their doors the same way,
+and the browser target's `emo.dom_*` family is the DOM capability layer.
+`emo` is built in: no `dep` entry, no `require`, no version. Every
+program may call it; a name the namespace does not carry is a compile
+error, and a bare door name (`file_read(...)`) is not defined at all.
+
 The packages:
 
 | Package | What it gives you | Targets |

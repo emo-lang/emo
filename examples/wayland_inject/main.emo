@@ -154,14 +154,14 @@ def create_devices(c wayland.Conn, vk_mgr Int64, vp_mgr Int64, seat_id Int64) {
 
 def send_keymap(c wayland.Conn, vkb Int64, vptr Int64) {
   const map_path = "/tmp/emo-inject-map-" + os.getpid().to_string() + ".tmp"
-  case os_shm_open(map_path) {
+  case emo.os_shm_open(map_path) {
     (R.error, why) then { println("inject: map " + why) }
     (R.ok, map_fd) then {
       const text = "xkb_keymap {\n  xkb_keycodes { include \"evdev\" };\n  xkb_types { include \"complete\" };\n  xkb_compat { include \"complete\" };\n  xkb_symbols { include \"pc+us\" };\n};\n"
-      case os_ftruncate(map_fd, text.length()) {
+      case emo.os_ftruncate(map_fd, text.length()) {
         (R.error, why) then { println("inject: ftruncate " + why) }
         (R.ok, _) then {
-          case os_pwrite(map_fd, text, 0) {
+          case emo.os_pwrite(map_fd, text, 0) {
             (R.error, why) then { println("inject: pwrite " + why) }
             (R.ok, _) then {
               println("inject: map painted")

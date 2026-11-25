@@ -53,7 +53,7 @@ def send_raw(conn TcpConn, m wayland.Message) {
   case m.finish() {
     (bytes, has_fd, fd) then {
       if has_fd {
-        case net_sendmsg_fd(conn, bytes.to_string(), fd) {
+        case emo.net_sendmsg_fd(conn, bytes.to_string(), fd) {
           (R.error, why) then { println("mock: fd send " + why) }
           (R.ok, _) then { }
         }
@@ -187,14 +187,14 @@ def mock(listener TcpListener, pool_path String) {
           // The keymap: a real fd, a real keymap's text painted
           // through the shm tier — both symbol spellings the compiled
           // keymaps wear, the shift riding the modifiers beats.
-          case os_shm_open(pool_path) {
+          case emo.os_shm_open(pool_path) {
             (R.error, why) then { println("mock: pool " + why) }
             (R.ok, map_fd) then {
               const text = "xkb_keymap {\n  xkb_keycodes {\n    <AD01> = 32;\n    <LCTL> = 37;\n    <LEFT> = 113;\n    <RGHT> = 114;\n    <RTRN> = 36;\n  };\n  xkb_symbols {\n    key <AD01> { [ q, Q ] };\n    key <LCTL> { symbols[Group1] = [ Control_L, Control_L ] };\n    key <LEFT> { [ Left ] };\n    key <RGHT> { [ Right ] };\n    key <RTRN> { [ Return ] };\n  };\n};\n"
-              case os_ftruncate(map_fd, text.length()) {
+              case emo.os_ftruncate(map_fd, text.length()) {
                 (R.error, why) then { println("mock: ftruncate " + why) }
                 (R.ok, _) then {
-                  case os_pwrite(map_fd, text, 0) {
+                  case emo.os_pwrite(map_fd, text, 0) {
                     (R.error, why) then { println("mock: pwrite " + why) }
                     (R.ok, _) then {
                       const keymap = wayland.Message.new(6, 0)

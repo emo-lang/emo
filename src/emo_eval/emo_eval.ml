@@ -538,131 +538,93 @@ let global_env () =
       mutable_ = false;
     };
   (* The runtime's implementations of the standard library's packages: the
-     bare names a package's own Emo source calls, never a surface. *)
-  Frame_tbl.replace env.frame "net_connect"
-    { bound = RuntimeImplFn "net_connect"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_listen"
-    { bound = RuntimeImplFn "net_listen"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_resolve"
-    { bound = RuntimeImplFn "net_resolve"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_env"
-    { bound = RuntimeImplFn "net_env"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_udp_bind"
-    { bound = RuntimeImplFn "net_udp_bind"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_connect_unix"
-    { bound = RuntimeImplFn "net_connect_unix"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_listen_unix"
-    { bound = RuntimeImplFn "net_listen_unix"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_sendmsg_fd"
-    { bound = RuntimeImplFn "net_sendmsg_fd"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_recvmsg_fd"
-    { bound = RuntimeImplFn "net_recvmsg_fd"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_shm_open"
-    { bound = RuntimeImplFn "os_shm_open"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_ftruncate"
-    { bound = RuntimeImplFn "os_ftruncate"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_sleep_ms"
-    { bound = RuntimeImplFn "os_sleep_ms"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_pwrite"
-    { bound = RuntimeImplFn "os_pwrite"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_tls_connect"
-    { bound = RuntimeImplFn "net_tls_connect"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_tls_connect_insecure"
-    { bound = RuntimeImplFn "net_tls_connect_insecure"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_listen_tls"
-    { bound = RuntimeImplFn "net_listen_tls"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_tls_connect_with"
-    { bound = RuntimeImplFn "net_tls_connect_with"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_tls_wrap"
-    { bound = RuntimeImplFn "net_tls_wrap"; mutable_ = false };
-  Frame_tbl.replace env.frame "net_listen_tls_with"
-    { bound = RuntimeImplFn "net_listen_tls_with"; mutable_ = false };
-  Frame_tbl.replace env.frame "file_read"
-    { bound = RuntimeImplFn "file_read"; mutable_ = false };
-  Frame_tbl.replace env.frame "file_write"
-    { bound = RuntimeImplFn "file_write"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_getpid"
-    { bound = RuntimeImplFn "os_getpid"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_getenv"
-    { bound = RuntimeImplFn "os_getenv"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_getppid"
-    { bound = RuntimeImplFn "os_getppid"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_fork"
-    { bound = RuntimeImplFn "os_fork"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_waitpid"
-    { bound = RuntimeImplFn "os_waitpid"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_waitpid_nohang"
-    { bound = RuntimeImplFn "os_waitpid_nohang"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_pipe"
-    { bound = RuntimeImplFn "os_pipe"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_execv"
-    { bound = RuntimeImplFn "os_execv"; mutable_ = false };
-  Frame_tbl.replace env.frame "os__exit"
-    { bound = RuntimeImplFn "os__exit"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_open_read"
-    { bound = RuntimeImplFn "os_open_read"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_open_write"
-    { bound = RuntimeImplFn "os_open_write"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_open_append"
-    { bound = RuntimeImplFn "os_open_append"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_lseek"
-    { bound = RuntimeImplFn "os_lseek"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_stat"
-    { bound = RuntimeImplFn "os_stat"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_read"
-    { bound = RuntimeImplFn "os_read"; mutable_ = false };
-  Frame_tbl.replace env.frame "rand_bytes"
-    { bound = RuntimeImplFn "rand_bytes"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_write"
-    { bound = RuntimeImplFn "os_write"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_close"
-    { bound = RuntimeImplFn "os_close"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_list_dir"
-    { bound = RuntimeImplFn "os_list_dir"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_mkdir"
-    { bound = RuntimeImplFn "os_mkdir"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_rmdir"
-    { bound = RuntimeImplFn "os_rmdir"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_unlink"
-    { bound = RuntimeImplFn "os_unlink"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_rename"
-    { bound = RuntimeImplFn "os_rename"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_getcwd"
-    { bound = RuntimeImplFn "os_getcwd"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_chdir"
-    { bound = RuntimeImplFn "os_chdir"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_dup2"
-    { bound = RuntimeImplFn "os_dup2"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_execvp"
-    { bound = RuntimeImplFn "os_execvp"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_isatty"
-    { bound = RuntimeImplFn "os_isatty"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_argv"
-    { bound = RuntimeImplFn "os_argv"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_getenv"
-    { bound = RuntimeImplFn "os_getenv"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_setenv"
-    { bound = RuntimeImplFn "os_setenv"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_unsetenv"
-    { bound = RuntimeImplFn "os_unsetenv"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_signal_ignore"
-    { bound = RuntimeImplFn "os_signal_ignore"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_signal_default"
-    { bound = RuntimeImplFn "os_signal_default"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_kill"
-    { bound = RuntimeImplFn "os_kill"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_setpgid"
-    { bound = RuntimeImplFn "os_setpgid"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_tty_raw"
-    { bound = RuntimeImplFn "os_tty_raw"; mutable_ = false };
-  Frame_tbl.replace env.frame "os_tty_restore"
-    { bound = RuntimeImplFn "os_tty_restore"; mutable_ = false };
-  Frame_tbl.replace env.frame "time_now_ms"
-    { bound = RuntimeImplFn "time_now_ms"; mutable_ = false };
-  Frame_tbl.replace env.frame "time_mono_ns"
-    { bound = RuntimeImplFn "time_mono_ns"; mutable_ = false };
-  Frame_tbl.replace env.frame "time_sleep_ms"
-    { bound = RuntimeImplFn "time_sleep_ms"; mutable_ = false };
+     doors under the compiler's `emo` namespace (`emo.file_read`), never a
+     bare name and never a surface. The namespace is one module handle
+     whose own frame carries the doors; the module system walks it like
+     any other module. *)
+  let doors =
+    [
+      "net_connect";
+      "net_listen";
+      "net_resolve";
+      "net_env";
+      "net_udp_bind";
+      "net_connect_unix";
+      "net_listen_unix";
+      "net_sendmsg_fd";
+      "net_recvmsg_fd";
+      "os_shm_open";
+      "os_ftruncate";
+      "os_sleep_ms";
+      "os_pwrite";
+      "net_tls_connect";
+      "net_tls_connect_insecure";
+      "net_listen_tls";
+      "net_tls_connect_with";
+      "net_tls_wrap";
+      "net_listen_tls_with";
+      "file_read";
+      "file_write";
+      "os_getpid";
+      "os_getenv";
+      "os_getppid";
+      "os_fork";
+      "os_waitpid";
+      "os_waitpid_nohang";
+      "os_pipe";
+      "os_execv";
+      "os__exit";
+      "os_open_read";
+      "os_open_write";
+      "os_open_append";
+      "os_lseek";
+      "os_stat";
+      "os_read";
+      "rand_bytes";
+      "os_write";
+      "os_close";
+      "os_list_dir";
+      "os_mkdir";
+      "os_rmdir";
+      "os_unlink";
+      "os_rename";
+      "os_getcwd";
+      "os_chdir";
+      "os_dup2";
+      "os_execvp";
+      "os_isatty";
+      "os_argv";
+      "os_setenv";
+      "os_unsetenv";
+      "os_signal_ignore";
+      "os_signal_default";
+      "os_kill";
+      "os_setpgid";
+      "os_tty_raw";
+      "os_tty_restore";
+      "time_now_ms";
+      "time_mono_ns";
+      "time_sleep_ms";
+    ]
+  in
+  let doors_env = { frame = Frame_tbl.create 64; parent = None } in
+  List.iter
+    (fun name ->
+      Frame_tbl.replace doors_env.frame name
+        { bound = RuntimeImplFn name; mutable_ = false })
+    doors;
+  Frame_tbl.replace env.frame "emo"
+    {
+      bound =
+        Module
+          {
+            mpath = [ "emo" ];
+            mchildren = [];
+            menv = Some doors_env;
+            loading = false;
+          };
+      mutable_ = false;
+    };
   env
 
 (* The restricted profile: hermetic evaluation with a step budget — the same

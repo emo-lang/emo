@@ -496,9 +496,16 @@ and parse_primary st =
       advance st |> ignore;
       node tok.Tok.span Ast.Self
   | Tok.Keyword Tok.Emo ->
-      error "E2028" tok.Tok.span
-        "`emo` is not a value; call the method directly on its receiver"
-        ~hint:"`emo Name { ... }` declares a function group"
+      (* `emo.` heads the compiler's runtime namespace (`emo.file_read`);
+         a bare `emo` still opens a function group, so the dot decides. *)
+      let next = Emo_lexer.Stream.peek_ahead st.stream 1 in
+      if next.Tok.kind = Tok.Op Tok.Dot && not next.Tok.newline_before then (
+        advance st |> ignore;
+        node tok.Tok.span (Ast.Ident "emo"))
+      else
+        error "E2028" tok.Tok.span
+          "`emo` is not a value; call the method directly on its receiver"
+          ~hint:"`emo Name { ... }` declares a function group"
   | Tok.String_chunk _ | Tok.String_end | Tok.Interp_open -> parse_string st
   | Tok.Keyword Tok.Do -> (
       advance st |> ignore;
@@ -1590,7 +1597,10 @@ and parse_item_decl st =
         item_desc = Ast.Item_class c;
         directives = [];
       }
-  | Tok.Keyword Tok.Emo ->
+  | Tok.Keyword Tok.Emo
+    when (Emo_lexer.Stream.peek_ahead st.stream 1).Tok.kind <> Tok.Op Tok.Dot ->
+      (* `emo Name { ... }` declares a group; `emo.file_read(...)` is an
+         ordinary statement, so the dot sends it to the statement arm. *)
       let g = parse_emo_group st in
       {
         Ast.item_span = g.Ast.group_span;

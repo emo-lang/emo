@@ -17,7 +17,7 @@ def bytes(n Int64) (R, Bytes) {
   if n < 0 {
     raise Exception.new(message: "rand: a negative count asks for no bytes")
   }
-  return rand_bytes(n)
+  return emo.rand_bytes(n)
 }
 
 // ---- The deterministic stream: SP 800-90A's HMAC-DRBG with SHA-256

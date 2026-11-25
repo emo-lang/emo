@@ -6,9 +6,9 @@
 // error codes, no nil.
 
 def read(path String) (R, String) {
-  return file_read(path)
+  return emo.file_read(path)
 }
 
 def write(path String, contents String) (R, Int64) {
-  return file_write(path, contents)
+  return emo.file_write(path, contents)
 }

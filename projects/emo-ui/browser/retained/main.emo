@@ -4,7 +4,7 @@ require "emo/ui_browser"
 // The DOM backend's own golden: the page read back, frame by frame. The
 // backend is driven the way the loop drives it — one `mount`, then a
 // `patch` per frame — and after each one the page is walked through
-// `dom_child`, every element marked `=` when the frame before already had
+// `emo.dom_child`, every element marked `=` when the frame before already had
 // it (it answers the same handle) and `+` when this frame made it. What
 // is pinned is the reconciliation itself: a continued node keeps its
 // element, a new or replaced one gets a new one, a reorder moves instead
@@ -59,7 +59,7 @@ def show(n ui.Node, el Int64, depth Int64, was Array[Int64], lines Box,
   if carries(n) {
     const kids = n.children()
     for var j = 0; j < kids.length(); j = j + 1 {
-      show(kids[j], dom_child(el, j), depth + 1, was, lines, seen)
+      show(kids[j], emo.dom_child(el, j), depth + 1, was, lines, seen)
     }
   }
 }
@@ -67,7 +67,7 @@ def show(n ui.Node, el Int64, depth Int64, was Array[Int64], lines Box,
 // The page as it stands, under the root's element — the mount point's
 // only child — against the elements the frame before had.
 def read_page(next ui.Node, was Array[Int64], lines Box, seen Box) {
-  show(next, dom_child(dom_root(), 0), 0, was, lines, seen)
+  show(next, emo.dom_child(emo.dom_root(), 0), 0, was, lines, seen)
 }
 
 def main() {

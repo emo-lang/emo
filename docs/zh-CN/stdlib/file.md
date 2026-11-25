@@ -26,6 +26,10 @@ String,写明路径和内核的说法:
 `write` 创建或截断该路径,写完全部 `contents` 字节,返回写入的字
 节数——永远是全部,否则失败以错误元组返回。路径不可写时同理。
 
+两者都是编译器运行时门的一行包装:`read` 就是
+`return emo.file_read(path)`,`write` 就是
+`return emo.file_write(path, contents)`。
+
 ## 路径
 
 路径按原样使用:相对路径相对进程的工作目录解析,工作目录由

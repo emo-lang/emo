@@ -53,7 +53,7 @@ class Conn {
     case m.finish() {
       (bytes, has_fd, fd) then {
         if has_fd {
-          case net_sendmsg_fd(self.side.conn, bytes.to_string(), fd) {
+          case emo.net_sendmsg_fd(self.side.conn, bytes.to_string(), fd) {
             (R.error, why) then { return (R.error, why) }
             (R.ok, _) then { return (R.ok, self) }
           }
@@ -70,7 +70,7 @@ class Conn {
 // The connection to the compositor: the socket at `path`, spoken to
 // in direct style. The c target's Unix-socket tier carries it.
 def connect(path String, timeout Float64) (R, Conn) {
-  const got = net_connect_unix(path, timeout)
+  const got = emo.net_connect_unix(path, timeout)
   case got {
     (R.error, why) then { return (R.error, why) }
     (R.ok, c) then { return (R.ok, Conn.new(Side.new(c), 2, 1)) }
@@ -313,7 +313,7 @@ class Side {
   // One recvmsg: the bytes appended, the consumed prefix dropped,
   // any fd that rode them queued for the grammar to claim.
   def recv_more() (R, Int64) {
-    case net_recvmsg_fd(self.conn, 4096) {
+    case emo.net_recvmsg_fd(self.conn, 4096) {
       (R.error, why) then { return (R.error, why) }
       (R.ok, data, fd) then {
         const got = data.to_bytes()

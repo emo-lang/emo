@@ -417,12 +417,15 @@ and lower_expr env (e : Ast.expr) : expr =
             let q = type_display env name in
             { ety = Emo_check.EnumType q; desc = Type_ref q }
         | None when is_builtin name -> expr (Builtin { name; args = [] })
-        | None when is_runtime_impl name ->
-            expr (Runtime_impl { name; args = [] })
         | None -> { ety = Emo_check.Unknown; desc = Type_ref name })
   | Ast.Type_ident name ->
       { ety = type_of env e.Ast.span; desc = Type_ref (type_display env name) }
   | Ast.Self -> expr (Var "self")
+  | Ast.Member ({ Ast.desc = Ast.Ident "emo"; _ }, name)
+    when is_runtime_impl name && not (List.mem "emo" env.locals) ->
+      (* A runtime door read as a value: the call lowering's zero-argument
+         shape, the same one the bare implementation name used to take. *)
+      expr (Runtime_impl { name; args = [] })
   | Ast.Member (inner, name) -> (
       (* A dotted path: a module member (def, class, enum member), or a
          field read on a value — the symbol table tells them apart. The
@@ -535,13 +538,15 @@ and lower_call env span callee args =
     List.map (fun { Ast.arg_value; _ } -> lower_expr env arg_value) args
   in
   match callee.Ast.desc with
-  | Ast.Ident name when is_builtin name || is_runtime_impl name -> (
-      (* The program's own names answer first: a def named `time_of` is
-         the program's def, not the time door its prefix matches (found
-         2026-11-14 — uuid_demo's helper lowered as a runtime door, and
-         the wasm build refused a door the program never asked for). The
-         doors sit below the program's symbols, the way the checker and
-         the interpreter resolve the same call. *)
+  | Ast.Member ({ Ast.desc = Ast.Ident "emo"; _ }, name)
+    when is_runtime_impl name && not (List.mem "emo" env.locals) ->
+      (* A runtime door: the compiler's `emo` namespace, lowered to the
+         same Runtime_impl node a bare implementation name used to reach. *)
+      {
+        ety = type_of env span;
+        desc = Runtime_impl { name; args = lower_args () };
+      }
+  | Ast.Ident name when is_builtin name -> (
       match resolve_callee env callee with
       | Some (mangled, params) when params = [] && args <> [] ->
           (* A zero-param symbol called with arguments is a const
@@ -557,15 +562,10 @@ and lower_call env span callee args =
             ety = type_of env span;
             desc = Call { func = mangled; args = order_args env params args };
           }
-      | None when is_builtin name ->
-          {
-            ety = type_of env span;
-            desc = Builtin { name; args = lower_args () };
-          }
       | None ->
           {
             ety = type_of env span;
-            desc = Runtime_impl { name; args = lower_args () };
+            desc = Builtin { name; args = lower_args () };
           })
   | _ -> (
       match resolve_callee env callee with

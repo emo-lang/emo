@@ -593,7 +593,7 @@ def fd_write(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
     if len > 0 {
       const b = internal.store.mem_bytes(mem)
       const chunk = copy_out(b, internal.value.mask32(p[1]), len)
-      case os_write(e[1][1], chunk.to_string()) {
+      case emo.os_write(e[1][1], chunk.to_string()) {
         (R.error, _) then {
           return e_io
         }
@@ -641,7 +641,7 @@ def fd_read(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
     }
     return e_success
   }
-  case os_read(e[1][1], sizes[1]) {
+  case emo.os_read(e[1][1], sizes[1]) {
     (R.error, why) then {
       return read_errno(why)
     }
@@ -718,7 +718,7 @@ def fd_close(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
     return e_badf
   }
   if e[0] == 2 {
-    os_close(e[1])
+    emo.os_close(e[1])
   }
   fd_put(slot, (0 - 1, 0 - 1, "", "", "", 0))
   return e_success
@@ -740,7 +740,7 @@ def fd_seek(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   if e[1][0] != 2 {
     return e_spipe
   }
-  case os_lseek(e[1][1], args[1][1], whence) {
+  case emo.os_lseek(e[1][1], args[1][1], whence) {
     (R.error, why) then {
       return read_errno(why)
     }
@@ -945,7 +945,7 @@ def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   }
   const host = r[1]
   if dir_open {
-    case os_stat(host) {
+    case emo.os_stat(host) {
       (R.error, why) then {
         return open_errno(why)
       }
@@ -958,7 +958,7 @@ def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
   }
   var hfd = 0 - 1
   if append {
-    case os_open_append(host) {
+    case emo.os_open_append(host) {
       (R.error, why) then {
         return open_errno(why)
       }
@@ -968,7 +968,7 @@ def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
     }
   } else {
     if want_write {
-      case os_open_write(host) {
+      case emo.os_open_write(host) {
         (R.error, why) then {
           return open_errno(why)
         }
@@ -977,7 +977,7 @@ def path_open(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 {
         }
       }
     } else {
-      case os_open_read(host) {
+      case emo.os_open_read(host) {
         (R.error, why) then {
           return open_errno(why)
         }
@@ -1132,7 +1132,7 @@ def fd_readdir(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64 
     return e_inval
   }
   const cookie = args[3][1]
-  case os_list_dir(e[1][3]) {
+  case emo.os_list_dir(e[1][3]) {
     (R.error, why) then {
       return read_errno(why)
     }
@@ -1222,7 +1222,7 @@ def fd_filestat_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) I
   if e[1][0] == 0 {
     return write_filestat(mem, args[1][1], 2, 0, 0, 0, 0, 0)
   }
-  case os_stat(e[1][3]) {
+  case emo.os_stat(e[1][3]) {
     (R.error, why) then {
       return open_errno(why)
     }
@@ -1254,7 +1254,7 @@ def path_filestat_get(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)])
   if r[0] != 0 {
     return r[0]
   }
-  case os_stat(r[1]) {
+  case emo.os_stat(r[1]) {
     (R.error, why) then {
       return open_errno(why)
     }
@@ -1281,7 +1281,7 @@ def path_create_directory(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int6
   if r[0] != 0 {
     return r[0]
   }
-  case os_mkdir(r[1]) {
+  case emo.os_mkdir(r[1]) {
     (R.error, why) then {
       return mut_errno(why)
     }
@@ -1302,7 +1302,7 @@ def path_remove_directory(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int6
   if r[0] != 0 {
     return r[0]
   }
-  case os_rmdir(r[1]) {
+  case emo.os_rmdir(r[1]) {
     (R.error, why) then {
       return mut_errno(why)
     }
@@ -1325,7 +1325,7 @@ def path_unlink_file(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) 
   if r[0] != 0 {
     return r[0]
   }
-  case os_unlink(r[1]) {
+  case emo.os_unlink(r[1]) {
     (R.error, why) then {
       return mut_errno(why)
     }
@@ -1357,7 +1357,7 @@ def path_rename(mem (Box[Bytes], Int64, Bool), args Array[(Int64, Int64)]) Int64
   if r2[0] != 0 {
     return r2[0]
   }
-  case os_rename(r1[1], r2[1]) {
+  case emo.os_rename(r1[1], r2[1]) {
     (R.error, why) then {
       return mut_errno(why)
     }

@@ -1068,709 +1068,6 @@ let empty_env =
             depth = 0;
             span = Emo_support.Span.zero;
           } );
-        (* The runtime's implementations of the standard library: the bare
-           names a package's own Emo source calls underneath, never an API,
-           and never presented as a surface. *)
-        ( "net_connect",
-          {
-            vtype =
-              FuncType
-                ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TupleType [ EnumType "R"; TcpConn ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_listen",
-          {
-            vtype =
-              FuncType
-                ( [ ("host", String); ("port", Int64) ],
-                  TupleType [ EnumType "R"; TcpListener ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_resolve",
-          {
-            vtype =
-              FuncType
-                ( [ ("host", String) ],
-                  TupleType [ EnumType "R"; ArrayType String ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_env",
-          {
-            vtype =
-              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; String ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_udp_bind",
-          {
-            vtype =
-              FuncType
-                ( [ ("host", String); ("port", Int64) ],
-                  TupleType [ EnumType "R"; UdpSocket ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_connect_unix",
-          {
-            vtype =
-              FuncType
-                ( [ ("path", String); ("timeout", Float64) ],
-                  TupleType [ EnumType "R"; TcpConn ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_listen_unix",
-          {
-            vtype =
-              FuncType
-                ([ ("path", String) ], TupleType [ EnumType "R"; TcpListener ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        (* The fd passage and the shm tier (A18.7): the c target's
-           runtime and the interpreter's stub leg; the ocaml target
-           still refuses them at runtime. *)
-        ( "net_sendmsg_fd",
-          {
-            vtype =
-              FuncType
-                ( [ ("conn", TcpConn); ("data", String); ("fd", Int64) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_recvmsg_fd",
-          {
-            vtype =
-              FuncType
-                ( [ ("conn", TcpConn); ("cap", Int64) ],
-                  TupleType [ EnumType "R"; String; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_shm_open",
-          {
-            vtype =
-              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_ftruncate",
-          {
-            vtype =
-              FuncType
-                ( [ ("fd", Int64); ("size", Int64) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_sleep_ms",
-          {
-            vtype =
-              FuncType ([ ("ms", Int64) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_pwrite",
-          {
-            vtype =
-              FuncType
-                ( [ ("fd", Int64); ("data", String); ("offset", Int64) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_tls_connect",
-          {
-            vtype =
-              FuncType
-                ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TupleType [ EnumType "R"; TcpConn ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_tls_connect_insecure",
-          {
-            vtype =
-              FuncType
-                ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
-                  TupleType [ EnumType "R"; TcpConn ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_listen_tls",
-          {
-            vtype =
-              FuncType
-                ( [
-                    ("host", String);
-                    ("port", Int64);
-                    ("cert_path", String);
-                    ("key_path", String);
-                  ],
-                  TupleType [ EnumType "R"; TcpListener ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_tls_connect_with",
-          {
-            vtype =
-              FuncType
-                ( [
-                    ("host", String);
-                    ("port", Int64);
-                    ("timeout", Float64);
-                    ("ca_file", String);
-                    ("client_cert_file", String);
-                    ("client_key_file", String);
-                    ("server_name", String);
-                    ("insecure", Bool);
-                  ],
-                  TupleType [ EnumType "R"; TcpConn ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_tls_wrap",
-          {
-            vtype =
-              FuncType
-                ( [
-                    ("conn", TcpConn);
-                    ("server_name", String);
-                    ("ca_file", String);
-                    ("client_cert_file", String);
-                    ("client_key_file", String);
-                    ("insecure", Bool);
-                  ],
-                  TupleType [ EnumType "R"; TcpConn ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "net_listen_tls_with",
-          {
-            vtype =
-              FuncType
-                ( [
-                    ("host", String);
-                    ("port", Int64);
-                    ("cert_path", String);
-                    ("key_path", String);
-                    ("ca_file", String);
-                    ("require_client_cert", Bool);
-                  ],
-                  TupleType [ EnumType "R"; TcpListener ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        (* The DOM capability family: the browser target's implementations
-           of the dom package. Handles are Int64s into the runtime's node
-           table; the page's own objects never cross into Emo. *)
-        ( "dom_root",
-          {
-            vtype = FuncType ([], Int64);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_element",
-          {
-            vtype = FuncType ([ ("tag", String) ], Int64);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_text",
-          {
-            vtype = FuncType ([ ("text", String) ], Int64);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_set_text",
-          {
-            vtype = FuncType ([ ("node", Int64); ("text", String) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_set_style",
-          {
-            vtype =
-              FuncType
-                ([ ("node", Int64); ("name", String); ("value", String) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_set_prop",
-          {
-            vtype =
-              FuncType
-                ([ ("node", Int64); ("name", String); ("value", Unknown) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_append",
-          {
-            vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_child",
-          {
-            vtype = FuncType ([ ("parent", Int64); ("index", Int64) ], Int64);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_remove",
-          {
-            vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_insert_before",
-          {
-            vtype =
-              FuncType
-                ( [ ("parent", Int64); ("child", Int64); ("before", Int64) ],
-                  Void );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_clear",
-          {
-            vtype = FuncType ([ ("node", Int64) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_connect",
-          {
-            vtype =
-              FuncType
-                ([ ("node", Int64); ("event", String); ("tag", Int64) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_value",
-          {
-            vtype = FuncType ([ ("node", Int64) ], String);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_sink",
-          {
-            vtype = FuncType ([ ("sink", Unknown) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_title",
-          {
-            vtype = FuncType ([ ("title", String) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "dom_viewport",
-          {
-            vtype = FuncType ([], TupleType [ Float64; Float64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "file_read",
-          {
-            vtype =
-              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; String ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "file_write",
-          {
-            vtype =
-              FuncType
-                ( [ ("path", String); ("contents", String) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_getpid",
-          {
-            vtype = FuncType ([], Int64);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_getppid",
-          {
-            vtype = FuncType ([], Int64);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_fork",
-          {
-            vtype = FuncType ([], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_waitpid",
-          {
-            vtype = FuncType ([ ("pid", Int64) ], TupleType [ Int64; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_waitpid_nohang",
-          {
-            vtype =
-              FuncType
-                ( [ ("pid", Int64) ],
-                  TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_tty_raw",
-          {
-            vtype =
-              FuncType
-                ([ ("fd", Int64) ], TupleType [ EnumType "R"; ArrayType Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_tty_restore",
-          {
-            vtype =
-              FuncType
-                ( [ ("fd", Int64); ("saved", ArrayType Int64) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_kill",
-          {
-            vtype =
-              FuncType
-                ( [ ("pid", Int64); ("sig", Int64) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_setpgid",
-          {
-            vtype =
-              FuncType
-                ( [ ("pid", Int64); ("pgid", Int64) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_pipe",
-          {
-            vtype =
-              FuncType
-                ([], TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_execv",
-          {
-            vtype =
-              FuncType
-                ([ ("path", String); ("argv", ArrayType String) ], Unknown);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os__exit",
-          {
-            vtype = FuncType ([ ("status", Int64) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_open_read",
-          {
-            vtype =
-              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_open_write",
-          {
-            vtype =
-              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_open_append",
-          {
-            vtype =
-              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_read",
-          {
-            vtype =
-              FuncType
-                ( [ ("fd", Int64); ("n", Int64) ],
-                  TupleType [ EnumType "R"; String ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "rand_bytes",
-          {
-            vtype =
-              FuncType ([ ("n", Int64) ], TupleType [ EnumType "R"; Bytes ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_write",
-          {
-            vtype =
-              FuncType
-                ( [ ("fd", Int64); ("data", String) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_close",
-          {
-            vtype =
-              FuncType ([ ("fd", Int64) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_lseek",
-          {
-            vtype =
-              FuncType
-                ( [ ("fd", Int64); ("offset", Int64); ("whence", Int64) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_stat",
-          {
-            vtype =
-              FuncType
-                ( [ ("path", String) ],
-                  TupleType
-                    [
-                      EnumType "R";
-                      TupleType [ Int64; Int64; Int64; Int64; Int64 ];
-                    ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_list_dir",
-          {
-            vtype =
-              FuncType
-                ( [ ("path", String) ],
-                  TupleType [ EnumType "R"; ArrayType String ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_mkdir",
-          {
-            vtype =
-              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_rmdir",
-          {
-            vtype =
-              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_unlink",
-          {
-            vtype =
-              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_rename",
-          {
-            vtype =
-              FuncType
-                ( [ ("old_path", String); ("new_path", String) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_getcwd",
-          {
-            vtype = FuncType ([], String);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_chdir",
-          {
-            vtype =
-              FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_dup2",
-          {
-            vtype =
-              FuncType
-                ( [ ("old_fd", Int64); ("new_fd", Int64) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_execvp",
-          {
-            vtype =
-              FuncType
-                ( [ ("file", String); ("argv", ArrayType String) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_isatty",
-          {
-            vtype = FuncType ([ ("fd", Int64) ], Bool);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_argv",
-          {
-            vtype = FuncType ([], ArrayType String);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_getenv",
-          {
-            vtype =
-              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; String ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_setenv",
-          {
-            vtype =
-              FuncType
-                ( [ ("name", String); ("value", String) ],
-                  TupleType [ EnumType "R"; Int64 ] );
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_unsetenv",
-          {
-            vtype =
-              FuncType ([ ("name", String) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_signal_ignore",
-          {
-            vtype =
-              FuncType ([ ("sig", Int64) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "os_signal_default",
-          {
-            vtype =
-              FuncType ([ ("sig", Int64) ], TupleType [ EnumType "R"; Int64 ]);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        (* The time package's doors: the wall clock, the monotonic
-           clock, and the sleep park. *)
-        ( "time_now_ms",
-          {
-            vtype = FuncType ([], Int64);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "time_mono_ns",
-          {
-            vtype = FuncType ([], Int64);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
-        ( "time_sleep_ms",
-          {
-            vtype = FuncType ([ ("ms", Int64) ], Void);
-            is_var = false;
-            depth = 0;
-            span = Emo_support.Span.zero;
-          } );
       ];
     depth = 0;
     ret = None;
@@ -1779,6 +1076,707 @@ let empty_env =
     in_void = false;
     loop_depth = 0;
   }
+
+(* The runtime's implementations of the standard library: the doors under
+   the compiler's `emo` namespace (`emo.file_read`), never bare names and
+   never a surface of their own. Each entry types one door; the lowering
+   answers the same name as a runtime implementation, so no backend arm
+   moves. *)
+let runtime_impl_bindings =
+  [
+    ( "net_connect",
+      {
+        vtype =
+          FuncType
+            ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
+              TupleType [ EnumType "R"; TcpConn ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_listen",
+      {
+        vtype =
+          FuncType
+            ( [ ("host", String); ("port", Int64) ],
+              TupleType [ EnumType "R"; TcpListener ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_resolve",
+      {
+        vtype =
+          FuncType
+            ([ ("host", String) ], TupleType [ EnumType "R"; ArrayType String ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_env",
+      {
+        vtype =
+          FuncType ([ ("name", String) ], TupleType [ EnumType "R"; String ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_udp_bind",
+      {
+        vtype =
+          FuncType
+            ( [ ("host", String); ("port", Int64) ],
+              TupleType [ EnumType "R"; UdpSocket ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_connect_unix",
+      {
+        vtype =
+          FuncType
+            ( [ ("path", String); ("timeout", Float64) ],
+              TupleType [ EnumType "R"; TcpConn ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_listen_unix",
+      {
+        vtype =
+          FuncType
+            ([ ("path", String) ], TupleType [ EnumType "R"; TcpListener ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    (* The fd passage and the shm tier (A18.7): the c target's
+           runtime and the interpreter's stub leg; the ocaml target
+           still refuses them at runtime. *)
+    ( "net_sendmsg_fd",
+      {
+        vtype =
+          FuncType
+            ( [ ("conn", TcpConn); ("data", String); ("fd", Int64) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_recvmsg_fd",
+      {
+        vtype =
+          FuncType
+            ( [ ("conn", TcpConn); ("cap", Int64) ],
+              TupleType [ EnumType "R"; String; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_shm_open",
+      {
+        vtype =
+          FuncType ([ ("name", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_ftruncate",
+      {
+        vtype =
+          FuncType
+            ( [ ("fd", Int64); ("size", Int64) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_sleep_ms",
+      {
+        vtype = FuncType ([ ("ms", Int64) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_pwrite",
+      {
+        vtype =
+          FuncType
+            ( [ ("fd", Int64); ("data", String); ("offset", Int64) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_tls_connect",
+      {
+        vtype =
+          FuncType
+            ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
+              TupleType [ EnumType "R"; TcpConn ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_tls_connect_insecure",
+      {
+        vtype =
+          FuncType
+            ( [ ("host", String); ("port", Int64); ("timeout", Float64) ],
+              TupleType [ EnumType "R"; TcpConn ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_listen_tls",
+      {
+        vtype =
+          FuncType
+            ( [
+                ("host", String);
+                ("port", Int64);
+                ("cert_path", String);
+                ("key_path", String);
+              ],
+              TupleType [ EnumType "R"; TcpListener ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_tls_connect_with",
+      {
+        vtype =
+          FuncType
+            ( [
+                ("host", String);
+                ("port", Int64);
+                ("timeout", Float64);
+                ("ca_file", String);
+                ("client_cert_file", String);
+                ("client_key_file", String);
+                ("server_name", String);
+                ("insecure", Bool);
+              ],
+              TupleType [ EnumType "R"; TcpConn ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_tls_wrap",
+      {
+        vtype =
+          FuncType
+            ( [
+                ("conn", TcpConn);
+                ("server_name", String);
+                ("ca_file", String);
+                ("client_cert_file", String);
+                ("client_key_file", String);
+                ("insecure", Bool);
+              ],
+              TupleType [ EnumType "R"; TcpConn ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "net_listen_tls_with",
+      {
+        vtype =
+          FuncType
+            ( [
+                ("host", String);
+                ("port", Int64);
+                ("cert_path", String);
+                ("key_path", String);
+                ("ca_file", String);
+                ("require_client_cert", Bool);
+              ],
+              TupleType [ EnumType "R"; TcpListener ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    (* The DOM capability family: the browser target's implementations
+           of the dom package. Handles are Int64s into the runtime's node
+           table; the page's own objects never cross into Emo. *)
+    ( "dom_root",
+      {
+        vtype = FuncType ([], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_element",
+      {
+        vtype = FuncType ([ ("tag", String) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_text",
+      {
+        vtype = FuncType ([ ("text", String) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_set_text",
+      {
+        vtype = FuncType ([ ("node", Int64); ("text", String) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_set_style",
+      {
+        vtype =
+          FuncType
+            ([ ("node", Int64); ("name", String); ("value", String) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_set_prop",
+      {
+        vtype =
+          FuncType
+            ([ ("node", Int64); ("name", String); ("value", Unknown) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_append",
+      {
+        vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_child",
+      {
+        vtype = FuncType ([ ("parent", Int64); ("index", Int64) ], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_remove",
+      {
+        vtype = FuncType ([ ("parent", Int64); ("child", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_insert_before",
+      {
+        vtype =
+          FuncType
+            ([ ("parent", Int64); ("child", Int64); ("before", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_clear",
+      {
+        vtype = FuncType ([ ("node", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_connect",
+      {
+        vtype =
+          FuncType ([ ("node", Int64); ("event", String); ("tag", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_value",
+      {
+        vtype = FuncType ([ ("node", Int64) ], String);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_sink",
+      {
+        vtype = FuncType ([ ("sink", Unknown) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_title",
+      {
+        vtype = FuncType ([ ("title", String) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "dom_viewport",
+      {
+        vtype = FuncType ([], TupleType [ Float64; Float64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "file_read",
+      {
+        vtype =
+          FuncType ([ ("path", String) ], TupleType [ EnumType "R"; String ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "file_write",
+      {
+        vtype =
+          FuncType
+            ( [ ("path", String); ("contents", String) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_getpid",
+      {
+        vtype = FuncType ([], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_getppid",
+      {
+        vtype = FuncType ([], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_fork",
+      {
+        vtype = FuncType ([], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_waitpid",
+      {
+        vtype = FuncType ([ ("pid", Int64) ], TupleType [ Int64; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_waitpid_nohang",
+      {
+        vtype =
+          FuncType
+            ( [ ("pid", Int64) ],
+              TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_tty_raw",
+      {
+        vtype =
+          FuncType
+            ([ ("fd", Int64) ], TupleType [ EnumType "R"; ArrayType Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_tty_restore",
+      {
+        vtype =
+          FuncType
+            ( [ ("fd", Int64); ("saved", ArrayType Int64) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_kill",
+      {
+        vtype =
+          FuncType
+            ( [ ("pid", Int64); ("sig", Int64) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_setpgid",
+      {
+        vtype =
+          FuncType
+            ( [ ("pid", Int64); ("pgid", Int64) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_pipe",
+      {
+        vtype =
+          FuncType ([], TupleType [ EnumType "R"; TupleType [ Int64; Int64 ] ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_execv",
+      {
+        vtype =
+          FuncType ([ ("path", String); ("argv", ArrayType String) ], Unknown);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os__exit",
+      {
+        vtype = FuncType ([ ("status", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_open_read",
+      {
+        vtype =
+          FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_open_write",
+      {
+        vtype =
+          FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_open_append",
+      {
+        vtype =
+          FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_read",
+      {
+        vtype =
+          FuncType
+            ([ ("fd", Int64); ("n", Int64) ], TupleType [ EnumType "R"; String ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "rand_bytes",
+      {
+        vtype = FuncType ([ ("n", Int64) ], TupleType [ EnumType "R"; Bytes ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_write",
+      {
+        vtype =
+          FuncType
+            ( [ ("fd", Int64); ("data", String) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_close",
+      {
+        vtype = FuncType ([ ("fd", Int64) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_lseek",
+      {
+        vtype =
+          FuncType
+            ( [ ("fd", Int64); ("offset", Int64); ("whence", Int64) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_stat",
+      {
+        vtype =
+          FuncType
+            ( [ ("path", String) ],
+              TupleType
+                [
+                  EnumType "R"; TupleType [ Int64; Int64; Int64; Int64; Int64 ];
+                ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_list_dir",
+      {
+        vtype =
+          FuncType
+            ([ ("path", String) ], TupleType [ EnumType "R"; ArrayType String ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_mkdir",
+      {
+        vtype =
+          FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_rmdir",
+      {
+        vtype =
+          FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_unlink",
+      {
+        vtype =
+          FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_rename",
+      {
+        vtype =
+          FuncType
+            ( [ ("old_path", String); ("new_path", String) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_getcwd",
+      {
+        vtype = FuncType ([], String);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_chdir",
+      {
+        vtype =
+          FuncType ([ ("path", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_dup2",
+      {
+        vtype =
+          FuncType
+            ( [ ("old_fd", Int64); ("new_fd", Int64) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_execvp",
+      {
+        vtype =
+          FuncType
+            ( [ ("file", String); ("argv", ArrayType String) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_isatty",
+      {
+        vtype = FuncType ([ ("fd", Int64) ], Bool);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_argv",
+      {
+        vtype = FuncType ([], ArrayType String);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_getenv",
+      {
+        vtype =
+          FuncType ([ ("name", String) ], TupleType [ EnumType "R"; String ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_setenv",
+      {
+        vtype =
+          FuncType
+            ( [ ("name", String); ("value", String) ],
+              TupleType [ EnumType "R"; Int64 ] );
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_unsetenv",
+      {
+        vtype =
+          FuncType ([ ("name", String) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_signal_ignore",
+      {
+        vtype = FuncType ([ ("sig", Int64) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "os_signal_default",
+      {
+        vtype = FuncType ([ ("sig", Int64) ], TupleType [ EnumType "R"; Int64 ]);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    (* The time package's doors: the wall clock, the monotonic
+           clock, and the sleep park. *)
+    ( "time_now_ms",
+      {
+        vtype = FuncType ([], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "time_mono_ns",
+      {
+        vtype = FuncType ([], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+    ( "time_sleep_ms",
+      {
+        vtype = FuncType ([ ("ms", Int64) ], Void);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
+  ]
+
+let runtime_impl_type (name : string) : t option =
+  match List.assoc_opt name runtime_impl_bindings with
+  | Some info -> Some info.vtype
+  | None -> None
 
 (* The raw-memory builtins (docs/raw-memory.md): admitted only where the
    program owns the address space. Registered on the riscv64 target
@@ -2206,6 +2204,14 @@ let lookup_env env name = List.assoc_opt name env.bindings
 let bound_local env name =
   match lookup_env env name with Some _ -> true | None -> false
 
+(* The compiler's `emo` namespace: a door call reads `emo.file_read`. A
+   local binding named `emo` shadows the namespace, the way a local
+   shadows a module head. *)
+let emo_receiver env (recv : Ast.expr) : bool =
+  match recv.Ast.desc with
+  | Ast.Ident "emo" -> not (bound_local env "emo")
+  | _ -> false
+
 let bind env name info = { env with bindings = (name, info) :: env.bindings }
 
 let child_scope env =
@@ -2624,34 +2630,40 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             refuse_script_binding ctx span name;
           info.vtype
       | None -> (
-          match normalize_module ctx [ name ] with
-          | Some name_path ->
-              (* A module reference: the current package's subtree, or a
-                 visible absolute module. *)
-              ctx.refs := name_path :: !(ctx.refs);
-              check_internal_value_path ctx span name_path;
-              Unknown
-          | None ->
-              if raw_mem_builtin name then
-                report ctx span "E4028"
-                  (Printf.sprintf
-                     "`%s` reaches %s: only the `riscv64` target admits it, \
-                      not `%s`"
-                     name (raw_mem_what name) ctx.target)
-              else if gc_heap_builtin name then
-                report ctx span "E4032"
-                  (Printf.sprintf
-                     "`%s` reaches the GC heap: only the interpreter run, the \
-                      `c` target and the metal admit it, not `%s`"
-                     name ctx.target)
-              else if out_of_scope ctx name then
-                report ctx span "E5008"
-                  (Printf.sprintf "%s does not declare `%s` in its deps"
-                     (package_label ctx) name)
-              else
-                report ctx span "E4003"
-                  (Printf.sprintf "`%s` is not defined" name);
-              Unknown))
+          if name = "emo" then (
+            report ctx span "E4003"
+              "`emo` is the runtime namespace — it is not a value; call one of \
+               its doors, like `emo.file_read`";
+            Unknown)
+          else
+            match normalize_module ctx [ name ] with
+            | Some name_path ->
+                (* A module reference: the current package's subtree, or a
+                   visible absolute module. *)
+                ctx.refs := name_path :: !(ctx.refs);
+                check_internal_value_path ctx span name_path;
+                Unknown
+            | None ->
+                if raw_mem_builtin name then
+                  report ctx span "E4028"
+                    (Printf.sprintf
+                       "`%s` reaches %s: only the `riscv64` target admits it, \
+                        not `%s`"
+                       name (raw_mem_what name) ctx.target)
+                else if gc_heap_builtin name then
+                  report ctx span "E4032"
+                    (Printf.sprintf
+                       "`%s` reaches the GC heap: only the interpreter run, \
+                        the `c` target and the metal admit it, not `%s`"
+                       name ctx.target)
+                else if out_of_scope ctx name then
+                  report ctx span "E5008"
+                    (Printf.sprintf "%s does not declare `%s` in its deps"
+                       (package_label ctx) name)
+                else
+                  report ctx span "E4003"
+                    (Printf.sprintf "`%s` is not defined" name);
+                Unknown))
   | Ast.Type_ident name -> (
       match resolve_type_ref ctx span name with
       | Some t -> t
@@ -2716,129 +2728,138 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
           report ctx span "E4003" "`self` is not defined here";
           Unknown)
   | Ast.Member (recv, name) -> (
-      let full = Option.value (dotted_path e) ~default:[] in
-      let module_path =
-        match full with
-        | head :: _ when not (bound_local env head) -> true
-        | _ -> false
-      in
-      (* A whole dotted path that names a type: `sync.WaitGroup`,
+      if emo_receiver env recv then (
+        match runtime_impl_type name with
+        | Some t -> t
+        | None ->
+            report ctx span "E5004"
+              (Printf.sprintf "the `emo` namespace has no door `%s`" name);
+            Unknown)
+      else
+        let full = Option.value (dotted_path e) ~default:[] in
+        let module_path =
+          match full with
+          | head :: _ when not (bound_local env head) -> true
+          | _ -> false
+        in
+        (* A whole dotted path that names a type: `sync.WaitGroup`,
          `plot.Scale` — maybe even before a `.new` / `.member`. *)
-      let type_ref =
-        if module_path then resolve_type_ref ctx span (String.concat "." full)
-        else None
-      in
-      match type_ref with
-      | Some t -> t
-      | None -> (
-          let resolved =
-            if module_path then module_prefix_of ctx full else None
-          in
-          match resolved with
-          | Some (op, np) when List.length op = List.length full ->
-              (* A qualified module reference: the whole dotted path names a
+        let type_ref =
+          if module_path then resolve_type_ref ctx span (String.concat "." full)
+          else None
+        in
+        match type_ref with
+        | Some t -> t
+        | None -> (
+            let resolved =
+              if module_path then module_prefix_of ctx full else None
+            in
+            match resolved with
+            | Some (op, np) when List.length op = List.length full ->
+                (* A qualified module reference: the whole dotted path names a
              module. *)
-              ctx.refs := np :: !(ctx.refs);
-              Unknown
-          | Some (op, np) when List.length full = List.length op + 1 -> (
-              (* A read of another module's member: the pre-registered value
+                ctx.refs := np :: !(ctx.refs);
+                Unknown
+            | Some (op, np) when List.length full = List.length op + 1 -> (
+                (* A read of another module's member: the pre-registered value
              tables answer for consts/vars, and a bare def reference is
              the closure value itself. *)
-              ctx.refs := np :: !(ctx.refs);
-              let dotted = String.concat "." np in
-              match Hashtbl.find_opt ctx.pvalues (np, name) with
-              | Some t -> t
-              | None -> (
-                  match Hashtbl.find_opt ctx.pdefs (np, name) with
-                  | Some ft -> ft
-                  | None ->
-                      report ctx span "E5004"
-                        (Printf.sprintf "module `%s` has no member `%s`" dotted
-                           name);
-                      Unknown))
-          | _ -> (
-              match full with
-              | head :: _ when module_path && out_of_scope ctx head ->
-                  report ctx span "E5008"
-                    (Printf.sprintf "%s does not declare `%s` in its deps"
-                       (package_label ctx) head);
-                  Unknown
-              | _ -> (
-                  let from_group =
-                    (* A bare `Math.tau` / `Math.double` read: groups are global,
+                ctx.refs := np :: !(ctx.refs);
+                let dotted = String.concat "." np in
+                match Hashtbl.find_opt ctx.pvalues (np, name) with
+                | Some t -> t
+                | None -> (
+                    match Hashtbl.find_opt ctx.pdefs (np, name) with
+                    | Some ft -> ft
+                    | None ->
+                        report ctx span "E5004"
+                          (Printf.sprintf "module `%s` has no member `%s`"
+                             dotted name);
+                        Unknown))
+            | _ -> (
+                match full with
+                | head :: _ when module_path && out_of_scope ctx head ->
+                    report ctx span "E5008"
+                      (Printf.sprintf "%s does not declare `%s` in its deps"
+                         (package_label ctx) head);
+                    Unknown
+                | _ -> (
+                    let from_group =
+                      (* A bare `Math.tau` / `Math.double` read: groups are global,
              so the module's own table and the program's registry both
              answer — consts carry their type, a bare def reference is
              the closure value. *)
-                    match recv.Ast.desc with
-                    | Ast.Type_ident gname -> (
-                        match
-                          match Hashtbl.find_opt ctx.groups gname with
-                          | Some g -> Some g
-                          | None -> Hashtbl.find_opt ctx.pgroups gname
-                        with
-                        | Some (defs, consts) ->
-                            Some
-                              (if List.mem_assoc name consts then
-                                 List.assoc name consts
-                               else
-                                 match
-                                   List.find_opt
-                                     (fun (n, _, _) -> String.equal n name)
-                                     defs
-                                 with
-                                 | Some (_, params, ret) ->
-                                     FuncType (params, ret)
-                                 | None ->
-                                     report ctx span "E4001"
-                                       (Printf.sprintf
-                                          "the group `%s` has no member `%s`"
-                                          gname name);
-                                     Unknown)
-                        | None -> None)
-                    | _ -> None
-                  in
-                  match from_group with
-                  | Some t -> t
-                  | None -> (
-                      let rt = check_expr ctx env recv in
-                      match rt with
-                      | ClassType c -> (
-                          match Hashtbl.find_opt ctx.classes c with
-                          | Some info when List.mem name info.cfields -> (
-                              (* the type `init` first assigns the field
+                      match recv.Ast.desc with
+                      | Ast.Type_ident gname -> (
+                          match
+                            match Hashtbl.find_opt ctx.groups gname with
+                            | Some g -> Some g
+                            | None -> Hashtbl.find_opt ctx.pgroups gname
+                          with
+                          | Some (defs, consts) ->
+                              Some
+                                (if List.mem_assoc name consts then
+                                   List.assoc name consts
+                                 else
+                                   match
+                                     List.find_opt
+                                       (fun (n, _, _) -> String.equal n name)
+                                       defs
+                                   with
+                                   | Some (_, params, ret) ->
+                                       FuncType (params, ret)
+                                   | None ->
+                                       report ctx span "E4001"
+                                         (Printf.sprintf
+                                            "the group `%s` has no member `%s`"
+                                            gname name);
+                                       Unknown)
+                          | None -> None)
+                      | _ -> None
+                    in
+                    match from_group with
+                    | Some t -> t
+                    | None -> (
+                        let rt = check_expr ctx env recv in
+                        match rt with
+                        | ClassType c -> (
+                            match Hashtbl.find_opt ctx.classes c with
+                            | Some info when List.mem name info.cfields -> (
+                                (* the type `init` first assigns the field
                                  (recorded program-wide before any module
                                  is checked); a field no `init` typed
                                  stays dynamic *)
-                              match
-                                Hashtbl.find_opt ctx.field_types (c, name)
-                              with
-                              | Some t -> t
-                              | None -> Unknown)
-                          | Some info ->
-                              report ctx span "E4001"
-                                (Printf.sprintf "`%s` has no field `%s`" c name);
-                              Unknown
-                          | None -> Unknown)
-                      | EnumType e -> (
-                          match Hashtbl.find_opt ctx.enums e with
-                          | Some members when List.mem name members ->
-                              EnumType e
-                          | Some members ->
-                              report ctx span "E4001"
-                                (Printf.sprintf "enum `%s` has no member `%s`" e
-                                   name);
-                              Unknown
-                          | None -> Unknown)
-                      | BoxType _ ->
-                          report ctx span "E4001"
-                            "a member access must be a call, like `x.read()`";
-                          Unknown
-                      | Unknown -> Unknown
-                      | other ->
-                          report ctx span "E4001"
-                            (Printf.sprintf "%s has no field `%s`"
-                               (to_string other) name);
-                          Unknown)))))
+                                match
+                                  Hashtbl.find_opt ctx.field_types (c, name)
+                                with
+                                | Some t -> t
+                                | None -> Unknown)
+                            | Some info ->
+                                report ctx span "E4001"
+                                  (Printf.sprintf "`%s` has no field `%s`" c
+                                     name);
+                                Unknown
+                            | None -> Unknown)
+                        | EnumType e -> (
+                            match Hashtbl.find_opt ctx.enums e with
+                            | Some members when List.mem name members ->
+                                EnumType e
+                            | Some members ->
+                                report ctx span "E4001"
+                                  (Printf.sprintf "enum `%s` has no member `%s`"
+                                     e name);
+                                Unknown
+                            | None -> Unknown)
+                        | BoxType _ ->
+                            report ctx span "E4001"
+                              "a member access must be a call, like `x.read()`";
+                            Unknown
+                        | Unknown -> Unknown
+                        | other ->
+                            report ctx span "E4001"
+                              (Printf.sprintf "%s has no field `%s`"
+                                 (to_string other) name);
+                            Unknown)))))
   | Ast.Index (base, index) -> (
       let bt = check_expr ctx env base in
       let it = check_expr ctx env index in
@@ -3214,842 +3235,858 @@ and check_module_member_call ctx env span (mpath : string list) mname args : t =
           Unknown)
 
 and check_method_call ctx env span recv mname args : t =
-  (match dotted_path recv with
-    | Some full -> (
-        (* A receiver that is exactly a module path (its head not
+  if emo_receiver env recv then (
+    match runtime_impl_type mname with
+    | Some ft -> check_apply ctx env span ("emo." ^ mname) ft args
+    | None ->
+        report ctx span "E5004"
+          (Printf.sprintf "the `emo` namespace has no door `%s`" mname);
+        Unknown)
+  else
+    (match dotted_path recv with
+      | Some full -> (
+          (* A receiver that is exactly a module path (its head not
            shadowed by a local): the call goes through the program's
            signature tables. *)
-        let module_path =
-          match full with
-          | head :: _ when not (bound_local env head) -> true
-          | _ -> false
-        in
-        if not module_path then Unknown
-        else
-          match module_prefix_of ctx full with
-          | Some (op, np) when List.length op = List.length full ->
-              check_module_member_call ctx env span np mname args
-          | _ -> (
-              match full with
-              | head :: _ when out_of_scope ctx head ->
-                  report ctx span "E5008"
-                    (Printf.sprintf "%s does not declare `%s` in its deps"
-                       (package_label ctx) head);
-                  Unknown
-              | _ -> Unknown))
-    | None -> (
-        match recv.Ast.desc with
-        | Ast.Type_ident gname -> (
-            (* The module's own groups first, then the program's global
+          let module_path =
+            match full with
+            | head :: _ when not (bound_local env head) -> true
+            | _ -> false
+          in
+          if not module_path then Unknown
+          else
+            match module_prefix_of ctx full with
+            | Some (op, np) when List.length op = List.length full ->
+                check_module_member_call ctx env span np mname args
+            | _ -> (
+                match full with
+                | head :: _ when out_of_scope ctx head ->
+                    report ctx span "E5008"
+                      (Printf.sprintf "%s does not declare `%s` in its deps"
+                         (package_label ctx) head);
+                    Unknown
+                | _ -> Unknown))
+      | None -> (
+          match recv.Ast.desc with
+          | Ast.Type_ident gname -> (
+              (* The module's own groups first, then the program's global
                registry — groups are callable by bare name from any
                module. *)
-            match
-              match Hashtbl.find_opt ctx.groups gname with
-              | Some g -> Some g
-              | None -> Hashtbl.find_opt ctx.pgroups gname
-            with
-            | Some (defs, consts) -> (
-                if List.mem_assoc mname consts then (
-                  if List.length args > 0 then
-                    report ctx span "E4009"
-                      (Printf.sprintf "the constant `%s.%s` takes no arguments"
-                         gname mname);
-                  List.assoc mname consts)
-                else
-                  match
-                    List.find_opt (fun (n, _, _) -> String.equal n mname) defs
-                  with
-                  | Some (_, params, ret) ->
-                      check_apply ctx env span
-                        (gname ^ "." ^ mname)
-                        (FuncType (params, ret))
-                        args
-                  | None ->
-                      report ctx span "E4001"
-                        (Printf.sprintf "the group `%s` has no member `%s`"
-                           gname mname);
-                      Unknown)
-            | None -> Unknown)
-        | _ -> Unknown))
-  |> fun fallback ->
-  if fallback <> Unknown then fallback
-  else if
-    match recv.Ast.desc with
-    | Ast.Type_ident g when Hashtbl.mem ctx.groups g -> true
-    | Ast.Type_ident g when Hashtbl.mem ctx.pgroups g -> true
-    | _ -> false
-  then fallback
-  else if
-    match (recv.Ast.desc, mname) with
-    | Ast.Type_ident "List", "new" -> true
-    | _ -> false
-  then (
-    if
-      (* List.new(array) — the deque's constructor. The one argument is an
-       Array; its element type becomes the List's element type. *)
-      List.length args <> 1
+              match
+                match Hashtbl.find_opt ctx.groups gname with
+                | Some g -> Some g
+                | None -> Hashtbl.find_opt ctx.pgroups gname
+              with
+              | Some (defs, consts) -> (
+                  if List.mem_assoc mname consts then (
+                    if List.length args > 0 then
+                      report ctx span "E4009"
+                        (Printf.sprintf
+                           "the constant `%s.%s` takes no arguments" gname mname);
+                    List.assoc mname consts)
+                  else
+                    match
+                      List.find_opt (fun (n, _, _) -> String.equal n mname) defs
+                    with
+                    | Some (_, params, ret) ->
+                        check_apply ctx env span
+                          (gname ^ "." ^ mname)
+                          (FuncType (params, ret))
+                          args
+                    | None ->
+                        report ctx span "E4001"
+                          (Printf.sprintf "the group `%s` has no member `%s`"
+                             gname mname);
+                        Unknown)
+              | None -> Unknown)
+          | _ -> Unknown))
+    |> fun fallback ->
+    if fallback <> Unknown then fallback
+    else if
+      match recv.Ast.desc with
+      | Ast.Type_ident g when Hashtbl.mem ctx.groups g -> true
+      | Ast.Type_ident g when Hashtbl.mem ctx.pgroups g -> true
+      | _ -> false
+    then fallback
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "List", "new" -> true
+      | _ -> false
     then (
-      report ctx span "E4009"
-        (Printf.sprintf "`List.new` expects 1 argument, got %d"
-           (List.length args));
-      ListType Unknown)
-    else
-      let { Ast.arg_name; arg_value; _ } = List.hd args in
-      (match arg_name with
-      | Some n ->
-          report ctx arg_value.Ast.span "E4009"
-            (Printf.sprintf "`List.new` takes a positional Array, got `%s`" n)
-      | None -> ());
-      match check_expr ctx env arg_value with
-      | ArrayType elem -> ListType elem
-      | Unknown -> ListType Unknown
-      | other ->
-          report ctx arg_value.Ast.span "E4004"
-            (Printf.sprintf "`List.new` expects an Array, got %s"
-               (to_string other));
-          ListType Unknown)
-  else if
-    match (recv.Ast.desc, mname) with
-    | Ast.Type_ident "Box", "new" -> true
-    | _ -> false
-  then (
-    (* Box.new(v) — the one mutable cell's constructor. The argument's
+      if
+        (* List.new(array) — the deque's constructor. The one argument is an
+       Array; its element type becomes the List's element type. *)
+        List.length args <> 1
+      then (
+        report ctx span "E4009"
+          (Printf.sprintf "`List.new` expects 1 argument, got %d"
+             (List.length args));
+        ListType Unknown)
+      else
+        let { Ast.arg_name; arg_value; _ } = List.hd args in
+        (match arg_name with
+        | Some n ->
+            report ctx arg_value.Ast.span "E4009"
+              (Printf.sprintf "`List.new` takes a positional Array, got `%s`" n)
+        | None -> ());
+        match check_expr ctx env arg_value with
+        | ArrayType elem -> ListType elem
+        | Unknown -> ListType Unknown
+        | other ->
+            report ctx arg_value.Ast.span "E4004"
+              (Printf.sprintf "`List.new` expects an Array, got %s"
+                 (to_string other));
+            ListType Unknown)
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Box", "new" -> true
+      | _ -> false
+    then (
+      (* Box.new(v) — the one mutable cell's constructor. The argument's
        type is the cell's element type, so `read` and `replace` check
        against it; every other member on a box is refused. *)
-    let arg_values =
-      List.map
-        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
-        args
-    in
-    match arg_values with
-    | [ (None, vt) ] -> BoxType vt
-    | [ (Some n, _) ] ->
-        report ctx span "E4009"
-          (Printf.sprintf "`Box.new` takes a positional value, got `%s`" n);
-        BoxType Unknown
-    | _ ->
-        report ctx span "E4009"
-          (Printf.sprintf "`Box.new` expects 1 argument, got %d"
-             (List.length arg_values));
-        BoxType Unknown)
-  else if
-    match (recv.Ast.desc, mname) with
-    | Ast.Type_ident "Atomic", "new" -> true
-    | _ -> false
-  then (
-    (* Atomic.new(v) — the synchronized cell's constructor. The argument's
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      match arg_values with
+      | [ (None, vt) ] -> BoxType vt
+      | [ (Some n, _) ] ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Box.new` takes a positional value, got `%s`" n);
+          BoxType Unknown
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Box.new` expects 1 argument, got %d"
+               (List.length arg_values));
+          BoxType Unknown)
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Atomic", "new" -> true
+      | _ -> false
+    then (
+      (* Atomic.new(v) — the synchronized cell's constructor. The argument's
        type is the payload, and the payload scope is the two scalars: an
        Int64 or Bool cell checks, anything else refuses by name (the
        annotation form refuses through decl_to_type). *)
-    let arg_values =
-      List.map
-        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
-        args
-    in
-    match arg_values with
-    | [ (None, vt) ] ->
-        if atomic_payload_ok vt then AtomicType vt
-        else (
-          refuse_atomic_payload ctx span vt;
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      match arg_values with
+      | [ (None, vt) ] ->
+          if atomic_payload_ok vt then AtomicType vt
+          else (
+            refuse_atomic_payload ctx span vt;
+            AtomicType Unknown)
+      | [ (Some n, _) ] ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Atomic.new` takes a positional value, got `%s`" n);
+          AtomicType Unknown
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Atomic.new` expects 1 argument, got %d"
+               (List.length arg_values));
           AtomicType Unknown)
-    | [ (Some n, _) ] ->
-        report ctx span "E4009"
-          (Printf.sprintf "`Atomic.new` takes a positional value, got `%s`" n);
-        AtomicType Unknown
-    | _ ->
-        report ctx span "E4009"
-          (Printf.sprintf "`Atomic.new` expects 1 argument, got %d"
-             (List.length arg_values));
-        AtomicType Unknown)
-  else if
-    match (recv.Ast.desc, mname) with
-    | Ast.Type_ident "ArrayBuilder", "new" -> true
-    | _ -> false
-  then (
-    (* ArrayBuilder.new() — the builder is born empty, so it takes no
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "ArrayBuilder", "new" -> true
+      | _ -> false
+    then (
+      (* ArrayBuilder.new() — the builder is born empty, so it takes no
        argument: its element type is Unknown until the first `push` whose
        argument type is known pins it. That pin is applied by
        `pin_builder_push`, not here — see the Expr_stmt arm of check_stmt. *)
-    if args <> [] then
-      report ctx span "E4009"
-        (Printf.sprintf "`ArrayBuilder.new` expects no arguments, got %d"
-           (List.length args));
-    BuilderType Unknown)
-  else if
-    match (recv.Ast.desc, mname) with
-    | Ast.Type_ident "Bytes", "new" -> true
-    | _ -> false
-  then (
-    (* Bytes.new(n) — the zero-filled byte buffer, one Int64 length.
+      if args <> [] then
+        report ctx span "E4009"
+          (Printf.sprintf "`ArrayBuilder.new` expects no arguments, got %d"
+             (List.length args));
+      BuilderType Unknown)
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Bytes", "new" -> true
+      | _ -> false
+    then (
+      (* Bytes.new(n) — the zero-filled byte buffer, one Int64 length.
        The constructor's own answer carries the Bytes type (T8.24): a
        receiver the emitters can key on, where it was Unknown before and
        only the eval and the c backend answered by the node's shape. *)
-    let arg_values =
-      List.map
-        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
-        args
-    in
-    match arg_values with
-    | [ (None, Int64) ] | [ (Some "n", Int64) ] -> Bytes
-    | [ (_, vt) ] ->
-        report ctx span "E4004"
-          (Printf.sprintf "`Bytes.new` expects an Int64 length, got %s"
-             (to_string vt));
-        Bytes
-    | _ ->
-        report ctx span "E4009"
-          (Printf.sprintf "`Bytes.new` expects 1 argument, got %d"
-             (List.length arg_values));
-        Bytes)
-  else if
-    match (recv.Ast.desc, mname) with
-    | Ast.Type_ident "Exception", ("new" | "with_data") -> true
-    | _ -> false
-  then (
-    (* The shipped exception class: `new` takes the message String, and
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      match arg_values with
+      | [ (None, Int64) ] | [ (Some "n", Int64) ] -> Bytes
+      | [ (_, vt) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`Bytes.new` expects an Int64 length, got %s"
+               (to_string vt));
+          Bytes
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Bytes.new` expects 1 argument, got %d"
+               (List.length arg_values));
+          Bytes)
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Exception", ("new" | "with_data") -> true
+      | _ -> false
+    then (
+      (* The shipped exception class: `new` takes the message String, and
        `with_data` takes the message and a data Map — two fixed-arity
        constructors, no optional argument. The data rides the instance
        and reads back through `e.data`. Named arguments keep
        message-first order: the runtime binds positionally. *)
-    let arg_values =
-      List.map
-        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
-        args
-    in
-    let message_ok = function String | Unknown -> true | _ -> false in
-    let data_ok = function MapType _ | Unknown -> true | _ -> false in
-    let check_arg label ok v =
-      if not (ok v) then
-        report ctx span "E4004"
-          (Printf.sprintf "`Exception.%s` expects %s, got %s" mname label
-             (to_string v))
-    in
-    match (mname, arg_values) with
-    | "new", [ (Some "message", mt) ] | "new", [ (None, mt) ] ->
-        check_arg "`message` to be a String" message_ok mt;
-        ClassType "Exception"
-    | "with_data", [ (Some "message", mt); (Some "data", dt) ]
-    | "with_data", [ (Some "message", mt); (None, dt) ]
-    | "with_data", [ (None, mt); (Some "data", dt) ]
-    | "with_data", [ (None, mt); (None, dt) ] ->
-        check_arg "`message` to be a String" message_ok mt;
-        check_arg "`data` to be a Map" data_ok dt;
-        ClassType "Exception"
-    | "new", _ ->
-        report ctx span "E4009"
-          "`Exception.new` expects exactly one argument, the message String; a \
-           data Map goes to `Exception.with_data`";
-        ClassType "Exception"
-    | _ ->
-        report ctx span "E4009"
-          "`Exception.with_data` expects `message` and `data`: a String and a \
-           Map";
-        ClassType "Exception")
-  else if
-    match (recv.Ast.desc, mname) with
-    | Ast.Type_ident "Map", "new" -> true
-    | _ -> false
-  then (
-    (* Map.new((k1, v1), (k2, v2), ...) — the hash map's constructor. Each
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      let message_ok = function String | Unknown -> true | _ -> false in
+      let data_ok = function MapType _ | Unknown -> true | _ -> false in
+      let check_arg label ok v =
+        if not (ok v) then
+          report ctx span "E4004"
+            (Printf.sprintf "`Exception.%s` expects %s, got %s" mname label
+               (to_string v))
+      in
+      match (mname, arg_values) with
+      | "new", [ (Some "message", mt) ] | "new", [ (None, mt) ] ->
+          check_arg "`message` to be a String" message_ok mt;
+          ClassType "Exception"
+      | "with_data", [ (Some "message", mt); (Some "data", dt) ]
+      | "with_data", [ (Some "message", mt); (None, dt) ]
+      | "with_data", [ (None, mt); (Some "data", dt) ]
+      | "with_data", [ (None, mt); (None, dt) ] ->
+          check_arg "`message` to be a String" message_ok mt;
+          check_arg "`data` to be a Map" data_ok dt;
+          ClassType "Exception"
+      | "new", _ ->
+          report ctx span "E4009"
+            "`Exception.new` expects exactly one argument, the message String; \
+             a data Map goes to `Exception.with_data`";
+          ClassType "Exception"
+      | _ ->
+          report ctx span "E4009"
+            "`Exception.with_data` expects `message` and `data`: a String and \
+             a Map";
+          ClassType "Exception")
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Map", "new" -> true
+      | _ -> false
+    then (
+      (* Map.new((k1, v1), (k2, v2), ...) — the hash map's constructor. Each
        argument is a (key, value) pair; key and value types unify across the
        pairs like a literal's entries, and keys must be hashable. *)
-    let pair_types =
-      List.map
-        (fun { Ast.arg_name; arg_value; _ } ->
-          (match arg_name with
-          | Some n ->
-              report ctx arg_value.Ast.span "E4009"
-                (Printf.sprintf "`Map.new` takes positional pairs, got `%s`" n)
-          | None -> ());
-          match check_expr ctx env arg_value with
-          | TupleType [ k; v ] -> Some (k, v)
-          | TupleType _ ->
-              report ctx arg_value.Ast.span "E4009"
-                "`Map.new` takes (key, value) pairs of two elements";
-              None
-          | Unknown -> None
-          | other ->
-              report ctx arg_value.Ast.span "E4009"
-                (Printf.sprintf "`Map.new` takes (key, value) pairs, got %s"
-                   (to_string other));
-              None)
-        args
-    in
-    let kt = unify ctx (List.filter_map (Option.map fst) pair_types) in
-    let vt = unify ctx (List.filter_map (Option.map snd) pair_types) in
-    (match kt with
-    | t when hashable_key t -> ()
-    | other ->
-        report ctx span "E4020"
-          (Printf.sprintf
-             "map keys must be String, Int64, Byte, Bool, Char, or Float64; \
-              got %s"
-             (to_string other)));
-    MapType (kt, vt))
-  else
-    let base = check_expr ctx env recv in
-    let arg_values =
-      List.map
-        (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
-        args
-    in
-    let none_expected result =
-      if List.length args = 0 then result
-      else (
-        report ctx span "E4009"
-          (Printf.sprintf "`%s` expects no arguments, got %d" mname
-             (List.length args));
-        result)
-    in
-    let builtin0 = none_expected in
-    let one_expected result =
-      if List.length args = 1 then result
-      else (
-        report ctx span "E4009"
-          (Printf.sprintf "`%s` expects 1 argument, got %d" mname
-             (List.length args));
-        result)
-    in
-    match (base, mname) with
-    | ClassType c, "new" -> (
-        match Hashtbl.find_opt ctx.classes c with
-        | Some info -> (
-            match info.cinit_params with
-            | Some params ->
-                check_apply ctx env span (c ^ ".new")
-                  (FuncType (params, ClassType c))
-                  args
-            | None ->
-                if List.length args > 0 then
-                  report ctx span "E4009"
-                    (Printf.sprintf
-                       "class `%s` declares no `init`; `new` takes no arguments"
-                       c);
-                ClassType c)
-        | None -> Unknown)
-    | ClassType _, "is" -> one_expected Bool
-    | ClassType c, _ -> (
-        match Hashtbl.find_opt ctx.classes c with
-        | Some info -> (
-            match List.assoc_opt mname info.cmethods with
-            | Some mi ->
-                check_apply ctx env span
-                  (c ^ "." ^ mname)
-                  (FuncType (mi.mparams, mi.mret))
-                  args
-            | None when String.equal mname "to_string" -> builtin0 String
-            | None ->
-                report ctx span "E4001"
-                  ?hint:
-                    (Option.map
-                       (fun d -> Printf.sprintf "did you mean `%s`?" d)
-                       (near_miss mname (List.map fst info.cmethods)))
-                  (Printf.sprintf "NoMethodError: `%s` has no method `%s`" c
-                     mname);
-                Unknown)
-        | None -> Unknown)
-    | InterfaceType _, "is" -> one_expected Bool
-    | InterfaceType i, _ -> (
-        match Hashtbl.find_opt ctx.interfaces i with
-        | Some sigs -> (
-            match
-              List.find_opt (fun (n, _, _) -> String.equal n mname) sigs
-            with
-            | Some (_, iptypes, iret) ->
-                check_apply ctx env span
-                  (i ^ "." ^ mname)
-                  (FuncType (iptypes, iret))
-                  args
-            | None when String.equal mname "to_string" -> builtin0 String
-            | None ->
-                report ctx span "E4001"
-                  ?hint:
-                    (Option.map
-                       (fun d -> Printf.sprintf "did you mean `%s`?" d)
-                       (near_miss mname (List.map (fun (n, _, _) -> n) sigs)))
-                  (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i
-                     mname);
-                Unknown)
-        | None -> Unknown)
-    | v, "to_string" -> builtin0 String
-    | TcpConn, "read_line" -> builtin0 (TupleType [ EnumType "R"; String ])
-    | TcpConn, "read_exactly" -> (
-        match arg_values with
-        | [ (None, Int64) ] | [ (Some "n", Int64) ] ->
-            TupleType [ EnumType "R"; String ]
-        | [ (_, other) ] ->
-            report ctx span "E4004"
-              (Printf.sprintf "`read_exactly` expects Int64, got %s"
-                 (to_string other));
-            TupleType [ EnumType "R"; String ]
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`read_exactly` expects 1 argument, got %d"
-                 (List.length arg_values));
-            TupleType [ EnumType "R"; String ])
-    | TcpConn, "read_all" -> builtin0 (TupleType [ EnumType "R"; String ])
-    | TcpConn, "write" -> (
-        match arg_values with
-        | [ (None, String) ] | [ (Some "data", String) ] ->
-            TupleType [ EnumType "R"; TcpConn ]
-        | [ (_, other) ] ->
-            report ctx span "E4004"
-              (Printf.sprintf "`write` expects String, got %s" (to_string other));
-            TupleType [ EnumType "R"; TcpConn ]
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`write` expects 1 argument, got %d"
-                 (List.length arg_values));
-            TupleType [ EnumType "R"; TcpConn ])
-    | TcpConn, "close" -> builtin0 (TupleType [ EnumType "R"; TcpConn ])
-    | TcpConn, "set_timeout" -> (
-        match arg_values with
-        | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpConn
-        | [ (_, other) ] ->
-            report ctx span "E4004"
-              (Printf.sprintf "`set_timeout` expects Float64, got %s"
-                 (to_string other));
-            TcpConn
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
-                 (List.length arg_values));
-            TcpConn)
-    | TcpListener, "accept" -> builtin0 (TupleType [ EnumType "R"; TcpConn ])
-    | TcpListener, "port" -> builtin0 Int64
-    | TcpListener, "close" -> builtin0 (TupleType [ EnumType "R"; TcpListener ])
-    | TcpListener, "set_timeout" -> (
-        match arg_values with
-        | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpListener
-        | [ (_, other) ] ->
-            report ctx span "E4004"
-              (Printf.sprintf "`set_timeout` expects Float64, got %s"
-                 (to_string other));
-            TcpListener
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
-                 (List.length arg_values));
-            TcpListener)
-    | UdpSocket, "send_to" -> (
-        match arg_values with
-        | [ (None, String); (None, Int64); (None, String) ] ->
-            TupleType [ EnumType "R"; UdpSocket ]
-        | [ _; _; _ ] ->
-            report ctx span "E4004"
-              "`send_to` expects (host String, port Int64, data String)";
-            TupleType [ EnumType "R"; UdpSocket ]
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`send_to` expects 3 arguments, got %d"
-                 (List.length arg_values));
-            TupleType [ EnumType "R"; UdpSocket ])
-    | UdpSocket, "recv_from" ->
-        builtin0
-          (TupleType [ EnumType "R"; TupleType [ String; String; Int64 ] ])
-    | UdpSocket, "port" -> builtin0 Int64
-    | UdpSocket, "close" -> builtin0 (TupleType [ EnumType "R"; UdpSocket ])
-    | UdpSocket, "set_timeout" -> (
-        match arg_values with
-        | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> UdpSocket
-        | [ (_, other) ] ->
-            report ctx span "E4004"
-              (Printf.sprintf "`set_timeout` expects Float64, got %s"
-                 (to_string other));
-            UdpSocket
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
-                 (List.length arg_values));
-            UdpSocket)
-    | String, "length" -> builtin0 Int64
-    | String, "chars" -> builtin0 (ArrayType Char)
-    | String, "substring" -> (
-        match arg_values with
-        | [ (None, Int64); (None, Int64) ] -> String
-        | [ _; _ ] ->
-            report ctx span "E4004"
-              "`substring` expects (start Int64, length Int64)";
-            String
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`substring` expects 2 arguments, got %d"
-                 (List.length arg_values));
-            String)
-    | String, "split" -> (
-        match arg_values with
-        | [ (None, String) ] | [ (Some "sep", String) ] -> ArrayType String
-        | [ _ ] ->
-            report ctx span "E4004" "`split` expects a String separator";
-            ArrayType String
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`split` expects 1 argument, got %d"
-                 (List.length arg_values));
-            ArrayType String)
-    | String, "trim" -> builtin0 String
-    | String, "lower" -> builtin0 String
-    | String, "upper" -> builtin0 String
-    | String, "index_of" -> (
-        match arg_values with
-        | [ (None, String) ] | [ (Some "needle", String) ] -> Int64
-        | [ _ ] ->
-            report ctx span "E4004" "`index_of` expects a String needle";
-            Int64
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`index_of` expects 1 argument, got %d"
-                 (List.length arg_values));
-            Int64)
-    | String, "starts_with" -> (
-        match arg_values with
-        | [ (None, String) ] | [ (Some "prefix", String) ] -> Bool
-        | [ _ ] ->
-            report ctx span "E4004" "`starts_with` expects a String prefix";
-            Bool
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`starts_with` expects 1 argument, got %d"
-                 (List.length arg_values));
-            Bool)
-    | String, "to_int64" -> builtin0 Int64
-    | ArrayType elem, "append" -> (
-        match arg_values with
-        | [ (_, vt) ] ->
-            if not (conforms ctx vt elem) then
+      let pair_types =
+        List.map
+          (fun { Ast.arg_name; arg_value; _ } ->
+            (match arg_name with
+            | Some n ->
+                report ctx arg_value.Ast.span "E4009"
+                  (Printf.sprintf "`Map.new` takes positional pairs, got `%s`" n)
+            | None -> ());
+            match check_expr ctx env arg_value with
+            | TupleType [ k; v ] -> Some (k, v)
+            | TupleType _ ->
+                report ctx arg_value.Ast.span "E4009"
+                  "`Map.new` takes (key, value) pairs of two elements";
+                None
+            | Unknown -> None
+            | other ->
+                report ctx arg_value.Ast.span "E4009"
+                  (Printf.sprintf "`Map.new` takes (key, value) pairs, got %s"
+                     (to_string other));
+                None)
+          args
+      in
+      let kt = unify ctx (List.filter_map (Option.map fst) pair_types) in
+      let vt = unify ctx (List.filter_map (Option.map snd) pair_types) in
+      (match kt with
+      | t when hashable_key t -> ()
+      | other ->
+          report ctx span "E4020"
+            (Printf.sprintf
+               "map keys must be String, Int64, Byte, Bool, Char, or Float64; \
+                got %s"
+               (to_string other)));
+      MapType (kt, vt))
+    else
+      let base = check_expr ctx env recv in
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      let none_expected result =
+        if List.length args = 0 then result
+        else (
+          report ctx span "E4009"
+            (Printf.sprintf "`%s` expects no arguments, got %d" mname
+               (List.length args));
+          result)
+      in
+      let builtin0 = none_expected in
+      let one_expected result =
+        if List.length args = 1 then result
+        else (
+          report ctx span "E4009"
+            (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+               (List.length args));
+          result)
+      in
+      match (base, mname) with
+      | ClassType c, "new" -> (
+          match Hashtbl.find_opt ctx.classes c with
+          | Some info -> (
+              match info.cinit_params with
+              | Some params ->
+                  check_apply ctx env span (c ^ ".new")
+                    (FuncType (params, ClassType c))
+                    args
+              | None ->
+                  if List.length args > 0 then
+                    report ctx span "E4009"
+                      (Printf.sprintf
+                         "class `%s` declares no `init`; `new` takes no \
+                          arguments"
+                         c);
+                  ClassType c)
+          | None -> Unknown)
+      | ClassType _, "is" -> one_expected Bool
+      | ClassType c, _ -> (
+          match Hashtbl.find_opt ctx.classes c with
+          | Some info -> (
+              match List.assoc_opt mname info.cmethods with
+              | Some mi ->
+                  check_apply ctx env span
+                    (c ^ "." ^ mname)
+                    (FuncType (mi.mparams, mi.mret))
+                    args
+              | None when String.equal mname "to_string" -> builtin0 String
+              | None ->
+                  report ctx span "E4001"
+                    ?hint:
+                      (Option.map
+                         (fun d -> Printf.sprintf "did you mean `%s`?" d)
+                         (near_miss mname (List.map fst info.cmethods)))
+                    (Printf.sprintf "NoMethodError: `%s` has no method `%s`" c
+                       mname);
+                  Unknown)
+          | None -> Unknown)
+      | InterfaceType _, "is" -> one_expected Bool
+      | InterfaceType i, _ -> (
+          match Hashtbl.find_opt ctx.interfaces i with
+          | Some sigs -> (
+              match
+                List.find_opt (fun (n, _, _) -> String.equal n mname) sigs
+              with
+              | Some (_, iptypes, iret) ->
+                  check_apply ctx env span
+                    (i ^ "." ^ mname)
+                    (FuncType (iptypes, iret))
+                    args
+              | None when String.equal mname "to_string" -> builtin0 String
+              | None ->
+                  report ctx span "E4001"
+                    ?hint:
+                      (Option.map
+                         (fun d -> Printf.sprintf "did you mean `%s`?" d)
+                         (near_miss mname (List.map (fun (n, _, _) -> n) sigs)))
+                    (Printf.sprintf "NoMethodError: `%s` has no method `%s`" i
+                       mname);
+                  Unknown)
+          | None -> Unknown)
+      | v, "to_string" -> builtin0 String
+      | TcpConn, "read_line" -> builtin0 (TupleType [ EnumType "R"; String ])
+      | TcpConn, "read_exactly" -> (
+          match arg_values with
+          | [ (None, Int64) ] | [ (Some "n", Int64) ] ->
+              TupleType [ EnumType "R"; String ]
+          | [ (_, other) ] ->
               report ctx span "E4004"
-                (Printf.sprintf "`append` expects %s, got %s" (to_string elem)
-                   (to_string vt));
-            ArrayType elem
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`append` expects 1 argument, got %d"
-                 (List.length arg_values));
-            ArrayType elem)
-    | ArrayType elem, "length" ->
-        builtin0
-          (ignore elem;
-           Int64)
-    | ArrayType elem, "sort" -> (
-        (* the six comparable scalars are the map-key set: the element
+                (Printf.sprintf "`read_exactly` expects Int64, got %s"
+                   (to_string other));
+              TupleType [ EnumType "R"; String ]
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`read_exactly` expects 1 argument, got %d"
+                   (List.length arg_values));
+              TupleType [ EnumType "R"; String ])
+      | TcpConn, "read_all" -> builtin0 (TupleType [ EnumType "R"; String ])
+      | TcpConn, "write" -> (
+          match arg_values with
+          | [ (None, String) ] | [ (Some "data", String) ] ->
+              TupleType [ EnumType "R"; TcpConn ]
+          | [ (_, other) ] ->
+              report ctx span "E4004"
+                (Printf.sprintf "`write` expects String, got %s"
+                   (to_string other));
+              TupleType [ EnumType "R"; TcpConn ]
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`write` expects 1 argument, got %d"
+                   (List.length arg_values));
+              TupleType [ EnumType "R"; TcpConn ])
+      | TcpConn, "close" -> builtin0 (TupleType [ EnumType "R"; TcpConn ])
+      | TcpConn, "set_timeout" -> (
+          match arg_values with
+          | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpConn
+          | [ (_, other) ] ->
+              report ctx span "E4004"
+                (Printf.sprintf "`set_timeout` expects Float64, got %s"
+                   (to_string other));
+              TcpConn
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+                   (List.length arg_values));
+              TcpConn)
+      | TcpListener, "accept" -> builtin0 (TupleType [ EnumType "R"; TcpConn ])
+      | TcpListener, "port" -> builtin0 Int64
+      | TcpListener, "close" ->
+          builtin0 (TupleType [ EnumType "R"; TcpListener ])
+      | TcpListener, "set_timeout" -> (
+          match arg_values with
+          | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> TcpListener
+          | [ (_, other) ] ->
+              report ctx span "E4004"
+                (Printf.sprintf "`set_timeout` expects Float64, got %s"
+                   (to_string other));
+              TcpListener
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+                   (List.length arg_values));
+              TcpListener)
+      | UdpSocket, "send_to" -> (
+          match arg_values with
+          | [ (None, String); (None, Int64); (None, String) ] ->
+              TupleType [ EnumType "R"; UdpSocket ]
+          | [ _; _; _ ] ->
+              report ctx span "E4004"
+                "`send_to` expects (host String, port Int64, data String)";
+              TupleType [ EnumType "R"; UdpSocket ]
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`send_to` expects 3 arguments, got %d"
+                   (List.length arg_values));
+              TupleType [ EnumType "R"; UdpSocket ])
+      | UdpSocket, "recv_from" ->
+          builtin0
+            (TupleType [ EnumType "R"; TupleType [ String; String; Int64 ] ])
+      | UdpSocket, "port" -> builtin0 Int64
+      | UdpSocket, "close" -> builtin0 (TupleType [ EnumType "R"; UdpSocket ])
+      | UdpSocket, "set_timeout" -> (
+          match arg_values with
+          | [ (None, Float64) ] | [ (Some "seconds", Float64) ] -> UdpSocket
+          | [ (_, other) ] ->
+              report ctx span "E4004"
+                (Printf.sprintf "`set_timeout` expects Float64, got %s"
+                   (to_string other));
+              UdpSocket
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`set_timeout` expects 1 argument, got %d"
+                   (List.length arg_values));
+              UdpSocket)
+      | String, "length" -> builtin0 Int64
+      | String, "chars" -> builtin0 (ArrayType Char)
+      | String, "substring" -> (
+          match arg_values with
+          | [ (None, Int64); (None, Int64) ] -> String
+          | [ _; _ ] ->
+              report ctx span "E4004"
+                "`substring` expects (start Int64, length Int64)";
+              String
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`substring` expects 2 arguments, got %d"
+                   (List.length arg_values));
+              String)
+      | String, "split" -> (
+          match arg_values with
+          | [ (None, String) ] | [ (Some "sep", String) ] -> ArrayType String
+          | [ _ ] ->
+              report ctx span "E4004" "`split` expects a String separator";
+              ArrayType String
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`split` expects 1 argument, got %d"
+                   (List.length arg_values));
+              ArrayType String)
+      | String, "trim" -> builtin0 String
+      | String, "lower" -> builtin0 String
+      | String, "upper" -> builtin0 String
+      | String, "index_of" -> (
+          match arg_values with
+          | [ (None, String) ] | [ (Some "needle", String) ] -> Int64
+          | [ _ ] ->
+              report ctx span "E4004" "`index_of` expects a String needle";
+              Int64
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`index_of` expects 1 argument, got %d"
+                   (List.length arg_values));
+              Int64)
+      | String, "starts_with" -> (
+          match arg_values with
+          | [ (None, String) ] | [ (Some "prefix", String) ] -> Bool
+          | [ _ ] ->
+              report ctx span "E4004" "`starts_with` expects a String prefix";
+              Bool
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`starts_with` expects 1 argument, got %d"
+                   (List.length arg_values));
+              Bool)
+      | String, "to_int64" -> builtin0 Int64
+      | ArrayType elem, "append" -> (
+          match arg_values with
+          | [ (_, vt) ] ->
+              if not (conforms ctx vt elem) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`append` expects %s, got %s" (to_string elem)
+                     (to_string vt));
+              ArrayType elem
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`append` expects 1 argument, got %d"
+                   (List.length arg_values));
+              ArrayType elem)
+      | ArrayType elem, "length" ->
+          builtin0
+            (ignore elem;
+             Int64)
+      | ArrayType elem, "sort" -> (
+          (* the six comparable scalars are the map-key set: the element
            type must pin one, and an unpinned element type cannot sort
            because the static targets pick their compare from it *)
-        match arg_values with
-        | [] -> (
-            match elem with
-            | Int64 | Float64 | String | Byte | Char | Bool -> ArrayType elem
-            | Unknown ->
+          match arg_values with
+          | [] -> (
+              match elem with
+              | Int64 | Float64 | String | Byte | Char | Bool -> ArrayType elem
+              | Unknown ->
+                  report ctx span "E4004"
+                    "`sort` needs a known element type; annotate the binding, \
+                     e.g. `const a Array[Int64] = []`";
+                  ArrayType elem
+              | other ->
+                  report ctx span "E4004"
+                    (Printf.sprintf
+                       "`sort` expects comparable elements (Int64, Float64, \
+                        String, Byte, Char, Bool), got %s"
+                       (to_string other));
+                  ArrayType elem)
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`sort` expects no arguments, got %d"
+                   (List.length arg_values));
+              ArrayType elem)
+      | TupleType _, "length" -> builtin0 Int64
+      | BoxType elem, "read" -> builtin0 elem
+      | BoxType elem, "replace" -> (
+          let args = List.map snd arg_values in
+          match args with
+          | [ v ] ->
+              if not (conforms ctx v elem) then
                 report ctx span "E4004"
-                  "`sort` needs a known element type; annotate the binding, \
-                   e.g. `const a Array[Int64] = []`";
-                ArrayType elem
-            | other ->
+                  (Printf.sprintf "`replace` expects %s, got %s"
+                     (to_string elem) (to_string v));
+              elem
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`replace` expects 1 argument, got %d"
+                   (List.length args));
+              elem)
+      | AtomicType elem, "load" -> none_expected elem
+      | AtomicType elem, "store" -> (
+          match List.map snd arg_values with
+          | [ v ] ->
+              if not (conforms ctx v elem) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`store` expects %s, got %s" (to_string elem)
+                     (to_string v));
+              Void
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`store` expects 1 argument, got %d"
+                   (List.length args));
+              Void)
+      | AtomicType elem, "exchange" -> (
+          match List.map snd arg_values with
+          | [ v ] ->
+              if not (conforms ctx v elem) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`exchange` expects %s, got %s"
+                     (to_string elem) (to_string v));
+              elem
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`exchange` expects 1 argument, got %d"
+                   (List.length args));
+              elem)
+      | AtomicType elem, "compare_exchange" -> (
+          match List.map snd arg_values with
+          | [ expected; fresh ] ->
+              if not (conforms ctx expected elem) then
                 report ctx span "E4004"
                   (Printf.sprintf
-                     "`sort` expects comparable elements (Int64, Float64, \
-                      String, Byte, Char, Bool), got %s"
-                     (to_string other));
-                ArrayType elem)
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`sort` expects no arguments, got %d"
-                 (List.length arg_values));
-            ArrayType elem)
-    | TupleType _, "length" -> builtin0 Int64
-    | BoxType elem, "read" -> builtin0 elem
-    | BoxType elem, "replace" -> (
-        let args = List.map snd arg_values in
-        match args with
-        | [ v ] ->
-            if not (conforms ctx v elem) then
-              report ctx span "E4004"
-                (Printf.sprintf "`replace` expects %s, got %s" (to_string elem)
-                   (to_string v));
-            elem
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`replace` expects 1 argument, got %d"
-                 (List.length args));
-            elem)
-    | AtomicType elem, "load" -> none_expected elem
-    | AtomicType elem, "store" -> (
-        match List.map snd arg_values with
-        | [ v ] ->
-            if not (conforms ctx v elem) then
-              report ctx span "E4004"
-                (Printf.sprintf "`store` expects %s, got %s" (to_string elem)
-                   (to_string v));
-            Void
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`store` expects 1 argument, got %d"
-                 (List.length args));
-            Void)
-    | AtomicType elem, "exchange" -> (
-        match List.map snd arg_values with
-        | [ v ] ->
-            if not (conforms ctx v elem) then
-              report ctx span "E4004"
-                (Printf.sprintf "`exchange` expects %s, got %s" (to_string elem)
-                   (to_string v));
-            elem
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`exchange` expects 1 argument, got %d"
-                 (List.length args));
-            elem)
-    | AtomicType elem, "compare_exchange" -> (
-        match List.map snd arg_values with
-        | [ expected; fresh ] ->
-            if not (conforms ctx expected elem) then
-              report ctx span "E4004"
-                (Printf.sprintf
-                   "`compare_exchange` expects %s as the expected value, got %s"
-                   (to_string elem) (to_string expected));
-            if not (conforms ctx fresh elem) then
-              report ctx span "E4004"
-                (Printf.sprintf
-                   "`compare_exchange` expects %s as the new value, got %s"
-                   (to_string elem) (to_string fresh));
-            TupleType [ Bool; elem ]
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
-                 (List.length args));
-            TupleType [ Bool; elem ])
-    | AtomicType Bool, (("fetch_add" | "fetch_sub") as mname) ->
-        (* Arithmetic is not Bool's vocabulary; the bitwise family is. *)
-        report ctx span "E4004"
-          (Printf.sprintf "`%s` expects an `Atomic[Int64]`, got `Atomic[Bool]`"
-             mname);
-        Bool
-    | AtomicType elem, (("fetch_add" | "fetch_sub") as mname) -> (
-        match List.map snd arg_values with
-        | [ v ] ->
-            if not (conforms ctx v Int64) then
-              report ctx span "E4004"
-                (Printf.sprintf "`%s` expects Int64, got %s" mname (to_string v));
-            elem
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
-                 (List.length args));
-            elem)
-    | AtomicType elem, (("fetch_and" | "fetch_or" | "fetch_xor") as mname) -> (
-        match List.map snd arg_values with
-        | [ v ] ->
-            if not (conforms ctx v elem) then
-              report ctx span "E4004"
-                (Printf.sprintf "`%s` expects %s, got %s" mname (to_string elem)
-                   (to_string v));
-            elem
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
-                 (List.length args));
-            elem)
-    | ListType elem, (("push_front" | "push_back") as mname) -> (
-        match List.map snd arg_values with
-        | [ v ] ->
-            if not (conforms ctx v elem) then
-              report ctx span "E4004"
-                (Printf.sprintf "`%s` expects %s, got %s" mname (to_string elem)
-                   (to_string v));
-            ListType elem
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
-                 (List.length args));
-            ListType elem)
-    | ListType elem, ("pop_front" | "pop_back") -> none_expected elem
-    | ListType _, "length" -> builtin0 Int64
-    | BuilderType elem, "push" -> (
-        (* While the element type is still Unknown, `push` answers with the
+                     "`compare_exchange` expects %s as the expected value, got \
+                      %s"
+                     (to_string elem) (to_string expected));
+              if not (conforms ctx fresh elem) then
+                report ctx span "E4004"
+                  (Printf.sprintf
+                     "`compare_exchange` expects %s as the new value, got %s"
+                     (to_string elem) (to_string fresh));
+              TupleType [ Bool; elem ]
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`compare_exchange` expects 2 arguments, got %d"
+                   (List.length args));
+              TupleType [ Bool; elem ])
+      | AtomicType Bool, (("fetch_add" | "fetch_sub") as mname) ->
+          (* Arithmetic is not Bool's vocabulary; the bitwise family is. *)
+          report ctx span "E4004"
+            (Printf.sprintf
+               "`%s` expects an `Atomic[Int64]`, got `Atomic[Bool]`" mname);
+          Bool
+      | AtomicType elem, (("fetch_add" | "fetch_sub") as mname) -> (
+          match List.map snd arg_values with
+          | [ v ] ->
+              if not (conforms ctx v Int64) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`%s` expects Int64, got %s" mname
+                     (to_string v));
+              elem
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                   (List.length args));
+              elem)
+      | AtomicType elem, (("fetch_and" | "fetch_or" | "fetch_xor") as mname)
+        -> (
+          match List.map snd arg_values with
+          | [ v ] ->
+              if not (conforms ctx v elem) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`%s` expects %s, got %s" mname
+                     (to_string elem) (to_string v));
+              elem
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                   (List.length args));
+              elem)
+      | ListType elem, (("push_front" | "push_back") as mname) -> (
+          match List.map snd arg_values with
+          | [ v ] ->
+              if not (conforms ctx v elem) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`%s` expects %s, got %s" mname
+                     (to_string elem) (to_string v));
+              ListType elem
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                   (List.length args));
+              ListType elem)
+      | ListType elem, ("pop_front" | "pop_back") -> none_expected elem
+      | ListType _, "length" -> builtin0 Int64
+      | BuilderType elem, "push" -> (
+          (* While the element type is still Unknown, `push` answers with the
            argument's type: that answer is what the enclosing `const`
            binding gets pinned to. Once pinned, every further push is
            checked against it. *)
-        match List.map snd arg_values with
-        | [ v ] -> (
-            match elem with
-            | Unknown -> BuilderType v
-            | _ ->
-                if not (conforms ctx v elem) then
-                  report ctx span "E4004"
-                    (Printf.sprintf "`push` expects %s, got %s" (to_string elem)
-                       (to_string v));
-                BuilderType elem)
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`push` expects 1 argument, got %d"
-                 (List.length args));
-            BuilderType elem)
-    | BuilderType _, "length" -> builtin0 Int64
-    | BuilderType elem, "get" -> (
-        match arg_values with
-        | [ (_, idx) ] ->
-            if not (conforms ctx idx Int64) then
-              report ctx span "E4004"
-                (Printf.sprintf "`get` expects Int64, got %s" (to_string idx));
-            elem
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`get` expects 1 argument, got %d"
-                 (List.length arg_values));
-            elem)
-    | BuilderType elem, "to_array" -> builtin0 (ArrayType elem)
-    | MapType (kt, vt), "get" -> (
-        match arg_values with
-        | [ (_, key) ] ->
-            if not (conforms ctx key kt) then
-              report ctx span "E4004"
-                (Printf.sprintf "`get` expects %s, got %s" (to_string kt)
-                   (to_string key));
-            vt
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`get` expects 1 argument, got %d"
-                 (List.length arg_values));
-            vt)
-    | MapType (kt, vt), "set" -> (
-        match arg_values with
-        | [ (_, key); (_, value) ] ->
-            if not (conforms ctx key kt) then
-              report ctx span "E4004"
-                (Printf.sprintf "`set` expects %s, got %s" (to_string kt)
-                   (to_string key));
-            if not (conforms ctx value vt) then
-              report ctx span "E4004"
-                (Printf.sprintf "`set` expects %s, got %s" (to_string vt)
-                   (to_string value));
-            MapType (kt, vt)
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`set` expects 2 arguments, got %d"
-                 (List.length arg_values));
-            MapType (kt, vt))
-    | MapType (kt, _), "has" -> (
-        match arg_values with
-        | [ (_, key) ] ->
-            if not (conforms ctx key kt) then
-              report ctx span "E4004"
-                (Printf.sprintf "`has` expects %s, got %s" (to_string kt)
-                   (to_string key));
-            Bool
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`has` expects 1 argument, got %d"
-                 (List.length arg_values));
-            Bool)
-    | MapType (kt, vt), "remove" -> (
-        match arg_values with
-        | [ (_, key) ] ->
-            if not (conforms ctx key kt) then
-              report ctx span "E4004"
-                (Printf.sprintf "`remove` expects %s, got %s" (to_string kt)
-                   (to_string key));
-            MapType (kt, vt)
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`remove` expects 1 argument, got %d"
-                 (List.length arg_values));
-            MapType (kt, vt))
-    | MapType _, "length" -> builtin0 Int64
-    | MapType (kt, _), "keys" -> builtin0 (ArrayType kt)
-    | MapType (_, vt), "values" -> builtin0 (ArrayType vt)
-    | Int64, "to_byte" -> builtin0 Byte
-    | Byte, "to_int64" -> builtin0 Int64
-    | Char, "to_int64" -> builtin0 Int64
-    | Float64, "to_bits" -> builtin0 Int64
-    | Float64, "sqrt" -> builtin0 Float64
-    | Float64, "floor" -> builtin0 Float64
-    | Float64, "ceil" -> builtin0 Float64
-    | Float64, "trunc" -> builtin0 Float64
-    | Float64, "to_int64" -> builtin0 Int64
-    | Int64, "to_float64" -> builtin0 Float64
-    | Bytes, "length" -> builtin0 Int64
-    (* The Bytes rules read a gradual index (and value) the same way the
+          match List.map snd arg_values with
+          | [ v ] -> (
+              match elem with
+              | Unknown -> BuilderType v
+              | _ ->
+                  if not (conforms ctx v elem) then
+                    report ctx span "E4004"
+                      (Printf.sprintf "`push` expects %s, got %s"
+                         (to_string elem) (to_string v));
+                  BuilderType elem)
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`push` expects 1 argument, got %d"
+                   (List.length args));
+              BuilderType elem)
+      | BuilderType _, "length" -> builtin0 Int64
+      | BuilderType elem, "get" -> (
+          match arg_values with
+          | [ (_, idx) ] ->
+              if not (conforms ctx idx Int64) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`get` expects Int64, got %s" (to_string idx));
+              elem
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`get` expects 1 argument, got %d"
+                   (List.length arg_values));
+              elem)
+      | BuilderType elem, "to_array" -> builtin0 (ArrayType elem)
+      | MapType (kt, vt), "get" -> (
+          match arg_values with
+          | [ (_, key) ] ->
+              if not (conforms ctx key kt) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`get` expects %s, got %s" (to_string kt)
+                     (to_string key));
+              vt
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`get` expects 1 argument, got %d"
+                   (List.length arg_values));
+              vt)
+      | MapType (kt, vt), "set" -> (
+          match arg_values with
+          | [ (_, key); (_, value) ] ->
+              if not (conforms ctx key kt) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`set` expects %s, got %s" (to_string kt)
+                     (to_string key));
+              if not (conforms ctx value vt) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`set` expects %s, got %s" (to_string vt)
+                     (to_string value));
+              MapType (kt, vt)
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`set` expects 2 arguments, got %d"
+                   (List.length arg_values));
+              MapType (kt, vt))
+      | MapType (kt, _), "has" -> (
+          match arg_values with
+          | [ (_, key) ] ->
+              if not (conforms ctx key kt) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`has` expects %s, got %s" (to_string kt)
+                     (to_string key));
+              Bool
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`has` expects 1 argument, got %d"
+                   (List.length arg_values));
+              Bool)
+      | MapType (kt, vt), "remove" -> (
+          match arg_values with
+          | [ (_, key) ] ->
+              if not (conforms ctx key kt) then
+                report ctx span "E4004"
+                  (Printf.sprintf "`remove` expects %s, got %s" (to_string kt)
+                     (to_string key));
+              MapType (kt, vt)
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`remove` expects 1 argument, got %d"
+                   (List.length arg_values));
+              MapType (kt, vt))
+      | MapType _, "length" -> builtin0 Int64
+      | MapType (kt, _), "keys" -> builtin0 (ArrayType kt)
+      | MapType (_, vt), "values" -> builtin0 (ArrayType vt)
+      | Int64, "to_byte" -> builtin0 Byte
+      | Byte, "to_int64" -> builtin0 Int64
+      | Char, "to_int64" -> builtin0 Int64
+      | Float64, "to_bits" -> builtin0 Int64
+      | Float64, "sqrt" -> builtin0 Float64
+      | Float64, "floor" -> builtin0 Float64
+      | Float64, "ceil" -> builtin0 Float64
+      | Float64, "trunc" -> builtin0 Float64
+      | Float64, "to_int64" -> builtin0 Int64
+      | Int64, "to_float64" -> builtin0 Float64
+      | Bytes, "length" -> builtin0 Int64
+      (* The Bytes rules read a gradual index (and value) the same way the
        containers do: an Unknown argument checks — the constructor rule
        typed every `Bytes.new` receiver, so a receiver indexed by a field
        or a dynamic value must not start failing (the atomic goldens'
        tolerance pass, T83.3). *)
-    | Bytes, "get" -> (
-        match arg_values with
-        | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
-            Int64
-        | [ _ ] ->
-            report ctx span "E4004" "`get` expects an Int64 index";
-            Int64
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`get` expects 1 argument, got %d"
-                 (List.length arg_values));
-            Int64)
-    | Bytes, (("set" | "set_u16_le" | "set_u32_le") as mname) -> (
-        match arg_values with
-        | [ (None, (Int64 | Unknown)); (None, (Int64 | Unknown)) ]
-        | [
-            (Some "i", (Int64 | Unknown)); ((Some "v" | None), (Int64 | Unknown));
-          ] ->
-            Int64
-        | [ _; _ ] ->
-            report ctx span "E4004"
-              (Printf.sprintf "`%s` expects (i Int64, v Int64)" mname);
-            Int64
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
-                 (List.length arg_values));
-            Int64)
-    | Bytes, (("get_u16_le" | "get_u32_le") as mname) -> (
-        match arg_values with
-        | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
-            Int64
-        | [ _ ] ->
-            report ctx span "E4004"
-              (Printf.sprintf "`%s` expects an Int64 index" mname);
-            Int64
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`%s` expects 1 argument, got %d" mname
-                 (List.length arg_values));
-            Int64)
-    | Bytes, "get_u64_le" -> (
-        match arg_values with
-        | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
-            Int64
-        | [ _ ] ->
-            report ctx span "E4004" "`get_u64_le` expects an Int64 index";
-            Int64
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`get_u64_le` expects 1 argument, got %d"
-                 (List.length arg_values));
-            Int64)
-    | Bytes, "set_u64_le" -> (
-        match arg_values with
-        | [ (None, (Int64 | Unknown)); (None, (Int64 | Unknown)) ]
-        | [
-            (Some "i", (Int64 | Unknown)); ((Some "v" | None), (Int64 | Unknown));
-          ] ->
-            Int64
-        | [ _; _ ] ->
-            report ctx span "E4004" "`set_u64_le` expects (i Int64, v Int64)";
-            Int64
-        | _ ->
-            report ctx span "E4009"
-              (Printf.sprintf "`set_u64_le` expects 2 arguments, got %d"
-                 (List.length arg_values));
-            Int64)
-    | String, "to_bytes" -> builtin0 Bytes
-    | _, "is" ->
-        let (_ : t list) = List.map snd arg_values in
-        one_expected Bool
-    | Unknown, _ -> Unknown
-    | v, m ->
-        report ctx span "E4001"
-          (Printf.sprintf "NoMethodError: `%s` has no method `%s`" (to_string v)
-             m);
-        Unknown
+      | Bytes, "get" -> (
+          match arg_values with
+          | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
+              Int64
+          | [ _ ] ->
+              report ctx span "E4004" "`get` expects an Int64 index";
+              Int64
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`get` expects 1 argument, got %d"
+                   (List.length arg_values));
+              Int64)
+      | Bytes, (("set" | "set_u16_le" | "set_u32_le") as mname) -> (
+          match arg_values with
+          | [ (None, (Int64 | Unknown)); (None, (Int64 | Unknown)) ]
+          | [
+              (Some "i", (Int64 | Unknown));
+              ((Some "v" | None), (Int64 | Unknown));
+            ] ->
+              Int64
+          | [ _; _ ] ->
+              report ctx span "E4004"
+                (Printf.sprintf "`%s` expects (i Int64, v Int64)" mname);
+              Int64
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`%s` expects 2 arguments, got %d" mname
+                   (List.length arg_values));
+              Int64)
+      | Bytes, (("get_u16_le" | "get_u32_le") as mname) -> (
+          match arg_values with
+          | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
+              Int64
+          | [ _ ] ->
+              report ctx span "E4004"
+                (Printf.sprintf "`%s` expects an Int64 index" mname);
+              Int64
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`%s` expects 1 argument, got %d" mname
+                   (List.length arg_values));
+              Int64)
+      | Bytes, "get_u64_le" -> (
+          match arg_values with
+          | [ (None, (Int64 | Unknown)) ] | [ (Some "i", (Int64 | Unknown)) ] ->
+              Int64
+          | [ _ ] ->
+              report ctx span "E4004" "`get_u64_le` expects an Int64 index";
+              Int64
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`get_u64_le` expects 1 argument, got %d"
+                   (List.length arg_values));
+              Int64)
+      | Bytes, "set_u64_le" -> (
+          match arg_values with
+          | [ (None, (Int64 | Unknown)); (None, (Int64 | Unknown)) ]
+          | [
+              (Some "i", (Int64 | Unknown));
+              ((Some "v" | None), (Int64 | Unknown));
+            ] ->
+              Int64
+          | [ _; _ ] ->
+              report ctx span "E4004" "`set_u64_le` expects (i Int64, v Int64)";
+              Int64
+          | _ ->
+              report ctx span "E4009"
+                (Printf.sprintf "`set_u64_le` expects 2 arguments, got %d"
+                   (List.length arg_values));
+              Int64)
+      | String, "to_bytes" -> builtin0 Bytes
+      | _, "is" ->
+          let (_ : t list) = List.map snd arg_values in
+          one_expected Bool
+      | Unknown, _ -> Unknown
+      | v, m ->
+          report ctx span "E4001"
+            (Printf.sprintf "NoMethodError: `%s` has no method `%s`"
+               (to_string v) m);
+          Unknown
 
 and check_part ctx env = function
   | Ast.Literal_text _ -> ()

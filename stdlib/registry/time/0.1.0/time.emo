@@ -260,7 +260,7 @@ def format_ms(ms Int64, layout String) String {
 
 // The OS's wall clock, UTC: the moment now is.
 def now() Time {
-  return Time.new(time_now_ms())
+  return Time.new(emo.time_now_ms())
 }
 
 // The moment at the given epoch milliseconds.
@@ -279,7 +279,7 @@ def of(year Int64, month Int64, day Int64, hour Int64, minute Int64, second Int6
 // Subtract two readings — the unit is nanoseconds, and the resolution
 // is the target's own.
 def mono() Int64 {
-  return time_mono_ns()
+  return emo.time_mono_ns()
 }
 
 // The reverse of the civil calendar: the day count the given UTC date
@@ -301,7 +301,7 @@ def days_from_civil(y Int64, m Int64, d Int64) Int64 {
 // queues in the mailbox and waits for the wake — sleep is woken early
 // by nothing.
 def sleep(seconds Float64) Void {
-  time_sleep_ms(duration(seconds))
+  emo.time_sleep_ms(duration(seconds))
 }
 
 // Runs the block once, the interval out, in its own process. The
@@ -314,7 +314,7 @@ def after(seconds Float64, f Block) Void {
 }
 
 def after_run(ms Int64, f Block) Void {
-  time_sleep_ms(ms)
+  emo.time_sleep_ms(ms)
   f()
 }
 
@@ -327,7 +327,7 @@ def tick(seconds Float64, f Block) Void {
 }
 
 def tick_loop(ms Int64, f Block) Void {
-  time_sleep_ms(ms)
+  emo.time_sleep_ms(ms)
   f()
   tick_loop(ms, f)
 }
@@ -339,7 +339,7 @@ def tick_loop(ms Int64, f Block) Void {
 // clock adjustment shows up; for a never-goes-back measurement, take
 // two `mono()` readings and subtract.
 def since(t Time) Int64 {
-  return time_now_ms() - t.unix_ms()
+  return emo.time_now_ms() - t.unix_ms()
 }
 
 def ms_between(a Time, b Time) Int64 {

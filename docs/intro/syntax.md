@@ -120,6 +120,7 @@ Math.tau          // 6
 - **A group is not a class.** There is nothing to instantiate and nothing to pass around — it is a namespace of functions. A group's own keyword appears only at the declaration and disappears at its use sites: `Math.abs(7)` never mentions it.
 - **Members are referenced through the group** — `Math.abs(7)`, `Config.version` — and inside the group they are visible bare, the way static methods read in their own class.
 - **Groups are stateless by design**: no `var`, no fields, no `init`. State wants a class and a `Box`.
+- **`emo.` is the runtime namespace, not a group.** Followed by a dot, the keyword heads the compiler's own doors — `emo.file_read(path)`, the implementation `file.read` wraps. It is built in: no `require`, no dependency entry.
 
 ## Enums
 

@@ -24,7 +24,7 @@ Reserved words are lowercase and case-sensitive. Their capitalized spellings
 | `def` | Function or method definition. |
 | `do` | Starts a process from a call and yields its pid. |
 | `else` | The alternative branch of an `if`. |
-| `emo` | Function group declaration. |
+| `emo` | Function group declaration; `emo.` heads the runtime namespace. |
 | `enum` | Enum declaration. |
 | `for` | Three-clause loop. |
 | `if` | Conditional statement, or the one-line conditional expression. |
@@ -47,7 +47,9 @@ Reserved words are lowercase and case-sensitive. Their capitalized spellings
 - **`class`** declares a class. All fields come into existence through
   `self.x = ...` inside `init`, and classes have no inheritance.
 - **`emo`** declares a function group — a named, stateless set of functions and
-  constants: no instances, no fields, no `init`.
+  constants: no instances, no fields, no `init`. Followed by a dot, `emo` heads
+  the compiler's runtime namespace instead: `emo.file_read(path)` reaches the
+  runtime door the standard library's `file.read` wraps.
 - **`interface`** declares a set of method signatures. Satisfaction is
   structural, with no `implements` declaration.
 - **`enum`** declares a closed set of named values: `enum Color { red, green, blue }`.

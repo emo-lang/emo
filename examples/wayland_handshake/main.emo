@@ -208,13 +208,13 @@ def client_body(c wayland.Conn, pool_path String) {
               case wayland.registry_bind(c, name, "wl_shm", version) {
                 (R.error, why) then { println("client: " + why) }
                 (R.ok, shm_id) then {
-                  case os_shm_open(pool_path) {
+                  case emo.os_shm_open(pool_path) {
                     (R.error, why) then { println("client: pool " + why) }
                     (R.ok, pool_fd) then {
-                      case os_ftruncate(pool_fd, 32) {
+                      case emo.os_ftruncate(pool_fd, 32) {
                         (R.error, why) then { println("client: ftruncate " + why) }
                         (R.ok, _) then {
-                          case os_pwrite(pool_fd, "poolbytes", 0) {
+                          case emo.os_pwrite(pool_fd, "poolbytes", 0) {
                             (R.error, why) then { println("client: pwrite " + why) }
                             (R.ok, _) then {
                               println("client: pool painted 9")
