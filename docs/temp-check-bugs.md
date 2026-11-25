@@ -6,9 +6,10 @@ none was pinned by a golden, which is why they stayed open. This file is a
 working list, not a design document — the decisions belong in `CHECK.md`
 until they are settled.
 
-The numbers are stable: items 1 and 2 are closed and keep their numbers,
-items 5 and 6 were found on 2026-11-25 while closing item 1, and items 7 and
-8 while closing item 2. **Open: 3, 4, 5, 6, 7, 8.**
+The numbers are stable: items 1, 2 and 3 are closed and keep their
+numbers, items 5 and 6 were found on 2026-11-25 while closing item 1,
+items 7 and 8 while closing item 2, and item 9 while closing item 3.
+**Open: 4, 5, 6, 7, 8, 9.**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -39,39 +40,36 @@ The decision and its verification are in `CHECK.md`'s entry of that date;
 `cross_target_refusal` pins three rows on five targets. What the round found
 on the way and left is item 7.
 
-## 3. wasm: the gradual paths the shape tests never learned
+## 3. wasm: the gradual paths the shape tests never learned — closed 2026-11-25
 
-Two gaps in the same family, both *loud* — neither answers a wrong value:
+Fixed on wasm — and on the beam, which turned out to carry the same
+field-read gap.
 
-**(a) A field read on an unknown class refuses at build time.**
+**(a) A field read on an unknown class** lowers through the runtime now:
+one `ref.test` per class on wasm, one pattern per class on the beam (an
+instance there is `{'emo_inst', ClassAtom, fields…}`). A class carrying the
+field reads its own slot; a class without it, and a value that is not an
+instance, answer the interpreter's own words — `` `Point` has no field `z`
+`` and "a member access must be a call, like `x.read()`" — where the build
+used to die with an internal error (exit 125). Inside a class member the
+read no longer assumes the receiver is `self`: the old code read any open
+receiver at self's class, an internal error when self's class lacked the
+field and a failed cast on wasm when it had one.
 
-```
-emo: internal error, uncaught exception:
-     Failure("wasm: field read without a known class")
-```
+**(b) The gradual Map's whole surface** — `has`, `keys`, `values`, and
+`set` beside the two doors that already answered — takes the Map's door
+through a `$vmap` test, and a receiver that is not a Map answers the
+interpreter's words (`Int64 has no method `has`` for a value, ``NoMethodError:
+`Point` has no method `has``` for an instance).
 
-A class instance that arrives through a mailbox binding has no static class,
-so `p.x` cannot pick a struct layout. The instance already carries its class
-at run time (the `$vinst` struct's class field); the lowering needs a runtime
-field walk — a chain of `ref.test` per class carrying the name, the shape the
-builtin-method dispatch already uses — instead of the build-time failure, and
-the CLI's internal-error exit (125) is the wrong surface for a program the
-checker admitted.
+| target | a sent instance's `p.x` | a field no class carries |
+|---|---|---|
+| wasm | `3`, `4` | `ABORT: `Point` has no field `z``, exit 1 |
+| beam | `3`, `4` | `runtime error: `Point` has no field `z``, exit 70 |
 
-**(b) The gradual Map has `get` and `length`, not the rest of its surface.**
-
-```
-emo build: wasm: method `has` has no static dispatch (in __recv_131,
-self type: Unknown)
-```
-
-`get` (with `$vmap` ahead of the builder and Bytes arms) and `length`'s
-`$vmap` count arm landed 2026-11-24; `has`, `keys`, `values`, `set`, and
-`remove` still refuse by name at the build. Their static arms exist — each is
-a `$vmap` test plus the runtime function the static path already calls.
-
-**Repro.** `m.get("k")` off a mailbox Map answers; `m.has("k")` on the same
-binding refuses at the build. A sent instance's `p.x` refuses at the build.
+The decision and its verification are in `CHECK.md`'s entry of that date;
+`cross_target_gradual` pins six rows across the two. What the round found
+on the way and left is item 9.
 
 ## 4. riscv64: three open walls
 
@@ -267,3 +265,29 @@ against C library (-lLIB)".
 failure) and the comment above it in `src/emo_codegen/c/emo_c_runtime.c`
 ("rides --cclib -L<dir>"). The suite never meets it: it passes the flags
 through `build_file`'s `cclibs`, not the command line.
+
+## 9. riscv64: a Map never answers
+
+**Symptom.** A program that constructs a Map literal never prints again:
+
+```
+const m = { "a": 1 }
+println("built the literal")
+```
+
+prints nothing under QEMU and never returns; the interpreter answers
+`built the literal`. Every door follows from it — `length`, `get`, `has`,
+`keys`, `values`, `set`, and `remove` each hang on a Map that stays in one
+process — and a Map sent to another process parks its sender inside the
+send: `boss <- m` never returns and the sender's next line never prints,
+while the receiver's root goes on and ends. The control through the same
+mailbox, an Int64, answers.
+
+**Where.** Not located. The suite only ever *built* a Map for the metal ("a
+map literal lowers to the metal's Map", step 91 — a build-only test): `map`
+is on the wasm, c, beam, and wasi golden lists and on no metal list, and
+`examples/map` cannot build there for another reason ("does not support an
+exception with a data map yet"). Checked against compilers built from
+`67c1b3b4` and `13395ae2` as well as the working copy: all three hang the
+same way, so this predates both rounds. A kinship with (4)(b)'s metal-Array
+wall is a guess, not a finding.

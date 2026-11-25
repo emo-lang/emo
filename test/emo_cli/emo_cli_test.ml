@@ -6610,6 +6610,158 @@ let cross_target_refusal_tests =
         mixed_kind_rows)
     mixed_kind_targets
 
+(* The gradual paths the shape tests never learned (2026-11-25): an
+   instance that arrives through a mailbox binding has no static class,
+   and its field read refused the build with an internal error on wasm
+   and the beam; a Map arriving the same way had two doors on wasm and
+   refused the other five. Both lower through the runtime now — one
+   ref.test on wasm, one pattern on the beam, per class — and a read no
+   class can answer refuses with the interpreter's own words: on wasm
+   the target's `ABORT: …` and exit 1, on the beam `runtime error: …`
+   and exit 70. The interpreter and every other target answered already. *)
+let gradual_field_source =
+  {|class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+def worker(boss Pid) {
+  boss <- Point.new(x: 3, y: 4)
+}
+
+const me = self_pid()
+const w = do worker(me)
+receive {
+  p then {
+    println(p.x)
+    println(p.y)
+  }
+}
+|}
+
+let gradual_map_source =
+  {|def worker(boss Pid) {
+  const m = { "a": 1, "b": 2 }
+  boss <- m
+}
+
+const me = self_pid()
+const w = do worker(me)
+receive {
+  m then {
+    println(m.get("a"))
+    println(m.length())
+    println(m.has("a"))
+    println(m.has("zz"))
+    println(m.keys())
+    println(m.values())
+    m.set("c", 3)
+    println(m.set("a", 10))
+    println(m.remove("b"))
+    println(m.remove("zz"))
+    println(m)
+    println(m.length())
+  }
+}
+|}
+
+let gradual_map_out =
+  "1\n\
+   2\n\
+   true\n\
+   false\n\
+   [a, b]\n\
+   [1, 2]\n\
+   {\"a\": 10, \"b\": 2, \"c\": 3}\n\
+   {\"a\": 10, \"c\": 3}\n\
+   {\"a\": 10, \"c\": 3}\n\
+   {\"a\": 10, \"c\": 3}\n\
+   2\n"
+
+let gradual_lack_source =
+  {|class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+def worker(boss Pid) {
+  boss <- Point.new(x: 3, y: 4)
+}
+
+const me = self_pid()
+const w = do worker(me)
+receive {
+  p then {
+    println(p.z)
+  }
+}
+|}
+
+(* Builds a scratch entry for [target] and runs the artifact the way the
+   goldens do; the answer is (stdout, stderr, status). *)
+let gradual_run ~target ~entry ~out () =
+  let dir = Filename.dirname entry in
+  Alcotest.(check int) "build exit" 0 (build_entry ~target entry out);
+  match target with
+  | "wasm" ->
+      run_cmd
+        (Printf.sprintf "node %s %s"
+           (Filename.quote (Lazy.force wasm_runner_path))
+           (Filename.quote (out ^ ".wasm")))
+  | "beam" ->
+      run_cmd
+        (Printf.sprintf
+           "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+           (Filename.quote dir))
+  | _ -> assert false
+
+let cross_target_gradual_tests =
+  let wasm_case name source check =
+    tc (Printf.sprintf "%s on wasm" name) (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry ("gradual-wasm-" ^ name) source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        check (gradual_run ~target:"wasm" ~entry ~out ()))
+  in
+  let beam_case name source check =
+    tc (Printf.sprintf "%s on the beam" name) (fun () ->
+        skip_unless_beam ();
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry = scratch_entry ("gradual-beam-" ^ name) source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        check (gradual_run ~target:"beam" ~entry ~out ()))
+  in
+  let answers expected (out, err, status) =
+    check_run "run" (out, err, status) expected
+  in
+  let refuses prefix sentence code (_out, err, status) =
+    Alcotest.(check bool)
+      "the interpreter's words in the envelope" true
+      (contains err (prefix ^ sentence));
+    match status with
+    | Unix.WEXITED n -> Alcotest.(check int) "exit" code n
+    | Unix.WSIGNALED n -> Alcotest.fail (Printf.sprintf "died on signal %d" n)
+    | Unix.WSTOPPED n -> Alcotest.fail (Printf.sprintf "stopped on signal %d" n)
+  in
+  [
+    wasm_case "a sent instance's field reads" gradual_field_source
+      (answers "3\n4\n");
+    beam_case "a sent instance's field reads" gradual_field_source
+      (answers "3\n4\n");
+    wasm_case "the gradual Map's whole surface answers" gradual_map_source
+      (answers gradual_map_out);
+    beam_case "the gradual Map's whole surface answers" gradual_map_source
+      (answers gradual_map_out);
+    wasm_case "a field no class carries refuses in words" gradual_lack_source
+      (refuses "ABORT: " "`Point` has no field `z`" 1);
+    beam_case "a field no class carries refuses in words" gradual_lack_source
+      (refuses "runtime error: " "`Point` has no field `z`" 70);
+  ]
+
 let hosted_bindings_tests =
   [
     tc "a module-level const keeps its identity on every hosted target"
@@ -7928,6 +8080,7 @@ let () =
       ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
       ("cross_target_refusal", cross_target_refusal_tests);
+      ("cross_target_gradual", cross_target_gradual_tests);
       ("pid_render", pid_render_tests);
       ("hosted_bindings", hosted_bindings_tests);
       ("atomic_surface", atomic_surface_tests);

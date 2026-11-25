@@ -537,6 +537,7 @@ let rt name =
   | "type_name" -> if !wasi_mode then b + 125 else b + 109
   | "op_mismatch" -> if !wasi_mode then b + 126 else b + 110
   | "unary_mismatch" -> if !wasi_mode then b + 127 else b + 111
+  | "no_member" -> if !wasi_mode then b + 128 else b + 112
   | _ -> failwith ("wasm: bad runtime function: " ^ name)
 
 (* imports, then the runtime funcs above (the numeric core, the
@@ -555,8 +556,8 @@ let rt name =
    the argv array, the entropy fill, the directory-entry scan — and the
    Array sort's compare and merge pair after those in both modes, and
    the gradual operators' refusal after the pair: the kind names, the
-   two sentences. *)
-let runtime_count () = !import_base + if !wasi_mode then 128 else 112
+   two sentences, the missing-member one. *)
+let runtime_count () = !import_base + if !wasi_mode then 129 else 113
 
 (* ---- Lowering state ---- *)
 
@@ -631,6 +632,10 @@ let unguarded_builtin_arms =
     ("length", 0);
     ("get", 1);
     ("set", 2);
+    ("has", 1);
+    ("remove", 1);
+    ("keys", 0);
+    ("values", 0);
     ("substring", 2);
     ("starts_with", 1);
     ("index_of", 1);
@@ -706,6 +711,21 @@ let fresh_local env name (t : W.valtype) : int =
   env.local_decls <- env.local_decls @ [ t ];
   env.local_map <- (name, idx) :: env.local_map;
   idx
+
+(* A class's display name as the interpreter says it: the entry module
+   renders bare — the interpreter names the entry file's module nothing —
+   and a main/ subdirectory keeps its full path. The instance rendering
+   and the runtime refusals both speak it. *)
+let entry_bare (display : string) : string =
+  let drop = "main." in
+  if
+    String.starts_with ~prefix:drop display
+    && not
+         (String.contains
+            (String.sub display 5 (String.length display - 5))
+            '.')
+  then String.sub display 5 (String.length display - 5)
+  else display
 
 let string_bytes_instrs (s : string) : W.instr list =
   let n = String.length s in
@@ -1198,41 +1218,48 @@ let rec expr env (x : Emo_ir.expr) : unit =
       match obj.Emo_ir.desc with
       | Emo_ir.Type_ref m -> string_const env (m ^ "__" ^ name)
       | _ -> (
-          let class_name =
+          let known_class =
             match obj.Emo_ir.ety with
-            | Emo_check.ClassType c -> (
+            | Emo_check.ClassType c ->
                 (* The checker's ClassType carries the display name; the
                    field tables key on the mangled cname. *)
-                match
-                  List.find_opt
-                    (fun (cl : Emo_ir.class_) ->
-                      String.equal cl.Emo_ir.cdisplay c)
-                    env.classes
-                with
-                | Some cl -> cl.Emo_ir.cname
-                | None -> c)
+                Some
+                  (match
+                     List.find_opt
+                       (fun (cl : Emo_ir.class_) ->
+                         String.equal cl.Emo_ir.cdisplay c)
+                       env.classes
+                   with
+                  | Some cl -> cl.Emo_ir.cname
+                  | None -> c)
             | _ -> (
                 (* The span type table keys on span start, so `self.x`
                    and the chain it opens share a start and the
                    receiver's type is lost; inside a class member, self
-                   is the class. *)
-                match env.current_class with
-                | Some c -> c
-                | None -> failwith "wasm: field read without a known class")
+                   is the class. Any other open receiver takes the
+                   runtime field walk — it was read as self's class here
+                   whatever it was, a wrong field on a wrong struct *)
+                match (env.current_class, obj.Emo_ir.desc) with
+                | Some c, Emo_ir.Var "self" -> Some c
+                | _ -> None)
           in
-          match
-            ( List.assoc_opt class_name env.class_field,
-              List.assoc_opt class_name env.class_type )
-          with
-          | Some fields, Some tidx -> (
-              match List.assoc_opt name fields with
-              | Some fidx ->
-                  expr env obj;
-                  e env (W.Ref_cast tidx);
-                  e env (W.Struct_get (tidx, fidx))
-              | None ->
-                  failwith ("wasm: unknown field " ^ class_name ^ "." ^ name))
-          | _ -> failwith ("wasm: unknown class " ^ class_name)))
+          match known_class with
+          | Some class_name -> (
+              match
+                ( List.assoc_opt class_name env.class_field,
+                  List.assoc_opt class_name env.class_type )
+              with
+              | Some fields, Some tidx -> (
+                  match List.assoc_opt name fields with
+                  | Some fidx ->
+                      expr env obj;
+                      e env (W.Ref_cast tidx);
+                      e env (W.Struct_get (tidx, fidx))
+                  | None ->
+                      failwith ("wasm: unknown field " ^ class_name ^ "." ^ name)
+                  )
+              | _ -> failwith ("wasm: unknown class " ^ class_name))
+          | None -> gradual_field_read env obj name))
   | Call { func; args } -> (
       if List.mem func env.fforeigns then
         raise
@@ -2577,10 +2604,117 @@ and method_call env self_ name args =
       es env (chain matches)
   | _ -> builtin_method_call env self_ name args
 
+(* The runtime field walk: a receiver the checker could not type — a
+   mailbox binding, most often — reads its field by the value's own
+   class. Every class answers through a ref.test of its own struct type
+   (the method dispatch's shape; sound because [class_pad] gives each
+   class a type of its own): a class carrying the field reads it, a
+   class without it refuses the way the interpreter does (E3007, "`C`
+   has no field `x`"), and anything that is not an instance answers the
+   interpreter's other sentence. On this target both are the abort. The
+   read used to refuse the build with an internal error (exit 125), the
+   wrong surface for a program the checker admitted. *)
+and gradual_field_read env (obj : Emo_ir.expr) (name : string) : unit =
+  let recv = fresh_local env "__field_recv" W.Anyref in
+  expr env obj;
+  e env (W.Local_set recv);
+  let carrying, lacking =
+    List.partition
+      (fun (_, found, _) -> Option.is_some found)
+      (List.filter_map
+         (fun (c : Emo_ir.class_) ->
+           List.assoc_opt c.Emo_ir.cname env.class_type
+           |> Option.map (fun tidx ->
+               ( tidx,
+                 List.assoc_opt name
+                   (Option.value ~default:[]
+                      (List.assoc_opt c.Emo_ir.cname env.class_field)),
+                 entry_bare c.Emo_ir.cdisplay )))
+         env.classes)
+  in
+  let refuse text =
+    string_const_code env text @ [ W.Call (rt "throw"); W.Unreachable ]
+  in
+  let rec chain = function
+    | [] -> refuse "a member access must be a call, like `x.read()`"
+    | (tidx, Some fidx, _) :: rest ->
+        [
+          W.If_else
+            ( W.Result W.Anyref,
+              [ W.Local_get recv; W.Ref_test tidx ],
+              [ W.Local_get recv; W.Ref_cast tidx; W.Struct_get (tidx, fidx) ],
+              chain rest );
+        ]
+    | (tidx, None, display) :: rest ->
+        [
+          W.If_else
+            ( W.Result W.Anyref,
+              [ W.Local_get recv; W.Ref_test tidx ],
+              refuse (Printf.sprintf "`%s` has no field `%s`" display name),
+              chain rest );
+        ]
+  in
+  es env (chain (carrying @ lacking))
+
+(* The abort for a gradual receiver that is not the shape a builtin
+   door needs — the interpreter's own words (E3007): an instance is
+   named by its class ("NoMethodError: `C` has no method `m`"), any
+   other value by its kind ("<kind> has no method `m`", which
+   rt_no_member assembles at run time). The class tests run only on the
+   failure path. *)
+and no_member env (recv : int) (name : string) : W.instr list =
+  let refuse text =
+    string_const_code env text @ [ W.Call (rt "throw"); W.Unreachable ]
+  in
+  let rec chain = function
+    | [] ->
+        string_const_code env name
+        @ [ W.Local_get recv; W.Call (rt "no_member"); W.Unreachable ]
+    | (tidx, display) :: rest ->
+        [
+          W.If_else
+            ( W.Result W.Anyref,
+              [ W.Local_get recv; W.Ref_test tidx ],
+              refuse
+                (Printf.sprintf "NoMethodError: `%s` has no method `%s`" display
+                   name),
+              chain rest );
+        ]
+  in
+  chain
+    (List.filter_map
+       (fun (c : Emo_ir.class_) ->
+         List.assoc_opt c.Emo_ir.cname env.class_type
+         |> Option.map (fun tidx -> (tidx, entry_bare c.Emo_ir.cdisplay)))
+       env.classes)
+
 and builtin_method_call env self_ name args =
   let mangled = Emo_ir.sanitize_ident name in
   let map_recv =
     match self_.Emo_ir.ety with Emo_check.MapType _ -> true | _ -> false
+  in
+  (* the gradual twin of a Map door: the receiver and its one argument
+     land in scratch locals, a Map at run time takes the door, and any
+     other shape is the abort *)
+  let gradual_map_door door arg =
+    let recv = fresh_local env "__map_recv" W.Anyref in
+    expr env self_;
+    e env (W.Local_set recv);
+    let key =
+      match arg with
+      | Some a ->
+          let k = fresh_local env "__map_arg" W.Anyref in
+          expr env a;
+          e env (W.Local_set k);
+          [ W.Local_get k ]
+      | None -> []
+    in
+    e env
+      (W.If_else
+         ( W.Result W.Anyref,
+           [ W.Local_get recv; W.Ref_test t_vmap ],
+           ([ W.Local_get recv ] @ key) @ [ W.Call (rt door) ],
+           no_member env recv name ))
   in
   match (name, args) with
   | "get", [ k ] when map_recv ->
@@ -2609,6 +2743,10 @@ and builtin_method_call env self_ name args =
   | "values", [] when map_recv ->
       expr env self_;
       e env (W.Call (rt "map_values"))
+  | "has", [ k ] -> gradual_map_door "map_has" (Some k)
+  | "remove", [ k ] -> gradual_map_door "map_remove" (Some k)
+  | "keys", [] -> gradual_map_door "map_keys" None
+  | "values", [] -> gradual_map_door "map_values" None
   | "to_string", [] ->
       (* Instances answer their own `to_string` first — the interpreter's
          rule; the builtin conversion answers otherwise. A Bytes receiver
@@ -2961,11 +3099,34 @@ and builtin_method_call env self_ name args =
                    ],
                    fallback );
              ] ))
-  | "set", [ i; v ] ->
+  | "set", [ i; v ]
+    when match self_.Emo_ir.ety with
+         | Emo_check.Bytes | Emo_check.BuilderType _ -> true
+         | _ -> false ->
       expr env self_;
       expr env i;
       expr env v;
       e env (W.Call (rt "bytes_set"))
+  | "set", [ k; v ] ->
+      (* A receiver the checker could not type: a Map at run time takes
+         the Map's set, where this arm used to hand every receiver to the
+         Bytes store. A Bytes or a builder still takes the store. *)
+      let recv = fresh_local env "__set_recv" W.Anyref in
+      let key = fresh_local env "__set_arg" W.Anyref in
+      let value = fresh_local env "__set_val" W.Anyref in
+      expr env self_;
+      e env (W.Local_set recv);
+      expr env k;
+      e env (W.Local_set key);
+      expr env v;
+      e env (W.Local_set value);
+      let operands = [ W.Local_get recv; W.Local_get key; W.Local_get value ] in
+      e env
+        (W.If_else
+           ( W.Result W.Anyref,
+             [ W.Local_get recv; W.Ref_test t_vmap ],
+             operands @ [ W.Call (rt "map_set") ],
+             operands @ [ W.Call (rt "bytes_set") ] ))
   | (("get_u16_le" | "get_u32_le" | "get_u64_le") as mname), [ i ] ->
       expr env self_;
       expr env i;
@@ -4420,20 +4581,6 @@ let rt_instance_str () : W.func_type =
         ];
     }
 
-(* The entry module renders bare — the interpreter names the entry
-   file's module nothing — and a main/ subdirectory keeps its full
-   path. *)
-let entry_bare (display : string) : string =
-  let drop = "main." in
-  if
-    String.starts_with ~prefix:drop display
-    && not
-         (String.contains
-            (String.sub display 5 (String.length display - 5))
-            '.')
-  then String.sub display 5 (String.length display - 5)
-  else display
-
 (* instance_str(v) over a whole program: every instance renders as its
    structure dump, the interpreter's rule; a class's own `to_string`
    answers only an explicit call. One ref.test per class; the fixed
@@ -5208,6 +5355,31 @@ let rt_unary_mismatch ~(t_sig : int) () : W.func_type =
       @ part (op_lit ", got ")
           [ W.Local_get 2; W.Call (rt "type_name"); W.Ref_cast t_bytes ]
       @ [ W.Struct_new t_vstring; W.Call (rt "throw"); W.Unreachable ];
+  }
+
+(* no_member(name, v): the interpreter's own E3007 sentence for a value
+   no builtin door takes — `<kind> has no method `NAME`` — handed to
+   throw. A gradual receiver that is not the shape a Map door needs ends
+   here once no class claims it; the name arrives as a pooled $vstring
+   and the kind comes off rt_type_name. *)
+let rt_no_member ~(t_sig : int) () : W.func_type =
+  {
+    W.ftype_idx = t_sig;
+    fparams = [ "name"; "v" ];
+    flocals = [];
+    fbody =
+      [ W.Local_get 1; W.Call (rt "type_name"); W.Ref_cast t_bytes ]
+      @ op_lit " has no method `"
+      @ [ W.Call (rt "strcat") ]
+      @ [ W.Local_get 0; W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
+      @ [ W.Call (rt "strcat") ]
+      @ op_lit "`"
+      @ [
+          W.Call (rt "strcat");
+          W.Struct_new t_vstring;
+          W.Call (rt "throw");
+          W.Unreachable;
+        ];
   }
 
 (* ---- Bytes: a fixed-length mutable byte buffer ($vbytes) ---- *)
@@ -12695,6 +12867,7 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
   let t_unary_mismatch =
     type_idx env (W.FuncT ([ W.Anyref; W.Anyref; W.Anyref ], []))
   in
+  let t_no_member = type_idx env (W.FuncT ([ W.Anyref; W.Anyref ], [])) in
   let init_func =
     rt_init string_pool
       ~pool_base:(1 + (2 * List.length env.consts) + List.length env.gvars)
@@ -12814,10 +12987,11 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
         rt_str_upper ();
         rt_str_chars ();
         (* the gradual operators' refusal, after the mode's own tail
-           like the sort pair: the kind names, the two sentences *)
+           like the sort pair: the kind names, the sentences *)
         rt_type_name ();
         rt_op_mismatch ~t_sig:t_op_mismatch ();
         rt_unary_mismatch ~t_sig:t_unary_mismatch ();
+        rt_no_member ~t_sig:t_no_member ();
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

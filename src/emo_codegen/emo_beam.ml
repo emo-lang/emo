@@ -69,6 +69,7 @@ let beam_temps =
     "__recv";
     "__inst_recv";
     "__thread";
+    "__field_recv";
     "_spawnarg";
     "_spawnn";
     "_spawnpid";
@@ -230,6 +231,18 @@ let instance_pattern (classes : Emo_ir.class_ list) (cname : string) : string =
   | 0 -> Printf.sprintf "{'emo_inst', %s}" (atom cname)
   | _ -> Printf.sprintf "{'emo_inst', %s, %s}" (atom cname) wilds
 
+(* A class's display name as the interpreter says it: the entry module
+   renders bare — the interpreter names the entry file's module nothing
+   — and a main/ subdirectory keeps its full path. The instance rendering
+   and the runtime field refusal both speak it. *)
+let entry_bare (d : string) =
+  let drop = "main." in
+  if
+    String.starts_with ~prefix:drop d
+    && not (String.contains (String.sub d 5 (String.length d - 5)) '.')
+  then String.sub d 5 (String.length d - 5)
+  else d
+
 let put env s = Buffer.add_string env.buf s
 
 (* 'emo_inst_str'/1 over a whole program: every instance renders as its
@@ -238,14 +251,6 @@ let put env s = Buffer.add_string env.buf s
    ride into the dump as literals. The caller — emo_to_str's tuple arm —
    has already established the instance shape. *)
 let inst_str_source (program : Emo_ir.program) : string =
-  let entry_bare (d : string) =
-    let drop = "main." in
-    if
-      String.starts_with ~prefix:drop d
-      && not (String.contains (String.sub d 5 (String.length d - 5)) '.')
-    then String.sub d 5 (String.length d - 5)
-    else d
-  in
   let arms =
     String.concat ""
       (List.map
@@ -519,32 +524,42 @@ let rec expr env (x : Emo_ir.expr) : unit =
       match obj.Emo_ir.desc with
       | Emo_ir.Type_ref m -> put env (binary_lit (m ^ "__" ^ name))
       | _ -> (
-          let class_name =
+          let known_class =
             match obj.Emo_ir.ety with
             | Emo_check.ClassType c -> (
                 match mangled_of_display env.classes c with
-                | Some cname -> cname
+                | Some cname -> Some cname
                 | None -> (
-                    match env.current_class with
-                    | Some c -> c
-                    | None -> failwith "beam: field read without a known class")
-                )
+                    (* The span type table keys on span start, so
+                       `self.x` and the chain it opens share a start
+                       and the receiver's type is lost; inside a class
+                       member, self is the class. Any other open
+                       receiver takes the runtime field walk — it was
+                       read at self's class index here whatever it was,
+                       another class's field or a build error *)
+                    match (env.current_class, obj.Emo_ir.desc) with
+                    | Some c, Emo_ir.Var "self" -> Some c
+                    | _ -> None))
             | _ -> (
-                match env.current_class with
-                | Some c -> c
-                | None -> failwith "beam: field read without a known class")
+                match (env.current_class, obj.Emo_ir.desc) with
+                | Some c, Emo_ir.Var "self" -> Some c
+                | _ -> None)
           in
-          match List.assoc_opt class_name env.class_field with
-          | Some fields -> (
-              match List.assoc_opt name fields with
-              | Some fidx ->
-                  put env
-                    (Printf.sprintf "call 'erlang':'element'(%d, " (fidx + 3));
-                  expr env obj;
-                  put env ")"
-              | None ->
-                  failwith ("beam: unknown field " ^ class_name ^ "." ^ name))
-          | None -> failwith ("beam: unknown class " ^ class_name)))
+          match known_class with
+          | Some class_name -> (
+              match List.assoc_opt class_name env.class_field with
+              | Some fields -> (
+                  match List.assoc_opt name fields with
+                  | Some fidx ->
+                      put env
+                        (Printf.sprintf "call 'erlang':'element'(%d, " (fidx + 3));
+                      expr env obj;
+                      put env ")"
+                  | None ->
+                      failwith ("beam: unknown field " ^ class_name ^ "." ^ name)
+                  )
+              | None -> failwith ("beam: unknown class " ^ class_name))
+          | None -> gradual_field_read env obj name))
   | Make_enum { enum_name; member } ->
       put env
         (Printf.sprintf "{'emo_enum', %s, %s}" (atom enum_name) (atom member))
@@ -1146,6 +1161,50 @@ and builtin_method_call env self_ name args =
                 \    call 'erlang':'error'({'emo_no_method', ";
               put env (atom name);
               put env "})\nend"))
+
+(* The runtime field walk: a receiver the checker could not type — a
+   mailbox binding, most often — reads its field by the value's own
+   class. An instance is {'emo_inst', ClassAtom, fields…}, so one
+   pattern per class names the field's own slot: a class carrying the
+   field reads it, a class without it refuses the way the interpreter
+   does (E3007, "`C` has no field `x`"), and anything that is not an
+   instance answers the interpreter's other sentence — on this target
+   both ride the runtime-error envelope the operator doors opened. The
+   read used to refuse the build with an internal error (exit 125). *)
+and gradual_field_read env (obj : Emo_ir.expr) (name : string) : unit =
+  let recv = fresh_var env "__field_recv" in
+  let refuse text =
+    Printf.sprintf "call 'erlang':'error'({'emo_runtime_error', %s})"
+      (binary_lit text)
+  in
+  put env (Printf.sprintf "let <%s> = " recv);
+  expr env obj;
+  put env (Printf.sprintf "\nin case %s of\n" recv);
+  let field_of (c : Emo_ir.class_) =
+    List.assoc_opt name
+      (Option.value ~default:[] (List.assoc_opt c.Emo_ir.cname env.class_field))
+  in
+  List.iter
+    (fun (c : Emo_ir.class_) ->
+      match field_of c with
+      | Some fidx ->
+          put env
+            (Printf.sprintf "\t  <%s> when 'true' -> _f%d\n"
+               (instance_pattern env.classes c.Emo_ir.cname)
+               fidx)
+      | None ->
+          put env
+            (Printf.sprintf "\t  <%s> when 'true' -> %s\n"
+               (instance_pattern env.classes c.Emo_ir.cname)
+               (refuse
+                  (Printf.sprintf "`%s` has no field `%s`"
+                     (entry_bare c.Emo_ir.cdisplay)
+                     name))))
+    env.classes;
+  put env
+    ("\t  <_other> when 'true' -> "
+    ^ refuse "a member access must be a call, like `x.read()`"
+    ^ "\nend")
 
 and args_list env args =
   put env "(";
