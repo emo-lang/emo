@@ -2,30 +2,20 @@
 
 Four open items, extracted 2026-11-24 from `CHECK.md`'s round entries. Each one
 was reproduced by hand on this tree (the CLI rebuilt from the working copy);
-none is pinned by a golden today, which is why they stayed open. This file is
-a working list, not a design document — the decisions belong in `CHECK.md`
+none was pinned by a golden, which is why they stayed open. This file is a
+working list, not a design document — the decisions belong in `CHECK.md`
 until they are settled.
 
-## 1. beam: a Pid does not render
+The numbers are stable: item 1 is closed and keeps its number, and items 5
+and 6 were found on 2026-11-25 while closing it. **Open: 2, 3, 4, 5, 6.**
 
-**Symptom.** `println(pid)` dies `{emo_no_to_str, <0.87.0>}` on the beam target.
+## 1. beam: a Pid does not render — closed 2026-11-25
 
-**Where.** `emo_to_str` in `src/emo_codegen/emo_beam.ml` has arms for the
-integers, floats, binaries, the Bytes/List/Builder/Map/Array/Box/Atomic tags,
-enums, tuples, and instances — no pid arm, so an Erlang pid falls to the
-`{'emo_no_to_str', _other}` error.
-
-**Repro.** `examples/processes` on the beam: the program now runs to its last
-two lines and dies on `println(gone)` (the entry is not in `beam_goldens`, so
-no pin caught it). The c target's `println` of a Pid lowers to
-`emo_println_pid` and answers `<pid N>`.
-
-**The open question.** The other targets print the *emo* pid number
-(`<pid 7>`), and that numbering is theirs — on the beam a Pid is the Erlang
-pid, whose own print form is `<0.87.0>`. Rendering it needs either a
-target-specific spelling (the target's own pid text) or a logical pid carried
-beside the Erlang pid (an extra cell in every spawn path). The interpreter,
-c, and the metal share one spelling today; the beam does not.
+Fixed; the decision and its verification are in `CHECK.md`'s entry of that
+date. A Pid on the beam is now the emo number beside the BEAM's own pid, so
+every door answers `<pid N>` the way the interpreter does, and
+`examples/processes` is pinned in `beam_goldens`. The rest of the Pid family
+on the other targets is item 5.
 
 ## 2. A mixed-kind refusal says something different on every target
 
@@ -121,3 +111,83 @@ not been found, and the dock's hover is parked on the metal until it is.
 **Where.** `emo-desktop` M32's record (`CHECK.md` 2026-11-20): "the dock's
 hover parked on the metal, the walk's strip one digest off the corpus's, the
 byte the carve and the canvas disagree on unfound."
+
+## 5. The rest of the Pid family, off the beam
+
+Found 2026-11-25, while checking item 1's fix against every hosted target
+with one probe. None of it is the beam's rendering, and none of it is pinned.
+
+**typescript — a Pid equals nothing, not even itself.** `self_pid() ==
+self_pid()` prints `false`, and a process sending back its own pid compares
+`false` against the spawner's handle, so a `receive` guard `who == a` falls
+through to the next branch. `E.self()` builds a fresh `EPid` on every call,
+and the equality answers `a === b` for two of them — it has an arm for the
+Float, Char, Builder, Enum, Bytes, Map, and List, none comparing `id`
+(`ts_core.ts`). Beside it, `pid.to_string()`
+raises `NoMethodError: '<pid 1>' has no method 'to_string'`; `println` and
+interpolation render right.
+
+**wasm — the root is pid 0, and it prints as one.** `println(self_pid())`
+prints `0`, not `<pid 1>`; equality holds. The scheduler suite's own pid
+program (`theirs == pid` inside a receive branch) dies at the build with exit
+125: `Failure("wasm: unbound local pid in __recv_131 …")` — the entry binding
+is not visible to the receive handler.
+
+**c — `examples/processes` is not byte-identical.** `low` and `high` arrive
+as `1` then `5` (`expected.txt` says `5` then `1`), and the six carriers end
+in `runtime error: deadlock: 1 process(es) waiting`, exit 70 — the entry
+cannot join `c_goldens` yet. Two smaller refusals on the same probe: a
+`receive` guard naming a pattern-bound variable (`who == a`) — "does not
+support the variable `who` here yet" — and `do` of a block value — "does not
+support spawning a first-class block yet yet" (the word is doubled).
+
+**beam — an all-blocked program waits forever.** A top-level `receive` with
+no process left to answer: the interpreter raises E3012 and exits 70; on the
+beam the `receive` has no `after` and never returns.
+
+**Where the beam does hold.** The same probe's 23 lines — numbering through
+a child's own `do`, identity across the boundary, a dead pid, List, Tuple,
+Map, and Box carriers, a loop's spawns, a block-value spawn — are
+byte-identical to the interpreter's on the beam, and c matches once the block
+spawn is removed.
+
+## 6. An entry binding that a const's initializer reads lowers to a type name
+
+**Symptom.** A const the entry keeps as a plain binding — its initializer
+holds a `do` — reads back as an atom when another const's initializer names
+it.
+
+```
+def worker(boss Pid) {
+  boss <- 1
+}
+
+const a = do worker(self_pid())
+receive {
+  n then {}
+}
+const wrapped = { "k": a }
+println(wrapped.get("k") == a)
+println(wrapped.get("k"))
+```
+
+| target | what it answers |
+|---|---|
+| interpreter | `true`, then `<pid 2>` |
+| typescript | `false`, then `a` |
+| beam | `false`, then dies `{emo_no_to_str, a}` — an atom has no render |
+| c | refuses at the build: `does not support this expression form (Type_ref) yet` |
+
+**Where.** `lower` in `src/emo_ir/emo_ir.ml`: an entry-module const keeps its
+plain binding when its initializer is `thunk_unsafe` — it holds the spawn
+marker, or names a top-level binding made by destructuring. The rule that
+keeps a *mentioning* const plain covers only the destructured names, so a
+const thunk reading a spawn-initialized const finds no symbol for it and
+`Ast.Ident` falls to its last arm, `Type_ref name`. Every compiled target
+takes that path; only the interpreter's own walk resolves the name.
+
+**Why it stayed hidden.** E5016 refuses the same read from a `def` on every
+target ("a top-level const whose initializer reads another script binding (or
+a `do`) cannot become the module const a def could call"). A const's
+initializer is the one reader it does not cover, and `examples/processes`
+reads its `gone` only from entry statements.

@@ -70,6 +70,7 @@ let beam_temps =
     "__inst_recv";
     "__thread";
     "_spawnarg";
+    "_spawnn";
     "_spawnpid";
     "_spawnself";
     "case";
@@ -1166,7 +1167,7 @@ and builtin env name args =
       put env ", ";
       expr env data;
       put env ")"
-  | "self_pid", [] -> put env "call 'erlang':'self'()"
+  | "self_pid", [] -> put env "apply 'emo_pid_self'/0 ()"
   | "halt", [] -> put env "call 'erlang':'throw'('emo_halt')"
   (* the exact no-op: a literal keeps the statement chain's `do` pair
      well-formed *)
@@ -1192,23 +1193,29 @@ and expr_block env (x : Emo_ir.expr) : string =
 (* A `do` spawns [call_text] and the child records itself in the root's
    table, so 'main'/0 can kill whatever is still alive when it ends. The
    child removes itself on the way out, so the table holds exactly the
-   children still running. The expression's value is the pid. *)
+   children still running. The expression's value is the pid: the emo
+   number the spawner takes here — the step that numbers a spawn on
+   every target — beside the BEAM's own, and the child keeps the number
+   for its own `self_pid()`. *)
 and spawn_registered env (call_text : string) : unit =
+  let n = fresh_var env "_spawnn" in
   let pid = fresh_var env "_spawnpid" in
   let self = fresh_var env "_spawnself" in
-  put env (Printf.sprintf "let <%s> =\n" pid);
+  put env (Printf.sprintf "let <%s> = apply 'emo_pid_next'/0 ()\n" n);
+  put env (Printf.sprintf "in let <%s> =\n" pid);
   put env "call 'erlang':'spawn'(fun () -> ";
   let saved = env.local_map in
   env.local_map <- [];
   put env (Printf.sprintf "let <%s> = call 'erlang':'self'()\nin " self);
   put env (Printf.sprintf "do apply 'emo_spawn_reg'/1 (%s) " self);
+  put env (Printf.sprintf "do apply 'emo_pid_reg'/1 (%s) " n);
   put env
     (body_wrapper ~halt:true
        ~on_exit:(Printf.sprintf "apply 'emo_unreg'/1 (%s)" self)
        call_text);
   env.local_map <- saved;
   put env ")";
-  put env (Printf.sprintf "\nin %s" pid)
+  put env (Printf.sprintf "\nin apply 'emo_pid_make'/2 (%s, %s)" n pid)
 
 (* Every function/closure body runs under this wrapper: a `return`
    anywhere in the body throws the tagged result and the wrapper
@@ -1578,7 +1585,7 @@ and stmt env (s : Emo_ir.stmt) : unit =
          buffer ({'emo_bytes_val', Bin}), because the tag's process-
          dictionary entry stays behind — the receiver's branch bindings
          unpack and re-register under their own keys *)
-      put env "call 'erlang':'!'(";
+      put env "apply 'emo_send'/2 (";
       expr env target;
       put env ", apply 'emo_msg_pack'/1 (";
       expr env message;
@@ -2334,6 +2341,10 @@ let rt_source =
 	      apply 'emo_array_to_str'/1 ({'emo_array', _t})
 	  <{'emo_enum', _n, _m}> when 'true' ->
 	      call 'erlang':'atom_to_binary'(_m, 'utf8')
+	  <{'emo_pid', _n, _p}> when 'true' ->
+	      call 'erlang':'iolist_to_binary'
+		([60, 112, 105, 100, 32,
+		  call 'erlang':'integer_to_binary'(_n), 62])
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
 	      %% an instance is a tagged tuple: it reaches the per-program
 	      %% structure dump
@@ -5571,6 +5582,63 @@ let rt_source =
     fun (_pid) ->
 	do call 'ets':'delete'('emo_procs', _pid) _pid
 
+%% ---- The pid ----
+%%
+%%   A Pid is {'emo_pid', N, Pid}: the emo number rides beside the
+%%   BEAM's own pid. The interpreter, c, typescript, and the metal
+%%   number processes in spawn order from the root's 1 and print
+%%   `<pid N>`, and the BEAM's own numbering (<0.87.0>) is the VM's — so
+%%   the spawner takes the number, the same step that numbers a spawn
+%%   everywhere else. The child keeps its
+%%   number in its process dictionary for its own `self_pid()` (the
+%%   root puts 1 before the entry runs), and the send reaches the BEAM
+%%   pid inside the tag — the spawn table and the exit hook take it
+%%   from `self()`, as before. The atomic holder takes no number: it
+%%   runs no Emo code, and a number spent there would shift every later
+%%   spawn off the other targets' count.
+
+%% The next number: one row of the shared cells table under an atom key
+%%   no cell uses (the cells are refs and {ref, index} pairs). The
+%%   default is 1, the root's own, so the first spawn answers 2.
+'emo_pid_next'/0 =
+    fun () ->
+	call 'ets':'update_counter'
+	  (apply 'emo_cells_table'/0 (), 'emo_next', 1, {'emo_next', 1})
+
+%% A process's own number, where its `self_pid()` reads it.
+'emo_pid_reg'/1 =
+    fun (_n) ->
+	do call 'erlang':'put'('emo_pid_n', _n) _n
+
+%% The tag, through a call: a `do` used as a statement ends in this
+%%   value, and a tuple literal built there draws erlc's "constructed,
+%%   but never used" — a call returns the same term quietly.
+'emo_pid_make'/2 =
+    fun (_n, _p) ->
+	{'emo_pid', _n, _p}
+
+%% A process that never registered has no number to answer: named, not
+%%   rendered as `<pid undefined>`.
+'emo_pid_self'/0 =
+    fun () ->
+	case call 'erlang':'get'('emo_pid_n') of
+	  <'undefined'> when 'true' ->
+	      call 'erlang':'error'('emo_pid_unregistered')
+	  <_n> when 'true' ->
+	      apply 'emo_pid_make'/2 (_n, call 'erlang':'self'())
+	end
+
+%% The send reaches the BEAM pid inside the tag; anything else meets the
+%%   send operator as it always did — the same badarg on a non-pid.
+'emo_send'/2 =
+    fun (_to, _m) ->
+	case _to of
+	  <{'emo_pid', _n, _p}> when 'true' ->
+	      call 'erlang':'!'(_p, _m)
+	  <_other> when 'true' ->
+	      call 'erlang':'!'(_other, _m)
+	end
+
 'emo_kill_spawned'/0 =
     fun () ->
 	case call 'ets':'whereis'('emo_procs') of
@@ -5835,6 +5903,7 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env "    fun () ->\n";
   put env "        do apply 'emo_root_table'/0 ()\n";
   put env "        do apply 'emo_cells_table'/0 ()\n";
+  put env "        do apply 'emo_pid_reg'/1 (1)\n";
   put env (body_wrapper ~on_exit:"apply 'emo_kill_spawned'/0 ()" body);
   put env "\nend\n";
   Buffer.contents buf

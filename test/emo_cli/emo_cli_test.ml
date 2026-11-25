@@ -759,6 +759,10 @@ let beam_goldens =
     "memoize_macro_demo";
     "derive_eq_macro_demo";
     "derive_shared_macro_demo";
+    (* processes: the last two lines print a dead process's pid, so the
+       golden carries the Pid render — `<pid 7>`, the emo number the
+       spawner takes, counted the way the interpreter counts *)
+    "processes";
   ]
 
 let erl_available =
@@ -7738,6 +7742,28 @@ let pid_render_tests =
           "<pid 1>\n<pid 1>\n<pid 1>\ntrue\n");
   ]
 
+(* The same family on the beam, where a Pid is the emo number beside the
+   BEAM's own pid: the root answers `<pid 1>` through all four doors. A
+   Pid there used to be the bare BEAM pid, which no arm of emo_to_str
+   rendered — `examples/processes` died on its `println(gone)`. *)
+let beam_pid_tests =
+  [
+    tc "the Pid render family answers the root's pid" (fun () ->
+        skip_unless_beam ();
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry = scratch_entry "beam-pid-render" pid_render_source in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "<pid 1>\n<pid 1>\n<pid 1>\ntrue\n");
+  ]
+
 let () =
   let suite =
     [
@@ -7757,6 +7783,7 @@ let () =
       ("beam_naming", beam_naming_tests);
       ("beam_block", beam_block_tests);
       ("beam_var", beam_var_tests);
+      ("beam_pid", beam_pid_tests);
       ("c_examples", c_examples_tests);
       ("c_tls", c_tls_tests);
       ("root_end", root_end_tests);
@@ -7805,7 +7832,7 @@ let () =
     ]
   in
   let beam_groups =
-    [ "beam_examples"; "beam_naming"; "beam_block"; "beam_var" ]
+    [ "beam_examples"; "beam_naming"; "beam_block"; "beam_var"; "beam_pid" ]
   in
   let suite =
     if beam_enabled then suite
