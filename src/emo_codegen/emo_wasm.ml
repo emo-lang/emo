@@ -71,6 +71,7 @@ let t_os_getcwd = 53
 let t_rand_bytes = 54
 let t_time_i64 = 55
 let t_vbyte = 56
+let t_vpid = 57
 let t_int_str = 17
 let t_bool_str = 18
 let t_char_str = 19
@@ -225,6 +226,14 @@ let runtime_types : W.typ list =
     (* $vbyte — the mutable field is what keeps this type distinct from
        $vint: a Byte and an Int64 are one value at run time otherwise,
        and `b == 7` answers true where the checker says false *)
+    W.StructT [ (W.I32, true); (W.I32, true) ];
+    (* $vpid — the Pid's own shape, the interpreter's and the c host's:
+       a Pid is not a number, so it renders `<pid N>` and equals by its
+       number alone. The second word keeps the shape one no other value
+       shares — a lone mutable i32 is $vchar's exact shape, and the
+       engine's canonical maps would let `ref.test $vchar` answer a
+       Pid (the char arm's char_str then rendered the pid number as a
+       code point — the NUL-and-U+0001 prints the probe caught) *)
   ]
 
 let i_print = 0
@@ -4184,6 +4193,28 @@ let rt_to_str () : W.func_type =
       ]
       [ innermost ]
   in
+  let pid_branch =
+    branch (test_of t_vpid)
+      [
+        W.I32_const 60;
+        W.I32_const 112;
+        W.I32_const 105;
+        W.I32_const 100;
+        W.I32_const 32;
+        W.Array_new_fixed (t_bytes, 5);
+        W.Local_get 0;
+        W.Ref_cast t_vpid;
+        W.Struct_get (t_vpid, 0);
+        W.I64_extend_i32_u;
+        W.Call (rt "int_str");
+        W.Call (rt "strcat");
+        W.I32_const 62;
+        W.Array_new_fixed (t_bytes, 1);
+        W.Call (rt "strcat");
+        W.Struct_new t_vstring;
+      ]
+      [ box_branch ]
+  in
   let byte_branch =
     branch (test_of t_vbyte)
       [
@@ -4193,7 +4224,7 @@ let rt_to_str () : W.func_type =
         W.Call (rt "int_str");
         W.Struct_new t_vstring;
       ]
-      [ box_branch ]
+      [ pid_branch ]
   in
   let atomic_branch =
     branch (test_of t_vatomic)
@@ -5011,7 +5042,10 @@ let rt_init (pool : string list) ~(pool_base : int) ~(g : driver_globals) :
           (fun i _ -> W.Global_set (pool_base + (List.length pool - 1 - i)))
           pool
       @ [
-          W.I32_const 0;
+          (* the root's pid is 1, the interpreter's and the beam's own
+             numbering — the spawn counter starts above it (the next
+             field is the state: runnable) *)
+          W.I32_const 1;
           W.I32_const 1;
           W.I32_const 0;
           W.Ref_null_any;
@@ -5030,7 +5064,7 @@ let rt_init (pool : string list) ~(pool_base : int) ~(g : driver_globals) :
           W.Global_set g.g_tail;
           W.Local_get 0;
           W.Global_set g.g_curp;
-          W.I32_const 1;
+          W.I32_const 2;
           W.Global_set g.g_next;
           W.I32_const 0;
           W.Global_set g.g_root_done;
@@ -6513,6 +6547,7 @@ let rt_equality_funcs (env : env) : W.func_type * W.func_type * W.func_type =
   let arms =
     [
       (both t_vint 0 1, i64_of 0 @ i64_of 1 @ [ W.I64_eq ]);
+      (both t_vpid 0 1, prim t_vpid @ [ W.I32_eq ]);
       (both t_vbyte 0 1, i64_of_byte 0 @ i64_of_byte 1 @ [ W.I64_eq ]);
       (both t_vfloat 0 1, prim t_vfloat @ [ W.F64_eq ]);
       (both t_vbool 0 1, prim t_vbool @ [ W.I32_eq ]);
@@ -12152,10 +12187,9 @@ let rt_spawn_begin (g : driver_globals) ~(t_pid : int) : W.func_type =
         W.I32_const 1;
         W.I32_add;
         W.Global_set g.g_next;
-        W.Global_get g.g_curp;
-        W.Struct_get (t_proc, 0);
-        W.I64_extend_i32_s;
-        W.Struct_new t_vint;
+        W.Local_get 0;
+        W.Local_get 0;
+        W.Struct_new t_vpid;
       ];
   }
 
@@ -12205,9 +12239,8 @@ let rt_send (g : driver_globals) : W.func_type =
         W.Call (rt "deep_copy");
         W.Local_set 1;
         W.Local_get 0;
-        W.Ref_cast t_vint;
-        W.Struct_get (t_vint, 0);
-        W.I32_wrap_i64;
+        W.Ref_cast t_vpid;
+        W.Struct_get (t_vpid, 0);
         W.Local_set 2;
         W.Global_get g.g_head;
         W.Local_set 3;
@@ -12352,13 +12385,15 @@ let rt_self_pid (g : driver_globals) ~(t_void_anyref : int) : W.func_type =
   {
     W.ftype_idx = t_void_anyref;
     fparams = [];
-    flocals = [];
+    flocals = [ (1, W.I32) ];
     fbody =
       [
         W.Global_get g.g_curp;
         W.Struct_get (t_proc, 0);
-        W.I64_extend_i32_s;
-        W.Struct_new t_vint;
+        W.Local_tee 0;
+        (* the discriminator word: never read, the shape's the point *)
+        W.Local_get 0;
+        W.Struct_new t_vpid;
       ];
   }
 
@@ -12793,13 +12828,25 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
       program.Emo_ir.pglobals
   in
   let main_stmts =
-    global_inits
-    @
-    match List.rev program.Emo_ir.pinit with
-    | (Emo_ir.Receive _ as last) :: rest_rev ->
-        stmts env (List.rev rest_rev) ~tail:false
-        @ stmt env last ~tail:true @ [ W.Drop ]
-    | _ -> stmts env program.Emo_ir.pinit ~tail:false
+    (* Each part binds before the next lowers: `@` does not order its
+       operands, and a right-to-left order lowered the trailing receive
+       before the entry's own bindings — the handler's captured bindings
+       computed against an empty local map, and every read of a plain
+       entry binding died `unbound local` at the build. *)
+    let first =
+      match List.rev program.Emo_ir.pinit with
+      | Emo_ir.Receive _ :: rest_rev ->
+          stmts env (List.rev rest_rev) ~tail:false
+      | _ -> stmts env program.Emo_ir.pinit ~tail:false
+    in
+    let last =
+      match List.rev program.Emo_ir.pinit with
+      | (Emo_ir.Receive _ as recv) :: _ ->
+          let code = stmt env recv ~tail:true in
+          code @ [ W.Drop ]
+      | _ -> []
+    in
+    global_inits @ first @ last
   in
   (* The pool fills while the entry lowers; init and globals read it
      after. *)

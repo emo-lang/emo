@@ -8203,6 +8203,99 @@ let pid_render_tests =
           "<pid 1>\n<pid 1>\n<pid 1>\ntrue\n");
   ]
 
+(* The rest of the Pid family, off the beam (2026-11-25): a Pid equals by
+   its number (typescript's E.self built a fresh EPid per call and the
+   equality answered `a === b` — always false across calls), and
+   `pid.to_string()` answers `<pid N>` (the NoMethodError the generic
+   dispatch raised). The wasm's value model gains the $vpid shape — a
+   lone mutable i32 is $vchar's exact shape, and the engine's canonical
+   maps would let the char arm claim a Pid. The root numbers itself 1 and
+   the first spawn 2, the interpreter's count. A guard naming a pattern
+   binding (`who == me`) lowers on the c target — the scan peeks the
+   candidate's projections before the guard — and `do blk(..)` spawns the
+   closure value: the block rides the spawn's arguments as word 0 and the
+   child calls it. *)
+let pid_identity_source =
+  {|
+def child(boss Pid) {
+  boss <- self_pid()
+}
+
+const me = self_pid()
+const w = do child(me)
+receive {
+  theirs then {
+    println(theirs == me)
+    println(theirs == theirs)
+    println(theirs)
+    println(theirs.to_string())
+  }
+}
+|}
+
+let pid_identity_out = "false\ntrue\n<pid 2>\n<pid 2>\n"
+
+let pid_guard_source =
+  {|
+const me = self_pid()
+me <- (5, 7)
+receive {
+  (who, n) when who == me then { println("tuple match ${n}") }
+  (a, b) then { println("${a} ${b}") }
+}
+|}
+
+let pid_guard_out = "5 7\n"
+
+let pid_spawn_tests =
+  [
+    tc "typescript: a Pid equals by its number and renders" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry "ts-pid-identity" pid_identity_source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out);
+        check_run "typescript"
+          (run_cmd (Printf.sprintf "node %s" (Filename.quote (out ^ ".ts"))))
+          pid_identity_out);
+    tc "wasm: a Pid equals by its number and renders" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry "wasm-pid-identity" pid_identity_source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote (out ^ ".wasm"))))
+          pid_identity_out);
+    tc "c: a guard names a pattern binding" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry = scratch_entry "c-pid-guard" pid_guard_source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry out);
+        check_run "c run" (run_cmd (Filename.quote out)) pid_guard_out);
+    tc "c: a block value spawns" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "c-pid-spawn"
+            {|
+const me = self_pid()
+const blk = ->(boss Pid) { boss <- 11 }
+do blk(me)
+receive {
+  n then { println(n) }
+}
+|}
+        in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry out);
+        check_run "c run" (run_cmd (Filename.quote out)) "11\n");
+  ]
+
 (* The same family on the beam, where a Pid is the emo number beside the
    BEAM's own pid: the root answers `<pid 1>` through all four doors. A
    Pid there used to be the bare BEAM pid, which no arm of emo_to_str
@@ -8245,6 +8338,8 @@ let () =
       ("beam_block", beam_block_tests);
       ("beam_var", beam_var_tests);
       ("beam_pid", beam_pid_tests);
+      ("pid_render", pid_render_tests);
+      ("pid_spawn", pid_spawn_tests);
       ("c_examples", c_examples_tests);
       ("c_tls", c_tls_tests);
       ("root_end", root_end_tests);
@@ -8253,7 +8348,6 @@ let () =
       ("cross_target_refusal", cross_target_refusal_tests);
       ("cross_target_gradual", cross_target_gradual_tests);
       ("metal_memory", metal_memory_tests);
-      ("pid_render", pid_render_tests);
       ("hosted_bindings", hosted_bindings_tests);
       ("atomic_surface", atomic_surface_tests);
       ("atomic_wasm", atomic_wasm_tests);

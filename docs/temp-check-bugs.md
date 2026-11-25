@@ -13,9 +13,11 @@ Item 4's (b) closed the same day and item 9 with them; its (c) was refuted
 (there is no disagreeing byte — the parked note compared the live dock's
 strip against a corpus chain with a different starting state); its (a) is
 closed for the crypto engines and open again for the desktop corpus, whose
-gate faults on a `Bytes` crossing a spawn/exec boundary. Item 10 was found
-while closing item 9.
-**Open: 4 (a, the desktop edge), 5, 6, 7, 8, 10.**
+gate faults on a `Bytes` crossing a spawn/exec boundary. Item 5 closed the
+same day (the beam's own deadlock end stays open and keeps the number).
+Item 10 was found while closing item 9.
+**Open: 4 (a, the desktop edge), 5 (the beam's deadlock end), 6, 7, 8,
+10.**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -182,7 +184,7 @@ that repaints the strip first), a corpus addition rather than a fix.
 hover parked on the metal, the walk's strip one digest off the corpus's, the
 byte the carve and the canvas disagree on unfound."
 
-## 5. The rest of the Pid family, off the beam
+## 5. The rest of the Pid family, off the beam — closed 2026-11-25 (the beam's own deadlock end stays open)
 
 Found 2026-11-25, while checking item 1's fix against every hosted target
 with one probe. None of it is the beam's rendering, and none of it is pinned.
@@ -215,11 +217,56 @@ support spawning a first-class block yet yet" (the word is doubled).
 no process left to answer: the interpreter raises E3012 and exits 70; on the
 beam the `receive` has no `after` and never returns.
 
-**Where the beam does hold.** The same probe's 23 lines — numbering through
-a child's own `do`, identity across the boundary, a dead pid, List, Tuple,
-Map, and Box carriers, a loop's spawns, a block-value spawn — are
-byte-identical to the interpreter's on the beam, and c matches once the block
-spawn is removed.
+**Fixed 2026-11-25 — typescript, wasm, and c.** The typescript runtime's
+deep-equality gained the EPid arm (`a.id = b.id` — `E.self()` builds a fresh
+EPid per call, so the object identity `a === b` was always false across
+calls) and the dispatch's `to_string` answers `<pid N>`; `println` and
+interpolation rendered right already. The wasm's value model gains the
+**$vpid shape** — the Pid used to BE an Int64, so `println` printed `0`
+where the interpreter prints `<pid 1>` — with two consequences the shape's
+own words record: the struct is two words because a lone mutable i32 is
+$vchar's exact shape and the engine's canonical maps would let `ref.test
+$vchar` claim a Pid (the char arm then rendered the pid number as a code
+point — the NUL-and-U+0001 prints the probe caught); and the root numbers
+itself 1, the first spawn 2, the interpreter's count. The family now answers
+`<pid 1>` / `true` / `false` / `true` / `<pid 2>` / `<pid 2>` byte-for-byte
+on typescript and wasm, pinned in the `pid_spawn` group. **And the c
+target's three refusals were one bug and one gap:** a receive guard naming
+a pattern binding (`who == me`) refused because the scan had no bindings —
+the scan now *peeks* the candidate's projections (borrowed, the candidate's
+own claim covers the read; the branch body's assignment takes the claims
+that live past the take) — and that same peek fixed `examples/processes`
+byte-for-byte on c (the guards' stale reads were the wrong low/high order
+and the six carriers' deadlock), while `do blk(..)` spawns the closure
+value (the block rides the spawn's arguments as word 0, the child calls it
+through the runtime's `emo_closure_callN`, 4 args at most). The
+spawning-a-first-class-block refusal and its doubled word retire with the
+lowering.
+
+**The beam's one open end — an all-blocked program waits forever — stayed
+open, and its fix was attempted and rolled back.** The design (recorded for
+the next round): the receive sits in a hoisted gate function the statement
+tail-calls; a scan with no matching message parks 1 ms, marks the process
+in the `emo_blocked` set, and checks — when the set's size reaches
+`emo_procs`'s, raise `{'emo_runtime_error', Bin}` through the runtime-error
+door (`runtime error: all N waiting processes are blocked; no message will
+ever arrive`, exit 70, the beam's own envelope); a matching message runs
+the branch body, whose door unmarks. The spawn registers the child in the
+parent (via `emo_spawn_and_reg`, before the parent can park), the tables
+are created at `main` (a simultaneous first park double-created
+`emo_blocked` and badarg'd), and the atomic holder stops registering as an
+Emo process (it parks forever and would inflate the live count). The
+rolled-back build's remaining wall: the gate's raise — `erlang:raise/2`
+answers `undef` (the doors use `erlang:error/1`; switching did not help) —
+raised from inside the polled gate's after-arm, the parked process *hangs
+the VM* instead of crashing, and the mechanism needs its own round with a
+real Erlang debugging session. The pieces live in
+`protected/tmp/20261125-*emo_beam-gate-error1.ml`.
+
+**Open end.** The beam's all-blocked deadlock (E3012) is the number's one
+open piece: the interpreter raises `error[E3012]: all 1 waiting processes
+are blocked; no message will ever arrive` (exit 70) and the beam waits
+forever.
 
 ## 6. An entry binding that a const's initializer reads lowers to a type name
 

@@ -598,6 +598,40 @@ and emit_spawn_site env (func : string) (args : Emo_ir.expr list)
         wrap_owned use_ty (Printf.sprintf "emo_box_pid(%s)" pid_expr)
       else pid_expr
 
+(* A first-class block's spawn (`do blk(..)`): the closure value rides
+   the spawn's arguments as word 0 — emo_spawn_process retains every
+   word it hands the child — and the wrapper calls it with the rest.
+   The block's answer is the child's own to discard. *)
+and emit_spawn_closure_site env (f : Emo_ir.expr) (args : Emo_ir.expr list)
+    (use_ty : Emo_check.t) : string =
+  if List.length args > 4 then
+    refuse "spawning a block with more than four arguments";
+  incr spawn_counter;
+  let wrapper = Printf.sprintf "emo_spawn%d" !spawn_counter in
+  let words = as_dyn env f :: List.map (as_dyn env) args in
+  let wenv = { env with buf = env.closures; fresh = 0 } in
+  put wenv "static void %s(void) {\n" wrapper;
+  put wenv "  emo_value *__args = emo_process_spawn_args();\n";
+  let call =
+    match List.length args with
+    | 0 -> "emo_closure_call0(__args[0])"
+    | 1 -> "emo_closure_call1(__args[0], __args[1])"
+    | 2 -> "emo_closure_call2(__args[0], __args[1], __args[2])"
+    | 3 -> "emo_closure_call3(__args[0], __args[1], __args[2], __args[3])"
+    | _ ->
+        "emo_closure_call4(__args[0], __args[1], __args[2], \
+         __args[3],          __args[4])"
+  in
+  put wenv "  emo_release(%s);\n" call;
+  put wenv "}\n\n";
+  let pid_expr =
+    Printf.sprintf "emo_spawn_process(%s, INT64_C(%d), (emo_value[]){%s})"
+      wrapper (List.length words) (String.concat ", " words)
+  in
+  if is_dyn use_ty then
+    wrap_owned use_ty (Printf.sprintf "emo_box_pid(%s)" pid_expr)
+  else pid_expr
+
 (* The runtime implementations (T23.10): files and TCP over the hosted OS.
    The TLS builtins ride their own gate (step 51): the arms below lower
    to the runtime's fenced TLS bodies, and the CLI defines EMO_HAS_TLS
@@ -1084,7 +1118,7 @@ and emit_expr env (e : Emo_ir.expr) : string =
       let cell = Printf.sprintf "emo_retain(%s)" (c_ident g) in
       if is_dyn e.Emo_ir.ety then wrap_owned e.Emo_ir.ety cell
       else unbox_code (wrap_owned Emo_check.Unknown cell) e.Emo_ir.ety
-  | Spawn_value _ -> refuse "spawning a first-class block yet"
+  | Spawn_value { f; args } -> emit_spawn_closure_site env f args e.Emo_ir.ety
   | Make_exception { message; data = None } ->
       wrap_owned e.Emo_ir.ety
         (Printf.sprintf "emo_make_exception(%s)" (to_str env message))
@@ -2165,6 +2199,27 @@ and pattern_assign_sfx env (get : string) (p : Ast.pattern) (sfx : string) :
             sub sfx)
         ps
 
+(* The receive scan's read-only bindings: a guard reads the candidate's
+   projections without a claim of their own — the candidate's own claim
+   (the scan's autorelease) covers them, and a failed guard leaves the
+   C variables for the next candidate's rewrite. The branch body's
+   pattern_assign_sfx takes the claims that live past the take. *)
+and pattern_peek_sfx env (get : string) (p : Ast.pattern) (sfx : string) : unit
+    =
+  match p.Ast.pattern_desc with
+  | Ast.Wildcard | Ast.Pattern_literal _ | Ast.Enum_member _ -> ()
+  | Ast.Pattern_binding name ->
+      let c = c_ident name ^ sfx in
+      put env "  %s = %s;\n" c get;
+      env.scope <- (name, c, Emo_check.Unknown) :: env.scope
+  | Ast.Tuple_pattern ps ->
+      List.iteri
+        (fun i sub ->
+          pattern_peek_sfx env
+            (Printf.sprintf "emo_index(%s, INT64_C(%d))" get i)
+            sub sfx)
+        ps
+
 (* Drop a redundant outermost parenthesis pair — a comparison at an
    if-condition's top level keeps clang's -Wparentheses-equality
    quiet. Only when the first `(` really matches the last `)`. *)
@@ -2392,6 +2447,9 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
       let code = closure_call env f args in
       if is_dyn ety then put env "  (void)(%s);\n" (wrap_owned ety code)
       else put env "  emo_release(%s);\n" code
+  | Effect { ety; desc = Spawn_value { f; args }; _ } ->
+      let code = emit_spawn_closure_site env f args ety in
+      put env "  (void)(%s);\n" code
   | Effect _ -> refuse "this expression statement"
   | Let { name; init; _ } -> (
       let value = emit_expr env init in
@@ -2589,6 +2647,13 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
           put env "      if (%s) {\n" test;
           match b.Emo_ir.guard with
           | Some g ->
+              (* the guard may name the pattern's own bindings: the scan
+                 peeks them (borrowed, the candidate's claim covers the
+                 read), and a guard that fails leaves the scope for the
+                 next candidate *)
+              let scope_mark = env.scope in
+              pattern_peek_sfx env s b.Emo_ir.pattern
+                (Printf.sprintf "%s__r%d_%d" q uniq i);
               let g_code = emit_expr env g in
               let g_code =
                 if is_dyn g.Emo_ir.ety then unbox_code g_code Emo_check.Bool
@@ -2597,7 +2662,8 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
               put env "        if (%s) {\n" g_code;
               put env "          emo_mailbox_take_current(__m);\n";
               put env "          goto %s;\n        }\n" lbl;
-              put env "      }\n"
+              put env "      }\n";
+              env.scope <- scope_mark
           | None ->
               put env "        emo_mailbox_take_current(__m);\n";
               put env "        goto %s;\n" lbl;

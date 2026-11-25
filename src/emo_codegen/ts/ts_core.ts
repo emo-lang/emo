@@ -681,6 +681,7 @@ function deepEq(a: any, b: any): boolean {
     if (a.items.length !== b.items.length) return false;
     return a.items.every((x: any, i: number) => deepEq(x, b.items[i]));
   }
+  if (a instanceof EPid && b instanceof EPid) return a.id === b.id;
   if (a instanceof EAtomic && b instanceof EAtomic)
     return deepEq(a.v, b.v); // the values the cells hold now
   if (
@@ -1634,6 +1635,8 @@ const E: any = {
       }
       if (name === "load" && recv instanceof EAtomic) return recv.v;
       if (name === "to_string" && recv instanceof EAtomic) return "<atomic>";
+      if (name === "to_string" && recv instanceof EPid)
+        return "<pid " + recv.id + ">";
       if (name === "to_string" && recv instanceof EBox) return "<box>";
       if (name === "store" && recv instanceof EAtomic) {
         recv.v = args[0];
