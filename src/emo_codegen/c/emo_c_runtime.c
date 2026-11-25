@@ -2126,9 +2126,47 @@ emo_value emo_send(emo_value recv, const char *name, int64_t arity,
 }
 
 /* ---- Dynamic operations ----
-   The interpreter's runtime rules: arithmetic and comparisons need
-   the same kind on both sides (int64 with int64, float64 with
-   float64, string with string for `+`), equality is structural. */
+   The interpreter's runtime rules: arithmetic and comparisons need the
+   same kind on both sides (int64 with int64, float64 with float64,
+   string with string for `+`), equality is structural. A gradual
+   operator on two values of different kinds refuses with the
+   interpreter's own sentence (E3001): the operator, the rule, and both
+   kinds. */
+
+/* The kind a dynamic value wears, by the interpreter's own name. */
+static const char *emo_type_name(emo_value v) {
+  if ((v & 7) == 0b001) return "Bool";
+  if ((v & 7) == 0b011) return "Char";
+  if ((v & 7) == 0b101) return "Byte";
+  switch (emo_cell_kind(v)) {
+    case EMO_INT64: return "Int64";
+    case EMO_FLOAT64: return "Float64";
+    case EMO_STRING: return "String";
+    case EMO_BYTES: return "Bytes";
+    case EMO_TUPLE: return "Tuple";
+    case EMO_ARRAY: return "Array";
+    case EMO_LIST: return "List";
+    case EMO_BUILDER: return "ArrayBuilder";
+    case EMO_MAP: return "Map";
+    case EMO_BOX: return "Box";
+    case EMO_ATOMIC: return "Atomic";
+    case EMO_REF: return "Ref";
+    case EMO_PID: return "Pid";
+    case EMO_INSTANCE: return "an instance";
+    case EMO_ENUM: return "an enum member";
+    case EMO_CLOSURE: return "an arrow block";
+    default: return "value";
+  }
+}
+
+static EMO_NORETURN void emo_type_mismatch(const char *op, const char *expects,
+                                           emo_value a, emo_value b) {
+  char message[160];
+  snprintf(message, sizeof message,
+           "operator `%s` expects %s, got %s and %s", op, expects,
+           emo_type_name(a), emo_type_name(b));
+  emo_fatal(message);
+}
 
 emo_value emo_add_dyn(emo_value a, emo_value b) {
   if ((a & 7) == 0b101 && (b & 7) == 0b101)
@@ -2143,7 +2181,7 @@ emo_value emo_add_dyn(emo_value a, emo_value b) {
   }
   if (ka == EMO_FLOAT64 && kb == EMO_FLOAT64)
     return emo_box_f64(emo_unbox_f64(a) + emo_unbox_f64(b));
-  emo_fatal("`+` needs two numbers or two strings");
+  emo_type_mismatch("+", "two numbers or two strings", a, b);
 }
 
 static emo_value emo_arith_dyn(emo_value a, emo_value b, char op) {
@@ -2177,7 +2215,8 @@ static emo_value emo_arith_dyn(emo_value a, emo_value b, char op) {
     default: return emo_box_f64(0.0 / 0.0); /* `%` on floats is refused */
     }
   }
-  emo_fatal("arithmetic needs two values of the same numeric type");
+  char op_name[2] = {op, 0};
+  emo_type_mismatch(op_name, "two numbers", a, b);
 }
 
 emo_value emo_sub_dyn(emo_value a, emo_value b) {
@@ -2200,7 +2239,10 @@ emo_value emo_neg_dyn(emo_value v) {
   if (emo_cell_kind(v) == EMO_INT64)
     return emo_box_i64((int64_t)(0ULL - (uint64_t)emo_unbox_i64(v)));
   if (emo_cell_kind(v) == EMO_FLOAT64) return emo_box_f64(-emo_unbox_f64(v));
-  emo_fatal("unary minus needs a number");
+  char message[96];
+  snprintf(message, sizeof message, "operator `-` expects a number, got %s",
+           emo_type_name(v));
+  emo_fatal(message);
 }
 
 bool emo_eq_dyn(emo_value a, emo_value b) {
@@ -2318,7 +2360,10 @@ int64_t emo_str_cmp(emo_value a, emo_value b) {
   return sa.len < sb.len ? -1 : (sa.len > sb.len ? 1 : 0);
 }
 
-static int emo_cmp_dyn(emo_value a, emo_value b) {
+/* [op] names the operator the program wrote, so a refusal reads right
+   for `>` and `>=` too — they compare in their own order here rather
+   than through a swapped `<`. */
+static int emo_cmp_dyn(emo_value a, emo_value b, const char *op) {
   if ((a & 7) == 0b101 && (b & 7) == 0b101) {
     int x = emo_byte_of(a), y = emo_byte_of(b);
     return x < y ? -1 : (x > y ? 1 : 0);
@@ -2333,12 +2378,20 @@ static int emo_cmp_dyn(emo_value a, emo_value b) {
     double x = emo_unbox_f64(a), y = emo_unbox_f64(b);
     return x < y ? -1 : (x > y ? 1 : 0);
   }
-  emo_fatal("comparisons need two values of the same type");
+  emo_type_mismatch(op, "two numbers", a, b);
 }
 
-bool emo_lt_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b) < 0; }
+bool emo_lt_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b, "<") < 0; }
 
-bool emo_le_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b) <= 0; }
+bool emo_le_dyn(emo_value a, emo_value b) {
+  return emo_cmp_dyn(a, b, "<=") <= 0;
+}
+
+bool emo_gt_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b, ">") > 0; }
+
+bool emo_ge_dyn(emo_value a, emo_value b) {
+  return emo_cmp_dyn(a, b, ">=") >= 0;
+}
 
 /* ---- The one stringification rule over dynamic values ---- */
 

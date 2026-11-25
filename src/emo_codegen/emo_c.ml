@@ -1990,8 +1990,8 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     | Ne -> Printf.sprintf "(!emo_eq_dyn(%s, %s))" a b
     | Lt -> Printf.sprintf "emo_lt_dyn(%s, %s)" a b
     | Le -> Printf.sprintf "emo_le_dyn(%s, %s)" a b
-    | Gt -> Printf.sprintf "emo_lt_dyn(%s, %s)" b a
-    | Ge -> Printf.sprintf "emo_le_dyn(%s, %s)" b a
+    | Gt -> Printf.sprintf "emo_gt_dyn(%s, %s)" a b
+    | Ge -> Printf.sprintf "emo_ge_dyn(%s, %s)" a b
     | And -> Printf.sprintf "(emo_bool_of(%s) && emo_bool_of(%s))" a b
     | Or -> Printf.sprintf "(emo_bool_of(%s) || emo_bool_of(%s))" a b
     | Bit_and | Bit_or | Bit_xor | Shl | Shr ->

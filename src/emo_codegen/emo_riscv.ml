@@ -2328,21 +2328,23 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
            here, the Call arm's rule *)
         if not boxed then unbox_if_numeric env ty
     | Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge ->
-        (* Gt/Ge swap the operands onto Lt/Le, the c target's trick *)
-        let a, b =
-          if op = Emo_ast.Gt || op = Emo_ast.Ge then (r, l) else (l, r)
-        in
-        emit_expr env (d + 1) a;
-        box_if_numeric env a.Emo_ir.ety;
+        (* the operands ride in the source order, left then right:
+           `>` and `>=` have their own doors, so a mixed pair refuses
+           with the operator's own words and both kinds in order *)
+        emit_expr env (d + 1) l;
+        box_if_numeric env l.Emo_ir.ety;
         let spill = temp_offset env d in
         put env "    sd a0, %d(sp)\n" spill;
-        emit_expr env (d + 1) b;
-        box_if_numeric env b.Emo_ir.ety;
+        emit_expr env (d + 1) r;
+        box_if_numeric env r.Emo_ir.ety;
         put env "    mv a1, a0\n";
         put env "    ld a0, %d(sp)\n" spill;
         call_runtime env
-          (if op = Emo_ast.Lt || op = Emo_ast.Gt then "emo_lt_dyn"
-           else "emo_le_dyn")
+          (match op with
+          | Emo_ast.Lt -> "emo_lt_dyn"
+          | Emo_ast.Le -> "emo_le_dyn"
+          | Emo_ast.Gt -> "emo_gt_dyn"
+          | _ -> "emo_ge_dyn")
     | _ -> refuse "this operator on a dynamic value"
   else
     match (op, ty) with
@@ -2681,47 +2683,61 @@ and emit_float_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
 
 and emit_unary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.unop)
     (x : Emo_ir.expr) : unit =
-  match (op, ty) with
-  | Emo_ast.Neg, Emo_check.Int64 ->
-      emit_expr env d x;
-      if not boxed then put env "    sub a0, x0, a0\n"
-      else begin
-        put env "    andi a0, a0, -32\n";
-        put env "    ld t0, 8(a0)\n";
-        put env "    sub t0, x0, t0\n";
-        put env "    mv a0, t0\n";
-        box_result env "emo_box_i64"
-      end
-  | Emo_ast.Neg, Emo_check.Float64 ->
-      emit_expr env d x;
-      if not boxed then put env "    fneg.d fa0, fa0\n"
-      else begin
-        put env "    andi a0, a0, -32\n";
-        put env "    fld fa0, 8(a0)\n";
-        put env "    fneg.d fa0, fa0\n";
-        box_result env "emo_box_f64"
-      end
-  | Emo_ast.Bit_not, Emo_check.Int64 ->
-      emit_expr env d x;
-      if not boxed then put env "    not a0, a0\n"
-      else begin
-        put env "    andi a0, a0, -32\n";
-        put env "    ld t0, 8(a0)\n";
+  (* A gradual operand's `-` and `~` take the runtime doors, which read
+     the value's own kind. The typed arms below key on the result's
+     static type, and a String read as an Int64 cell answered -1 for
+     `-"s"` before the doors (found 2026-11-25). *)
+  if
+    x.Emo_ir.ety = Emo_check.Unknown
+    && (op = Emo_ast.Neg || op = Emo_ast.Bit_not)
+  then begin
+    emit_expr env d x;
+    call_runtime env
+      (if op = Emo_ast.Neg then "emo_neg_dyn" else "emo_bnot_dyn");
+    if not boxed then unbox_if_numeric env ty
+  end
+  else
+    match (op, ty) with
+    | Emo_ast.Neg, Emo_check.Int64 ->
+        emit_expr env d x;
+        if not boxed then put env "    sub a0, x0, a0\n"
+        else begin
+          put env "    andi a0, a0, -32\n";
+          put env "    ld t0, 8(a0)\n";
+          put env "    sub t0, x0, t0\n";
+          put env "    mv a0, t0\n";
+          box_result env "emo_box_i64"
+        end
+    | Emo_ast.Neg, Emo_check.Float64 ->
+        emit_expr env d x;
+        if not boxed then put env "    fneg.d fa0, fa0\n"
+        else begin
+          put env "    andi a0, a0, -32\n";
+          put env "    fld fa0, 8(a0)\n";
+          put env "    fneg.d fa0, fa0\n";
+          box_result env "emo_box_f64"
+        end
+    | Emo_ast.Bit_not, Emo_check.Int64 ->
+        emit_expr env d x;
+        if not boxed then put env "    not a0, a0\n"
+        else begin
+          put env "    andi a0, a0, -32\n";
+          put env "    ld t0, 8(a0)\n";
+          put env "    not t0, t0\n";
+          put env "    mv a0, t0\n";
+          box_result env "emo_box_i64"
+        end
+    | Emo_ast.Bit_not, Emo_check.Byte ->
+        emit_expr env d x;
+        put env "    srli t0, a0, 4\n";
         put env "    not t0, t0\n";
-        put env "    mv a0, t0\n";
-        box_result env "emo_box_i64"
-      end
-  | Emo_ast.Bit_not, Emo_check.Byte ->
-      emit_expr env d x;
-      put env "    srli t0, a0, 4\n";
-      put env "    not t0, t0\n";
-      put env "    andi t0, t0, 255\n";
-      put env "    slli a0, t0, 4\n";
-      put env "    ori a0, a0, 7\n"
-  | Emo_ast.Not, _ ->
-      emit_expr env d x;
-      put env "    xori a0, a0, 16\n"
-  | _ -> refuse "this unary operator"
+        put env "    andi t0, t0, 255\n";
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
+    | Emo_ast.Not, _ ->
+        emit_expr env d x;
+        put env "    xori a0, a0, 16\n"
+    | _ -> refuse "this unary operator"
 
 and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
   (* Every part becomes a String block through the runtime's to-string
@@ -7947,19 +7963,26 @@ emo_dyn_method:
 
 # ---- Dynamic arithmetic ----
 #
-# emo_add_dyn / emo_sub_dyn / emo_mul_dyn / emo_lt_dyn / emo_le_dyn:
-# a0 = a1 = dynamic values; the result boxed or a Bool immediate
-# (Gt/Ge swap their operands at the call site). The kind test reads the
-# low five bits: 0 the boxed Int64, 2 the boxed Float64, 4 the String,
-# 7 the Byte immediate (kind 3, bit 0 set) — a Byte answers a Byte, the
-# eight-bit wrap the typed lane's own, and the kinds' equality test below
-# keeps a mixed Byte/Int64 pair the loud refusal the interpreter is. An
-# immediate's bit 4 is payload, not kind, so an odd tag masks to its low
-# four bits first (the cell tags are even and wider — 16 the Atomic, 18
-# the Pid — and must keep the five).
+# emo_add_dyn / emo_sub_dyn / emo_mul_dyn / emo_lt_dyn / emo_le_dyn /
+# emo_gt_dyn / emo_ge_dyn: a0 = a1 = dynamic values; the result boxed
+# or a Bool immediate. The kind test reads the low five bits: 0 the
+# boxed Int64, 2 the boxed Float64, 4 the String, 7 the Byte immediate
+# (kind 3, bit 0 set) — a Byte answers a Byte, the eight-bit wrap the
+# typed lane's own, and the kinds' equality test below keeps a mixed
+# Byte/Int64 pair the loud refusal the interpreter is. An immediate's
+# bit 4 is payload, not kind, so an odd tag masks to its low four bits
+# first (the cell tags are even and wider — 16 the Atomic, 18 the Pid —
+# and must keep the five).
+#
+# Each entry sets t3 to its operator's id before the dispatch, and a
+# mixed pair ends at .Ldyn_bad with the sentence the interpreter
+# answers (E3001): the operator's own words, both kinds. `>` and `>=`
+# compare through `<` and `<=` over the swapped operands, so their
+# entries swap first and the fail path swaps the sentence back.
 
     .globl emo_add_dyn
 emo_add_dyn:
+    li t3, 0
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8019,6 +8042,7 @@ emo_add_dyn:
 
     .globl emo_sub_dyn
 emo_sub_dyn:
+    li t3, 1
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8063,6 +8087,7 @@ emo_sub_dyn:
 
     .globl emo_mul_dyn
 emo_mul_dyn:
+    li t3, 2
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8107,6 +8132,16 @@ emo_mul_dyn:
 
     .globl emo_lt_dyn
 emo_lt_dyn:
+    li t3, 3
+    j .Llt_body
+    .globl emo_gt_dyn
+emo_gt_dyn:
+    mv t0, a0
+    mv a0, a1
+    mv a1, t0
+    li t3, 5
+    j .Llt_body
+.Llt_body:
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8155,6 +8190,16 @@ emo_lt_dyn:
 
     .globl emo_le_dyn
 emo_le_dyn:
+    li t3, 4
+    j .Lle_body
+    .globl emo_ge_dyn
+emo_ge_dyn:
+    mv t0, a0
+    mv a0, a1
+    mv a1, t0
+    li t3, 6
+    j .Lle_body
+.Lle_body:
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8211,9 +8256,284 @@ emo_le_dyn:
     addi sp, sp, 32
     ret
 .Ldyn_bad:
-    la a0, msg_arith
-    la a1, msg_arith_end
+    # The interpreter's own sentence (E3001): the operator's words — t3
+    # the id the entry set — then the two kinds. `>` and `>=` arrive
+    # swapped for the compare; the sentence takes them back in the
+    # source order.
+    li t4, 5
+    beq t3, t4, .Ldyn_bad_swap
+    li t4, 6
+    beq t3, t4, .Ldyn_bad_swap
+    j .Ldyn_bad_go
+.Ldyn_bad_swap:
+    mv t4, a0
+    mv a0, a1
+    mv a1, t4
+.Ldyn_bad_go:
+    mv a2, a0
+    mv a3, a1
+    beqz t3, .Ldyn_bad_add
+    li t4, 1
+    beq t3, t4, .Ldyn_bad_sub
+    li t4, 2
+    beq t3, t4, .Ldyn_bad_mul
+    li t4, 3
+    beq t3, t4, .Ldyn_bad_lt
+    li t4, 4
+    beq t3, t4, .Ldyn_bad_le
+    li t4, 5
+    beq t3, t4, .Ldyn_bad_gt
+    j .Ldyn_bad_ge
+.Ldyn_bad_add:
+    la a0, msg_op_add
+    la a1, msg_op_add_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_sub:
+    la a0, msg_op_sub
+    la a1, msg_op_sub_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_mul:
+    la a0, msg_op_mul
+    la a1, msg_op_mul_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_lt:
+    la a0, msg_op_lt
+    la a1, msg_op_lt_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_le:
+    la a0, msg_op_le
+    la a1, msg_op_le_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_gt:
+    la a0, msg_op_gt
+    la a1, msg_op_gt_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_ge:
+    la a0, msg_op_ge
+    la a1, msg_op_ge_end
+.Ldyn_bad_fail:
+    call emo_op_fail
+
+# emo_op_fail: a0 = the start and a1 = the end of the operator's own
+# words (through "got "), a2 = the left operand, a3 = the right one (0
+# for a unary operator, which names one kind). The kinds join the words
+# in a stack buffer — s0 the cursor — and the whole sentence reaches
+# emo_fail: this never returns.
+    .globl emo_op_fail
+emo_op_fail:
+    addi sp, sp, -160
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd a3, 16(sp)
+    addi s0, sp, 32
+    jal .Lof_append
+    mv a0, a2
+    call emo_type_name
+    jal .Lof_append
+    ld a2, 16(sp)
+    beqz a2, .Lof_emit
+    la a0, msg_op_and
+    la a1, msg_op_and_end
+    jal .Lof_append
+    mv a0, a2
+    call emo_type_name
+    jal .Lof_append
+.Lof_emit:
+    addi a0, sp, 32
+    mv a1, s0
     call emo_fail
+.Lof_append:
+    # a0 = start, a1 = end: the bytes land at s0, which walks on
+    bgeu a0, a1, .Lof_appended
+    lbu t0, 0(a0)
+    sb t0, 0(s0)
+    addi a0, a0, 1
+    addi s0, s0, 1
+    j .Lof_append
+.Lof_appended:
+    ret
+
+# emo_type_name: a0 = a dynamic value; a0 = the start and a1 = the end
+# of its kind's name, the interpreter's own. The immediates carry their
+# kind in bits 3:1 (0 Bool, 1 Char, 2 an enum member, 3 Byte), the cells
+# in bits 4:1.
+    .globl emo_type_name
+emo_type_name:
+    andi t0, a0, 1
+    bnez t0, .Ltn_imm
+    andi t0, a0, 31
+    beqz t0, .Ltn_int64
+    li t1, 2
+    beq t0, t1, .Ltn_float64
+    li t1, 4
+    beq t0, t1, .Ltn_string
+    li t1, 6
+    beq t0, t1, .Ltn_tuple
+    li t1, 8
+    beq t0, t1, .Ltn_array
+    li t1, 10
+    beq t0, t1, .Ltn_box
+    li t1, 12
+    beq t0, t1, .Ltn_arrow
+    li t1, 14
+    beq t0, t1, .Ltn_instance
+    li t1, 16
+    beq t0, t1, .Ltn_atomic
+    li t1, 18
+    beq t0, t1, .Ltn_pid
+    li t1, 20
+    beq t0, t1, .Ltn_bytes
+    li t1, 22
+    beq t0, t1, .Ltn_builder
+    li t1, 24
+    beq t0, t1, .Ltn_ref
+    li t1, 26
+    beq t0, t1, .Ltn_map
+    j .Ltn_value
+.Ltn_imm:
+    srli t0, a0, 1
+    andi t0, t0, 7
+    beqz t0, .Ltn_bool
+    li t1, 1
+    beq t0, t1, .Ltn_char
+    li t1, 2
+    beq t0, t1, .Ltn_enum
+    li t1, 3
+    beq t0, t1, .Ltn_byte
+    j .Ltn_value
+.Ltn_bool:
+    la a0, msg_kind_bool
+    la a1, msg_kind_bool_end
+    ret
+.Ltn_char:
+    la a0, msg_kind_char
+    la a1, msg_kind_char_end
+    ret
+.Ltn_byte:
+    la a0, msg_kind_byte
+    la a1, msg_kind_byte_end
+    ret
+.Ltn_enum:
+    la a0, msg_kind_enum
+    la a1, msg_kind_enum_end
+    ret
+.Ltn_int64:
+    la a0, msg_kind_int64
+    la a1, msg_kind_int64_end
+    ret
+.Ltn_float64:
+    la a0, msg_kind_float64
+    la a1, msg_kind_float64_end
+    ret
+.Ltn_string:
+    la a0, msg_kind_string
+    la a1, msg_kind_string_end
+    ret
+.Ltn_tuple:
+    la a0, msg_kind_tuple
+    la a1, msg_kind_tuple_end
+    ret
+.Ltn_array:
+    la a0, msg_kind_array
+    la a1, msg_kind_array_end
+    ret
+.Ltn_box:
+    la a0, msg_kind_box
+    la a1, msg_kind_box_end
+    ret
+.Ltn_arrow:
+    la a0, msg_kind_arrow
+    la a1, msg_kind_arrow_end
+    ret
+.Ltn_instance:
+    la a0, msg_kind_instance
+    la a1, msg_kind_instance_end
+    ret
+.Ltn_atomic:
+    la a0, msg_kind_atomic
+    la a1, msg_kind_atomic_end
+    ret
+.Ltn_pid:
+    la a0, msg_kind_pid
+    la a1, msg_kind_pid_end
+    ret
+.Ltn_bytes:
+    la a0, msg_kind_bytes
+    la a1, msg_kind_bytes_end
+    ret
+.Ltn_builder:
+    la a0, msg_kind_builder
+    la a1, msg_kind_builder_end
+    ret
+.Ltn_ref:
+    la a0, msg_kind_ref
+    la a1, msg_kind_ref_end
+    ret
+.Ltn_map:
+    la a0, msg_kind_map
+    la a1, msg_kind_map_end
+    ret
+.Ltn_value:
+    la a0, msg_kind_value
+    la a1, msg_kind_value_end
+    ret
+
+# ---- The unary doors ----
+#
+# emo_neg_dyn / emo_bnot_dyn: a0 = a gradual value; a0 = its negation
+# or complement, by the value's own kind — the evaluator's rule, `-` on
+# an Int64 or a Float64, `~` on an Int64 or a Byte. Anything else is
+# the refusal naming the kind: the typed lanes key on the result's
+# static type, and a String read as an Int64 cell answered -1 for
+# `-"s"` before these doors (found 2026-11-25).
+    .globl emo_neg_dyn
+emo_neg_dyn:
+    mv a2, a0
+    andi t0, a0, 31
+    beqz t0, .Lneg_int
+    li t1, 2
+    beq t0, t1, .Lneg_float
+    j .Lneg_bad
+.Lneg_int:
+    andi a0, a0, -32
+    ld a0, 8(a0)
+    sub a0, x0, a0
+    j emo_box_i64
+.Lneg_float:
+    andi a0, a0, -32
+    fld fa0, 8(a0)
+    fneg.d fa0, fa0
+    j emo_box_f64
+.Lneg_bad:
+    la a0, msg_op_neg
+    la a1, msg_op_neg_end
+    li a3, 0
+    j emo_op_fail
+
+    .globl emo_bnot_dyn
+emo_bnot_dyn:
+    mv a2, a0
+    andi t0, a0, 15
+    li t1, 7
+    beq t0, t1, .Lbnot_byte
+    andi t0, a0, 31
+    beqz t0, .Lbnot_int
+    la a0, msg_op_bnot
+    la a1, msg_op_bnot_end
+    li a3, 0
+    j emo_op_fail
+.Lbnot_int:
+    andi a0, a0, -32
+    ld a0, 8(a0)
+    not a0, a0
+    j emo_box_i64
+.Lbnot_byte:
+    srli t0, a0, 4
+    not t0, t0
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    ret
 
 # ---- to-string ----
 
@@ -8990,9 +9310,93 @@ msg_field_end:
 msg_method:
     .ascii "no such method on this value"
 msg_method_end:
-msg_arith:
-    .ascii "arithmetic on values of these kinds"
-msg_arith_end:
+msg_op_add:
+    .ascii "operator `+` expects two numbers or two strings, got "
+msg_op_add_end:
+msg_op_sub:
+    .ascii "operator `-` expects two numbers, got "
+msg_op_sub_end:
+msg_op_mul:
+    .ascii "operator `*` expects two numbers, got "
+msg_op_mul_end:
+msg_op_lt:
+    .ascii "operator `<` expects two numbers, got "
+msg_op_lt_end:
+msg_op_le:
+    .ascii "operator `<=` expects two numbers, got "
+msg_op_le_end:
+msg_op_gt:
+    .ascii "operator `>` expects two numbers, got "
+msg_op_gt_end:
+msg_op_ge:
+    .ascii "operator `>=` expects two numbers, got "
+msg_op_ge_end:
+msg_op_neg:
+    .ascii "operator `-` expects a number, got "
+msg_op_neg_end:
+msg_op_bnot:
+    .ascii "operator `~` expects an Int64, got "
+msg_op_bnot_end:
+msg_op_and:
+    .ascii " and "
+msg_op_and_end:
+msg_kind_bool:
+    .ascii "Bool"
+msg_kind_bool_end:
+msg_kind_char:
+    .ascii "Char"
+msg_kind_char_end:
+msg_kind_byte:
+    .ascii "Byte"
+msg_kind_byte_end:
+msg_kind_enum:
+    .ascii "an enum member"
+msg_kind_enum_end:
+msg_kind_int64:
+    .ascii "Int64"
+msg_kind_int64_end:
+msg_kind_float64:
+    .ascii "Float64"
+msg_kind_float64_end:
+msg_kind_string:
+    .ascii "String"
+msg_kind_string_end:
+msg_kind_tuple:
+    .ascii "Tuple"
+msg_kind_tuple_end:
+msg_kind_array:
+    .ascii "Array"
+msg_kind_array_end:
+msg_kind_box:
+    .ascii "Box"
+msg_kind_box_end:
+msg_kind_arrow:
+    .ascii "an arrow block"
+msg_kind_arrow_end:
+msg_kind_instance:
+    .ascii "an instance"
+msg_kind_instance_end:
+msg_kind_atomic:
+    .ascii "Atomic"
+msg_kind_atomic_end:
+msg_kind_pid:
+    .ascii "Pid"
+msg_kind_pid_end:
+msg_kind_bytes:
+    .ascii "Bytes"
+msg_kind_bytes_end:
+msg_kind_builder:
+    .ascii "ArrayBuilder"
+msg_kind_builder_end:
+msg_kind_ref:
+    .ascii "Ref"
+msg_kind_ref_end:
+msg_kind_map:
+    .ascii "Map"
+msg_kind_map_end:
+msg_kind_value:
+    .ascii "value"
+msg_kind_value_end:
 msg_divzero:
     .ascii "division by zero"
 msg_divzero_end:

@@ -405,7 +405,9 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Binary (op, l, r) ->
       (* Int64 is the target's own 64-bit wrapping integer — every
          integer operator already masks at 64 bits — so only Byte needs
-         its own path, wrapping at 256. *)
+         its own path, wrapping at 256. Every operator reaches its kind
+         dispatch through its door (op_refusal_source), which names it
+         when a mixed pair refuses. *)
       let name =
         match (op, x.Emo_ir.ety) with
         | Emo_ast.Add, Emo_check.Byte -> "byte_add"
@@ -433,18 +435,23 @@ let rec expr env (x : Emo_ir.expr) : unit =
             (* the logical operators lower through the case above *)
             | Emo_ast.And | Emo_ast.Or -> assert false)
       in
-      put env (Printf.sprintf "apply 'emo_%s'/2 " name);
+      (* `==`/`!=` are total — no kind ever refuses — so they alone go
+         straight to their dispatch *)
+      put env
+        (Printf.sprintf "apply 'emo_%s%s'/2 "
+           (if name = "eq" || name = "ne" then "" else "op_")
+           name);
       args_list env [ l; r ]
   | Unary (Emo_ast.Neg, x) ->
-      put env "apply 'emo_neg'/1 ";
+      put env "apply 'emo_op_neg'/1 ";
       args_list env [ x ]
   | Unary (Emo_ast.Not, x) ->
       put env "apply 'emo_not'/1 ";
       args_list env [ x ]
   | Unary (Emo_ast.Bit_not, x) ->
       put env
-        (if x.Emo_ir.ety = Emo_check.Byte then "apply 'emo_byte_bnot'/1 "
-         else "apply 'emo_bnot'/1 ");
+        (if x.Emo_ir.ety = Emo_check.Byte then "apply 'emo_op_byte_bnot'/1 "
+         else "apply 'emo_op_bnot'/1 ");
       args_list env [ x ]
   | Tuple es ->
       put env "{";
@@ -1219,13 +1226,15 @@ and spawn_registered env (call_text : string) : unit =
 
 (* Every function/closure body runs under this wrapper: a `return`
    anywhere in the body throws the tagged result and the wrapper
-   unwraps it as the function's value. A process wrapper also swallows
+   unwinds it as the function's value. A process wrapper also swallows
    `halt`: the spawned fun returns and the process ends. [on_exit] is
    the entry's: Core Erlang has no `after`, so the root process ending —
    by return, `halt`, or an uncaught raise — runs it on both ways out,
-   killing every child that is still alive. *)
-and body_wrapper ?(halt : bool = false) ?(on_exit : string = "") (body : string)
-    : string =
+   killing every child that is still alive. [on_error] is the entry's
+   too: the one arm it keeps for a runtime refusal, which the operator
+   doors raise as {'emo_runtime_error', Bin}. *)
+and body_wrapper ?(halt : bool = false) ?(on_exit : string = "")
+    ?(on_error : string = "") (body : string) : string =
   let halt_arm =
     if halt then "\n\t  <'emo_halt'> when 'true' -> 'ok'" else ""
   in
@@ -1238,10 +1247,10 @@ of
 catch
     <_C, _T, _S> ->
 	%scase _T of
-	  <{'emo_return', _rv}> when 'true' -> _rv%s
+	  <{'emo_return', _rv}> when 'true' -> _rv%s%s
 	  <_other> when 'true' -> call 'erlang':'throw'(_T)
 	end|json}
-    body exit_run exit_run halt_arm
+    body exit_run exit_run halt_arm on_error
 
 (* ---- Statements ----
 
@@ -2268,6 +2277,173 @@ and guard_expr env (x : Emo_ir.expr) : unit =
         (Emo_ir.Lower_error
            "beam: guard expressions are limited to comparisons, \
             boolean             operators, and constants on this target")
+
+(* ---- The gradual operators' refusal ----
+
+   The kind dispatches (emo_add, emo_band, emo_lt, …) raise the bare
+   {'emo_bad_type', A, B} tag on a mixed pair — a dispatch has no operator
+   to speak of — so every operator reaches its dispatch through a door
+   that names it, and the door answers the interpreter's own sentence
+   (E3001): the operator, the rule, and both kinds. The doors and the
+   type names are written out here rather than by hand: one shape, twenty-
+   one names, and every string rides as the per-byte binary literal the
+   rest of the runtime takes.
+
+   The sentence travels as an {'emo_runtime_error', Bin} error. The
+   root's wrapper announces it the way the c target does — `runtime
+   error: …` on standard error, exit 70 — and a spawned process dies on
+   it as on any error, the root going on. The target had no clean
+   runtime refusal before this: every one was an Erlang crash report,
+   and the other refusals still are. *)
+
+let gradual_op_doors : (string * int * string * string) list =
+  [
+    ("add", 2, "+", "two numbers or two strings");
+    ("byte_add", 2, "+", "two numbers or two strings");
+    ("sub", 2, "-", "two numbers");
+    ("byte_sub", 2, "-", "two numbers");
+    ("mul", 2, "*", "two numbers");
+    ("byte_mul", 2, "*", "two numbers");
+    ("div", 2, "/", "two numbers");
+    ("mod", 2, "%", "two numbers");
+    ("lt", 2, "<", "two numbers");
+    ("le", 2, "<=", "two numbers");
+    ("gt", 2, ">", "two numbers");
+    ("ge", 2, ">=", "two numbers");
+    ("band", 2, "&", "two Int64s or two Bytes");
+    ("bor", 2, "|", "two Int64s or two Bytes");
+    ("bxor", 2, "^", "two Int64s or two Bytes");
+    ("shl", 2, "<<", "two Int64s or two Bytes");
+    ("shr", 2, ">>", "two Int64s or two Bytes");
+    ("byte_shl", 2, "<<", "two Int64s or two Bytes");
+    ("neg", 1, "-", "a number");
+    ("bnot", 1, "~", "an Int64");
+    ("byte_bnot", 1, "~", "an Int64");
+  ]
+
+let op_refusal_source : string =
+  let lit s = binary_lit s in
+  (* (pattern, the name it answers); a Char wears its UTF-8 bytes here,
+     so it reads as a String — the target has no Char of its own *)
+  let name_arms =
+    [
+      ("<'true'> when 'true'", "Bool");
+      ("<'false'> when 'true'", "Bool");
+      ("<'ok'> when 'true'", "Void");
+      ("<{'emo_byte', _x}> when 'true'", "Byte");
+      ("<{'emo_bytes', _k}> when 'true'", "Bytes");
+      ("<{'emo_list', _k}> when 'true'", "List");
+      ("<{'emo_builder', _k}> when 'true'", "ArrayBuilder");
+      ("<{'emo_map', _k}> when 'true'", "Map");
+      ("<{'emo_array', _k}> when 'true'", "Array");
+      ("<{'emo_atomic', _r}> when 'true'", "Atomic");
+      ("<{'emo_pid', _n, _p}> when 'true'", "Pid");
+      ("<_i> when call 'erlang':'is_integer'(_i)", "Int64");
+      ("<_f> when call 'erlang':'is_float'(_f)", "Float64");
+      ("<_s> when call 'erlang':'is_binary'(_s)", "String");
+      ("<_r> when call 'erlang':'is_reference'(_r)", "Box");
+      ("<_l> when call 'erlang':'is_list'(_l)", "Array");
+      ("<_p> when call 'erlang':'is_pid'(_p)", "Pid");
+    ]
+  in
+  let type_name =
+    String.concat "\n"
+      ([
+         "%% The kind a value wears, by the interpreter's own name.";
+         "'emo_type_name'/1 =";
+         "    fun (_v) ->";
+         "\tcase _v of";
+       ]
+      @ List.map
+          (fun (pat, n) -> Printf.sprintf "\t  %s -> %s" pat (lit n))
+          name_arms
+      @ [
+          "\t  <{}> when 'true' ->";
+          lit "Tuple";
+          "\t  <{'emo_enum', _n, _m}> when 'true' ->";
+          lit "an enum member";
+          "\t  <_t> when call 'erlang':'is_tuple'(_t) ->";
+          "\t      case call 'erlang':'element'(1, _t) of";
+          "\t\t<'emo_inst'> when 'true' ->";
+          lit "an instance";
+          "\t\t<_> when 'true' ->";
+          lit "Tuple";
+          "\t      end";
+          "\t  <_fn> when call 'erlang':'is_function'(_fn) ->";
+          lit "an arrow block";
+          "\t  <_other> when 'true' ->";
+          lit "value";
+          "\tend";
+          "";
+        ])
+  in
+  let reporters =
+    String.concat "\n"
+      [
+        "%% The interpreter's own sentence, as a binary.";
+        "'emo_mismatch'/4 =";
+        "    fun (_op, _expects, _a, _b) ->";
+        Printf.sprintf
+          "\tcall 'erlang':'iolist_to_binary' ([%s, _op, %s, _expects, %s, \
+           apply 'emo_type_name'/1 (_a), %s, apply 'emo_type_name'/1 (_b)])"
+          (lit "operator `") (lit "` expects ") (lit ", got ") (lit " and ");
+        "";
+        "'emo_unary_mismatch'/3 =";
+        "    fun (_op, _expects, _a) ->";
+        Printf.sprintf
+          "\tcall 'erlang':'iolist_to_binary' ([%s, _op, %s, _expects, %s, \
+           apply 'emo_type_name'/1 (_a)])"
+          (lit "operator `") (lit "` expects ") (lit ", got ");
+        "";
+        "%% A runtime refusal reaches the root: announce the sentence the way";
+        "%%   the c target does, and end the program with 70 — the \
+         interpreter's";
+        "%%   own exit for it. The write is the port's own, so nothing is left";
+        "%%   in a buffer when the halt comes.";
+        "'emo_runtime_fail'/1 =";
+        "    fun (_msg) ->";
+        Printf.sprintf
+          "\tdo call 'file':'write'(call 'erlang':'whereis'('standard_error'), \
+           [%s, _msg, %s])"
+          (lit "runtime error: ") (lit "\n");
+        "\t    call 'erlang':'halt'(70)";
+        "";
+      ]
+  in
+  let door (name, arity, op, expects) =
+    let args =
+      String.concat ", " (List.init arity (fun i -> Printf.sprintf "_a%d" i))
+    in
+    let report =
+      if arity = 2 then
+        Printf.sprintf "apply 'emo_mismatch'/4 (%s, %s, _x, _y)" (lit op)
+          (lit expects)
+      else
+        Printf.sprintf "apply 'emo_unary_mismatch'/3 (%s, %s, _x)" (lit op)
+          (lit expects)
+    in
+    String.concat "\n"
+      ([
+         Printf.sprintf "'emo_op_%s'/%d =" name arity;
+         Printf.sprintf "    fun (%s) ->" args;
+         Printf.sprintf "\ttry apply 'emo_%s'/%d (%s)" name arity args;
+         "of";
+         "    <_r> -> _r";
+         "catch";
+         "    <_C, _T, _S> ->";
+         "\tcase _T of";
+         "\t  <{'emo_bad_type', _x, _y}> when 'true' ->";
+         "\t      call 'erlang':'error'";
+         "\t\t({'emo_runtime_error',";
+       ]
+      @ [ Printf.sprintf "\t\t  %s})" report ]
+      @ [ "\t  <_other> when 'true' -> call 'erlang':'throw'(_T)"; "\tend"; "" ]
+      )
+  in
+  String.concat "\n"
+    ([ "%% ---- The gradual operators' doors ----"; "" ]
+    @ [ type_name; reporters ]
+    @ List.map door gradual_op_doors)
 
 let rt_source =
   {|
@@ -5755,6 +5931,7 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env "    attributes []\n";
   put env rt_source;
   put env (inst_str_source program);
+  put env op_refusal_source;
   (* a def emitter shared by program functions and class methods *)
   let emit_def ~(cc : string option) ~(params : (string * string) list)
       ~(fname : string) ~(body : Emo_ir.stmt list) : unit =
@@ -5904,6 +6081,12 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env "        do apply 'emo_root_table'/0 ()\n";
   put env "        do apply 'emo_cells_table'/0 ()\n";
   put env "        do apply 'emo_pid_reg'/1 (1)\n";
-  put env (body_wrapper ~on_exit:"apply 'emo_kill_spawned'/0 ()" body);
+  put env
+    (body_wrapper ~on_exit:"apply 'emo_kill_spawned'/0 ()"
+       ~on_error:
+         "\n\
+          \t  <{'emo_runtime_error', _msg}> when 'true' ->\n\
+          \t      apply 'emo_runtime_fail'/1 (_msg)"
+       body);
   put env "\nend\n";
   Buffer.contents buf

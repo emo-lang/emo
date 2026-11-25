@@ -2274,6 +2274,14 @@ module Emo_runtime = struct
   let type_error v expected =
     Printf.sprintf "expected %s, got %s" expected (Emo_eval.type_name v)
 
+  (* A gradual operator on two values of different kinds refuses with the
+     interpreter's own sentence (E3001): the operator, the rule, and both
+     kinds. *)
+  let type_mismatch op expects a b =
+    failwith
+      (Printf.sprintf "operator `%s` expects %s, got %s and %s" op expects
+         (Emo_eval.type_name a) (Emo_eval.type_name b))
+
   let unbox_bool v =
     match v with
     | Emo_eval.Bool b -> b
@@ -2382,21 +2390,21 @@ module Emo_runtime = struct
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x + y) land 255)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x +. y)
     | Emo_eval.String x, Emo_eval.String y -> Emo_eval.String (x ^ y)
-    | _ -> failwith "operator `+` expects two numbers or two strings"
+    | _ -> type_mismatch "+" "two numbers or two strings" a b
 
   let sub a b =
     match (a, b) with
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.sub x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte ((x - y) land 255)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x -. y)
-    | _ -> failwith "operator `-` expects two numbers"
+    | _ -> type_mismatch "-" "two numbers" a b
 
   let mul a b =
     match (a, b) with
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.mul x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x * y land 255)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x *. y)
-    | _ -> failwith "operator `*` expects two numbers"
+    | _ -> type_mismatch "*" "two numbers" a b
 
   let div a b =
     match (a, b) with
@@ -2406,7 +2414,7 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.div x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x / y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (x /. y)
-    | _ -> failwith "operator `/` expects two numbers"
+    | _ -> type_mismatch "/" "two numbers" a b
 
   let modulo a b =
     match (a, b) with
@@ -2415,7 +2423,7 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.rem x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x mod y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Float (Float.rem x y)
-    | _ -> failwith "operator `%` expects two numbers"
+    | _ -> type_mismatch "%" "two numbers" a b
 
   (* Bitwise work is integer work: no float coercion, and out-of-range
      shift counts are an error, never a silent platform wrap. *)
@@ -2427,19 +2435,19 @@ module Emo_runtime = struct
     match (a, b) with
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logand x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x land y)
-    | _ -> failwith (type_error a "two Int64s or two Bytes")
+    | _ -> type_mismatch "&" "two Int64s or two Bytes" a b
 
   let bit_or a b =
     match (a, b) with
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logor x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x lor y)
-    | _ -> failwith (type_error a "two Int64s or two Bytes")
+    | _ -> type_mismatch "|" "two Int64s or two Bytes" a b
 
   let bit_xor a b =
     match (a, b) with
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Int64 (Int64.logxor x y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Byte (x lxor y)
-    | _ -> failwith (type_error a "two Int64s or two Bytes")
+    | _ -> type_mismatch "^" "two Int64s or two Bytes" a b
 
   (* Fixed-width shift counts are their own width; the count saturates at
      the width, matching the evaluator. *)
@@ -2451,7 +2459,7 @@ module Emo_runtime = struct
         else Emo_eval.Int64 (Int64.shift_left x (Int64.to_int c))
     | Emo_eval.Byte x, Emo_eval.Byte c ->
         if c >= 8 then Emo_eval.Byte 0 else Emo_eval.Byte ((x lsl c) land 255)
-    | _ -> failwith (type_error a "two Int64s or two Bytes")
+    | _ -> type_mismatch "<<" "two Int64s or two Bytes" a b
 
   let shr a b =
     match (a, b) with
@@ -2461,12 +2469,15 @@ module Emo_runtime = struct
         else Emo_eval.Int64 (Int64.shift_right x (Int64.to_int c))
     | Emo_eval.Byte x, Emo_eval.Byte c ->
         if c >= 8 then Emo_eval.Byte 0 else Emo_eval.Byte (x lsr c)
-    | _ -> failwith (type_error a "two Int64s or two Bytes")
+    | _ -> type_mismatch ">>" "two Int64s or two Bytes" a b
 
   let bit_not = function
     | Emo_eval.Int64 x -> Emo_eval.Int64 (Int64.lognot x)
     | Emo_eval.Byte x -> Emo_eval.Byte (lnot x land 255)
-    | v -> failwith (type_error v "Int64")
+    | v ->
+        failwith
+          (Printf.sprintf "operator `~` expects an Int64, got %s"
+             (Emo_eval.type_name v))
 
   (* Native-int shifts for the specialized path: the operands are already
      unboxed, so the guard must live here rather than in emitted code. *)
@@ -2499,7 +2510,7 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x < y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x < y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x < y)
-    | _ -> failwith "operator `<` expects two numbers"
+    | _ -> type_mismatch "<" "two numbers" a b
 
   let le a b =
     match (a, b) with
@@ -2507,7 +2518,7 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x <= y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x <= y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x <= y)
-    | _ -> failwith "operator `<=` expects two numbers"
+    | _ -> type_mismatch "<=" "two numbers" a b
 
   let gt a b =
     match (a, b) with
@@ -2515,7 +2526,7 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x > y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x > y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x > y)
-    | _ -> failwith "operator `>` expects two numbers"
+    | _ -> type_mismatch ">" "two numbers" a b
 
   let ge a b =
     match (a, b) with
@@ -2523,7 +2534,7 @@ module Emo_runtime = struct
     | Emo_eval.Int64 x, Emo_eval.Int64 y -> Emo_eval.Bool (x >= y)
     | Emo_eval.Byte x, Emo_eval.Byte y -> Emo_eval.Bool (x >= y)
     | Emo_eval.Float x, Emo_eval.Float y -> Emo_eval.Bool (x >= y)
-    | _ -> failwith "operator `>=` expects two numbers"
+    | _ -> type_mismatch ">=" "two numbers" a b
 
   let eq a b = Emo_eval.Bool (Emo_eval.equal_value a b)
   let ne a b = Emo_eval.Bool (not (Emo_eval.equal_value a b))
@@ -2548,7 +2559,10 @@ module Emo_runtime = struct
     match v with
     | Emo_eval.Float f -> Emo_eval.Float (-.f)
     | Emo_eval.Int64 n -> Emo_eval.Int64 (Int64.neg n)
-    | other -> failwith (type_error other "number")
+    | other ->
+        failwith
+          (Printf.sprintf "operator `-` expects a number, got %s"
+             (Emo_eval.type_name other))
 
   (* ---- Objects and values ---- *)
 

@@ -6472,6 +6472,144 @@ let check_hosted ?(files = []) name source expected =
              "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
              (Filename.quote dir)))
 
+(* The mixed-kind refusal is one sentence on every target (the width
+   rule's text half, closed 2026-11-25). Each kind arrives as a mailbox
+   binding, so the checker cannot refuse the pair and the runtime must —
+   and it answers the interpreter's own words: the operator, the rule,
+   both kinds. Each target keeps its envelope: c and beam print `runtime
+   error: …` and exit 70, typescript `error[E3010]: uncaught exception:
+   …` and exit 70 (it printed the sentence and exited 0 before), wasm
+   `ABORT: …` and exit 1, the metal `emo runtime: …`. Three rows: the
+   addition the ledger named; `>`, compared as a swapped `<` on c and
+   the metal, which read the operator and the order backwards; and a
+   unary `-`, which met a JS TypeError on typescript and answered a bare
+   -1 on the metal. *)
+let mixed_kind_rows =
+  [
+    ( "add",
+      {|self_pid() <- (7, 7.5, Byte.from_int64(3), "s", true)
+receive {
+  (i, f, b, s, t) then {
+    println(i + f)
+  }
+}
+|},
+      "operator `+` expects two numbers or two strings, got Int64 and Float64"
+    );
+    ( "order",
+      {|self_pid() <- (7, 7.5, Byte.from_int64(3), "s", true)
+receive {
+  (i, f, b, s, t) then {
+    println(f > b)
+  }
+}
+|},
+      "operator `>` expects two numbers, got Float64 and Byte" );
+    ( "neg",
+      {|self_pid() <- (7, 7.5, Byte.from_int64(3), "s", true)
+receive {
+  (i, f, b, s, t) then {
+    println(-s)
+  }
+}
+|},
+      "operator `-` expects a number, got String" );
+  ]
+
+let mixed_kind_targets =
+  [
+    ( "c",
+      "runtime error: ",
+      70,
+      fun () -> if not (Lazy.force cc_available) then Alcotest.skip () );
+    ( "typescript",
+      "error[E3010]: uncaught exception: ",
+      70,
+      fun () -> if not (Lazy.force node_available) then Alcotest.skip () );
+    ( "wasm",
+      "ABORT: ",
+      1,
+      fun () -> if not (Lazy.force node_available) then Alcotest.skip () );
+    ( "beam",
+      "runtime error: ",
+      70,
+      fun () ->
+        skip_unless_beam ();
+        if not (Lazy.force erl_available) then Alcotest.skip () );
+    ( "riscv64",
+      "emo runtime: ",
+      0,
+      fun () -> if not (Lazy.force riscv64_available) then Alcotest.skip () );
+  ]
+
+let cross_target_refusal_tests =
+  List.concat_map
+    (fun (target, prefix, code, available) ->
+      List.map
+        (fun (row, source, sentence) ->
+          tc
+            (Printf.sprintf
+               "a mixed pair refuses in the interpreter's words on %s: %s"
+               target row) (fun () ->
+              available ();
+              let entry =
+                scratch_entry (Printf.sprintf "mixed-%s-%s" target row) source
+              in
+              let dir = Filename.dirname entry in
+              let out = Filename.concat dir "app" in
+              Alcotest.(check int)
+                "build exit" 0
+                (build_entry ~target entry out);
+              let text, status =
+                match target with
+                | "c" ->
+                    let _, err, status = run_cmd (Filename.quote out) in
+                    (err, status)
+                | "typescript" ->
+                    let _, err, status =
+                      run_cmd ("node " ^ Filename.quote (out ^ ".ts"))
+                    in
+                    (err, status)
+                | "wasm" ->
+                    let _, err, status =
+                      run_cmd
+                        (Printf.sprintf "node %s %s"
+                           (Filename.quote (Lazy.force wasm_runner_path))
+                           (Filename.quote (out ^ ".wasm")))
+                    in
+                    (err, status)
+                | "beam" ->
+                    let _, err, status =
+                      run_cmd
+                        (Printf.sprintf
+                           "erl -noshell -pa %s -eval 'app:main(), \
+                            erlang:halt(0).'"
+                           (Filename.quote dir))
+                    in
+                    (err, status)
+                | "riscv64" ->
+                    let serial, _, status =
+                      run_cmd
+                        (Printf.sprintf
+                           "qemu-system-riscv64 -machine virt -nographic \
+                            -kernel %s"
+                           (Filename.quote (out ^ ".elf")))
+                    in
+                    (riscv64_payload serial, status)
+                | _ -> assert false
+              in
+              Alcotest.(check bool)
+                "the sentence in the target's envelope" true
+                (contains text (prefix ^ sentence));
+              match status with
+              | Unix.WEXITED n -> Alcotest.(check int) "exit" code n
+              | Unix.WSIGNALED n ->
+                  Alcotest.fail (Printf.sprintf "died on signal %d" n)
+              | Unix.WSTOPPED n ->
+                  Alcotest.fail (Printf.sprintf "stopped on signal %d" n)))
+        mixed_kind_rows)
+    mixed_kind_targets
+
 let hosted_bindings_tests =
   [
     tc "a module-level const keeps its identity on every hosted target"
@@ -7789,6 +7927,7 @@ let () =
       ("root_end", root_end_tests);
       ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
+      ("cross_target_refusal", cross_target_refusal_tests);
       ("pid_render", pid_render_tests);
       ("hosted_bindings", hosted_bindings_tests);
       ("atomic_surface", atomic_surface_tests);

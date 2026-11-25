@@ -532,6 +532,11 @@ let rt name =
   | "array_sort" -> if !wasi_mode then b + 122 else b + 106
   | "str_upper" -> if !wasi_mode then b + 123 else b + 107
   | "str_chars" -> if !wasi_mode then b + 124 else b + 108
+  (* the gradual operators' refusal rides last in both modes: the kind
+     names, the binary sentence, the unary one *)
+  | "type_name" -> if !wasi_mode then b + 125 else b + 109
+  | "op_mismatch" -> if !wasi_mode then b + 126 else b + 110
+  | "unary_mismatch" -> if !wasi_mode then b + 127 else b + 111
   | _ -> failwith ("wasm: bad runtime function: " ^ name)
 
 (* imports, then the runtime funcs above (the numeric core, the
@@ -548,8 +553,10 @@ let rt name =
    bounded stream read, the fs write cycle, the fd table, the name
    sort, the open-at and one-string-at wrappers, the environment scan,
    the argv array, the entropy fill, the directory-entry scan — and the
-   Array sort's compare and merge pair after those in both modes. *)
-let runtime_count () = !import_base + if !wasi_mode then 125 else 109
+   Array sort's compare and merge pair after those in both modes, and
+   the gradual operators' refusal after the pair: the kind names, the
+   two sentences. *)
+let runtime_count () = !import_base + if !wasi_mode then 128 else 112
 
 (* ---- Lowering state ---- *)
 
@@ -4928,23 +4935,39 @@ let f64_of (l : int) : W.instr list =
 let bytes_of (l : int) : W.instr list =
   [ W.Local_get l; W.Ref_cast t_vstring; W.Struct_get (t_vstring, 0) ]
 
-let num_to_f64 (local : int) : W.instr list =
-  [
-    W.If_else
-      ( W.Result W.F64,
-        [ W.Local_get local; W.Ref_test t_vfloat ],
-        [ W.Local_get local; W.Ref_cast t_vfloat; W.Struct_get (t_vfloat, 0) ],
-        [
-          W.Local_get local;
-          W.Ref_cast t_vint;
-          W.Struct_get (t_vint, 0);
-          W.F64_convert_i64_s;
-        ] );
-  ]
+(* ---- The gradual operators' refusal ----
+
+   A mixed pair used to end in a bare `unreachable` — a RuntimeError
+   with no word to say. It now answers with the interpreter's own
+   sentence (E3001): the operator, the rule, and both kinds, delivered
+   through the target's own abort (throw) — `ABORT: …` under the host,
+   the stderr line and the exit under wasi. The sentence is assembled
+   by rt_op_mismatch and rt_unary_mismatch over rt_type_name, the three
+   last runtime functions (the rt map is by position, so they ride after
+   the mode's own tail). *)
+
+(* The bytes of a short literal, as a fresh $bytes. *)
+let op_lit (s : string) : W.instr list =
+  (String.to_seq s
+  |> Seq.map (fun c -> W.I32_const (Char.code c))
+  |> List.of_seq)
+  @ [ W.Array_new_fixed (t_bytes, String.length s) ]
+
+(* The refusal at an operator's last arm: the operands in locals [a]
+   and [b], the operator and its rule as literals. *)
+let op_mismatch (op : string) (expects : string) (a : int) (b : int) :
+    W.instr list =
+  op_lit op @ op_lit expects
+  @ [ W.Local_get a; W.Local_get b; W.Call (rt "op_mismatch"); W.Unreachable ]
+
+let unary_mismatch (op : string) (expects : string) (a : int) : W.instr list =
+  op_lit op @ op_lit expects
+  @ [ W.Local_get a; W.Call (rt "unary_mismatch"); W.Unreachable ]
 
 (* arithmetic: int path via i64 op, float path via f64 op, a mixed pair
-   traps *)
-let rt_arith (int_op : W.instr) (float_body : W.instr list) : W.func_type =
+   refuses naming the operator *)
+let rt_arith (op : string) (int_op : W.instr) (float_body : W.instr list) :
+    W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -4965,14 +4988,14 @@ let rt_arith (int_op : W.instr) (float_body : W.instr list) : W.func_type =
                       ( W.Result W.Anyref,
                         both_float 0 1,
                         f64_of 0 @ f64_of 1 @ float_body,
-                        [ W.Unreachable ] );
+                        op_mismatch op "two numbers" 0 1 );
                   ] );
             ] );
       ];
   }
 
 (* add: int + int, string + string (concat), float + float; a mixed pair
-   traps *)
+   refuses naming the operator *)
 let rt_add () =
   {
     W.ftype_idx = t_numop;
@@ -5001,21 +5024,23 @@ let rt_add () =
                               both_float 0 1,
                               f64_of 0 @ f64_of 1
                               @ [ W.F64_add; W.Struct_new t_vfloat ],
-                              [ W.Unreachable ] );
+                              op_mismatch "+" "two numbers or two strings" 0 1
+                            );
                         ] );
                   ] );
             ] );
       ];
   }
 
-let rt_sub () = rt_arith W.I64_sub [ W.F64_sub; W.Struct_new t_vfloat ]
-let rt_mul () = rt_arith W.I64_mul [ W.F64_mul; W.Struct_new t_vfloat ]
+let rt_sub () = rt_arith "-" W.I64_sub [ W.F64_sub; W.Struct_new t_vfloat ]
+let rt_mul () = rt_arith "*" W.I64_mul [ W.F64_mul; W.Struct_new t_vfloat ]
 
 (* div/mod: int division truncates *)
-let rt_div () = rt_arith W.I64_div_s [ W.F64_div; W.Struct_new t_vfloat ]
-let rt_mod () = rt_arith W.I64_rem_s [ W.F64_rem_s; W.Struct_new t_vfloat ]
+let rt_div () = rt_arith "/" W.I64_div_s [ W.F64_div; W.Struct_new t_vfloat ]
+let rt_mod () = rt_arith "%" W.I64_rem_s [ W.F64_rem_s; W.Struct_new t_vfloat ]
 
-(* neg *)
+(* neg: an Int64 or a Float64; a Byte is not a number here, the
+   evaluator's own rule, and anything else refuses naming the operator *)
 let rt_neg () : W.func_type =
   {
     W.ftype_idx = t_sig1;
@@ -5027,13 +5052,19 @@ let rt_neg () : W.func_type =
           ( W.Result W.Anyref,
             [ W.Local_get 0; W.Ref_test t_vint ],
             [ W.I64_const 0L ] @ i64_of 0 @ [ W.I64_sub; W.Struct_new t_vint ],
-            num_to_f64 0 @ [ W.F64_neg; W.Struct_new t_vfloat ] );
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get 0; W.Ref_test t_vfloat ],
+                  f64_of 0 @ [ W.F64_neg; W.Struct_new t_vfloat ],
+                  unary_mismatch "-" "a number" 0 );
+            ] );
       ];
   }
 
-(* Bitwise ops are integer-only: the checker guarantees Int64, and any
-   other shape traps rather than silently coercing. *)
-let rt_bit (op : W.instr) : W.func_type =
+(* Bitwise ops are integer-only: two Int64s or two Bytes, and any other
+   pair refuses rather than silently coercing. *)
+let rt_bit (op : string) (int_op : W.instr) : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -5043,22 +5074,22 @@ let rt_bit (op : W.instr) : W.func_type =
         W.If_else
           ( W.Result W.Anyref,
             both_byte 0 1,
-            i64_of_byte 0 @ i64_of_byte 1 @ [ op ] @ byte_answer,
+            i64_of_byte 0 @ i64_of_byte 1 @ [ int_op ] @ byte_answer,
             [
               W.If_else
                 ( W.Result W.Anyref,
                   both_int 0 1,
-                  i64_of 0 @ i64_of 1 @ [ op; W.Struct_new t_vint ],
-                  [ W.Unreachable ] );
+                  i64_of 0 @ i64_of 1 @ [ int_op; W.Struct_new t_vint ],
+                  op_mismatch op "two Int64s or two Bytes" 0 1 );
             ] );
       ];
   }
 
-let rt_bit_and = rt_bit W.I64_and
-let rt_bit_or = rt_bit W.I64_or
-let rt_bit_xor = rt_bit W.I64_xor
-let rt_shl = rt_bit W.I64_shl
-let rt_shr = rt_bit W.I64_shr_s
+let rt_bit_and = rt_bit "&" W.I64_and
+let rt_bit_or = rt_bit "|" W.I64_or
+let rt_bit_xor = rt_bit "^" W.I64_xor
+let rt_shl = rt_bit "<<" W.I64_shl
+let rt_shr = rt_bit ">>" W.I64_shr_s
 
 let rt_bnot () : W.func_type =
   {
@@ -5077,9 +5108,106 @@ let rt_bnot () : W.func_type =
                   [ W.Local_get 0; W.Ref_test t_vint ],
                   [ W.I64_const (-1L) ] @ i64_of 0
                   @ [ W.I64_xor; W.Struct_new t_vint ],
-                  [ W.Unreachable ] );
+                  unary_mismatch "~" "an Int64" 0 );
             ] );
       ];
+  }
+
+(* type_name(v) -> the kind a value wears, by the interpreter's own
+   name: the to_str chain's shapes. A $vbool and a $vchar are distinct
+   structs here, so both are named; a Pid is an Int64 on this target;
+   anything unlisted is an instance, to_str's own last resort. *)
+let rt_type_name () : W.func_type =
+  let chain =
+    List.fold_right
+      (fun (t, name) cont ->
+        [
+          W.If_else
+            ( W.Result W.Anyref,
+              [ W.Local_get 0; W.Ref_test t ],
+              op_lit name,
+              cont );
+        ])
+      [
+        (t_vbool, "Bool");
+        (t_vchar, "Char");
+        (t_vint, "Int64");
+        (t_vfloat, "Float64");
+        (t_vbyte, "Byte");
+        (t_vstring, "String");
+        (t_vbytes, "Bytes");
+        (t_vlist, "List");
+        (t_vbuilder, "ArrayBuilder");
+        (t_vmap, "Map");
+        (t_anyarray, "Array");
+        (t_vtuple, "Tuple");
+        (t_vbox, "Box");
+        (t_vatomic, "Atomic");
+        (t_venum, "an enum member");
+        (t_vfun, "an arrow block");
+      ]
+      (op_lit "an instance")
+  in
+  { W.ftype_idx = t_sig1; fparams = [ "v" ]; flocals = []; fbody = chain }
+
+(* op_mismatch(op, expects, a, b) and unary_mismatch(op, expects, a):
+   the interpreter's sentence over the parts — `operator `OP` expects
+   EXPECTS, got A and B` — handed to throw. The literals and the names
+   arrive as anyref and narrow to $bytes on their way into strcat; each
+   part joins the sentence so far, kept in the local [acc]. *)
+let rt_op_mismatch ~(t_sig : int) () : W.func_type =
+  let acc = 4 in
+  (* the sentence so far under the joined part: strcat(acc, head + tail) *)
+  let part (head : W.instr list) (tail : W.instr list) : W.instr list =
+    [ W.Local_get acc ] @ head @ tail
+    @ [ W.Call (rt "strcat"); W.Call (rt "strcat") ]
+  in
+  let kind (operand : int) : W.instr list =
+    [ W.Local_get operand; W.Call (rt "type_name"); W.Ref_cast t_bytes ]
+  in
+  {
+    W.ftype_idx = t_sig;
+    fparams = [ "op"; "expects"; "a"; "b" ];
+    flocals = [ (1, W.RefNull t_bytes) ];
+    fbody =
+      op_lit "operator `"
+      @ [
+          W.Local_get 0;
+          W.Ref_cast t_bytes;
+          W.Call (rt "strcat");
+          W.Local_set acc;
+        ]
+      @ part (op_lit "` expects ") [ W.Local_get 1; W.Ref_cast t_bytes ]
+      @ [ W.Local_set acc ]
+      @ part (op_lit ", got ") (kind 2)
+      @ [ W.Local_set acc ]
+      @ part (op_lit " and ") (kind 3)
+      @ [ W.Struct_new t_vstring; W.Call (rt "throw"); W.Unreachable ];
+  }
+
+let rt_unary_mismatch ~(t_sig : int) () : W.func_type =
+  let acc = 3 in
+  let part (head : W.instr list) (tail : W.instr list) : W.instr list =
+    [ W.Local_get acc ] @ head @ tail
+    @ [ W.Call (rt "strcat"); W.Call (rt "strcat") ]
+  in
+  {
+    W.ftype_idx = t_sig;
+    fparams = [ "op"; "expects"; "a" ];
+    flocals = [ (1, W.RefNull t_bytes) ];
+    fbody =
+      op_lit "operator `"
+      @ [
+          W.Local_get 0;
+          W.Ref_cast t_bytes;
+          W.Call (rt "strcat");
+          W.Local_set acc;
+        ]
+      @ part (op_lit "` expects ") [ W.Local_get 1; W.Ref_cast t_bytes ]
+      @ [ W.Local_set acc ]
+      @ part (op_lit ", got ")
+          [ W.Local_get 2; W.Call (rt "type_name"); W.Ref_cast t_bytes ]
+      @ [ W.Struct_new t_vstring; W.Call (rt "throw"); W.Unreachable ];
   }
 
 (* ---- Bytes: a fixed-length mutable byte buffer ($vbytes) ---- *)
@@ -5805,7 +5933,7 @@ let rt_bytes_label () : W.func_type =
       @ [ W.Struct_new t_vstring ];
   }
 
-let rt_cmp (int_body : W.instr list) (float_body : W.instr list)
+let rt_cmp (op : string) (int_body : W.instr list) (float_body : W.instr list)
     (string_body : W.instr list) : W.func_type =
   {
     W.ftype_idx = t_numop;
@@ -5838,7 +5966,7 @@ let rt_cmp (int_body : W.instr list) (float_body : W.instr list)
                             ( W.Result W.Anyref,
                               both_float 0 1,
                               f64_of 0 @ f64_of 1 @ float_body,
-                              [ W.Unreachable ] );
+                              op_mismatch op "two numbers" 0 1 );
                         ] );
                   ] );
             ] );
@@ -5854,25 +5982,25 @@ let rt_string_cmp (tail : W.instr list) : W.instr list =
   @ tail @ [ W.Struct_new t_vbool ]
 
 let rt_lt () =
-  rt_cmp
+  rt_cmp "<"
     [ W.I64_lt_s; W.Struct_new t_vbool ]
     [ W.F64_lt; W.Struct_new t_vbool ]
     (rt_string_cmp [ W.I32_const 0; W.I32_lt_s ])
 
 let rt_le () =
-  rt_cmp
+  rt_cmp "<="
     [ W.I64_le_s; W.Struct_new t_vbool ]
     [ W.F64_le; W.Struct_new t_vbool ]
     (rt_string_cmp [ W.I32_const 1; W.I32_lt_s ])
 
 let rt_gt () =
-  rt_cmp
+  rt_cmp ">"
     [ W.I64_gt_s; W.Struct_new t_vbool ]
     [ W.F64_gt; W.Struct_new t_vbool ]
     (rt_string_cmp [ W.I32_const 0; W.I32_gt ])
 
 let rt_ge () =
-  rt_cmp
+  rt_cmp ">="
     [ W.I64_ge_s; W.Struct_new t_vbool ]
     [ W.F64_ge; W.Struct_new t_vbool ]
     (rt_string_cmp [ W.I32_const 0; W.I32_ge ])
@@ -12561,6 +12689,12 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
     type_idx env (W.FuncT ([ W.Anyref; W.Anyref; W.I32 ], [ W.I32 ]))
   in
   let t_sort = type_idx env (W.FuncT ([ W.Anyref; W.I32 ], [ W.Anyref ])) in
+  let t_op_mismatch =
+    type_idx env (W.FuncT ([ W.Anyref; W.Anyref; W.Anyref; W.Anyref ], []))
+  in
+  let t_unary_mismatch =
+    type_idx env (W.FuncT ([ W.Anyref; W.Anyref; W.Anyref ], []))
+  in
   let init_func =
     rt_init string_pool
       ~pool_base:(1 + (2 * List.length env.consts) + List.length env.gvars)
@@ -12679,6 +12813,11 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
         rt_array_sort ~t_sig:t_sort ();
         rt_str_upper ();
         rt_str_chars ();
+        (* the gradual operators' refusal, after the mode's own tail
+           like the sort pair: the kind names, the two sentences *)
+        rt_type_name ();
+        rt_op_mismatch ~t_sig:t_op_mismatch ();
+        rt_unary_mismatch ~t_sig:t_unary_mismatch ();
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

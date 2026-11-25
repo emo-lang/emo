@@ -320,9 +320,10 @@ let errors_out =
    tag: expected Bool, got String\n\
    index: index 0 is out of bounds\n\
    box: calling a non-function\n\
-   mixed add: operator `+` expects two numbers or two strings\n\
-   mixed lt: operator `<` expects two numbers\n\
-   mixed le: operator `<=` expects two numbers\n\
+   mixed add: operator `+` expects two numbers or two strings, got Float64 and \
+   Int64\n\
+   mixed lt: operator `<` expects two numbers, got Int64 and Float64\n\
+   mixed le: operator `<=` expects two numbers, got Int64 and Float64\n\
    arity: `f` expects 2 arguments, got 1\n"
 
 (* The process program: a spawned child echoes a message back through

@@ -84,18 +84,15 @@ function _endIfShutdown(handle?: any): void {
   throw new EProgramEnd();
 }
 
-// Processes end cleanly on EHalt/EReturn and on an uncaught Emo
-// exception. A spawned process's exception ends that process silently —
-// the root's is reported, matching the native scheduler's event log.
+// Processes end cleanly on EHalt/EReturn and on the program's end. Any
+// other exception leaves the entry on purpose: the emitted wrapper's
+// own catch reports it and sets exit 70 — reporting it here instead
+// printed the sentence and then exited 0 (found 2026-11-25: an Emo
+// exception raised inside a receive branch). A spawned process's
+// exception ends that process silently, in _taskEnd.
 function _taskError(e: any): any {
   if (e instanceof EHalt || e instanceof EReturn || e instanceof EProgramEnd)
     return undefined;
-  if (e instanceof EEmoException) {
-    console.error(
-      "error[E3010]: uncaught exception: " + toStr(e.messageValue)
-    );
-    return undefined;
-  }
   throw e;
 }
 
@@ -1473,47 +1470,52 @@ const E: any = {
     if (bothFloat(a, b)) return new EFloat(unfloat(a) % unfloat(b));
     return numMix("%", "two numbers", a, b);
   },
-  // Bitwise work is integer work. JS bitwise ops run on int32, so
-  // results past 2^31 follow the platform's word — the width family
-  // (Int64/Byte) carries the exact contract later.
+  // `~` is the one bitwise operator with one operand to name.
   requireInt(v: any, op: string): number {
     if (!isInt(v)) throw new EEmoException(`operator \`${op}\` expects an Int64, got ${tag(v)}`);
     return v as number;
   },
+  // Bitwise work is integer work: two Int64s or two Bytes, never a
+  // coercion across kinds — a mixed pair refuses with the interpreter's
+  // own sentence, where a JS TypeError about BigInt stood. JS bitwise
+  // ops run on int32, so the Byte pair stays exact only because a byte
+  // is below 256; the width family (Int64/Byte) carries the contract.
   bitAnd(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) & (b as bigint));
-    return this.requireInt(a, "&") & this.requireInt(b, "&");
+    if (bothInt(a, b)) return (a as number) & (b as number);
+    return numMix("&", "two Int64s or two Bytes", a, b);
   },
   bitOr(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) | (b as bigint));
-    return this.requireInt(a, "|") | this.requireInt(b, "|");
+    if (bothInt(a, b)) return (a as number) | (b as number);
+    return numMix("|", "two Int64s or two Bytes", a, b);
   },
   bitXor(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) ^ (b as bigint));
-    return this.requireInt(a, "^") ^ this.requireInt(b, "^");
+    if (bothInt(a, b)) return (a as number) ^ (b as number);
+    return numMix("^", "two Int64s or two Bytes", a, b);
   },
   shl(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Shl(a as bigint, b as bigint);
-    if (isInt(a) && isInt(b)) return E.byteShl(a as number, b as number);
-    const n = this.requireInt(b, "<<");
-    if (n < 0) throw new EEmoException("shift count must be non-negative");
-    return this.requireInt(a, "<<") << n;
+    if (bothInt(a, b)) return E.byteShl(a as number, b as number);
+    return numMix("<<", "two Int64s or two Bytes", a, b);
   },
   shr(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Shr(a as bigint, b as bigint);
-    if (isInt(a) && isInt(b)) return E.byteShr(a as number, b as number);
-    const n = this.requireInt(b, ">>");
-    if (n < 0) throw new EEmoException("shift count must be non-negative");
-    return this.requireInt(a, ">>") >> n;
+    if (bothInt(a, b)) return E.byteShr(a as number, b as number);
+    return numMix(">>", "two Int64s or two Bytes", a, b);
   },
   bitNot(a: any) {
     if (isI64(a)) return wrap64(~(a as bigint));
     if (isInt(a)) return E.byteBitNot(a as number);
     return ~this.requireInt(a, "~");
   },
+  // The evaluator's rule: an Int64 or a Float64 negates, and a Byte
+  // does not — the refusal names the kind.
   neg(a: any) {
-    if (isInt(a)) return -(a as number);
-    return new EFloat(-unfloat(a));
+    if (isI64(a)) return E.i64Neg(a as bigint);
+    if (isFloat(a)) return new EFloat(-a.v);
+    throw new EEmoException(`operator \`-\` expects a number, got ${tag(a)}`);
   },
   lt(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return emoStrLt(a, b);

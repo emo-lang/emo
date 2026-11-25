@@ -352,7 +352,9 @@ int64_t emo_length(emo_value v);
 /* Dynamic operations — the runtime dispatches the interpreter's
    semantics when the static type is Unknown. Arithmetic and
    comparisons require the same kind on both sides, `+` on two
-   strings concatenates, and equality is structural. */
+   strings concatenates, and equality is structural. A mixed pair
+   refuses with the interpreter's own sentence: the operator, the rule,
+   and both kinds. */
 emo_value emo_add_dyn(emo_value a, emo_value b);
 emo_value emo_sub_dyn(emo_value a, emo_value b);
 emo_value emo_mul_dyn(emo_value a, emo_value b);
@@ -362,6 +364,8 @@ emo_value emo_neg_dyn(emo_value v);
 bool emo_eq_dyn(emo_value a, emo_value b);
 bool emo_lt_dyn(emo_value a, emo_value b);
 bool emo_le_dyn(emo_value a, emo_value b);
+bool emo_gt_dyn(emo_value a, emo_value b);
+bool emo_ge_dyn(emo_value a, emo_value b);
 int64_t emo_str_cmp(emo_value a, emo_value b); /* byte order, the sort's compare */
 
 /* The one stringification rule over dynamic values: the scalar
