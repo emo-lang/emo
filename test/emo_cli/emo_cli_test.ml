@@ -6762,6 +6762,177 @@ let cross_target_gradual_tests =
       (refuses "runtime error: " "`Point` has no field `z`" 70);
   ]
 
+(* The metal's memory model after the Bytes wall's close (2026-11-25):
+   a Bytes is a counted kind, and the three shapes below are the ones
+   the counting exposed. The element write's index used to ride a temp
+   register across the value's evaluation — a call, a nested read, a
+   box — so the bounds check read whatever the callee left behind and
+   the metal answered `index out of bounds` (or wrote the wrong slot);
+   a `const` bound in one block stayed on the emitter's bound list past
+   its scope, so a sibling block's same-named binding took the write
+   barrier over a dead slot and the block entered the freelist twice;
+   and the bump arena never gave a byte back, so a loop of 2000
+   64-KiB buffers exhausted the image heap. Each row answers what the
+   interpreter answers. *)
+let metal_element_write_source =
+  {|def five() Int64 { return 5 }
+
+def scaled(n Int64) Int64 {
+  const a = [10, 20, 30]
+  a[1] = n
+  a[2] = n * 2 + 1
+  return a[1] + a[2]
+}
+
+const a = [1, 2, 3]
+a[0] = five()
+a[1] = a[2] - 2
+println(a)
+println(scaled(9))
+const nested = [[1, 2], [3, 4]]
+nested[1] = nested[0]
+println(nested)
+const i = 1
+a[i] = i + 40
+println(a)
+|}
+
+let metal_element_write_out = "[5, 1, 3]\n28\n[[1, 2], [1, 2]]\n[5, 41, 3]\n"
+
+let metal_received_array_source =
+  {|def worker(boss Pid) {
+  receive {
+    a then {
+      a[0] = 55
+      boss <- a
+    }
+  }
+}
+
+const me = self_pid()
+const w = do worker(me)
+const a = [1, 2, 3]
+w <- a
+a[0] = 77
+receive {
+  got then { println(got) }
+}
+println(a)
+|}
+
+let metal_received_array_out = "[55, 2, 3]\n[77, 2, 3]\n"
+
+let metal_sibling_scope_source =
+  {|def two(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(4)
+  out.set(0, a.get(0))
+  return out
+}
+
+class Digest {
+  def init(is224 Bool) {
+    self.box = Bytes.new(112)
+  }
+
+  def sum() Bytes {
+    return two(self.box, self.box)
+  }
+}
+
+var i = 0
+while i < 20 {
+  const d = Digest.new(false)
+  i = i + 1
+}
+
+var j = 0
+while j < 40 {
+  const d = Digest.new(false)
+  const h = d.sum()
+  j = j + h.length()
+}
+println(j)
+|}
+
+let metal_arena_reuse_source =
+  {|def churn(n Int64) Int64 {
+  var i = 0
+  var s = 0
+  while i < n {
+    const b = Bytes.new(65536)
+    b.set(0, 7)
+    s = s + b.get(0)
+    i = i + 1
+  }
+  return s
+}
+
+println(churn(2000))
+println("done")
+|}
+
+(* A Map literal was the metal's silence: `const m = { "a": 1 }` printed
+   nothing and never returned, every door behind it hung, and a Map sent
+   to another process parked its sender inside the send. The cause was
+   the freelist a dead block had entered twice: its walk cycled. The
+   doors answer now — length, get, has, keys, set and remove, each the
+   interpreter's own answer. A Map's *rendering* has no metal arm yet
+   (`to_string` refuses it), so this probe prints through the doors and
+   never the Map itself. *)
+let metal_map_source =
+  {|const m = { "a": 1, "b": 2 }
+println(m.length())
+println(m.get("a"))
+println(m.has("b"))
+println(m.has("zz"))
+println(m.keys())
+const s = m.set("c", 3)
+println(s.length())
+const t = s.set("a", 10)
+println(t.get("a"))
+const u = t.remove("b")
+println(u.length())
+println(u.has("b"))
+println(u.keys())
+|}
+
+let metal_map_out = "2\n1\ntrue\nfalse\n[a, b]\n3\n10\n2\nfalse\n[a, c]\n"
+
+let metal_memory_tests =
+  let boot name source expected =
+    if not (Lazy.force riscv64_available) then Alcotest.skip ();
+    let entry = scratch_entry name source in
+    let elf = Filename.concat (Filename.dirname entry) "app.elf" in
+    Alcotest.(check int)
+      "riscv64 build" 0
+      (build_entry ~target:"riscv64" entry elf);
+    let serial, err, status =
+      run_cmd
+        (Printf.sprintf
+           "qemu-system-riscv64 -machine virt -nographic -kernel %s"
+           (Filename.quote elf))
+    in
+    check_run "riscv64" (riscv64_payload serial, err, status) expected
+  in
+  [
+    tc "an element write survives its value's evaluation on the metal"
+      (fun () ->
+        boot "metal-element-write" metal_element_write_source
+          metal_element_write_out);
+    tc "a received Array is the array the sender described on the metal"
+      (fun () ->
+        boot "metal-received-array" metal_received_array_source
+          metal_received_array_out);
+    tc "a sibling scope's same-named binding is a fresh one on the metal"
+      (fun () -> boot "metal-sibling-scope" metal_sibling_scope_source "40\n");
+    (* 2000 × 64 KiB is 128 MiB against the image's 96 MiB heap: only a
+       model that gives a dead Bytes back finishes this. *)
+    tc "the metal's arena gives a dead Bytes back" (fun () ->
+        boot "metal-arena-reuse" metal_arena_reuse_source "14000\ndone\n");
+    tc "a Map literal's doors answer on the metal" (fun () ->
+        boot "metal-map" metal_map_source metal_map_out);
+  ]
+
 let hosted_bindings_tests =
   [
     tc "a module-level const keeps its identity on every hosted target"
@@ -8081,6 +8252,7 @@ let () =
       ("cross_target", cross_target_tests);
       ("cross_target_refusal", cross_target_refusal_tests);
       ("cross_target_gradual", cross_target_gradual_tests);
+      ("metal_memory", metal_memory_tests);
       ("pid_render", pid_render_tests);
       ("hosted_bindings", hosted_bindings_tests);
       ("atomic_surface", atomic_surface_tests);

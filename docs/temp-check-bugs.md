@@ -9,7 +9,13 @@ until they are settled.
 The numbers are stable: items 1, 2 and 3 are closed and keep their
 numbers, items 5 and 6 were found on 2026-11-25 while closing item 1,
 items 7 and 8 while closing item 2, and item 9 while closing item 3.
-**Open: 4, 5, 6, 7, 8, 9.**
+Item 4's (b) closed the same day and item 9 with them; its (c) was refuted
+(there is no disagreeing byte — the parked note compared the live dock's
+strip against a corpus chain with a different starting state); its (a) is
+closed for the crypto engines and open again for the desktop corpus, whose
+gate faults on a `Bytes` crossing a spawn/exec boundary. Item 10 was found
+while closing item 9.
+**Open: 4 (a, the desktop edge), 5, 6, 7, 8, 10.**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -71,38 +77,106 @@ The decision and its verification are in `CHECK.md`'s entry of that date;
 `cross_target_gradual` pins six rows across the two. What the round found
 on the way and left is item 9.
 
-## 4. riscv64: three open walls
+## 4. riscv64: three walls — (b) closed, (c) refuted, (a) closed for the crypto engines and open again for the desktop corpus (2026-11-25)
 
-**(a) A `Bytes` is a permanent bump cell.** The metal's bump allocator never
-gives bytes back, and the crypto engines construct per operation
-(`Bytes.new(80)` per field element in Ed25519, a fresh digest buffer per
-PBKDF2 round). `crypto_sign`, `crypto_sign_sweep`, and `crypto_kdf` therefore
-die of arena exhaustion mid-pass — every line they print is byte-correct, the
-memory model is the limit. The counted-`Bytes` experiment was attempted and
-rolled back: the deaths moved to the tail crossings (a tail call retains for a
-frame that dies at the jump) and then to the entry edges (spawn thunks and
-assembler-entered services park no marker). The shape the next round should
-start from is the registration-by-refcount variant: pool-register a parameter
-only when its count already sits above one, so a tail crossing's claim is the
-only thing a drain gives back. It needs no register, no ABI, and no marker.
+**(a) A `Bytes` is a permanent bump cell — closed for the crypto engines,
+open again for the desktop corpus (2026-11-25).** A `Bytes` is a counted kind
+now: kind 10 keeps its tag, the header's high half carries the refcount, and a
+release that reaches zero goes straight to the freelist — the cargo is raw
+bytes, so there is no holdings walk. The birth serves the freelist first and is
+born with one claim, the two copy paths (`emo_copy_deep`'s snapshot,
+`emo_copy_out`'s receive) settle a clone's count explicitly instead of copying
+the source's, and the emitter treats a `Bytes` the way it treats an identity: a
+birth pools, a read claims, every container store retains (the array literal's
+fill, `Set_field`, an element write, a Map's entries, and the runtime's own
+word-copying stores — the builder's tagged push and `to_array`, the append, the
+Map's `keys`), and a non-self tail jump that carries a claim-bearing word takes
+the plain road instead, because the callee borrows and a link claim would
+outlive its owner.
 
-**(b) A cross-process Array copy is written out of bounds.** A worker that
-receives an Array and writes into it (`a[i] = v`) dies
-`emo runtime: index out of bounds`, while the same literal write inside one
-process works (the probe prints `[1, 20, 3]`). The break is the copy's shape —
-`emo_send`'s `emo_copy_deep` or the receive-side re-copy — so the received
-array is not the array the sender's word describes. The same family as the
-hash twin's metal-Array wall.
+Measured on the demos' own engines:
+
+| measure | before | after |
+|---|---|---|
+| `Bytes.new(80)` in a loop, per iteration | 96 B | 0 |
+| `crypto_sign`'s whole run | 13.5 MB (dead at the 8 MiB grant) | 58 KB |
+| the three blocked demos at 8 MiB | 11 / 1 / 0 lines, then `the value heap is exhausted` | 21 / 13 / 2 lines, byte-identical |
+
+Three pre-existing bugs the counting flushed, each fixed:
+
+- **The constructor took the instance's claim twice** — the birth, an explicit
+  entry retain, and the caller's retain, one of which the exit's unwind gave
+  back. No constructed object could reach zero, so every construction leaked
+  its instance and (through the walk) its fields.
+- **The emitter's bound list was never pruned at a block's exit.** A name bound
+  by a `const` stayed "already bound" past its scope, so a sibling block's
+  same-named binding took the write barrier over a dead slot — releasing a
+  block nobody owned, which the freelist then handed out twice (item 9's Map).
+- **Three statements under-counted their temp depth** — `Assign_index`, `Raise`,
+  and the children of `Make_exception`, `Bytes_new` and `Map_lit` — so a deep
+  initializer could write past the frame's slots.
+
+**What the desktop corpus then found.** `projects/emo-desktop/fb/check.sh` is
+green where it measures bytes (interpreter, ocaml, c, typescript, wasm; its
+eight red rows are the beam leg's timeouts, the tree's own long-standing
+`frame`-family hang, and they are red on the tree before this round too). The
+EmoOS smoke case is red, and on this tree it is red
+*earlier* than on the tree before this round: the boot's shell presents its
+second frame and then a pass faults inside `emo_release_walk` (`user fault 25
+cause 13 at 0x871004ac addr 0x83890008`). Two temporary diagnostics narrowed it
+(both reverted): the faulting instruction disassembles to `ld a0, 0(t6)` in the
+walk's field/captures loop — the recursive release of a counted block's
+holdings running off the arena's end page — and the block, printed with its
+slot's own words, stands **below the pass's `end` but above its `cursor`**: an
+address inside the pass's arena that this pass never allocated, i.e. a stale
+pointer into a run the allocator had handed on. Before this round that release
+was a no-op for a `Bytes`, so nothing was dereferenced; now it is, and the
+stale word's "count" walks the fields past the run. So the counting is not the
+bug — it surfaces a pre-existing stale counted word on the desktop's
+spawn/exec path, one the gate alone exercises. The crypto engines, the 26 metal
+goldens and `native_image` are all still byte-identical, so the counting itself
+holds; what is open is that stale word. The gate also carries two pre-existing reasons to be red, reported
+for the record: its kernel copy list was missing the eight files `user.S`
+incbins (fixed in `test/emo_os` this round), and run.sh still pins the frame
+budget at `frames 1918 1674` while the tree counts `1925 1681`.
+
+**(b) A cross-process Array copy is written out of bounds — closed
+2026-11-25.** The copy was sound: the worker read `[77, 2, 3]` and its length.
+The death was `a[i] = v`'s own lowering — the index rode a temp register across
+the value's evaluation, and a value that allocated (a call, a box, a nested
+read's own index) left the arena cursor or a stray word there, so the bounds
+check read it and refused or wrote the wrong slot. The index now spills into a
+frame slot of its own before the value evaluates. `a[0] = five()`,
+`a[i] = i + 40`, a native frame's `a[0] = 55` and `a[1] = a[0]` all died or
+miswrote; a literal value in a dynamic frame was the one shape that survived,
+because nothing allocated between the two reads.
 
 **Repro.** The array-mutability probe: sender writes 77 into its own binding
 after sending, worker writes 55 into the received copy and sends it back; the
-interpreter, c, typescript, wasm, and beam answer `[55, 2, 3]` then
-`[77, 2, 3]`, the metal dies at the worker's write.
+interpreter, c, typescript, wasm, beam and now the metal answer `[55, 2, 3]`
+then `[77, 2, 3]`.
 
-**(c) The dock's hover is one digest off.** The metal's `paint_tile` hover
-byte disagrees with the corpus by one digest; the corpus's own tile and
-`tiler` rows pass. The single byte the carve and the canvas disagree on has
-not been found, and the dock's hover is parked on the metal until it is.
+**(c) The dock's hover is one digest off — refuted 2026-11-25: there is no
+such byte.** The premise was that the metal's carve and the hosted canvas
+disagree on one pixel of a hovered tile. Measured directly: a kernel-profile
+program paints the golden's own chains onto a `ui_fb_winbuf.Win` over plain RAM
+(the carve's `carve_*` walks, the same ones the desktop calls) and folds the
+strip with `ui_fb_frame.digest`/`round_digest`. Every digest the corpus pins
+comes back:
+
+| chain | corpus | carve |
+|---|---|---|
+| the desk era's three `paint_tile` rows | `2705446303`, `1028097810`, `1695040239`, `tiler 1222847109` | identical |
+| the launcher's hover row, lifted | `532476419`, `2615177506`, `tiler 1465435319`, `329071474` | identical |
+
+The same program built with `c7645471` prints the same numbers, so the two
+painters have always agreed when they start from the same strip. What the
+parked note compared was the **live** dock buffer's walk digest against a
+corpus chain that starts from a strip the golden painted — different starting
+states, therefore a different digest, and no disagreeing pixel anywhere. The
+hover stays parked because run.sh asserts only the ten `frame` rows; un-parking
+it needs a corpus row for the state the desk loop is in at the beat (or a beat
+that repaints the strip first), a corpus addition rather than a fix.
 
 **Where.** `emo-desktop` M32's record (`CHECK.md` 2026-11-20): "the dock's
 hover parked on the metal, the walk's strip one digest off the corpus's, the
@@ -266,28 +340,53 @@ failure) and the comment above it in `src/emo_codegen/c/emo_c_runtime.c`
 ("rides --cclib -L<dir>"). The suite never meets it: it passes the flags
 through `build_file`'s `cclibs`, not the command line.
 
-## 9. riscv64: a Map never answers
+## 9. riscv64: a Map never answers — closed 2026-11-25
 
-**Symptom.** A program that constructs a Map literal never prints again:
+Fixed by item 4's round, and its symptom was the clue that named the bug.
+
+**Symptom (as filed).** A program that constructs a Map literal never printed
+again:
 
 ```
 const m = { "a": 1 }
 println("built the literal")
 ```
 
-prints nothing under QEMU and never returns; the interpreter answers
-`built the literal`. Every door follows from it — `length`, `get`, `has`,
-`keys`, `values`, `set`, and `remove` each hang on a Map that stays in one
-process — and a Map sent to another process parks its sender inside the
-send: `boss <- m` never returns and the sender's next line never prints,
-while the receiver's root goes on and ends. The control through the same
-mailbox, an Int64, answers.
+printed nothing under QEMU and never returned, and a Map sent to another
+process parked its sender inside the send. The control through the same
+mailbox, an Int64, answered.
 
-**Where.** Not located. The suite only ever *built* a Map for the metal ("a
-map literal lowers to the metal's Map", step 91 — a build-only test): `map`
-is on the wasm, c, beam, and wasi golden lists and on no metal list, and
-`examples/map` cannot build there for another reason ("does not support an
-exception with a data map yet"). Checked against compilers built from
-`67c1b3b4` and `13395ae2` as well as the working copy: all three hang the
-same way, so this predates both rounds. A kinship with (4)(b)'s metal-Array
-wall is a guess, not a finding.
+**Cause.** The metal's freelist had a cycle: a block released twice entered the
+list twice (the constructor took its instance's claim twice, and the emitter's
+bound list outlived its block, so a sibling scope's write barrier released a
+dead slot's word). The Map's own birth — the first allocation wide enough to
+walk past the corrupted head — looped forever inside the freelist scan, which
+is why the literal never returned and why *every* door behind it hung while a
+scalar message answered. The same corruption explained item 4's (b) crash.
+
+**Verified.** With the double release gone the whole surface answers the
+interpreter: `length`, `get`, `has`, `keys`, `set`, `remove` — `2, 1, true,
+false, [a, b], 3, 10, 2, false, [a, c]` — pinned in the `metal_memory` group
+("a Map literal's doors answer on the metal"). A compiler built from
+`c7645471` still hangs the same way (QEMU killed at 60 s, no output), so the
+round is what closed it.
+
+**What is still missing on the metal:** a Map's *rendering*. `println(m)` and
+`println(m.set("a", 10))` answer `cannot convert this value to a string yet` —
+`emo_to_string` has no Map arm there. Recorded as item 10.
+
+## 10. riscv64: a Map has no rendering
+
+**Symptom.** `println(m)` and `println(m.set("a", 10))` — a Map through any
+door that answers the Map itself — refuse at the run: `emo runtime: cannot
+convert this value to a string yet`. Every other target renders a Map as
+`{"a": 10, "b": 2}` and the interpreter's own order.
+
+**Where.** `emo_to_string`'s kind dispatch in `src/emo_codegen/emo_riscv.ml`
+has arms for the numerics, the String, the Tuple, the Array, the Bytes, the
+builder, the Atomic, the Pid and the instance; kind 13 (Map) falls to the
+refusal. The fix is one arm over the entries array `emo_map_keys` already
+walks, in insertion order, with the key's and the value's own `to_string`.
+
+Found 2026-11-25 while closing item 9 (the doors answer now; the rendering
+never did).

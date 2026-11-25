@@ -536,19 +536,21 @@ let sp_store env reg (off : int) : unit =
 
 (* Whether a value of this type may be an identity the claims track:
    the Unknown of a dynamic body, the class and interface names, the
-   Box, the closure. The value kinds — the numerics, the string, the
-   tuple, the array, the enum family, the Pid — carry no claims, and
-   the Atomic crosses processes, so its cell carries no count either:
-   the helpers would answer no-ops, and the emitter skips the work.
-   The Ref does count (step 91): its cell is the root registry's
-   resident, and a dropped root leaves the table the moment its last
-   claim releases — the same exactness the c runtime's EMO_REF gives
-   the collector. *)
+   Box, the closure, the Bytes. The value kinds — the numerics, the
+   string, the tuple, the array, the enum family, the Pid — carry no
+   claims, and the Atomic crosses processes, so its cell carries no
+   count either: the helpers would answer no-ops, and the emitter skips
+   the work. The Bytes counts (the crypto engines construct per
+   operation and the bump never gave a byte back): the cargo is raw
+   bytes, so its release is the freelist and no holdings walk. The Ref
+   does count (step 91): its cell is the root registry's resident, and
+   a dropped root leaves the table the moment its last claim releases —
+   the same exactness the c runtime's EMO_REF gives the collector. *)
 let may_own (t : Emo_check.t) : bool =
   match t with
   | Emo_check.Unknown | Emo_check.ClassType _ | Emo_check.InterfaceType _
   | Emo_check.BoxType _ | Emo_check.FuncType _ | Emo_check.Ref
-  | Emo_check.MapType _ ->
+  | Emo_check.MapType _ | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -616,6 +618,19 @@ let rec unwind_owned env (mark : int) : unit =
     put env "    call emo_release\n";
     unwind_owned env mark
   end
+
+(* A nested block's names live no longer than the block. The claim stack
+   unwinds at its exit (the caller's mark); the bound list has to come
+   back with it. A name that stayed bound past its scope made a sibling
+   block's same-named `const` a re-binding: the write barrier released
+   the slot's word — a block the previous scope had already released —
+   and the dead block entered the freelist twice, so two live
+   allocations answered one address (the metal's Digest sum read a box
+   the freelist had handed out again). *)
+let block env (body : unit -> unit) : unit =
+  let saved = env.bound in
+  body ();
+  env.bound <- saved
 
 (* ---- The pre-pass ---- *)
 
@@ -766,7 +781,10 @@ let rec expr_depth (e : Emo_ir.expr) : int =
   | Method { self_; args; _ } ->
       1 + List.length args
       + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 (self_ :: args)
-  | Box_new x | Atomic_new x -> 1 + expr_depth x
+  | Box_new x | Atomic_new x | Bytes_new x -> 1 + expr_depth x
+  | Make_exception { message; _ } -> 1 + expr_depth message
+  | Map_lit pairs ->
+      1 + List.fold_left (fun acc pair -> max acc (expr_depth pair)) 0 pairs
   | Do_spawn { args; _ } ->
       List.length args
       + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 args
@@ -793,6 +811,14 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
         | Set_global_var { value; _ } -> expr_depth value
         | Set_field { self_; value; _ } ->
             1 + max (expr_depth self_) (expr_depth value)
+        | Assign_index { target; index; value } ->
+            (* the base, the index, and the value spill into slots of
+               their own, and the value evaluates a region deeper *)
+            2
+            + List.fold_left
+                (fun acc e -> max acc (expr_depth e))
+                0 [ target; index; value ]
+        | Raise e -> expr_depth e
         | If { cond; then_; else_ } ->
             max (expr_depth cond) (max (stmts_depth then_) (stmts_depth else_))
         | Return_stmt e -> expr_depth e
@@ -823,8 +849,7 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
                     | Some g -> max (expr_depth g) (stmts_depth b.Emo_ir.body)
                     | None -> stmts_depth b.Emo_ir.body))
                 0 branches
-        | Break | Continue -> 0
-        | _ -> 0))
+        | Break | Continue -> 0))
     0 stmts
 
 (* The loop's hot reads (feat/modern-desktop): the names a body reads
@@ -1029,7 +1054,14 @@ let rec pool_expr env (ctr : int ref) (e : Emo_ir.expr) : unit =
   | Do_spawn { args; _ } -> List.iter (pool_expr env ctr) args
   | Builtin { args; _ } | Runtime_impl { args; _ } ->
       List.iter (pool_expr env ctr) args
-  | List_new x | Bytes_new x -> pool_expr env ctr x
+  | List_new x | Bytes_new x ->
+      pool_expr env ctr x;
+      (* a Bytes birth is a counted block: its claim pools like any
+         identity's *)
+      if
+        (match e.Emo_ir.desc with Bytes_new _ -> true | _ -> false)
+        && may_own e.Emo_ir.ety
+      then incr ctr
   | Make_exception { message; data } ->
       pool_expr env ctr message;
       Option.iter (pool_expr env ctr) data
@@ -1771,7 +1803,8 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         put env "    andi a0, a0, -32\n";
         put env "    ld a0, 8(a0)\n"
       end;
-      call_runtime env "emo_bytes_new"
+      call_runtime env "emo_bytes_new";
+      pool_result env e.Emo_ir.ety
   | Builder_new ->
       (* the growing array's empty birth (T8.25): one backing Array of
          no elements, one cell holding zero and it *)
@@ -3480,16 +3513,28 @@ and emit_tail env (e : Emo_ir.expr) : bool =
      instance on every read from a def (found on the way to
      emo-desktop A8.3, pinned in examples/def_values) *)
   let memo_thunk = List.mem (frame ()).fname !const_thunks in
+  (* A claim-bearing word crossing a non-self tail jump would be owned by
+     nobody: the caller retains it for the link, its own claim goes back
+     at the drain before the jump, and the callee — which borrows, the
+     entry edges' rule — never releases the link's claim, so the block
+     leaks with the dying frame. Such a call takes the plain road
+     instead: the frame lives until the callee returns, and the drain at
+     the ret label releases what the call borrowed. *)
+  let crossing (args : Emo_ir.expr list) : bool =
+    List.exists (fun (a : Emo_ir.expr) -> may_own a.Emo_ir.ety) args
+  in
   match e.Emo_ir.desc with
   | _ when memo_thunk -> false
   | Call { func; args } -> (
+      let self = String.equal func (frame ()).fname in
       match List.assoc_opt func env.fsigs with
-      | Some conv when result_compatible conv.cresult (mine ()) ->
+      | Some conv
+        when result_compatible conv.cresult (mine ())
+             && (self || not (crossing args)) ->
           if List.length args > 8 then
             refuse "a call with more than eight arguments";
           let n = List.length args in
           let f = frame () in
-          let self = String.equal func f.fname in
           List.iteri
             (fun i arg ->
               let spill = temp_offset env i in
@@ -3566,7 +3611,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
             true
           end
       | Some _ -> false
-      | None when result_compatible R_word (mine ()) ->
+      | None when result_compatible R_word (mine ()) && not (crossing args) ->
           let f = frame () in
           let n = List.length args in
           emit_args env 0 args;
@@ -3593,7 +3638,8 @@ and emit_tail env (e : Emo_ir.expr) : bool =
           put env "    tail %s\n" (func_label func);
           true
       | None -> false)
-  | Call_value { f; args } when result_compatible R_word (mine ()) ->
+  | Call_value { f; args }
+    when result_compatible R_word (mine ()) && not (crossing args) ->
       let ff = frame () in
       let fslot = temp_offset env 0 in
       emit_expr env 1 f;
@@ -3931,11 +3977,11 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         put env "    andi t0, a0, 16\n";
         put env "    beqz t0, %s\n" l_else
       end;
-      emit_stmts env then_;
+      block env (fun () -> emit_stmts env then_);
       unwind_owned env mark;
       put env "    j %s\n" l_end;
       put env "%s:\n" l_else;
-      emit_stmts env else_;
+      block env (fun () -> emit_stmts env else_);
       unwind_owned env mark;
       put env "%s:\n" l_end
   | Case { scrutinee; branches } ->
@@ -3957,24 +4003,25 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
              into the bind, the guard, and the body *)
           let l_next = fresh_label env "skip" in
           let l_fail = fresh_label env "guardfail" in
-          emit_pattern_test env scrut_slot b.Emo_ir.pattern l_next;
-          rec_pattern_bind env scrut_slot b.Emo_ir.pattern;
-          match b.Emo_ir.guard with
-          | Some g ->
-              emit_expr env 2 g;
-              put env "    andi t0, a0, 16\n";
-              put env "    beqz t0, %s\n" l_fail;
-              emit_stmts env b.Emo_ir.body;
-              unwind_owned env mark;
-              put env "    j %s\n" l_end;
-              put env "%s:\n" l_fail;
-              unwind_owned env mark;
-              put env "%s:\n" l_next
-          | None ->
-              emit_stmts env b.Emo_ir.body;
-              unwind_owned env mark;
-              put env "    j %s\n" l_end;
-              put env "%s:\n" l_next)
+          block env (fun () ->
+              emit_pattern_test env scrut_slot b.Emo_ir.pattern l_next;
+              rec_pattern_bind env scrut_slot b.Emo_ir.pattern;
+              match b.Emo_ir.guard with
+              | Some g ->
+                  emit_expr env 2 g;
+                  put env "    andi t0, a0, 16\n";
+                  put env "    beqz t0, %s\n" l_fail;
+                  emit_stmts env b.Emo_ir.body;
+                  unwind_owned env mark;
+                  put env "    j %s\n" l_end;
+                  put env "%s:\n" l_fail;
+                  unwind_owned env mark;
+                  put env "%s:\n" l_next
+              | None ->
+                  emit_stmts env b.Emo_ir.body;
+                  unwind_owned env mark;
+                  put env "    j %s\n" l_end;
+                  put env "%s:\n" l_next))
         branches;
       put env "%s:\n" l_end
   | Return_stmt e ->
@@ -4050,8 +4097,13 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
          (unsigned — a negative index reads as huge), then the store
          runs Set_field's own barrier order: the new word's retain
          before the old word's release, the element's address riding
-         a3 across both calls alone *)
+         a3 across both calls alone. The index spills into a slot of
+         its own before the value evaluates: a value's evaluation
+         spends the temp registers — a call's, a nested read's own
+         index — and the bounds check reads the index after it *)
       let self_slot = temp_offset env 0 in
+      let index_slot = temp_offset env 1 in
+      let value_slot = temp_offset env 2 in
       emit_expr env 1 target;
       put env "    sd a0, %d(sp)\n" self_slot;
       emit_expr env 1 index;
@@ -4061,18 +4113,20 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         put env "    andi a0, a0, -32\n";
         put env "    ld t2, 8(a0)\n"
       end;
-      emit_expr env 1 value;
+      sp_store env "t2" index_slot;
+      emit_expr env 2 value;
       box_if_numeric env value.Emo_ir.ety;
-      put env "    sd a0, %d(sp)\n" (temp_offset env 1);
+      sp_store env "a0" value_slot;
       put env "    ld t0, %d(sp)\n" self_slot;
       put env "    andi t0, t0, -32\n";
       let l_oob = fresh_label env "stoob" in
       put env "    ld t1, 8(t0)\n";
+      put env "    ld t2, %d(sp)\n" index_slot;
       put env "    bgeu t2, t1, %s\n" l_oob;
       put env "    slli t2, t2, 3\n";
       put env "    addi a3, t0, 16\n";
       put env "    add a3, a3, t2\n";
-      put env "    ld a0, %d(sp)\n" (temp_offset env 1);
+      put env "    ld a0, %d(sp)\n" value_slot;
       put env "    call emo_retain\n";
       put env "    mv a5, a0\n";
       put env "    ld a0, 0(a3)\n";
@@ -4139,52 +4193,54 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         (fun (b : Emo_ir.branch) ->
           let l_next = fresh_label env "skip" in
           let l_fail = fresh_label env "guardfail" in
-          emit_pattern_test env msg_slot b.Emo_ir.pattern l_next;
-          (* accepted by the pattern: the message crosses heaps now —
-             the copy-out (T5.2) lands it in this process's own arena
-             before any binding reads a word of it, because the
-             sender's arena reclaims the moment this receive clears
-             the last pin. The sender ring decides what is a value: a
-             gate request (the kernel's raw word) rides as-is. A guard
-             that still fails wastes the copy's quota and nothing else;
-             the pin holds and the scan continues over the copy, which
-             answers exactly as the snapshot would. *)
-          put env "    ld a0, %d(sp)\n" msg_slot;
-          put env "    mv a1, s0\n";
-          put env "    call emo_copy_out_at\n";
-          put env "    sd a0, %d(sp)\n" msg_slot;
-          (* the clone's claim: the frame pool's, released at the scan's
-             drain (a failed candidate) or the statement's end (an
-             accepted one — the bindings hold their own) *)
-          pool_result env Emo_check.Unknown;
-          rec_pattern_bind env msg_slot b.Emo_ir.pattern;
-          match b.Emo_ir.guard with
-          | Some g ->
-              emit_expr env 3 g;
-              put env "    andi t0, a0, 16\n";
-              put env "    beqz t0, %s\n" l_fail;
-              (* accepted: the message leaves the mailbox, the body runs *)
-              put env "    mv a0, s0\n";
-              put env "    call emo_mb_remove\n";
-              emit_stmts env b.Emo_ir.body;
-              unwind_owned env mark;
-              put env "    j %s\n" l_end;
-              put env "%s:\n" l_fail;
-              unwind_owned env mark;
-              (* the failed candidate's clone releases here, so the next
-                 candidate's clone pools into a fresh window (T8.7's
-                 pool) *)
-              (match env.cur with
-              | Some f -> pool_drain env f
-              | None -> ());
-              put env "%s:\n" l_next
-          | None ->
-              put env "    mv a0, s0\n";
-              put env "    call emo_mb_remove\n";
-              emit_stmts env b.Emo_ir.body;
-              unwind_owned env mark;
-              put env "    j %s\n" l_end;
-              put env "%s:\n" l_next)
+          block env (fun () ->
+              emit_pattern_test env msg_slot b.Emo_ir.pattern l_next;
+              (* accepted by the pattern: the message crosses heaps now —
+                 the copy-out (T5.2) lands it in this process's own arena
+                 before any binding reads a word of it, because the
+                 sender's arena reclaims the moment this receive clears
+                 the last pin. The sender ring decides what is a value: a
+                 gate request (the kernel's raw word) rides as-is. A guard
+                 that still fails wastes the copy's quota and nothing else;
+                 the pin holds and the scan continues over the copy, which
+                 answers exactly as the snapshot would. *)
+              put env "    ld a0, %d(sp)\n" msg_slot;
+              put env "    mv a1, s0\n";
+              put env "    call emo_copy_out_at\n";
+              put env "    sd a0, %d(sp)\n" msg_slot;
+              (* the clone's claim: the frame pool's, released at the
+                 scan's drain (a failed candidate) or the statement's end
+                 (an accepted one — the bindings hold their own) *)
+              pool_result env Emo_check.Unknown;
+              rec_pattern_bind env msg_slot b.Emo_ir.pattern;
+              match b.Emo_ir.guard with
+              | Some g ->
+                  emit_expr env 3 g;
+                  put env "    andi t0, a0, 16\n";
+                  put env "    beqz t0, %s\n" l_fail;
+                  (* accepted: the message leaves the mailbox, the body
+                     runs *)
+                  put env "    mv a0, s0\n";
+                  put env "    call emo_mb_remove\n";
+                  emit_stmts env b.Emo_ir.body;
+                  unwind_owned env mark;
+                  put env "    j %s\n" l_end;
+                  put env "%s:\n" l_fail;
+                  unwind_owned env mark;
+                  (* the failed candidate's clone releases here, so the
+                     next candidate's clone pools into a fresh window
+                     (T8.7's pool) *)
+                  (match env.cur with
+                  | Some f -> pool_drain env f
+                  | None -> ());
+                  put env "%s:\n" l_next
+              | None ->
+                  put env "    mv a0, s0\n";
+                  put env "    call emo_mb_remove\n";
+                  emit_stmts env b.Emo_ir.body;
+                  unwind_owned env mark;
+                  put env "    j %s\n" l_end;
+                  put env "%s:\n" l_next))
         branches;
       put env "    addi s0, s0, 1\n";
       put env "    j %s\n" l_test;
@@ -4217,7 +4273,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         put env "    beqz t0, %s\n" exit_l
       end;
       env.loops <- (exit_l, head, mark) :: env.loops;
-      emit_stmts env body;
+      block env (fun () -> emit_stmts env body);
       env.loops <- List.tl env.loops;
       unwind_owned env mark;
       put env "    j %s\n" head;
@@ -4230,6 +4286,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
          at the exit; the body's release at every back edge, and at
          every break and continue. *)
       let outer = List.length env.owned in
+      let saved_bound = env.bound in
       emit_stmt env init;
       let mark = List.length env.owned in
       let head = fresh_label env "loop" in
@@ -4242,7 +4299,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         put env "    beqz t0, %s\n" exit_l
       end;
       env.loops <- (exit_l, post_l, mark) :: env.loops;
-      emit_stmts env body;
+      block env (fun () -> emit_stmts env body);
       env.loops <- List.tl env.loops;
       unwind_owned env mark;
       put env "%s:\n" post_l;
@@ -4252,7 +4309,10 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       emit_stmt env post;
       put env "    j %s\n" head;
       put env "%s:\n" exit_l;
-      unwind_owned env outer
+      unwind_owned env outer;
+      (* the header's names (the loop variable among them) leave with
+         the loop *)
+      env.bound <- saved_bound
   | Break -> (
       match env.loops with
       | (exit_l, _, mark) :: _ ->
@@ -4761,8 +4821,10 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
   gput env "    call emo_instance_new\n";
   (* the fresh self's birth claim is the frame's own — the owned stack
      holds it, never the pool: the init body's statement boundaries
-     must not reclaim the object under construction (T8.7's pool) *)
-  gput env "    call emo_retain\n";
+     must not reclaim the object under construction (T8.7's pool). No
+     second retain here: the birth claim IS the frame's, and the exit's
+     unwind gives it back — a retain on top left every construction one
+     claim over its owner, and the object never reached zero *)
   env.owned <- [ ("self", 8 + (8 * nparams)) ];
   gput env "    sd a0, %d(sp)\n" (8 + (8 * nparams));
   (* the pool word starts at zero, like every body's (T8.7's pool) *)
@@ -5282,6 +5344,8 @@ emo_retain:
     beq t0, t1, .Lret_bump
     li t1, 6                # Closure
     beq t0, t1, .Lret_bump
+    li t1, 10               # Bytes: the counted buffer (the wall's close)
+    beq t0, t1, .Lret_bump
     li t1, 12               # Ref: the root registry counts its cells
     beq t0, t1, .Lret_bump
     li t1, 13               # Map: the entries' claims ride the cell
@@ -5336,6 +5400,8 @@ emo_release_walk:
     beq t0, t2, .Lrel_ident
     li t2, 7                # Instance
     beq t0, t2, .Lrel_ident
+    li t2, 10               # Bytes: counted, its cargo raw bytes
+    beq t0, t2, .Lrel_ident
     li t2, 12               # Ref: counted like the identity kinds —
     beq t0, t2, .Lrel_ident #   the registry's exact oracle (step 91)
     li t2, 13               # Map: counted like the identity kinds
@@ -5357,6 +5423,8 @@ emo_release_walk:
     sd t3, 0(t2)
     srli t4, t3, 32
     bnez t4, .Lrel_done     # still held
+    li t4, 10               # the Bytes: raw cargo, straight to the freelist
+    beq t0, t4, .Lrel_free
     li t4, 12               # the Ref's cell: unlink, no holdings walk —
     beq t0, t4, .Lrel_ref   #   the payload is a raw heap word, never a
                             #   tagged value the release may walk
@@ -5510,6 +5578,7 @@ emo_print_bytes:
     call emo_console_emit
     addi s0, s0, 1
     j .Lpb
+
 .Lpb_done:
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -6413,27 +6482,67 @@ emo_string_eq:
 
 # ---- Bytes (T8.24): the mutable byte buffer ----
 # A Bytes block is a String-layout block of kind 10 — [header][length]
-# [bytes padded to 8] — the mutability the difference: copy_deep copies
-# it (the generic container walk its payload count already serves), eq
-# compares it by content (the String's own comparator), and it carries
-# no refcount (not an identity kind).
+# [bytes padded to 8] — with an identity's refcount in the header's
+# high half: the crypto engines construct per operation, and the bump
+# never gave a byte back, so the buffer joined the counted kinds (the
+# metal's Bytes wall's close). Its cargo is raw bytes, not values: a
+# release reaching zero goes straight to the freelist, no holdings
+# walk. The birth serves the freelist first, like every identity's.
 
-# emo_alloc_bytes: a0 = length; a0 = a zeroed, tagged Bytes.
+# emo_alloc_bytes: a0 = length; a0 = a zeroed, tagged Bytes, refcount 1.
     .globl emo_alloc_bytes
 emo_alloc_bytes:
-    addi sp, sp, -16
+    addi sp, sp, -32
     sd ra, 0(sp)
-    sd a0, 8(sp)
+    sd s0, 8(sp)
+    sd a0, 16(sp)           # the length
     addi t0, a0, 7
     srli t0, t0, 3
-    addi t0, t0, 1
-    mv a0, t0
+    addi t0, t0, 1          # payload words = the length word + the bytes
+    sd t0, 24(sp)
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t5, 584(t1)          # the arena's end; the freelist head at -8
+    ld t2, -8(t5)
+    li t3, 0                # the walk's predecessor
+.Lab_scan:
+    beqz t2, .Lab_bump
+    ld t4, 0(t2)            # the freed header: refcount 0, the count below
+    slli t6, t4, 32
+    srli t6, t6, 32         # the count, zero-extended
+    ld t0, 24(sp)
+    bgeu t6, t0, .Lab_fit
+    mv t3, t2
+    ld t2, 8(t2)            # the link
+    j .Lab_scan
+.Lab_fit:
+    ld t4, 8(t2)            # the successor
+    beqz t3, 1f
+    sd t4, 8(t3)
+    j 2f
+1:  sd t4, -8(t5)           # the head moves
+2:  li t4, 1
+    slli t4, t4, 32
+    ld t0, 24(sp)
+    or t4, t4, t0           # refcount 1, the requested count
+    sd t4, 0(t2)
+    mv s0, t2
+    j .Lab_shape
+.Lab_bump:
+    ld a0, 24(sp)
     call emo_alloc
-    ld t1, 8(sp)
-    sd t1, 8(a0)
-    addi t0, t1, 7           # zero the payload words: the interpreter's
-    srli t0, t0, 3           #   Bytes.new is a zero-filled buffer
-    add t2, a0, 16
+    ld t4, 0(a0)
+    li t3, 1
+    slli t3, t3, 32
+    or t4, t4, t3
+    sd t4, 0(a0)            # refcount 1
+    mv s0, a0
+.Lab_shape:
+    ld t1, 16(sp)
+    sd t1, 8(s0)            # the length word
+    addi t0, t1, 7          # zero the payload words: the interpreter's
+    srli t0, t0, 3          #   Bytes.new is a zero-filled buffer, and a
+    add t2, s0, 16          #   freelist block arrives holding garbage
 .Lab_zero:
     beqz t0, .Lab_zdone
     sd zero, 0(t2)
@@ -6441,9 +6550,11 @@ emo_alloc_bytes:
     addi t0, t0, -1
     j .Lab_zero
 .Lab_zdone:
+    mv a0, s0
     ori a0, a0, 20
     ld ra, 0(sp)
-    addi sp, sp, 16
+    ld s0, 8(sp)
+    addi sp, sp, 32
     ret
 
 # emo_bytes_new: a0 = the raw byte count (the emitter detags a boxed
@@ -6790,15 +6901,30 @@ emo_builder_new:
 # a0 = the builder (the pushes chain). A builder a raw push has claimed
 # (the mark below the size) refuses a tagged value loudly — one
 # representation per builder, the mixing the arena track's chase died
-# of twice.
+# of twice. The tagged path takes the builder's claim on the word it
+# stores — a counted Bytes would free under it — and only that path:
+# a raw builder's payload is a number, and a retain over it would read
+# the number as a tagged word and write a header somewhere no block
+# stands (the Inter face's outline words hang the machine that way).
     .globl emo_builder_push
 emo_builder_push:
     andi t0, a0, -32
     ld t0, 24(t0)
-    beqz t0, emo_builder_store
+    beqz t0, .Lbp_tagged
     la a0, msg_builder_mix
     la a1, msg_builder_mix_end
     tail emo_fail
+.Lbp_tagged:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    mv a0, a1
+    call emo_retain
+    mv a1, a0
+    ld a0, 8(sp)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_builder_store
 
 # the store itself, value verbatim: the grow, the copy, the size step.
 emo_builder_store:
@@ -6985,9 +7111,21 @@ emo_builder_to_array:
     addi t3, t3, 8
     addi s2, s2, -1
     bnez s2, 5b
-    beqz s4, .Lbta_done
+    beqz s4, .Lbta_claim
     li t0, -1
     sd t0, 0(s5)              # a raw builder's array wears the raw mark
+    j .Lbta_done
+.Lbta_claim:
+    # a tagged array holds every element's claim — the builder keeps its
+    # own, and a counted Bytes would free under the array otherwise
+    ld s2, 8(s5)
+    addi s1, s5, 16
+6:  beqz s2, .Lbta_done
+    ld a0, 0(s1)
+    call emo_retain
+    addi s1, s1, 8
+    addi s2, s2, -1
+    j 6b
 .Lbta_done:
     mv a0, s5
     ori a0, a0, 8
@@ -7141,11 +7279,14 @@ emo_string_index_of:
 # with the value on the end (the original is untouched).
     .globl emo_array_append
 emo_array_append:
-    addi sp, sp, -48
+    addi sp, sp, -64
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
     sd s2, 24(sp)
+    sd s3, 32(sp)             # the source cursor
+    sd s4, 40(sp)             # the destination cursor
+    sd s5, 48(sp)             # the new block
     mv s1, a1                 # the value, out of the call's way
     andi s0, a0, -32
     ld t0, 0(s0)
@@ -7156,27 +7297,35 @@ emo_array_append:
     ld s2, 8(s0)
     addi a0, s2, 2
     call emo_alloc
+    mv s5, a0
     addi t1, s2, 1
     sd t1, 8(a0)
-    addi t2, a0, 16
-    addi t3, s0, 16
+    addi s4, a0, 16
+    addi s3, s0, 16
     mv t5, s2
     beqz t5, .Lap_last
 .Lap_copy:
-    ld t4, 0(t3)
-    sd t4, 0(t2)
-    addi t3, t3, 8
-    addi t2, t2, 8
+    ld a0, 0(s3)
+    call emo_retain           # the new array holds every element it
+    sd a0, 0(s4)              #   copies — the source keeps its own
+    addi s3, s3, 8
+    addi s4, s4, 8
     addi t5, t5, -1
     bnez t5, .Lap_copy
 .Lap_last:
-    sd s1, 0(t2)
+    mv a0, s1
+    call emo_retain           # and the appended value's
+    sd a0, 0(s4)
+    mv a0, s5
     ori a0, a0, 8
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
     ld s2, 24(sp)
-    addi sp, sp, 48
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 64
     ret
 
 # emo_sort_cmp: a0 = a, a1 = b, a2 = the compare mode; a0 = -1 / 0 / 1.
@@ -11000,6 +11149,17 @@ emo_copy_deep:
     addi t6, t6, 1
     j 1b
 2:  sd a0, 16(sp)
+    # the clone is born with one claim of its own: the verbatim header
+    #   carried the source's refcount, and a copy that inherited it would
+    #   answer a count nobody holds
+    andi t4, a0, -32
+    ld t5, 0(t4)
+    slli t5, t5, 32
+    srli t5, t5, 32
+    li t6, 1
+    slli t6, t6, 32
+    or t5, t5, t6
+    sd t5, 0(t4)
     j .Lcd_wrap                 # 48(sp) already holds the tag (20)
 .Lcd_builder:
     # the builder's clone: the size word verbatim, the array deep
@@ -11063,7 +11223,8 @@ emo_copy_out:
     beq t0, t1, .Lco_string
     li t1, 20
     beq t0, t1, .Lco_string  # a Bytes: the byte payload clones verbatim,
-                             #   the String's own walk (T8.24)
+                             #   the clone born with a claim of its own
+                             #   (the String's own walk, T8.24)
     li t1, 10
     beq t0, t1, .Lco_box
     li t1, 22
@@ -11182,7 +11343,20 @@ emo_copy_out:
 .Lco_wraps:
     ld a0, 16(sp)
     ld t2, 48(sp)
-    or a0, a0, t2
+    li t3, 20
+    bne t2, t3, 3f
+    # a Bytes clone is born with one claim of its own: the verbatim
+    #   header carried the sender's refcount, which the receiver never
+    #   held (a String has no count and rides as it came)
+    andi t4, a0, -32
+    ld t5, 0(t4)
+    slli t5, t5, 32
+    srli t5, t5, 32
+    li t6, 1
+    slli t6, t6, 32
+    or t5, t5, t6
+    sd t5, 0(t4)
+3:  or a0, a0, t2
     j .Lco_ret
 .Lco_box:
     # a Box's payload rides in its first word: unbox, recurse, rebox
@@ -13309,7 +13483,9 @@ emo_map_keys:
     j .Lmk_put              #   reads its elements through the box
 .Lmk_key_tag:
 .Lmk_put:
-    sd t6, 0(s4)
+    mv a0, t6
+    call emo_retain           # the array holds the key's claim — the map
+    sd a0, 0(s4)              #   keeps its own
     addi s4, s4, 8
     addi s5, s5, 1
     j .Lmk_walk
@@ -13426,6 +13602,7 @@ emo_print_dec:
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
+
 |asm}
   | "user" | "app" ->
       {asm|

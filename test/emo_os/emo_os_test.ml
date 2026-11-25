@@ -219,6 +219,19 @@ let smoke_tests =
             "user.emo";
             "user.S";
             "dash-test.sh";
+            (* what user.S incbins beside the images the test builds:
+               the shell's four programs and the C door's toolchain. The
+               kernel's build fails at the assembler without them
+               (`<file>: No such file or directory`), so the copy list
+               carries every one. *)
+            "emosh.elf";
+            "dash.elf";
+            "uutils.elf";
+            "tcc.elf";
+            "tcc-libtcc1.a";
+            "tcc-crt0.o";
+            "tcc-libc.a";
+            "tcc-test.c";
             "gate.emo";
             "notify.emo";
             "frames.emo";
