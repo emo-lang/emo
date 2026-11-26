@@ -12,14 +12,16 @@ items 7 and 8 while closing item 2, and item 9 while closing item 3.
 Item 4's (b) closed the same day and item 9 with them; its (c) was refuted
 (there is no disagreeing byte — the parked note compared the live dock's
 strip against a corpus chain with a different starting state); its (a) is
-closed for the crypto engines and open again for the desktop corpus, whose
-gate faults on a `Bytes` crossing a spawn/exec boundary. Item 5 closed the
+closed for the crypto engines and, since 2026-11-26, the desktop corpus
+too — the stale word the desktop gate surfaced was the release walk's
+field loop losing its cursor across a nested walk, and the fix turns the
+gate green on both legs. Item 5 closed the
 same day, and its beam deadlock end (E3012) closed with it on 2026-11-26.
 Item 6 closed on 2026-11-26. Item 10 was found while closing item 9.
 Item 7's boolean operators, wrong answers and c warning closed on
 2026-11-26; its (a), (b), (e) and (f) stay open inside the item.
-Items 8 and 10 closed on 2026-11-26. **Open: 4 (a, the desktop edge),
-7 (a, b, e, f).**
+Items 8 and 10 closed on 2026-11-26, and item 4's (a) closed with them —
+the EmoOS smoke is green on both legs. **Open: 7 (a, b, e, f).**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -81,10 +83,10 @@ The decision and its verification are in `CHECK.md`'s entry of that date;
 `cross_target_gradual` pins six rows across the two. What the round found
 on the way and left is item 9.
 
-## 4. riscv64: three walls — (b) closed, (c) refuted, (a) closed for the crypto engines and open again for the desktop corpus (2026-11-25)
+## 4. riscv64: three walls — (b) closed, (c) refuted, (a) closed 2026-11-26
 
-**(a) A `Bytes` is a permanent bump cell — closed for the crypto engines,
-open again for the desktop corpus (2026-11-25).** A `Bytes` is a counted kind
+**(a) A `Bytes` is a permanent bump cell — closed for the crypto engines
+and the desktop corpus (2026-11-26).** A `Bytes` is a counted kind
 now: kind 10 keeps its tag, the header's high half carries the refcount, and a
 release that reaches zero goes straight to the freelist — the cargo is raw
 bytes, so there is no holdings walk. The birth serves the freelist first and is
@@ -120,8 +122,8 @@ Three pre-existing bugs the counting flushed, each fixed:
   and the children of `Make_exception`, `Bytes_new` and `Map_lit` — so a deep
   initializer could write past the frame's slots.
 
-**What the desktop corpus then found.** `projects/emo-desktop/fb/check.sh` is
-green where it measures bytes (interpreter, ocaml, c, typescript, wasm; its
+**What the desktop corpus then found — and the stale word closed 2026-11-26,
+below.** `projects/emo-desktop/fb/check.sh` is green where it measures bytes (interpreter, ocaml, c, typescript, wasm; its
 eight red rows are the beam leg's timeouts, the tree's own long-standing
 `frame`-family hang, and they are red on the tree before this round too). The
 EmoOS smoke case is red, and on this tree it is red
@@ -139,10 +141,35 @@ stale word's "count" walks the fields past the run. So the counting is not the
 bug — it surfaces a pre-existing stale counted word on the desktop's
 spawn/exec path, one the gate alone exercises. The crypto engines, the 26 metal
 goldens and `native_image` are all still byte-identical, so the counting itself
-holds; what is open is that stale word. The gate also carries two pre-existing reasons to be red, reported
-for the record: its kernel copy list was missing the eight files `user.S`
-incbins (fixed in `test/emo_os` this round), and run.sh still pins the frame
-budget at `frames 1918 1674` while the tree counts `1925 1681`.
+holds; what was open was that stale word.
+
+**The stale word, found and fixed (2026-11-26): the release walk's field
+loop kept its cursor and count in caller-saved t5/t6 across a recursive
+`call emo_release`, and a field that is itself a Closure or Instance runs
+the same walk — the nested walk set t5/t6 for *its* block, and the outer
+loop resumed on the inner block's cursor and count.** The desktop's view
+trees nest instances, so the shell's root pass (pid 1) resumed its walk at
+a field block near the arena's top and walked its remaining "fields" off
+the run, faulting at the arena's end page. The evidence: a probe on the
+walk's field loop printed, for every nested re-entry, `ra` back into the
+loop itself (0x8710055e), and a probe on emo_release's entry printed the
+released "words" — a String's raw bytes (`b minus\0`), raw doubles
+(16.0, 32.0, 64.0) and packed immediates — i.e. a block's payload read as
+fields. The fix is the Map arm's own pattern, which already saved s-regs
+because "the release takes every temp it finds": the field loop now runs
+in s2 (cursor) / s3 (count) on a sub-frame and reloads what it needs
+before the freelist push. The walk's t1 (serving slot) was being clobbered
+the same way and is now taken from the release frame at the push.
+`projects/emo-os/run.sh`'s frame pin was stale (`frames 1918 1674` against
+the tree's `1925 1681`, red before this round) and is updated; with the
+fix the EmoOS smoke is **green on both legs** (legacy set_timer and sstc
+stimecmp, every assertion through `frames 1925 1681` and self-exit), and
+`examples/processes`, `examples/atomic_cell` and `examples/language_tour`
+are byte-identical with their `expected.txt` on the metal. The kernel copy
+list (the eight `user.S` incbins) was fixed earlier in `test/emo_os`. The
+gate also carries one pre-existing reason to be red, reported for the
+record: nothing left — the pin was the last one and it is a stale corpus
+number, not a defect.
 
 **(b) A cross-process Array copy is written out of bounds — closed
 2026-11-25.** The copy was sound: the worker read `[77, 2, 3]` and its length.

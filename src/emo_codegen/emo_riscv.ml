@@ -5398,6 +5398,7 @@ emo_release:
     la t1, emo_cur_slot
     ld t1, 0(t1)
     j emo_release_walk
+
     .globl emo_release_in
 emo_release_in:
     mv t1, a1               # the slot whose freelist serves the push
@@ -5468,12 +5469,31 @@ emo_release_walk:
     call emo_release
     j .Lrel_free
 .Lrel_seq_loop:
-    beqz t5, .Lrel_free
-    ld a0, 0(t6)
+    # the field walk's state rides s-regs saved on a sub-frame of the
+    # release's own: a field that is itself a Closure or Instance runs
+    # this walk recursively, and its t5/t6 would otherwise be the
+    # cursor and count the caller resumes on — the nested walk's own
+    # count then steers the outer loop off the block (found in the
+    # desktop corpus: nested instances walked the arena's end).
+    addi sp, sp, -40
+    sd s2, 0(sp)
+    sd s3, 8(sp)
+    sd s4, 16(sp)
+    mv s2, t6               # the cursor
+    mv s3, t5               # the fields left
+.Lrel_seq:
+    beqz s3, .Lrel_seq_out
+    ld a0, 0(s2)
     call emo_release
-    addi t6, t6, 8
-    addi t5, t5, -1
-    j .Lrel_seq_loop
+    addi s2, s2, 8
+    addi s3, s3, -1
+    j .Lrel_seq
+.Lrel_seq_out:
+    ld s2, 0(sp)
+    ld s3, 8(sp)
+    ld s4, 16(sp)
+    addi sp, sp, 40
+    j .Lrel_free
 .Lrel_map:
     # the entries' own words release first, then the entries block and
     # the buckets block go home to the freelist — the cell itself rides
