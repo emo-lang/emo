@@ -317,7 +317,10 @@ let rec expr env (e : Emo_ir.expr) : string =
         | None -> if uop = Ast.Neg then "neg" else "bitNot"
       in
       Printf.sprintf "E.%s(%s)" fn (expr env x)
-  | Unary (Ast.Not, x) -> Printf.sprintf "(!E.truthy(%s))" (expr env x)
+  | Unary (Ast.Not, x) ->
+      (* the checked path answers for a typed Bool and refuses for
+         anything else the run meets, so no truthiness leaks *)
+      Printf.sprintf "E.not(%s)" (expr env x)
   | Cond { c; t; e = else_ } ->
       Printf.sprintf "(E.truthy(%s) ? (%s) : (%s))" (expr env c) (expr env t)
         (expr env else_)
@@ -344,8 +347,12 @@ let rec expr env (e : Emo_ir.expr) : string =
           lcode rcode
       in
       match op with
-      | Ast.And -> Printf.sprintf "(E.truthy(%s) && E.truthy(%s))" lcode rcode
-      | Ast.Or -> Printf.sprintf "(E.truthy(%s) || E.truthy(%s))" lcode rcode
+      | Ast.And ->
+          Printf.sprintf "(E.boolOf(%s, \"&&\") && E.boolOf(%s, \"&&\"))" lcode
+            rcode
+      | Ast.Or ->
+          Printf.sprintf "(E.boolOf(%s, \"||\") || E.boolOf(%s, \"||\"))" lcode
+            rcode
       | Ast.Eq -> call "eq"
       | Ast.Ne -> call "ne"
       | Ast.Lt -> call "lt"

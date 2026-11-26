@@ -2540,12 +2540,29 @@ module Emo_runtime = struct
   let ne a b = Emo_eval.Bool (not (Emo_eval.equal_value a b))
   (* `&&`/`||` short-circuit: the right operand rides a thunk, so a
      false guard never evaluates it — matching the interpreter and the
-     other targets. *)
+     other targets. Each side the run actually evaluates is checked:
+     the interpreter's own sentence names the operator and the kind it
+     met (a bare `expected Bool` read as a crash report before). *)
+  let bool_checked op (v : Emo_eval.value) : bool =
+    match v with
+    | Emo_eval.Bool b -> b
+    | other ->
+        failwith
+          (Printf.sprintf "operator `%s` expects two Bools, got %s" op
+             (Emo_eval.type_name other))
   let and_l a (rb : unit -> Emo_eval.value) : Emo_eval.value =
-    if unbox_bool a then rb () else Emo_eval.Bool false
+    if bool_checked "&&" a then Emo_eval.Bool (bool_checked "&&" (rb ()))
+    else Emo_eval.Bool false
   let or_l a (rb : unit -> Emo_eval.value) : Emo_eval.value =
-    if unbox_bool a then Emo_eval.Bool true else rb ()
-  let not_ v = Emo_eval.Bool (not (unbox_bool v))
+    if bool_checked "||" a then Emo_eval.Bool true
+    else Emo_eval.Bool (bool_checked "||" (rb ()))
+  let not_ v =
+    match v with
+    | Emo_eval.Bool b -> Emo_eval.Bool (not b)
+    | other ->
+        failwith
+          (Printf.sprintf "operator `!` expects a Bool, got %s"
+             (Emo_eval.type_name other))
   let no_return () = failwith "reached the end of a function without `return`"
 
   let case_error v =

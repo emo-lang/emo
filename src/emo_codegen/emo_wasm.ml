@@ -547,6 +547,9 @@ let rt name =
   | "op_mismatch" -> if !wasi_mode then b + 126 else b + 110
   | "unary_mismatch" -> if !wasi_mode then b + 127 else b + 111
   | "no_member" -> if !wasi_mode then b + 128 else b + 112
+  | "not_checked" -> if !wasi_mode then b + 129 else b + 113
+  | "and_checked" -> if !wasi_mode then b + 130 else b + 114
+  | "or_checked" -> if !wasi_mode then b + 131 else b + 115
   | _ -> failwith ("wasm: bad runtime function: " ^ name)
 
 (* imports, then the runtime funcs above (the numeric core, the
@@ -566,7 +569,7 @@ let rt name =
    Array sort's compare and merge pair after those in both modes, and
    the gradual operators' refusal after the pair: the kind names, the
    two sentences, the missing-member one. *)
-let runtime_count () = !import_base + if !wasi_mode then 129 else 113
+let runtime_count () = !import_base + if !wasi_mode then 132 else 116
 
 (* ---- Lowering state ---- *)
 
@@ -1131,11 +1134,11 @@ let rec expr env (x : Emo_ir.expr) : unit =
       expr env operand;
       e env (W.Call (rt "neg"))
   | Unary (Ast.Not, operand) ->
-      (* The operand arrives as anyref, so it is narrowed to $vbool
-         before the field read, exactly like `&&` and `||`. *)
+      (* The operand is checked, not cast: a value that is not a Bool
+         meets the interpreter's own sentence where the bare cast
+         answered `illegal cast`. *)
       expr env operand;
-      e env (W.Ref_cast t_vbool);
-      e env (W.Struct_get (t_vbool, 0));
+      e env (W.Call (rt "not_checked"));
       e env W.I32_eqz;
       e env (W.Struct_new t_vbool)
   | Unary (Ast.Bit_not, operand) ->
@@ -1145,21 +1148,18 @@ let rec expr env (x : Emo_ir.expr) : unit =
       es env
         (truthy (expr_block env c)
         @ [ W.If (W.Result W.Anyref, expr_block env t, expr_block env else_) ])
-  | Binary (Ast.And, l, r) ->
-      (* The left value arrives as anyref, so it is narrowed to $vbool
-         before the field read — the same contract truthy follows. *)
+  | Binary (((Ast.And | Ast.Or) as lop), l, r) ->
+      (* The left side is checked first; the right side evaluates only
+         when the left does not decide, and is checked the same way.
+         `&&`: a false left answers false without the right; `||` a
+         true left answers true. *)
+      let name = if lop = Ast.And then "and_checked" else "or_checked" in
       expr env l;
-      e env (W.Ref_cast t_vbool);
-      e env (W.Struct_get (t_vbool, 0));
-      let rcode = expr_block env r in
-      e env (W.If (W.Result W.I32, truthy rcode, [ W.I32_const 0 ]));
-      e env (W.Struct_new t_vbool)
-  | Binary (Ast.Or, l, r) ->
-      expr env l;
-      e env (W.Ref_cast t_vbool);
-      e env (W.Struct_get (t_vbool, 0));
-      let rcode = expr_block env r in
-      e env (W.If (W.Result W.I32, [ W.I32_const 1 ], truthy rcode));
+      e env (W.Call (rt name));
+      let rcode = expr_block env r @ [ W.Call (rt name) ] in
+      if lop = Ast.And then
+        e env (W.If (W.Result W.I32, rcode, [ W.I32_const 0 ]))
+      else e env (W.If (W.Result W.I32, [ W.I32_const 1 ], rcode));
       e env (W.Struct_new t_vbool)
   | Binary (op, l, r) ->
       expr env l;
@@ -5218,7 +5218,153 @@ let rt_mul () = rt_arith "*" W.I64_mul [ W.F64_mul; W.Struct_new t_vfloat ]
 
 (* div/mod: int division truncates *)
 let rt_div () = rt_arith "/" W.I64_div_s [ W.F64_div; W.Struct_new t_vfloat ]
-let rt_mod () = rt_arith "%" W.I64_rem_s [ W.F64_rem_s; W.Struct_new t_vfloat ]
+
+(* The float remainder by the evaluator's rule — C's fmod, the sign
+   of the left operand. WebAssembly has no remainder opcode: the old
+   text named `f64.rem_s` and the binary encoded 0xA5 — `f64.max` — so
+   `7.5 % 7.5` answered `7.5`. This is binary long division, exact at
+   every step: the scale-up doubles while the divisor is below the
+   dividend's half (the halving of a double is exact), each subtraction
+   runs within one doubling step where the operands agree, and the
+   halvings retrace those doublings. *)
+let rt_mod () : W.func_type =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "a"; "b" ];
+    flocals = [ (2, W.F64); (3, W.F64); (4, W.F64); (5, W.F64); (6, W.F64) ];
+    fbody =
+      [
+        W.Local_get 0;
+        W.Ref_cast t_vfloat;
+        W.Struct_get (t_vfloat, 0);
+        W.Local_set 2;
+        W.Local_get 1;
+        W.Ref_cast t_vfloat;
+        W.Struct_get (t_vfloat, 0);
+        W.Local_set 3;
+        (* the NaN gate: y zero, or either operand not finite — only a
+           finite value survives `v - v == 0` *)
+        W.If_else
+          ( W.Result W.Anyref,
+            [
+              W.Local_get 3;
+              W.F64_const 0.;
+              W.F64_eq;
+              W.Local_get 2;
+              W.Local_get 2;
+              W.F64_sub;
+              W.F64_const 0.;
+              W.F64_eq;
+              W.I32_eqz;
+              W.I32_or;
+              W.Local_get 3;
+              W.Local_get 3;
+              W.F64_sub;
+              W.F64_const 0.;
+              W.F64_eq;
+              W.I32_eqz;
+              W.I32_or;
+            ],
+            [ W.F64_const 0.; W.F64_const 0.; W.F64_div; W.Struct_new t_vfloat ],
+            [
+              W.If_else
+                ( W.Result W.F64,
+                  [ W.Local_get 2; W.F64_const 0.; W.F64_lt ],
+                  [ W.F64_const 0.; W.Local_get 2; W.F64_sub ],
+                  [ W.Local_get 2 ] );
+              W.Local_set 4;
+              W.If_else
+                ( W.Result W.F64,
+                  [ W.Local_get 3; W.F64_const 0.; W.F64_lt ],
+                  [ W.F64_const 0.; W.Local_get 3; W.F64_sub ],
+                  [ W.Local_get 3 ] );
+              W.Local_set 5;
+              W.If_else
+                ( W.Result W.Anyref,
+                  [ W.Local_get 4; W.Local_get 5; W.F64_lt ],
+                  [ W.Local_get 2; W.Struct_new t_vfloat ],
+                  [
+                    W.Local_get 5;
+                    W.Local_set 6;
+                    (* scale the divisor up while it is below the
+                       dividend's half *)
+                    W.Loop
+                      ( W.Void,
+                        [
+                          W.Local_get 5;
+                          W.Local_get 4;
+                          W.F64_const 2.;
+                          W.F64_div;
+                          W.F64_le;
+                          W.If
+                            ( W.Void,
+                              [
+                                W.Local_get 5;
+                                W.F64_const 2.;
+                                W.F64_mul;
+                                W.Local_set 5;
+                                W.Br 1;
+                              ],
+                              [] );
+                        ] );
+                    W.Block
+                      ( W.Void,
+                        [
+                          W.Loop
+                            ( W.Void,
+                              [
+                                W.Local_get 4;
+                                W.Local_get 5;
+                                W.F64_ge;
+                                W.If
+                                  ( W.Void,
+                                    [
+                                      W.Local_get 4;
+                                      W.Local_get 5;
+                                      W.F64_sub;
+                                      W.Local_set 4;
+                                      W.Local_get 5;
+                                      W.Local_get 6;
+                                      W.F64_gt;
+                                      W.If
+                                        ( W.Void,
+                                          [
+                                            W.Local_get 5;
+                                            W.F64_const 2.;
+                                            W.F64_div;
+                                            W.Local_set 5;
+                                          ],
+                                          [] );
+                                      W.Br 1;
+                                    ],
+                                    [
+                                      W.Local_get 5;
+                                      W.Local_get 6;
+                                      W.F64_gt;
+                                      W.If
+                                        ( W.Void,
+                                          [
+                                            W.Local_get 5;
+                                            W.F64_const 2.;
+                                            W.F64_div;
+                                            W.Local_set 5;
+                                            W.Br 1;
+                                          ],
+                                          [] );
+                                      W.Br 2;
+                                    ] );
+                              ] );
+                        ] );
+                    W.If_else
+                      ( W.Result W.F64,
+                        [ W.Local_get 2; W.F64_const 0.; W.F64_lt ],
+                        [ W.Local_get 4; W.F64_neg ],
+                        [ W.Local_get 4 ] );
+                    W.Struct_new t_vfloat;
+                  ] );
+            ] );
+      ];
+  }
 
 (* neg: an Int64 or a Float64; a Byte is not a number here, the
    evaluator's own rule, and anything else refuses naming the operator *)
@@ -5269,8 +5415,103 @@ let rt_bit (op : string) (int_op : W.instr) : W.func_type =
 let rt_bit_and = rt_bit "&" W.I64_and
 let rt_bit_or = rt_bit "|" W.I64_or
 let rt_bit_xor = rt_bit "^" W.I64_xor
-let rt_shl = rt_bit "<<" W.I64_shl
-let rt_shr = rt_bit ">>" W.I64_shr_s
+
+(* The shifts carry the evaluator's count rules: a negative count is
+   the refusal, a count at or past the width answers zero — the Byte at
+   eight, the Int64 at sixty-four (the right shift sign-extends) —
+   where a raw `i64.shl` wrapped the count modulo the width and
+   `3 << 70` answered `192`. *)
+let shift_refuse =
+  op_lit "shift count must be non-negative"
+  @ [ W.Struct_new t_vstring; W.Call (rt "throw"); W.Unreachable ]
+
+let guarded_shift (width : Int64.t) (zero_answer : W.instr list)
+    (int_answer : W.instr list) (shift : W.instr) (count_of : W.instr list) :
+    W.instr list =
+  (* the count, unboxed from its tagged word: refuse below zero,
+     answer zero at the width, shift below it *)
+  [
+    W.If_else
+      ( W.Result W.Anyref,
+        count_of @ [ W.I64_const 0L; W.I64_lt_s ],
+        shift_refuse,
+        [
+          W.If_else
+            ( W.Result W.Anyref,
+              count_of @ [ W.I64_const width; W.I64_ge_s ],
+              zero_answer,
+              i64_of 0 @ count_of @ [ shift ] @ int_answer );
+        ] );
+  ]
+
+let rt_shl =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [
+        W.If_else
+          ( W.Result W.Anyref,
+            both_byte 0 1,
+            guarded_shift 8L
+              ([ W.I64_const 0L ] @ byte_answer)
+              [ W.Struct_new t_vint ] W.I64_shl (i64_of_byte 1),
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  both_int 0 1,
+                  guarded_shift 64L
+                    [ W.I64_const 0L; W.Struct_new t_vint ]
+                    [ W.Struct_new t_vint ] W.I64_shl (i64_of 1),
+                  op_mismatch "<<" "two Int64s or two Bytes" 0 1 );
+            ] );
+      ];
+  }
+
+let shr_int_body =
+  [
+    W.If_else
+      ( W.Result W.Anyref,
+        i64_of 1 @ [ W.I64_const 0L; W.I64_lt_s ],
+        shift_refuse,
+        [
+          W.If_else
+            ( W.Result W.Anyref,
+              i64_of 1 @ [ W.I64_const 64L; W.I64_ge_s ],
+              [
+                W.If_else
+                  ( W.Result W.Anyref,
+                    i64_of 0 @ [ W.I64_const 0L; W.I64_lt_s ],
+                    [ W.I64_const (-1L); W.Struct_new t_vint ],
+                    [ W.I64_const 0L; W.Struct_new t_vint ] );
+              ],
+              i64_of 0 @ i64_of 1 @ [ W.I64_shr_s; W.Struct_new t_vint ] );
+        ] );
+  ]
+
+let rt_shr =
+  {
+    W.ftype_idx = t_numop;
+    fparams = [ "a"; "b" ];
+    flocals = [];
+    fbody =
+      [
+        W.If_else
+          ( W.Result W.Anyref,
+            both_byte 0 1,
+            guarded_shift 8L
+              ([ W.I64_const 0L ] @ byte_answer)
+              [ W.Struct_new t_vint ] W.I64_shr_u (i64_of_byte 1),
+            [
+              W.If_else
+                ( W.Result W.Anyref,
+                  both_int 0 1,
+                  shr_int_body,
+                  op_mismatch ">>" "two Int64s or two Bytes" 0 1 );
+            ] );
+      ];
+  }
 
 let rt_bnot () : W.func_type =
   {
@@ -5415,6 +5656,34 @@ let rt_no_member ~(t_sig : int) () : W.func_type =
           W.Unreachable;
         ];
   }
+
+(* The logical operators' checked operands: not_checked(v),
+   and_checked(v), or_checked(v) -> i32 answer the Bool's bit when v is
+   one, and the interpreter's own sentence over the kind otherwise —
+   `!` expects "a Bool", `&&`/`||` "two Bools". Each side the short-
+   circuit actually evaluates is checked as it evaluates, where the
+   bare `ref.cast` answered `illegal cast`. The operator's words ride
+   inside each function: a call site has no byte literal to pass. *)
+let rt_bool_checked (op : string) (expects : string) ~(t_sig : int) :
+    W.func_type =
+  {
+    W.ftype_idx = t_sig;
+    fparams = [ "v" ];
+    flocals = [];
+    fbody =
+      [
+        W.If_else
+          ( W.Result W.I32,
+            [ W.Local_get 0; W.Ref_test t_vbool ],
+            [ W.Local_get 0; W.Ref_cast t_vbool; W.Struct_get (t_vbool, 0) ],
+            op_lit op @ op_lit expects
+            @ [ W.Local_get 0; W.Call (rt "unary_mismatch"); W.Unreachable ] );
+      ];
+  }
+
+let rt_not_checked ~t_sig = rt_bool_checked "!" "a Bool" ~t_sig
+let rt_and_checked ~t_sig = rt_bool_checked "&&" "two Bools" ~t_sig
+let rt_or_checked ~t_sig = rt_bool_checked "||" "two Bools" ~t_sig
 
 (* ---- Bytes: a fixed-length mutable byte buffer ($vbytes) ---- *)
 
@@ -12915,6 +13184,7 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
     type_idx env (W.FuncT ([ W.Anyref; W.Anyref; W.Anyref ], []))
   in
   let t_no_member = type_idx env (W.FuncT ([ W.Anyref; W.Anyref ], [])) in
+  let t_bool_checked = type_idx env (W.FuncT ([ W.Anyref ], [ W.I32 ])) in
   let init_func =
     rt_init string_pool
       ~pool_base:(1 + (2 * List.length env.consts) + List.length env.gvars)
@@ -13039,6 +13309,9 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
         rt_op_mismatch ~t_sig:t_op_mismatch ();
         rt_unary_mismatch ~t_sig:t_unary_mismatch ();
         rt_no_member ~t_sig:t_no_member ();
+        rt_not_checked ~t_sig:t_bool_checked;
+        rt_and_checked ~t_sig:t_bool_checked;
+        rt_or_checked ~t_sig:t_bool_checked;
       ]
     @ List.map snd lowered @ List.map snd class_funcs @ List.map snd hidden
   in

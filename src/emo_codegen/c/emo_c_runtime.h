@@ -198,6 +198,8 @@ int64_t emo_unbox_i64(emo_value v);
 double emo_unbox_f64(emo_value v);
 emo_str emo_str_of(emo_value v); /* borrows the cell's bytes */
 bool emo_bool_of(emo_value v);
+bool emo_bool_dyn(emo_value v, const char *op);
+bool emo_not_dyn(emo_value v);
 int32_t emo_char_of(emo_value v);
 uint8_t emo_byte_of(emo_value v);
 
@@ -361,6 +363,8 @@ emo_value emo_mul_dyn(emo_value a, emo_value b);
 emo_value emo_div_dyn(emo_value a, emo_value b);
 emo_value emo_mod_dyn(emo_value a, emo_value b);
 emo_value emo_neg_dyn(emo_value v);
+
+#include <math.h>
 bool emo_eq_dyn(emo_value a, emo_value b);
 bool emo_lt_dyn(emo_value a, emo_value b);
 bool emo_le_dyn(emo_value a, emo_value b);

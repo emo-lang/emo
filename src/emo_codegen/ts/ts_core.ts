@@ -1511,6 +1511,20 @@ const E: any = {
     if (isInt(a)) return E.byteBitNot(a as number);
     return ~this.requireInt(a, "~");
   },
+  // The evaluator's rule: `!` takes a Bool, and `&&`/`||` check each
+  // side the run actually evaluates — the refusal names the operator
+  // and the kind it met.
+  boolOf(v: any, op: string): boolean {
+    if (v === true || v === false) return v as boolean;
+    throw new EEmoException(
+      `operator \`${op}\` expects two Bools, got ${tag(v)}`,
+    );
+  },
+  not(v: any): boolean {
+    if (v === true) return false;
+    if (v === false) return true;
+    throw new EEmoException(`operator \`!\` expects a Bool, got ${tag(v)}`);
+  },
   // The evaluator's rule: an Int64 or a Float64 negates, and a Byte
   // does not — the refusal names the kind.
   neg(a: any) {

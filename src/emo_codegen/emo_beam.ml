@@ -384,19 +384,28 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Binary (((Emo_ast.And | Emo_ast.Or) as op), l, r) ->
       (* the other targets short-circuit these, so beam does too —
          Core Erlang has no `andalso` call, only the operator, and the
-         operator is not a Core form; a case gives the same shape *)
+         operator is not a Core form; a case gives the same shape.
+         Each side the run actually evaluates goes through the checked
+         call first: a value that is not a Bool meets the
+         interpreter's own sentence, the operator's words over the one
+         kind it met — the unchecked case answered `false` for any
+         non-Bool left before. *)
       let lcode = expr_block env l in
       let rcode = expr_block env r in
+      let op_lit = binary_lit (if op = Emo_ast.And then "&&" else "||") in
+      let check code =
+        Printf.sprintf "apply 'emo_bool_checked'/2 (%s, %s)" code op_lit
+      in
       if op = Emo_ast.And then
         put env
           (Printf.sprintf
              "case %s of\n\
-              \t  <'true'> when 'true' ->\n\
-             \    %s\n\
-              \t  <_other> when 'true' ->\n\
+              \t  <'false'> when 'true' ->\n\
              \    'false'\n\
+              \t  <_other> when 'true' ->\n\
+             \    %s\n\
               \tend"
-             lcode rcode)
+             (check lcode) (check rcode))
       else
         put env
           (Printf.sprintf
@@ -406,7 +415,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
               \t  <_other> when 'true' ->\n\
              \    %s\n\
               \tend"
-             lcode rcode)
+             (check lcode) (check rcode))
   | Binary (op, l, r) ->
       (* Int64 is the target's own 64-bit wrapping integer — every
          integer operator already masks at 64 bits — so only Byte needs
@@ -451,7 +460,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
       put env "apply 'emo_op_neg'/1 ";
       args_list env [ x ]
   | Unary (Emo_ast.Not, x) ->
-      put env "apply 'emo_not'/1 ";
+      put env "apply 'emo_op_not'/1 ";
       args_list env [ x ]
   | Unary (Emo_ast.Bit_not, x) ->
       put env
@@ -2454,6 +2463,7 @@ let gradual_op_doors : (string * int * string * string) list =
     ("shl", 2, "<<", "two Int64s or two Bytes");
     ("shr", 2, ">>", "two Int64s or two Bytes");
     ("byte_shl", 2, "<<", "two Int64s or two Bytes");
+    ("not", 1, "!", "a Bool");
     ("neg", 1, "-", "a number");
     ("bnot", 1, "~", "an Int64");
     ("byte_bnot", 1, "~", "an Int64");
@@ -2532,6 +2542,25 @@ let op_refusal_source : string =
           "\tcall 'erlang':'iolist_to_binary' ([%s, _op, %s, _expects, %s, \
            apply 'emo_type_name'/1 (_a)])"
           (lit "operator `") (lit "` expects ") (lit ", got ");
+        "";
+        Printf.sprintf
+          "%% The logical operators' checked operand: `!` rides it with %s, %s \
+           with %s — each side the run actually evaluates is checked as it \
+           evaluates."
+          (lit "a Bool") (lit "&&") (lit "two Bools");
+        "";
+        "'emo_bool_checked'/2 =";
+        "    fun (_v, _op) ->";
+        "\tcase _v of";
+        "\t  <'true'> when 'true' -> 'true'";
+        "\t  <'false'> when 'true' -> 'false'";
+        "\t  <_other> when 'true' ->";
+        Printf.sprintf
+          "\t      call 'erlang':'error'\n\
+           \t\t({'emo_runtime_error', apply 'emo_unary_mismatch'/3 (_op, %s, \
+           _other)})"
+          (lit "two Bools");
+        "\tend";
         "";
         "%% A runtime refusal reaches the root: announce the sentence the way";
         "%%   the c target does, and end the program with 70 — the \

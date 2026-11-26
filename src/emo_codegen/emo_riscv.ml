@@ -2378,6 +2378,30 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
           | Emo_ast.Le -> "emo_le_dyn"
           | Emo_ast.Gt -> "emo_gt_dyn"
           | _ -> "emo_ge_dyn")
+    | (Emo_ast.And | Emo_ast.Or) as sop ->
+        (* the short-circuit on checked operands: the left decides or
+           the right answers, each side through the runtime's check —
+           the build used to refuse these on a dynamic value where the
+           evaluator runs them *)
+        let op_id = if sop = Emo_ast.And then 0 else 1 in
+        let short_word =
+          if sop = Emo_ast.And then "    li a0, 1\n" else "    li a0, 17\n"
+        in
+        let l_end = fresh_label env "sc" in
+        emit_expr env d l;
+        put env "    li a1, %d\n" op_id;
+        call_runtime env "emo_bool_checked";
+        if sop = Emo_ast.And then put env "    beqz a0, %s\n" l_end
+        else put env "    bnez a0, %s\n" l_end;
+        emit_expr env d r;
+        put env "    li a1, %d\n" op_id;
+        call_runtime env "emo_bool_checked";
+        put env "    slli a0, a0, 4\n";
+        put env "    ori a0, a0, 1\n";
+        put env "    j 1f\n";
+        put env "%s:\n" l_end;
+        put env "%s" short_word;
+        put env "1:\n"
     | _ -> refuse "this operator on a dynamic value"
   else
     match (op, ty) with
@@ -2769,7 +2793,8 @@ and emit_unary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.unop)
         put env "    ori a0, a0, 7\n"
     | Emo_ast.Not, _ ->
         emit_expr env d x;
-        put env "    xori a0, a0, 16\n"
+        if x.Emo_ir.ety = Emo_check.Unknown then call_runtime env "emo_not_dyn"
+        else put env "    xori a0, a0, 16\n"
     | _ -> refuse "this unary operator"
 
 and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
@@ -8684,6 +8709,51 @@ emo_bnot_dyn:
     ori a0, a0, 7
     ret
 
+# emo_not_dyn: a0 = a gradual value; a0 = its negation. The
+# evaluator's rule: `!` takes a Bool (the word whose bit 16 is the
+# value) — anything else is the refusal naming the kind, where the
+# bare `xori` answered a corrupted word (`1Bytes[]` for `!"s"`).
+    .globl emo_not_dyn
+emo_not_dyn:
+    andi t0, a0, 15
+    li t1, 1
+    beq t0, t1, .Lnotd_bool
+    mv a2, a0
+    la a0, msg_op_not
+    la a1, msg_op_not_end
+    li a3, 0
+    j emo_op_fail
+.Lnotd_bool:
+    xori a0, a0, 16
+    ret
+
+# emo_bool_checked: a0 = a gradual word, a1 = the operator's id
+# (0 = `&&`, 1 = `||`); a0 = the Bool as 0/1. Anything else meets the
+# interpreter's sentence in the operator's own words. `&&`/`||` check
+# each side the run actually evaluates, so the short-circuit keeps its
+# shortness.
+    .globl emo_bool_checked
+emo_bool_checked:
+    mv a2, a0
+    andi t0, a0, 15
+    li t1, 1
+    beq t0, t1, .Lbc_bool
+    li t2, 1
+    beq a1, t2, .Lbc_or
+    la a0, msg_op_bool_and
+    la a1, msg_op_bool_and_end
+    li a3, 0
+    j emo_op_fail
+.Lbc_or:
+    la a0, msg_op_bool_or
+    la a1, msg_op_bool_or_end
+    li a3, 0
+    j emo_op_fail
+.Lbc_bool:
+    srli a0, a0, 4
+    andi a0, a0, 1
+    ret
+
 # ---- to-string ----
 
 # emo_i64_to_string: a0 = the integer; a0 = a String. The magnitude is
@@ -9486,6 +9556,15 @@ msg_op_neg_end:
 msg_op_bnot:
     .ascii "operator `~` expects an Int64, got "
 msg_op_bnot_end:
+msg_op_not:
+    .ascii "operator `!` expects a Bool, got "
+msg_op_not_end:
+msg_op_bool_and:
+    .ascii "operator `&&` expects two Bools, got "
+msg_op_bool_and_end:
+msg_op_bool_or:
+    .ascii "operator `||` expects two Bools, got "
+msg_op_bool_or_end:
 msg_op_and:
     .ascii " and "
 msg_op_and_end:

@@ -1979,11 +1979,15 @@ and emit_unary env (result_ty : Emo_check.t) (op : Ast.unop) (x : Emo_ir.expr) :
   if is_dyn x.Emo_ir.ety then
     match op with
     | Ast.Neg ->
-        (* the dynamic negation answers a fresh boxed word either way *)
+        (* the dynamic negation answers a fresh boxed word either way,
+           and the word's kind is the runtime's: the checker types a
+           gradual negation Int64 by result, so unboxing past a
+           dynamic operand read a Float cell as an integer — the wrap
+           stays dynamic and the use dispatches by kind *)
         let code = Printf.sprintf "emo_neg_dyn(%s)" (as_dyn env x) in
         if is_dyn result_ty then wrap_owned result_ty code
-        else unbox_code (wrap_owned Emo_check.Unknown code) result_ty
-    | Ast.Not -> Printf.sprintf "(!emo_bool_of(%s))" (as_dyn env x)
+        else wrap_owned Emo_check.Unknown code
+    | Ast.Not -> Printf.sprintf "emo_not_dyn(%s)" (as_dyn env x)
     | Ast.Bit_not -> refuse "the bitwise operators"
   else
     let v = emit_expr env x in
@@ -2026,8 +2030,12 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     | Le -> Printf.sprintf "emo_le_dyn(%s, %s)" a b
     | Gt -> Printf.sprintf "emo_gt_dyn(%s, %s)" a b
     | Ge -> Printf.sprintf "emo_ge_dyn(%s, %s)" a b
-    | And -> Printf.sprintf "(emo_bool_of(%s) && emo_bool_of(%s))" a b
-    | Or -> Printf.sprintf "(emo_bool_of(%s) || emo_bool_of(%s))" a b
+    | And ->
+        Printf.sprintf "(emo_bool_dyn(%s, \"&&\") && emo_bool_dyn(%s, \"&&\"))"
+          a b
+    | Or ->
+        Printf.sprintf "(emo_bool_dyn(%s, \"||\") || emo_bool_dyn(%s, \"||\"))"
+          a b
     | Bit_and | Bit_or | Bit_xor | Shl | Shr ->
         refuse "the bitwise operators in the dynamic world"
   else
@@ -2075,6 +2083,7 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     | Emo_check.Float64, (Add | Sub | Mul | Div) -> plain (arith_text op)
     | Emo_check.Float64, (Eq | Ne | Lt | Le | Gt | Ge) ->
         plain (compare_text op)
+    | Emo_check.Float64, Mod -> Printf.sprintf "fmod(%s, %s)" a b
     | Emo_check.Float64, _ -> refuse "this Float64 operation"
     (* Bool *)
     | Emo_check.Bool, (Eq | Ne) -> plain (compare_text op)
@@ -2182,6 +2191,15 @@ and pattern_declare_sfx env (p : Ast.pattern) (sfx : string) : unit =
       env.owned <- (c, Emo_check.Unknown) :: env.owned
   | Ast.Tuple_pattern ps ->
       List.iteri (fun i sub -> pattern_declare_sfx env sub sfx) ps
+
+(* The receive branch's void casts: every binding the body may never
+   read, casted so the compiler's `set but not used` stays quiet. *)
+and pattern_void_sfx env (p : Ast.pattern) (sfx : string) : unit =
+  match p.Ast.pattern_desc with
+  | Ast.Wildcard | Ast.Pattern_literal _ | Ast.Enum_member _ -> ()
+  | Ast.Pattern_binding name -> put env "  (void)%s;\n" (c_ident name ^ sfx)
+  | Ast.Tuple_pattern ps ->
+      List.iter (fun sub -> pattern_void_sfx env sub sfx) ps
 
 and pattern_assign_sfx env (get : string) (p : Ast.pattern) (sfx : string) :
     unit =
@@ -2677,6 +2695,11 @@ and emit_stmt env (s : Emo_ir.stmt) : unit =
         (fun i (b : Emo_ir.branch) ->
           put env "%s: {\n" (Printf.sprintf "%s__recv_b%d_%d" q i uniq);
           pattern_assign_sfx env s b.Emo_ir.pattern
+            (Printf.sprintf "%s__r%d_%d" q uniq i);
+          (* a binding the body never reads still counts as set: the
+             void casts keep the compiler's unused-variable warnings
+             out of every receive *)
+          pattern_void_sfx env b.Emo_ir.pattern
             (Printf.sprintf "%s__r%d_%d" q uniq i);
           emit_stmts env b.Emo_ir.body;
           put env "  goto %s;\n" end_label;

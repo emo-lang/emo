@@ -2986,7 +2986,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             (Printf.sprintf "operator `!` expects a Bool, got %s"
                (to_string other));
           Bool
-      | Ast.Neg, (Int64 | Unknown) -> Int64
+      | Ast.Neg, Int64 -> Int64
+      | Ast.Neg, Unknown ->
+          (* the value keeps the runtime's kind — a gradual operand may
+             be a Float, and an Int64-typed result unboxed it as an
+             integer (garbage on c) *)
+          Unknown
       | Ast.Neg, Byte ->
           report ctx span "E4004"
             "operator `-` does not apply to the unsigned Byte";

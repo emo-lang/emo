@@ -16,7 +16,9 @@ closed for the crypto engines and open again for the desktop corpus, whose
 gate faults on a `Bytes` crossing a spawn/exec boundary. Item 5 closed the
 same day, and its beam deadlock end (E3012) closed with it on 2026-11-26.
 Item 6 closed on 2026-11-26. Item 10 was found while closing item 9.
-**Open: 4 (a, the desktop edge), 7, 8, 10.**
+Item 7's boolean operators, wrong answers and c warning closed on
+2026-11-26; its (a), (b), (e) and (f) stay open inside the item.
+**Open: 4 (a, the desktop edge), 7 (a, b, e, f), 8, 10.**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -354,17 +356,21 @@ is E4003 at the checker regardless (forward reference), so the closure's
 order-independence is load-bearing only for the lowering's whole-file
 scan. The dune suite was not run.
 
-## 7. What the operator round found and left
+## 7. What the operator round found and left — (c), (d) and (g) closed 2026-11-26
 
 Found 2026-11-25 while closing item 2, each one reproduced by hand on the
 seven targets. None of it is the mixed-kind sentence — that one is the
-interpreter's everywhere now — and none is pinned.
+interpreter's everywhere now — and none is pinned. The boolean operators,
+the three wrong answers and the c warning closed on 2026-11-26; (a), (b),
+(e) and (f) stay below with the reasons.
 
-**(a) The envelope is still each target's own.** The sentence is one; the
-prefix, the code, and the exit status around it are not (the table is in
-item 2). On the beam only the operator family is clean: every other runtime
-refusal there still dies as an Erlang crash report, and a spawned process's
-report is written to *stdout*.
+**(a) The envelope is still each target's own — open.** The sentence is
+one; the prefix, the code, and the exit status around it are not (the
+table is in item 2). The boolean operators joined the clean family this
+round; every other runtime refusal on the beam still dies as an Erlang
+crash report, and a spawned process's report is written to *stdout*.
+Routing the rest through the `{'emo_runtime_error', Bin}` door is its
+own round — the raise sites are scattered across the runtime helpers.
 
 **(b) A refusal inside a spawned process ends a different thing.** The same
 `i + f` in a `do` process: the interpreter and typescript end the offending
@@ -376,47 +382,81 @@ root goes on — forever, when it was waiting for the message. wasm refuses the
 program at the build (a `receive` must be the last statement of its body).
 
 **(c) The boolean operators are the one family still in every target's own
-words.** `!"s"` through a mailbox binding:
+words. — closed 2026-11-26.** Every target now answers the interpreter's
+own sentence for `!`, `&&` and `||` on a value that is not a Bool, and
+answers the Bool where it is one, with the short-circuit intact (`t || s`
+never runs the right side anywhere). Each side the run actually evaluates
+is checked as it evaluates, so `b && s` names the right's kind — the
+interpreter's `got String`, never a two-kind sentence. Per target: the
+beam gains `emo_op_not` (the generated door, `("not", 1, "!", "a Bool")`
+joining the door list) and an `emo_bool_checked` helper the lowered
+`&&`/`||` call per operand (the unchecked case answered `false` for any
+non-Bool left); c gains `emo_bool_dyn` and `emo_not_dyn` (the runtime
+checks, the sentence over `emo_type_name`) where `emo_bool_of` answered
+the generic wrong-type fatal; typescript's `E.truthy` truthiness — which
+printed `true` for `!"s"` — becomes `E.not` and `E.boolOf` throwing
+`EEmoException`; wasm gains `rt_not_checked`/`rt_and_checked`/
+`rt_or_checked` (appended last, the rt map is by position) where the bare
+`ref.cast` answered `illegal cast`; the metal gains `emo_not_dyn` and
+`emo_bool_checked` (the Bool tag masked at four bits — the word's value
+bit rides above it — and `emo_op_fail`'s one-kind flag set, where the
+bare `xori` corrupted the word into `1Bytes[]` and `&&`/`||` refused the
+build); the ocaml runtime's `unbox_bool` — the bare `expected Bool` —
+becomes the sentence in `and_l`/`or_l`/`not_`. Verified by hand on all
+seven: the `!` refusal and the `&&`-on-String refusal in each target's
+own envelope (the beam `runtime error: …` 70, c `runtime error: …` 70,
+typescript `error[E3010]` 70, wasm `ABORT: …` 1, ocaml `Fatal error` 2,
+the metal `emo runtime: …`), the Bool pair answering `f/true/false`
+byte-identical everywhere it runs, and the metal's `&&` on a true left
+and String right naming the String alone.
 
-| target | what it answers |
-|---|---|
-| interpreter | `error[E3001]: operator `!` expects a Bool, got String` |
-| c | `runtime error: a value of the wrong type was used where a type was expected` |
-| ocaml | `Fatal error: exception Failure("expected Bool, got String")` |
-| typescript | prints `true`, exit 0 |
-| wasm | `RuntimeError: illegal cast` |
-| beam | `{emo_bad_type,<<"s">>,<<"s">>}` |
-| riscv64 | prints `1Bytes[]`, exit 0 |
+**(d) Three wrong answers and one early death in the same operators. —
+closed 2026-11-26.** `7.5 % 7.5` answers `0.0` everywhere the Float
+remainder runs: c's `emo_arith_dyn` computes `fmod` (it answered a
+manufactured `0.0/0.0`) and its static form builds through `fmod` too
+(where it refused the whole build); wasm's `rt_mod` is a real fmod —
+binary long division, exact at every step, because WebAssembly has no
+remainder opcode and the old text named `f64.rem_s` while the binary
+encoded 0xA5, `f64.max`, so `7.5 % 7.5` answered `7.5` (the divisor
+scales up while below the dividend's half, each subtraction runs within
+one doubling step, the halvings retrace exact doublings; the NaN gate
+tests `v - v == 0`, which only a finite value survives). The Byte shift
+by a count at or past eight answers `0` on wasm now: `rt_shl`/`rt_shr`
+carry the evaluator's count rules (a negative count refuses with
+`shift count must be non-negative`, a count at the width — eight for the
+Byte, sixty-four for the Int64 — answers zero, the right shift
+sign-extends), where a raw `i64.shl` wrapped the count modulo the width
+and `3 << 70` answered `192`; the Int64 path carries the same guard. And
+the gradual Float's negation answers `-7.5` on c: the checker types a
+gradual `-` `Unknown` now (it typed the result Int64 by rule, and every
+consumer unboxed the Float answer as an integer — garbage; the emitters
+already take their dynamic paths for an Unknown operand), while an
+explicit Int64 negation keeps its type. Verified by hand: the three
+remainders byte-identical with the interpreter on c and wasm (`0.0`,
+`1.5`, `2.25`), the shifts `0/0` on wasm, and `-f` as `-7.5` on the
+interpreter, c, typescript, wasm and the beam.
 
-`s && t` answers the same way where it refuses — the interpreter says
-"operator `&&` expects two Bools, got String", naming the left kind alone —
-and typescript and beam print `false`; the metal refuses `&&` on a dynamic
-value at the build. `t || s` is `true` everywhere: the right side never runs.
+**(e) A Char reads as a String in the beam sentence — open.** `ch + i`
+says "got Char and Int64" on six targets and "got String and Int64" on
+the beam, where a Char is its UTF-8 bytes and the target has no Char
+shape of its own — the sentence cannot name what the value model does
+not distinguish. Naming it means tagging the beam's Chars, which every
+String operation would unwrap; its own round.
 
-**(d) Three wrong answers and one early death in the same operators.**
-`7.5 % 7.5` as mailbox Floats answers `0.0` on the interpreter, typescript and
-beam, `nan` on c, and `7.5` on wasm; the metal refuses a dynamic `%` at the
-build. c refuses the static form too — `7.5 % 2.0` does not build there
-("does not support this Float64 operation yet") where the interpreter, ocaml,
-typescript and beam answer `1.5`. A Byte shift by a count at or past eight —
-`3 << 70` as mailbox Bytes — answers `0` on the interpreter, ocaml, typescript
-and beam, `192` on wasm. A gradual Float's negation on c — `-f` — dies
-"runtime error: a value of the wrong type was used where a type was
-expected": the checker types the result Int64 and c unboxes the Float answer
-as one.
+**(f) The build refusals are unchanged — open.** c refuses the bitwise
+operators and `~` on a dynamic value ("does not support the bitwise
+operators in the dynamic world yet"); the metal refuses `/`, `%`, the
+bitwise operators and the shifts on one ("does not support this operator
+on a dynamic value yet") — `&&`/`||` closed this round, and the metal's
+Float `%` is the same "arrives with runtime exceptions" shape. These are
+missing dynamic lanes, not wrong answers; the interpreter refuses at
+runtime where they refuse at the build.
 
-**(e) A Char reads as a String in the beam sentence.** `ch + i` says "got
-Char and Int64" on six targets and "got String and Int64" on the beam, where
-a Char is its UTF-8 bytes.
-
-**(f) The build refusals are unchanged.** c refuses the bitwise operators
-and `~` on a dynamic value ("does not support the bitwise operators in the
-dynamic world yet"); the metal refuses `/`, `%`, the bitwise operators and
-`&&`/`||` on one ("does not support this operator on a dynamic value yet").
-
-**(g) The c emitter warns on an unused receive binding.** A tuple binding
-the body never reads lands as a variable: `warning: variable 'b__r1_0' set
-but not used [-Wunused-but-set-variable]`, three to a probe.
+**(g) The c emitter warns on an unused receive binding. — closed
+2026-11-26.** Every receive branch now casts its bindings `(void)` after
+the take (`pattern_void_sfx`), so a binding the body never reads costs
+no warning; `examples/processes` builds with zero warnings and stays
+byte-identical with its `expected.txt`.
 
 ## 8. The TLS hint names a flag form the build rejects
 

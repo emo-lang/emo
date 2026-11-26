@@ -2212,7 +2212,8 @@ static emo_value emo_arith_dyn(emo_value a, emo_value b, char op) {
     case '-': return emo_box_f64(x - y);
     case '*': return emo_box_f64(x * y);
     case '/': return emo_box_f64(x / y);
-    default: return emo_box_f64(0.0 / 0.0); /* `%` on floats is refused */
+    /* the remainder the evaluator answers: fmod, sign of the left */
+    default: return emo_box_f64(fmod(x, y));
     }
   }
   char op_name[2] = {op, 0};
@@ -2229,6 +2230,26 @@ emo_value emo_mul_dyn(emo_value a, emo_value b) {
 
 emo_value emo_div_dyn(emo_value a, emo_value b) {
   return emo_arith_dyn(a, b, '/');
+}
+
+/* The logical operators' checked operand: the interpreter's own
+   sentence for anything that is not a Bool, naming the operator and
+   the kind it met. `&&`/`||` check each side the run actually
+   evaluates, so the short-circuit keeps its shortness. */
+bool emo_bool_dyn(emo_value v, const char *op) {
+  if ((v & 7) == 0b001) return (v >> 3) != 0;
+  char message[96];
+  snprintf(message, sizeof message,
+           "operator `%s` expects two Bools, got %s", op, emo_type_name(v));
+  emo_fatal(message);
+}
+
+bool emo_not_dyn(emo_value v) {
+  if ((v & 7) == 0b001) return (v >> 3) == 0;
+  char message[96];
+  snprintf(message, sizeof message, "operator `!` expects a Bool, got %s",
+           emo_type_name(v));
+  emo_fatal(message);
 }
 
 emo_value emo_mod_dyn(emo_value a, emo_value b) {
