@@ -2664,10 +2664,22 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         else put env "    bnez t0, %s\n" l_end;
         emit_expr env d r;
         put env "%s:\n" l_end
-    | Emo_ast.Div, _ | Emo_ast.Mod, _ ->
-        refuse
-          "`%` on this type (the metal's float remainder needs a remainder \
-           routine; the integer forms ride)"
+    | Emo_ast.Mod, Emo_check.Float64 ->
+        (* the evaluator refuses a zero divisor, and the remainder is
+           the exact binary long division (emo_fmod_d) *)
+        emit_float_pair env d l r;
+        put env "    li t0, 0\n";
+        put env "    fcvt.d.w fa2, t0\n";
+        put env "    feq.d t0, fa1, fa2\n";
+        put env "    beqz t0, 1f\n";
+        let label = string_label env "division by zero" in
+        put env "    la a0, %s\n" label;
+        put env "    la a1, %s_end\n" label;
+        call_runtime env "emo_fail";
+        put env "1:\n";
+        call_runtime env "emo_fmod_d";
+        if boxed then box_result env "emo_box_f64"
+    | Emo_ast.Div, _ | Emo_ast.Mod, _ -> refuse "this operator on this type"
     | _ -> refuse "this operator on this type"
 
 (* The int pair's operands (feat/modern-desktop): a mapped local's
@@ -8452,11 +8464,15 @@ emo_mod_dyn:
     beq t0, t2, .Lmod_byte
     j .Ldyn_bad
 .Lmod_float:
-    # no remainder instruction: the evaluator's fmod needs the binary
-    # long division the wasm target carries, its own round
-    la a0, msg_fmod_gap
-    la a1, msg_fmod_gap_end
-    call emo_fail
+    fld fa0, 8(s0)
+    fld fa1, 8(s1)
+    li t0, 0
+    fcvt.d.w fa2, t0
+    feq.d t0, fa1, fa2
+    bnez t0, .Lmod_zero
+    call emo_fmod_d
+    call emo_box_f64
+    j .Ldyn_done
 .Lmod_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -8695,6 +8711,61 @@ emo_shr_dyn:
     la a0, msg_shift_neg
     la a1, msg_shift_neg_end
     call emo_fail
+
+# emo_fmod_d: fa0 = x, fa1 = y (y not zero); fa0 = fmod(x, y) — the
+# sign of x, exact. The D extension has no remainder instruction, so
+# this is the binary long division the wasm target carries: |y| doubles
+# while it is at most x/2 (a power-of-two scale, exact), then the loop
+# subtracts it down — every subtraction runs with d <= x < 2d, where
+# Sterbenz's lemma makes it exact — halving d back toward |y| after
+# each pass. The gates answer the special cases first: a NaN operand
+# answers NaN, an infinite y answers x, an infinite x answers NaN, and
+# |x| < |y| answers x (the equal pair falls through to a signed zero).
+    .globl emo_fmod_d
+emo_fmod_d:
+    li t0, 0
+    fcvt.d.w fa7, t0            # 0.0, the NaN recipe's dividend
+    feq.d t0, fa0, fa0
+    beqz t0, .Lfmod_nan         # x is NaN
+    feq.d t0, fa1, fa1
+    beqz t0, .Lfmod_nan         # y is NaN
+    fsub.d fa5, fa1, fa1
+    feq.d t0, fa5, fa5
+    beqz t0, .Lfmod_retx        # y is infinite: x
+    fsub.d fa5, fa0, fa0
+    feq.d t0, fa5, fa5
+    beqz t0, .Lfmod_nan         # x is infinite: NaN
+    fsgnjx.d fa2, fa0, fa0      # |x|, the running remainder
+    fsgnjx.d fa3, fa1, fa1      # |y|
+    flt.d t0, fa2, fa3
+    bnez t0, .Lfmod_retx        # |x| < |y|: x
+    li t0, 2
+    fcvt.d.w fa5, t0            # 2.0
+    li t0, 1
+    fcvt.d.w fa6, t0
+    fdiv.d fa6, fa6, fa5        # 0.5
+    fmv.d fa4, fa3              # d = |y|
+.Lfmod_scale:
+    fmul.d fa7, fa2, fa6        # x/2 (the zero constant is spent by now)
+    fle.d t0, fa4, fa7
+    beqz t0, .Lfmod_sub
+    fmul.d fa4, fa4, fa5        # d *= 2 — never past x, so never overflows
+    j .Lfmod_scale
+.Lfmod_sub:
+    flt.d t0, fa2, fa4
+    bnez t0, .Lfmod_halve       # x < d: no subtraction this pass
+    fsub.d fa2, fa2, fa4        # exact (d <= x < 2d)
+.Lfmod_halve:
+    feq.d t0, fa4, fa3
+    bnez t0, .Lfmod_retx        # d is back at |y|: the remainder stands
+    fmul.d fa4, fa4, fa6        # d /= 2
+    j .Lfmod_sub
+.Lfmod_retx:
+    fsgnj.d fa0, fa2, fa0       # the remainder with x's sign
+    ret
+.Lfmod_nan:
+    fdiv.d fa0, fa7, fa7        # 0.0/0.0 — the quiet NaN
+    ret
 
     .globl emo_lt_dyn
 emo_lt_dyn:
@@ -10167,9 +10238,6 @@ msg_div_zero_end:
 msg_shift_neg:
     .ascii "shift count must be non-negative"
 msg_shift_neg_end:
-msg_fmod_gap:
-    .ascii "the float remainder needs a remainder routine on the metal"
-msg_fmod_gap_end:
 msg_op_neg:
     .ascii "operator `-` expects a number, got "
 msg_op_neg_end:

@@ -28,9 +28,8 @@ the same day (the beam already answered, c and ocaml scoped their
 children, the metal's split rides the proven death machinery — wasm's
 constraint stands); 7(e) closed too — the sentence already named the
 Char and printf's `%c` learned the tagged shape; 7(f) closed the same
-day — c's and the metal's missing dynamic lanes landed. **Open: nothing — item 7 closed; the metal's float
-remainder, the one deliberate gap left, has its own paragraph inside
-7(f) and waits for its own round.**
+day — c's and the metal's missing dynamic lanes landed. **Open: nothing — item 7 closed, its last gap (the metal's float
+remainder) closed the same day after the user asked what it was.**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -543,11 +542,21 @@ the static and the dynamic float paths (IEEE's infinity and NaN are
 gone), and `7.5 % 2.0` still answers `1.5` through fmod; on the metal,
 the static float `Div` arm and the dynamic door gained the same zero
 check, so `7.5 / 0.0` refuses `division by zero` on both paths where it
-used to answer infinity. Left open, its own round: the metal's float
-`%` — no remainder instruction, so the evaluator's fmod needs the wasm
-round's binary long division in asm; it refuses loudly today
-(`the float remainder needs a remainder routine on the metal`) instead
-of answering a wrong number.
+used to answer infinity. The metal's float `%` closed too: the D
+extension has no remainder instruction and the freestanding target has
+no libm, so `emo_fmod_d` is the wasm round's binary long division in
+asm — |y| doubles while at most x/2 (a power-of-two scale, exact), the
+loop subtracts it down (every subtraction inside `d <= x < 2d`, exact
+by Sterbenz's lemma) and halves it back toward |y| — with the special
+cases gated first (a NaN operand answers NaN, an infinite y answers x,
+an infinite x answers NaN, |x| < |y| answers x, and the equal pair
+falls through to a signed zero). Both lanes ride it: the static
+`(Mod, Float64)` arm and the dynamic mod door's float arm, each with
+the evaluator's zero refusal. Verified against the interpreter byte for
+byte: `7.5%2.0=1.5`, `7.5%7.5=0.0`, `7.25%2.5=2.25`, `-7.5%2.0=-1.5`,
+`7.5%-2.0=1.5`, `4.0%4.0=0.0`, `-4.0%4.0=-0.0` (the dividend's sign,
+printed), `0.0%3.0=0.0`, `1e300%3.0=0.0`, `5.0%1.5=0.5`, and `7.5%0.0`
+— static and through a mailbox — refusing `division by zero`.
 
 **(g) The c emitter warns on an unused receive binding. — closed
 2026-11-26.** Every receive branch now casts its bindings `(void)` after
