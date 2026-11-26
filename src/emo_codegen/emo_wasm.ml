@@ -3715,12 +3715,14 @@ and case env scrutinee (branches : Emo_ir.branch list) ~(tail : bool) :
 (* The enclosing bindings a receive hands its handler: the newest
    binding per name, in binding order — the park packs them into a
    tuple and the handler unpacks them back by name. *)
-and captured_bindings (env : env) : (string * int) list =
+and captured_bindings (env : env) : (string * int * W.valtype) list =
   let rec pick seen = function
     | [] -> []
-    | ((n, i) as x) :: rest ->
+    | (n, i) :: rest ->
         if List.mem_assoc n seen then pick seen rest
-        else x :: pick ((n, i) :: seen) rest
+        else
+          let t = List.nth env.local_decls i in
+          (n, i, t) :: pick ((n, i) :: seen) rest
   in
   pick [] env.local_map
 
@@ -3740,7 +3742,16 @@ and receive env (branches : Emo_ir.branch list) ~(tail : bool) : W.instr list =
   let msg = fresh_local env "__recv_msg" W.Anyref in
   let park_code =
     [ W.Ref_func handler_idx; W.Struct_new t_vfun2 ]
-    @ List.concat_map (fun (_, i) -> [ W.Local_get i ]) caps
+    @ List.concat_map
+        (fun (_, i, t) ->
+          (* the park's tuple is anyref: a native binding — a def's
+             Int64 or Float64 slot — boxes, and the handler unboxes it
+             back (a raw i64 in the array made the module invalid) *)
+          match t with
+          | W.I64 -> [ W.Local_get i; W.Struct_new t_vint ]
+          | W.F64 -> [ W.Local_get i; W.Struct_new t_vfloat ]
+          | _ -> [ W.Local_get i ])
+        caps
     @ [
         W.Array_new_fixed (t_anyarray, List.length caps);
         W.Struct_new t_vtuple;
@@ -3764,7 +3775,7 @@ and receive env (branches : Emo_ir.branch list) ~(tail : bool) : W.instr list =
   ]
   @ if tail then [] else [ W.Drop ]
 
-and emit_receive_handler env (caps : (string * int) list)
+and emit_receive_handler env (caps : (string * int * W.valtype) list)
     (branches : Emo_ir.branch list) : int =
   let fidx = env.nfuncs in
   env.nfuncs <- env.nfuncs + 1;
@@ -3784,15 +3795,41 @@ and emit_receive_handler env (caps : (string * int) list)
   env.current_class <- None;
   let unpacked =
     List.concat_map
-      (fun (k, (n, _)) ->
-        [
-          W.Local_get 1;
-          W.Ref_cast t_vtuple;
-          W.Struct_get (t_vtuple, 0);
-          W.I32_const k;
-          W.Array_get t_anyarray;
-          W.Local_set (fresh_local env n W.Anyref);
-        ])
+      (fun (k, (n, _, t)) ->
+        let slot = fresh_local env (n ^ "__box") W.Anyref in
+        let head =
+          [
+            W.Local_get 1;
+            W.Ref_cast t_vtuple;
+            W.Struct_get (t_vtuple, 0);
+            W.I32_const k;
+            W.Array_get t_anyarray;
+            W.Local_set slot;
+          ]
+        in
+        (* the binding's name resolves to its own slot: the boxed word
+           for a dynamic binding, the unboxed value for a native one *)
+        let bind t =
+          match t with
+          | W.I64 ->
+              head
+              @ [
+                  W.Local_get slot;
+                  W.Ref_cast t_vint;
+                  W.Struct_get (t_vint, 0);
+                  W.Local_set (fresh_local env n W.I64);
+                ]
+          | W.F64 ->
+              head
+              @ [
+                  W.Local_get slot;
+                  W.Ref_cast t_vfloat;
+                  W.Struct_get (t_vfloat, 0);
+                  W.Local_set (fresh_local env n W.F64);
+                ]
+          | _ -> head @ [ W.Local_get slot; W.Local_set (fresh_local env n t) ]
+        in
+        bind t)
       (List.mapi (fun k x -> (k, x)) caps)
   in
   let dispatch = dispatch_branches env [ W.Local_get 0 ] branches ~tail:false in
@@ -5228,146 +5265,183 @@ let rt_div () = rt_arith "/" W.I64_div_s [ W.F64_div; W.Struct_new t_vfloat ]
    runs within one doubling step where the operands agree, and the
    halvings retrace those doublings. *)
 let rt_mod () : W.func_type =
+  (* The remainder: Byte and Int64 through the integer op (the
+     evaluator's two's-complement semantics), the Float64 arm the
+     exact binary long division — WebAssembly has no remainder opcode,
+     and the old text's `f64.rem_s` encoded 0xA5, `f64.max`. The kind
+     dispatch is rt_arith's, written out because the float arm needs
+     locals. *)
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
-    flocals = [ (2, W.F64); (3, W.F64); (4, W.F64); (5, W.F64); (6, W.F64) ];
+    (* flocals are (count × type) groups beyond the parameters: five
+       f64s at 2..6 — x, y, the remainder, the scaled divisor and |y| —
+       then the subtraction phase's done flag at 7 *)
+    flocals = [ (5, W.F64); (1, W.I32) ];
     fbody =
       [
-        W.Local_get 0;
-        W.Ref_cast t_vfloat;
-        W.Struct_get (t_vfloat, 0);
-        W.Local_set 2;
-        W.Local_get 1;
-        W.Ref_cast t_vfloat;
-        W.Struct_get (t_vfloat, 0);
-        W.Local_set 3;
-        (* the NaN gate: y zero, or either operand not finite — only a
-           finite value survives `v - v == 0` *)
         W.If_else
           ( W.Result W.Anyref,
+            both_byte 0 1,
+            i64_of_byte 0 @ i64_of_byte 1 @ [ W.I64_rem_s ] @ byte_answer,
             [
-              W.Local_get 3;
-              W.F64_const 0.;
-              W.F64_eq;
-              W.Local_get 2;
-              W.Local_get 2;
-              W.F64_sub;
-              W.F64_const 0.;
-              W.F64_eq;
-              W.I32_eqz;
-              W.I32_or;
-              W.Local_get 3;
-              W.Local_get 3;
-              W.F64_sub;
-              W.F64_const 0.;
-              W.F64_eq;
-              W.I32_eqz;
-              W.I32_or;
-            ],
-            [ W.F64_const 0.; W.F64_const 0.; W.F64_div; W.Struct_new t_vfloat ],
-            [
-              W.If_else
-                ( W.Result W.F64,
-                  [ W.Local_get 2; W.F64_const 0.; W.F64_lt ],
-                  [ W.F64_const 0.; W.Local_get 2; W.F64_sub ],
-                  [ W.Local_get 2 ] );
-              W.Local_set 4;
-              W.If_else
-                ( W.Result W.F64,
-                  [ W.Local_get 3; W.F64_const 0.; W.F64_lt ],
-                  [ W.F64_const 0.; W.Local_get 3; W.F64_sub ],
-                  [ W.Local_get 3 ] );
-              W.Local_set 5;
               W.If_else
                 ( W.Result W.Anyref,
-                  [ W.Local_get 4; W.Local_get 5; W.F64_lt ],
-                  [ W.Local_get 2; W.Struct_new t_vfloat ],
+                  both_int 0 1,
+                  i64_of 0 @ i64_of 1 @ [ W.I64_rem_s; W.Struct_new t_vint ],
                   [
-                    W.Local_get 5;
-                    W.Local_set 6;
-                    (* scale the divisor up while it is below the
-                       dividend's half *)
-                    W.Loop
-                      ( W.Void,
+                    W.If_else
+                      ( W.Result W.Anyref,
+                        both_float 0 1,
                         [
-                          W.Local_get 5;
-                          W.Local_get 4;
-                          W.F64_const 2.;
-                          W.F64_div;
-                          W.F64_le;
-                          W.If
-                            ( W.Void,
+                          W.Local_get 0;
+                          W.Ref_cast t_vfloat;
+                          W.Struct_get (t_vfloat, 0);
+                          W.Local_set 2;
+                          W.Local_get 1;
+                          W.Ref_cast t_vfloat;
+                          W.Struct_get (t_vfloat, 0);
+                          W.Local_set 3;
+                          (* the NaN gate: y zero, or either operand not finite — only
+               a finite value survives `v - v == 0` *)
+                          W.If_else
+                            ( W.Result W.Anyref,
                               [
-                                W.Local_get 5;
-                                W.F64_const 2.;
-                                W.F64_mul;
-                                W.Local_set 5;
-                                W.Br 1;
+                                W.Local_get 3;
+                                W.F64_const 0.;
+                                W.F64_eq;
+                                W.Local_get 2;
+                                W.Local_get 2;
+                                W.F64_sub;
+                                W.F64_const 0.;
+                                W.F64_eq;
+                                W.I32_eqz;
+                                W.I32_or;
+                                W.Local_get 3;
+                                W.Local_get 3;
+                                W.F64_sub;
+                                W.F64_const 0.;
+                                W.F64_eq;
+                                W.I32_eqz;
+                                W.I32_or;
                               ],
-                              [] );
-                        ] );
-                    W.Block
-                      ( W.Void,
-                        [
-                          W.Loop
-                            ( W.Void,
                               [
-                                W.Local_get 4;
-                                W.Local_get 5;
-                                W.F64_ge;
-                                W.If
-                                  ( W.Void,
+                                W.F64_const 0.;
+                                W.F64_const 0.;
+                                W.F64_div;
+                                W.Struct_new t_vfloat;
+                              ],
+                              [
+                                W.If_else
+                                  ( W.Result W.F64,
+                                    [ W.Local_get 2; W.F64_const 0.; W.F64_lt ],
+                                    [ W.F64_const 0.; W.Local_get 2; W.F64_sub ],
+                                    [ W.Local_get 2 ] );
+                                W.Local_set 4;
+                                W.If_else
+                                  ( W.Result W.F64,
+                                    [ W.Local_get 3; W.F64_const 0.; W.F64_lt ],
+                                    [ W.F64_const 0.; W.Local_get 3; W.F64_sub ],
+                                    [ W.Local_get 3 ] );
+                                W.Local_set 5;
+                                W.If_else
+                                  ( W.Result W.Anyref,
+                                    [ W.Local_get 4; W.Local_get 5; W.F64_lt ],
+                                    [ W.Local_get 2; W.Struct_new t_vfloat ],
                                     [
-                                      W.Local_get 4;
                                       W.Local_get 5;
-                                      W.F64_sub;
-                                      W.Local_set 4;
-                                      W.Local_get 5;
-                                      W.Local_get 6;
-                                      W.F64_gt;
-                                      W.If
+                                      W.Local_set 6;
+                                      (* scale the divisor up while it is below the
+                       dividend's half *)
+                                      W.Loop
                                         ( W.Void,
                                           [
                                             W.Local_get 5;
+                                            W.Local_get 4;
                                             W.F64_const 2.;
                                             W.F64_div;
-                                            W.Local_set 5;
-                                          ],
-                                          [] );
-                                      W.Br 1;
-                                    ],
-                                    [
-                                      W.Local_get 5;
-                                      W.Local_get 6;
-                                      W.F64_gt;
-                                      W.If
+                                            W.F64_le;
+                                            W.If
+                                              ( W.Void,
+                                                [
+                                                  W.Local_get 5;
+                                                  W.F64_const 2.;
+                                                  W.F64_mul;
+                                                  W.Local_set 5;
+                                                  W.Br 1;
+                                                ],
+                                                [] );
+                                          ] );
+                                      (* The subtraction phase, with a done flag and no
+                       branch inside any `if`: a `br` nested in an `if`
+                       counts that `if` as a label, and the old shape's
+                       "continue" landed on the enclosing `if`'s end —
+                       which ends the loop — so every remainder stopped
+                       after one subtraction. `br_if 1` at the loop
+                       body's own level is unambiguous: 0 is the loop,
+                       1 is the block. *)
+                                      W.I32_const 0;
+                                      W.Local_set 7;
+                                      W.Block
                                         ( W.Void,
                                           [
-                                            W.Local_get 5;
-                                            W.F64_const 2.;
-                                            W.F64_div;
-                                            W.Local_set 5;
-                                            W.Br 1;
+                                            W.Loop
+                                              ( W.Void,
+                                                [
+                                                  W.Local_get 7;
+                                                  W.Br_if 1;
+                                                  W.Local_get 4;
+                                                  W.Local_get 5;
+                                                  W.F64_ge;
+                                                  W.If
+                                                    ( W.Void,
+                                                      [
+                                                        W.Local_get 4;
+                                                        W.Local_get 5;
+                                                        W.F64_sub;
+                                                        W.Local_set 4;
+                                                      ],
+                                                      [] );
+                                                  W.Local_get 5;
+                                                  W.Local_get 6;
+                                                  W.F64_gt;
+                                                  W.If
+                                                    ( W.Void,
+                                                      [
+                                                        W.Local_get 5;
+                                                        W.F64_const 2.;
+                                                        W.F64_div;
+                                                        W.Local_set 5;
+                                                      ],
+                                                      [
+                                                        W.I32_const 1;
+                                                        W.Local_set 7;
+                                                      ] );
+                                                  (* a `loop` repeats only through its own
+                                   label: reaching the body's end falls
+                                   out of it *)
+                                                  W.Br 0;
+                                                ] );
+                                          ] );
+                                      W.If_else
+                                        ( W.Result W.F64,
+                                          [
+                                            W.Local_get 2;
+                                            W.F64_const 0.;
+                                            W.F64_lt;
                                           ],
-                                          [] );
-                                      W.Br 2;
+                                          [ W.Local_get 4; W.F64_neg ],
+                                          [ W.Local_get 4 ] );
+                                      W.Struct_new t_vfloat;
                                     ] );
                               ] );
-                        ] );
-                    W.If_else
-                      ( W.Result W.F64,
-                        [ W.Local_get 2; W.F64_const 0.; W.F64_lt ],
-                        [ W.Local_get 4; W.F64_neg ],
-                        [ W.Local_get 4 ] );
-                    W.Struct_new t_vfloat;
+                        ],
+                        op_mismatch "%" "two numbers" 0 1 );
                   ] );
             ] );
       ];
   }
 
-(* neg: an Int64 or a Float64; a Byte is not a number here, the
-   evaluator's own rule, and anything else refuses naming the operator *)
 let rt_neg () : W.func_type =
   {
     W.ftype_idx = t_sig1;
@@ -5421,30 +5495,33 @@ let rt_bit_xor = rt_bit "^" W.I64_xor
    eight, the Int64 at sixty-four (the right shift sign-extends) —
    where a raw `i64.shl` wrapped the count modulo the width and
    `3 << 70` answered `192`. *)
-let shift_refuse =
+(* A function, not a value: the `rt` name resolves against the mode's
+   import base, which is only known when the assembly runs — a top-level
+   value would freeze the hosted index into a wasi build. *)
+let shift_refuse () : W.instr list =
   op_lit "shift count must be non-negative"
   @ [ W.Struct_new t_vstring; W.Call (rt "throw"); W.Unreachable ]
 
 let guarded_shift (width : Int64.t) (zero_answer : W.instr list)
-    (int_answer : W.instr list) (shift : W.instr) (count_of : W.instr list) :
-    W.instr list =
+    (left_of : W.instr list) (int_answer : W.instr list) (shift : W.instr)
+    (count_of : W.instr list) : W.instr list =
   (* the count, unboxed from its tagged word: refuse below zero,
      answer zero at the width, shift below it *)
   [
     W.If_else
       ( W.Result W.Anyref,
         count_of @ [ W.I64_const 0L; W.I64_lt_s ],
-        shift_refuse,
+        shift_refuse (),
         [
           W.If_else
             ( W.Result W.Anyref,
               count_of @ [ W.I64_const width; W.I64_ge_s ],
               zero_answer,
-              i64_of 0 @ count_of @ [ shift ] @ int_answer );
+              left_of @ count_of @ [ shift ] @ int_answer );
         ] );
   ]
 
-let rt_shl =
+let rt_shl () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -5456,25 +5533,25 @@ let rt_shl =
             both_byte 0 1,
             guarded_shift 8L
               ([ W.I64_const 0L ] @ byte_answer)
-              [ W.Struct_new t_vint ] W.I64_shl (i64_of_byte 1),
+              (i64_of_byte 0) [ W.Struct_new t_vint ] W.I64_shl (i64_of_byte 1),
             [
               W.If_else
                 ( W.Result W.Anyref,
                   both_int 0 1,
                   guarded_shift 64L
                     [ W.I64_const 0L; W.Struct_new t_vint ]
-                    [ W.Struct_new t_vint ] W.I64_shl (i64_of 1),
+                    (i64_of 0) [ W.Struct_new t_vint ] W.I64_shl (i64_of 1),
                   op_mismatch "<<" "two Int64s or two Bytes" 0 1 );
             ] );
       ];
   }
 
-let shr_int_body =
+let shr_int_body () : W.instr list =
   [
     W.If_else
       ( W.Result W.Anyref,
         i64_of 1 @ [ W.I64_const 0L; W.I64_lt_s ],
-        shift_refuse,
+        shift_refuse (),
         [
           W.If_else
             ( W.Result W.Anyref,
@@ -5490,7 +5567,7 @@ let shr_int_body =
         ] );
   ]
 
-let rt_shr =
+let rt_shr () : W.func_type =
   {
     W.ftype_idx = t_numop;
     fparams = [ "a"; "b" ];
@@ -5502,12 +5579,13 @@ let rt_shr =
             both_byte 0 1,
             guarded_shift 8L
               ([ W.I64_const 0L ] @ byte_answer)
-              [ W.Struct_new t_vint ] W.I64_shr_u (i64_of_byte 1),
+              (i64_of_byte 0) [ W.Struct_new t_vint ] W.I64_shr_u
+              (i64_of_byte 1),
             [
               W.If_else
                 ( W.Result W.Anyref,
                   both_int 0 1,
-                  shr_int_body,
+                  shr_int_body (),
                   op_mismatch ">>" "two Int64s or two Bytes" 0 1 );
             ] );
       ];
@@ -13209,8 +13287,8 @@ let assemble ~(wasi : bool) (program : Emo_ir.program) : W.module_ =
         rt_bit_and;
         rt_bit_or;
         rt_bit_xor;
-        rt_shl;
-        rt_shr;
+        rt_shl ();
+        rt_shr ();
         rt_bnot ();
         rt_bytes_new ();
         rt_bytes_get ();
