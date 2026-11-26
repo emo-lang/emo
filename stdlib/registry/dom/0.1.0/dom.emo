@@ -152,23 +152,23 @@ class TextNode {
   }
 
   def as_element() Element {
-    raise Exception.new(message: "dom: expected an element, got text")
+    :raise "dom: expected an element, got text"
   }
 
   def tag() String {
-    raise Exception.new(message: "dom: expected an element, got text")
+    :raise "dom: expected an element, got text"
   }
 
   def attrs() Array[(String, String)] {
-    raise Exception.new(message: "dom: expected an element, got text")
+    :raise "dom: expected an element, got text"
   }
 
   def attr(name String) (R, String) {
-    raise Exception.new(message: "dom: expected an element, got text")
+    :raise "dom: expected an element, got text"
   }
 
   def children() Array[Node] {
-    raise Exception.new(message: "dom: expected an element, got text")
+    :raise "dom: expected an element, got text"
   }
 
   def parent() (R, Node) {
@@ -213,23 +213,23 @@ class CommentNode {
   }
 
   def as_element() Element {
-    raise Exception.new(message: "dom: expected an element, got a comment")
+    :raise "dom: expected an element, got a comment"
   }
 
   def tag() String {
-    raise Exception.new(message: "dom: expected an element, got a comment")
+    :raise "dom: expected an element, got a comment"
   }
 
   def attrs() Array[(String, String)] {
-    raise Exception.new(message: "dom: expected an element, got a comment")
+    :raise "dom: expected an element, got a comment"
   }
 
   def attr(name String) (R, String) {
-    raise Exception.new(message: "dom: expected an element, got a comment")
+    :raise "dom: expected an element, got a comment"
   }
 
   def children() Array[Node] {
-    raise Exception.new(message: "dom: expected an element, got a comment")
+    :raise "dom: expected an element, got a comment"
   }
 
   def parent() (R, Node) {
@@ -274,23 +274,23 @@ class DoctypeNode {
   }
 
   def as_element() Element {
-    raise Exception.new(message: "dom: expected an element, got a doctype")
+    :raise "dom: expected an element, got a doctype"
   }
 
   def tag() String {
-    raise Exception.new(message: "dom: expected an element, got a doctype")
+    :raise "dom: expected an element, got a doctype"
   }
 
   def attrs() Array[(String, String)] {
-    raise Exception.new(message: "dom: expected an element, got a doctype")
+    :raise "dom: expected an element, got a doctype"
   }
 
   def attr(name String) (R, String) {
-    raise Exception.new(message: "dom: expected an element, got a doctype")
+    :raise "dom: expected an element, got a doctype"
   }
 
   def children() Array[Node] {
-    raise Exception.new(message: "dom: expected an element, got a doctype")
+    :raise "dom: expected an element, got a doctype"
   }
 
   def parent() (R, Node) {
