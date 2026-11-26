@@ -59,7 +59,20 @@
 #define EMO_NORETURN
 #endif
 
+/* The process state the fatal split reads: defined with the process
+   machinery below, forward-declared here because every refusal rides
+   this function. */
+/* Whether the refusing process is a spawned one: defined with the
+   process machinery below, forward-declared here because every
+   refusal rides the fatal split. emo_process_halt_current rides
+   emo_c_runtime.h's declarations. */
+static int emo_fatal_is_child(void);
+
 static EMO_NORETURN void emo_fatal(const char *message) {
+  /* A spawned process's refusal ends only that process, silently — the
+     interpreter's own rule (the raised-exception path, T23.6, already
+     splits the same way); the root's is the program's outcome. */
+  if (emo_fatal_is_child()) emo_process_halt_current();
   fprintf(stderr, "runtime error: %s\n", message);
   exit(70);
 }
@@ -352,6 +365,12 @@ emo_value emo_vchar(int32_t v) {
   return ((uintptr_t)(uint32_t)v << 3) | 0b011;
 }
 
+/* A Byte is the 0b101 immediate, its eight bits in the top bits — the
+   Char's own shape. It rode an Int64 cell before, which made a Byte and
+   an Int64 one value at run time: `b == 7` answered true and `b + 1`
+   computed, where the checker refuses both. */
+emo_value emo_vbyte(uint8_t v) { return ((uintptr_t)v << 3) | 0b101; }
+
 emo_value emo_box_str(emo_str s) {
   /* The cell: [header][len][bytes...] — the bytes share the cell,
      which owns them from here on; an emo_str borrowed back out
@@ -642,6 +661,11 @@ int32_t emo_char_of(emo_value v) {
   return (int32_t)(uint32_t)(v >> 3);
 }
 
+uint8_t emo_byte_of(emo_value v) {
+  if ((v & 7) != 0b101) emo_fatal(emo_wrong_type);
+  return (uint8_t)(v >> 3);
+}
+
 emo_value emo_tuple_new(int64_t arity, emo_value *elems) {
   /* [header][arity][elements...] */
   emo_value v = emo_cell_new(EMO_TUPLE, arity + 1);
@@ -684,8 +708,7 @@ emo_value emo_array_append(emo_value arr, emo_value v) {
    static element type (the dynamic table infers the mode from the
    first element). Floats answer `<` twice, then the NaN rule — a NaN
    sorts after every number, two NaNs equal, a total order every
-   target agrees on. A Byte rides the dynamic world as an Int64 cell
-   carrying 0-255, so modes 0 and 3 share the arm. */
+   target agrees on. A Byte is the 0b101 immediate, its own mode. */
 static int64_t emo_sort_cmp(uintptr_t a, uintptr_t b, int64_t mode) {
   switch (mode) {
   case 1: {
@@ -708,7 +731,11 @@ static int64_t emo_sort_cmp(uintptr_t a, uintptr_t b, int64_t mode) {
     uintptr_t x = a >> 3, y = b >> 3;
     return x < y ? -1 : y < x ? 1 : 0;
   }
-  default: { /* Int64, and a Byte in its Int64 cell */
+  case 3: { /* Byte: the 0b101 immediate, its eight bits in the top */
+    uintptr_t x = a >> 3, y = b >> 3;
+    return x < y ? -1 : y < x ? 1 : 0;
+  }
+  default: { /* Int64 */
     int64_t x = emo_unbox_i64(a), y = emo_unbox_i64(b);
     return x < y ? -1 : y < x ? 1 : 0;
   }
@@ -1173,7 +1200,8 @@ static const char *emo_map_key_rule =
     "a map key must be a String, Int64, Byte, Bool, Char, or Float64";
 
 static bool emo_map_key_ok(emo_value k) {
-  if ((k & 7) == 0b001 || (k & 7) == 0b011) return true; /* Bool, Char */
+  if ((k & 7) == 0b001 || (k & 7) == 0b011 || (k & 7) == 0b101)
+    return true; /* Bool, Char, Byte */
   switch (emo_cell_kind(k)) {
   case EMO_INT64:
   case EMO_FLOAT64:
@@ -1193,6 +1221,7 @@ static uint64_t emo_hash_key(emo_value k) {
   if ((k & 7) == 0b001) return emo_hash_mix(0x1000ULL + (k >> 3));
   if ((k & 7) == 0b011)
     return emo_hash_mix(0x2000ULL + (uint64_t)(uint32_t)(k >> 3));
+  if ((k & 7) == 0b101) return emo_hash_mix(0x4000ULL + (k >> 3));
   switch (emo_cell_kind(k)) {
   case EMO_INT64:
     return emo_hash_mix((uint64_t)emo_unbox_i64(k) ^ 0x3000ULL);
@@ -1700,10 +1729,11 @@ int64_t emo_length(emo_value v) {
   uintptr_t k = emo_cell_kind(v);
   if (k == EMO_LIST) return emo_list_length(v);
   if (k == EMO_BUILDER) return emo_builder_length(v);
+  if (k == EMO_MAP) return emo_map_length(v);
   if (k != EMO_TUPLE && k != EMO_ARRAY && k != EMO_BYTES && k != EMO_STRING)
     emo_fatal(
-        "only strings, Bytes, tuples, arrays, Lists, and ArrayBuilders have a "
-        "length");
+        "only strings, Bytes, tuples, arrays, Lists, ArrayBuilders, and Maps "
+        "have a length");
   return (int64_t)*emo_payload(v);
 }
 
@@ -1802,6 +1832,7 @@ static void emo_printf_spec(char *out, const char *flags, const char *width,
 static const char *emo_printf_kind_name(emo_value v) {
   if ((v & 7) == 0b001) return "Bool";
   if ((v & 7) == 0b011) return "Char";
+  if ((v & 7) == 0b101) return "Byte";
   switch (emo_cell_kind(v)) {
     case EMO_INT64: return "Int64";
     case EMO_FLOAT64: return "Float64";
@@ -2108,11 +2139,51 @@ emo_value emo_send(emo_value recv, const char *name, int64_t arity,
 }
 
 /* ---- Dynamic operations ----
-   The interpreter's runtime rules: arithmetic and comparisons need
-   the same kind on both sides (int64 with int64, float64 with
-   float64, string with string for `+`), equality is structural. */
+   The interpreter's runtime rules: arithmetic and comparisons need the
+   same kind on both sides (int64 with int64, float64 with float64,
+   string with string for `+`), equality is structural. A gradual
+   operator on two values of different kinds refuses with the
+   interpreter's own sentence (E3001): the operator, the rule, and both
+   kinds. */
+
+/* The kind a dynamic value wears, by the interpreter's own name. */
+static const char *emo_type_name(emo_value v) {
+  if ((v & 7) == 0b001) return "Bool";
+  if ((v & 7) == 0b011) return "Char";
+  if ((v & 7) == 0b101) return "Byte";
+  switch (emo_cell_kind(v)) {
+    case EMO_INT64: return "Int64";
+    case EMO_FLOAT64: return "Float64";
+    case EMO_STRING: return "String";
+    case EMO_BYTES: return "Bytes";
+    case EMO_TUPLE: return "Tuple";
+    case EMO_ARRAY: return "Array";
+    case EMO_LIST: return "List";
+    case EMO_BUILDER: return "ArrayBuilder";
+    case EMO_MAP: return "Map";
+    case EMO_BOX: return "Box";
+    case EMO_ATOMIC: return "Atomic";
+    case EMO_REF: return "Ref";
+    case EMO_PID: return "Pid";
+    case EMO_INSTANCE: return "an instance";
+    case EMO_ENUM: return "an enum member";
+    case EMO_CLOSURE: return "an arrow block";
+    default: return "value";
+  }
+}
+
+static EMO_NORETURN void emo_type_mismatch(const char *op, const char *expects,
+                                           emo_value a, emo_value b) {
+  char message[160];
+  snprintf(message, sizeof message,
+           "operator `%s` expects %s, got %s and %s", op, expects,
+           emo_type_name(a), emo_type_name(b));
+  emo_fatal(message);
+}
 
 emo_value emo_add_dyn(emo_value a, emo_value b) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101)
+    return emo_vbyte((uint8_t)(emo_byte_of(a) + emo_byte_of(b)));
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
   if (ka == EMO_STRING && kb == EMO_STRING)
     return emo_cell_concat_raw(a, b);
@@ -2123,10 +2194,20 @@ emo_value emo_add_dyn(emo_value a, emo_value b) {
   }
   if (ka == EMO_FLOAT64 && kb == EMO_FLOAT64)
     return emo_box_f64(emo_unbox_f64(a) + emo_unbox_f64(b));
-  emo_fatal("`+` needs two numbers or two strings");
+  emo_type_mismatch("+", "two numbers or two strings", a, b);
 }
 
 static emo_value emo_arith_dyn(emo_value a, emo_value b, char op) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101) {
+    int x = emo_byte_of(a), y = emo_byte_of(b);
+    if ((op == '/' || op == '%') && y == 0) emo_fatal("division by zero");
+    switch (op) {
+    case '-': return emo_vbyte((uint8_t)(x - y));
+    case '*': return emo_vbyte((uint8_t)(x * y));
+    case '/': return emo_vbyte((uint8_t)(x / y));
+    default: return emo_vbyte((uint8_t)(x % y));
+    }
+  }
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
   if (ka == EMO_INT64 && kb == EMO_INT64) {
     int64_t x = emo_unbox_i64(a), y = emo_unbox_i64(b), r;
@@ -2143,11 +2224,13 @@ static emo_value emo_arith_dyn(emo_value a, emo_value b, char op) {
     switch (op) {
     case '-': return emo_box_f64(x - y);
     case '*': return emo_box_f64(x * y);
-    case '/': return emo_box_f64(x / y);
-    default: return emo_box_f64(0.0 / 0.0); /* `%` on floats is refused */
+    case '/': return emo_box_f64(emo_div_f64(x, y));
+    /* the remainder the evaluator answers: fmod, sign of the left */
+    default: return emo_box_f64(emo_fmod_f64(x, y));
     }
   }
-  emo_fatal("arithmetic needs two values of the same numeric type");
+  char op_name[2] = {op, 0};
+  emo_type_mismatch(op_name, "two numbers", a, b);
 }
 
 emo_value emo_sub_dyn(emo_value a, emo_value b) {
@@ -2162,15 +2245,110 @@ emo_value emo_div_dyn(emo_value a, emo_value b) {
   return emo_arith_dyn(a, b, '/');
 }
 
+/* The logical operators' checked operand: the interpreter's own
+   sentence for anything that is not a Bool, naming the operator and
+   the kind it met. `&&`/`||` check each side the run actually
+   evaluates, so the short-circuit keeps its shortness. */
+bool emo_bool_dyn(emo_value v, const char *op) {
+  if ((v & 7) == 0b001) return (v >> 3) != 0;
+  char message[96];
+  snprintf(message, sizeof message,
+           "operator `%s` expects two Bools, got %s", op, emo_type_name(v));
+  emo_fatal(message);
+}
+
+bool emo_not_dyn(emo_value v) {
+  if ((v & 7) == 0b001) return (v >> 3) == 0;
+  char message[96];
+  snprintf(message, sizeof message, "operator `!` expects a Bool, got %s",
+           emo_type_name(v));
+  emo_fatal(message);
+}
+
 emo_value emo_mod_dyn(emo_value a, emo_value b) {
   return emo_arith_dyn(a, b, '%');
+}
+
+/* The bitwise and shift doors: two Int64s or two Bytes, the
+   evaluator's count rules on the shifts (a negative count refuses,
+   a count at or past the width answers zero — the shift helpers the
+   static lanes share carry the same rules). */
+static emo_value emo_bit_pair_dyn(emo_value a, emo_value b, char op) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101) {
+    int x = emo_byte_of(a), y = emo_byte_of(b), r;
+    switch (op) {
+    case '&': r = x & y; break;
+    case '|': r = x | y; break;
+    case '^': r = x ^ y; break;
+    default: r = x;
+    }
+    return emo_vbyte((uint8_t)r);
+  }
+  uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
+  if (ka == EMO_INT64 && kb == EMO_INT64) {
+    int64_t x = emo_unbox_i64(a), y = emo_unbox_i64(b), r;
+    switch (op) {
+    case '&': r = (int64_t)((uint64_t)x & (uint64_t)y); break;
+    case '|': r = (int64_t)((uint64_t)x | (uint64_t)y); break;
+    case '^': r = (int64_t)((uint64_t)x ^ (uint64_t)y); break;
+    default: r = x;
+    }
+    return emo_box_i64(r);
+  }
+  char op_name[2] = {op, 0};
+  emo_type_mismatch(op_name, "two Int64s or two Bytes", a, b);
+}
+
+emo_value emo_bit_and_dyn(emo_value a, emo_value b) {
+  return emo_bit_pair_dyn(a, b, '&');
+}
+
+emo_value emo_bit_or_dyn(emo_value a, emo_value b) {
+  return emo_bit_pair_dyn(a, b, '|');
+}
+
+emo_value emo_bit_xor_dyn(emo_value a, emo_value b) {
+  return emo_bit_pair_dyn(a, b, '^');
+}
+
+emo_value emo_shl_dyn(emo_value a, emo_value b) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101)
+    return emo_vbyte(
+        (uint8_t)emo_shl_i64(emo_byte_of(a), (int64_t)emo_byte_of(b)));
+  uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
+  if (ka == EMO_INT64 && kb == EMO_INT64)
+    return emo_box_i64(emo_shl_i64(emo_unbox_i64(a), emo_unbox_i64(b)));
+  emo_type_mismatch("<<", "two Int64s or two Bytes", a, b);
+}
+
+emo_value emo_shr_dyn(emo_value a, emo_value b) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101)
+    return emo_vbyte(
+        (uint8_t)emo_shr_i64(emo_byte_of(a), (int64_t)emo_byte_of(b)));
+  uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
+  if (ka == EMO_INT64 && kb == EMO_INT64)
+    return emo_box_i64(emo_shr_i64(emo_unbox_i64(a), emo_unbox_i64(b)));
+  emo_type_mismatch(">>", "two Int64s or two Bytes", a, b);
+}
+
+emo_value emo_bnot_dyn(emo_value v) {
+  if ((v & 7) == 0b101) return emo_vbyte((uint8_t)~emo_byte_of(v));
+  if (emo_cell_kind(v) == EMO_INT64)
+    return emo_box_i64((int64_t)~(uint64_t)emo_unbox_i64(v));
+  char message[96];
+  snprintf(message, sizeof message, "operator `~` expects an Int64, got %s",
+           emo_type_name(v));
+  emo_fatal(message);
 }
 
 emo_value emo_neg_dyn(emo_value v) {
   if (emo_cell_kind(v) == EMO_INT64)
     return emo_box_i64((int64_t)(0ULL - (uint64_t)emo_unbox_i64(v)));
   if (emo_cell_kind(v) == EMO_FLOAT64) return emo_box_f64(-emo_unbox_f64(v));
-  emo_fatal("unary minus needs a number");
+  char message[96];
+  snprintf(message, sizeof message, "operator `-` expects a number, got %s",
+           emo_type_name(v));
+  emo_fatal(message);
 }
 
 bool emo_eq_dyn(emo_value a, emo_value b) {
@@ -2288,7 +2466,14 @@ int64_t emo_str_cmp(emo_value a, emo_value b) {
   return sa.len < sb.len ? -1 : (sa.len > sb.len ? 1 : 0);
 }
 
-static int emo_cmp_dyn(emo_value a, emo_value b) {
+/* [op] names the operator the program wrote, so a refusal reads right
+   for `>` and `>=` too — they compare in their own order here rather
+   than through a swapped `<`. */
+static int emo_cmp_dyn(emo_value a, emo_value b, const char *op) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101) {
+    int x = emo_byte_of(a), y = emo_byte_of(b);
+    return x < y ? -1 : (x > y ? 1 : 0);
+  }
   uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
   if (ka == EMO_STRING && kb == EMO_STRING) return emo_str_cmp(a, b);
   if (ka == EMO_INT64 && kb == EMO_INT64) {
@@ -2299,12 +2484,20 @@ static int emo_cmp_dyn(emo_value a, emo_value b) {
     double x = emo_unbox_f64(a), y = emo_unbox_f64(b);
     return x < y ? -1 : (x > y ? 1 : 0);
   }
-  emo_fatal("comparisons need two values of the same type");
+  emo_type_mismatch(op, "two numbers", a, b);
 }
 
-bool emo_lt_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b) < 0; }
+bool emo_lt_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b, "<") < 0; }
 
-bool emo_le_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b) <= 0; }
+bool emo_le_dyn(emo_value a, emo_value b) {
+  return emo_cmp_dyn(a, b, "<=") <= 0;
+}
+
+bool emo_gt_dyn(emo_value a, emo_value b) { return emo_cmp_dyn(a, b, ">") > 0; }
+
+bool emo_ge_dyn(emo_value a, emo_value b) {
+  return emo_cmp_dyn(a, b, ">=") >= 0;
+}
 
 /* ---- The one stringification rule over dynamic values ---- */
 
@@ -2331,6 +2524,10 @@ static void emo_render_dyn(emo_value v, FILE *out) {
     char buf[4];
     int32_t n = emo_utf8_put(buf, emo_char_of(v));
     fwrite(buf, 1, (size_t)n, out);
+    return;
+  }
+  if ((v & 7) == 0b101) {
+    fprintf(out, "%u", (unsigned)emo_byte_of(v));
     return;
   }
   switch (emo_cell_kind(v)) {
@@ -2769,6 +2966,10 @@ void emo_process_halt_current(void) {
   abort(); /* unreachable */
 }
 
+static int emo_fatal_is_child(void) {
+  return emo_current != NULL && emo_current->pid != emo_root_pid;
+}
+
 /* An uncaught raise. The root's is the program's outcome (T23.6): render
    the interpreter's E3010 message and exit 1. A spawned process's ends
    only that process, the interpreter's `Exit_raised` — the scheduler
@@ -3062,7 +3263,9 @@ void emo_scheduler_run(void) {
       for (emo_process *q = emo_process_table; q; q = q->next_table)
         if (!q->finished) deadlocked++;
       if (deadlocked > 0) {
-        fprintf(stderr, "runtime error: deadlock: %d process(es) waiting\n",
+        fprintf(stderr,
+                "runtime error: all %d waiting processes are blocked; no "
+                "message will ever arrive\n",
                 deadlocked);
         exit(70);
       }
@@ -4032,7 +4235,7 @@ int64_t emo_net_set_timeout(int64_t fd, double seconds) {
      package's -lssl/-lcrypto symlinks, while macOS has shipped no
      system TLS library for years (no headers since Xcode 10, and the
      /usr/lib dylibs are gone from current releases), so its OpenSSL
-     comes from Homebrew or similar and rides --cclib -L<dir>. The
+     comes from Homebrew or similar and rides --cclib=-L<dir>. The
      pre-flight probe (emo_cli) catches a machine without either and
      names the fix instead of surfacing raw linker output.
 
@@ -5306,6 +5509,20 @@ double emo_f64_from_bits(int64_t bits) {
   return d;
 }
 
+/* The float division and remainder: the evaluator refuses a zero
+   divisor for both (`division by zero`, E3005) where IEEE answers an
+   infinity or a NaN. -0.0 compares equal to 0.0, the evaluator's own
+   test. */
+double emo_div_f64(double x, double y) {
+  if (y == 0.0) emo_fatal("division by zero");
+  return x / y;
+}
+
+double emo_fmod_f64(double x, double y) {
+  if (y == 0.0) emo_fatal("division by zero");
+  return fmod(x, y);
+}
+
 double emo_f64_sqrt(double x) { return sqrt(x); }
 double emo_f64_floor(double x) { return floor(x); }
 double emo_f64_ceil(double x) { return ceil(x); }
@@ -5844,6 +6061,7 @@ static emo_value emo_bm_to_int64(emo_value recv, const emo_value *args) {
   (void)args;
   /* a Char immediate is not a cell: its code point is the answer */
   if ((recv & 7) == 0b011) return emo_box_i64((int64_t)emo_char_of(recv));
+  if ((recv & 7) == 0b101) return emo_box_i64((int64_t)emo_byte_of(recv));
   switch (emo_cell_kind(recv)) {
     case EMO_FLOAT64:
       return emo_box_i64((int64_t)emo_unbox_f64(recv));
@@ -6071,6 +6289,7 @@ static int64_t emo_sort_mode_of(emo_value arr) {
   uintptr_t v = emo_payload(arr)[1];
   if ((v & 7) == 0b001) return 5; /* Bool */
   if ((v & 7) == 0b011) return 4; /* Char */
+  if ((v & 7) == 0b101) return 3; /* Byte */
   if ((v & 7) == 0) {
     uintptr_t k = emo_cell_kind(v);
     if (k == EMO_FLOAT64) return 1;
@@ -6122,7 +6341,7 @@ static emo_value emo_bm_trunc(emo_value recv, const emo_value *args) {
 
 static emo_value emo_bm_to_byte(emo_value recv, const emo_value *args) {
   (void)args;
-  return emo_box_i64(emo_unbox_i64(recv) & 255);
+  return emo_vbyte((uint8_t)(emo_unbox_i64(recv) & 255));
 }
 
 static const emo_builtin_method emo_builtin_methods[] = {

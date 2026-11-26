@@ -84,18 +84,15 @@ function _endIfShutdown(handle?: any): void {
   throw new EProgramEnd();
 }
 
-// Processes end cleanly on EHalt/EReturn and on an uncaught Emo
-// exception. A spawned process's exception ends that process silently —
-// the root's is reported, matching the native scheduler's event log.
+// Processes end cleanly on EHalt/EReturn and on the program's end. Any
+// other exception leaves the entry on purpose: the emitted wrapper's
+// own catch reports it and sets exit 70 — reporting it here instead
+// printed the sentence and then exited 0 (found 2026-11-25: an Emo
+// exception raised inside a receive branch). A spawned process's
+// exception ends that process silently, in _taskEnd.
 function _taskError(e: any): any {
   if (e instanceof EHalt || e instanceof EReturn || e instanceof EProgramEnd)
     return undefined;
-  if (e instanceof EEmoException) {
-    console.error(
-      "error[E3010]: uncaught exception: " + toStr(e.messageValue)
-    );
-    return undefined;
-  }
   throw e;
 }
 
@@ -684,6 +681,7 @@ function deepEq(a: any, b: any): boolean {
     if (a.items.length !== b.items.length) return false;
     return a.items.every((x: any, i: number) => deepEq(x, b.items[i]));
   }
+  if (a instanceof EPid && b instanceof EPid) return a.id === b.id;
   if (a instanceof EAtomic && b instanceof EAtomic)
     return deepEq(a.v, b.v); // the values the cells hold now
   if (
@@ -710,7 +708,7 @@ function toStr(v: any): string {
   if (v === null || v === undefined) return "nil";
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return String.fromCodePoint(v.c);
-  if (v instanceof EBox) return toStr(v.v);
+  if (v instanceof EBox) return "<box>";
   if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof EList) {
@@ -789,7 +787,7 @@ function toStrP(v: any): string | Promise<string> {
   if (v === null || v === undefined) return "nil";
   if (isFloat(v)) return floatStr(v.v);
   if (isChar(v)) return String.fromCodePoint(v.c);
-  if (v instanceof EBox) return toStrP(v.v);
+  if (v instanceof EBox) return "<box>";
   if (v instanceof EAtomic) return "<atomic>";
   if (v instanceof EBytes) return "Bytes[" + v.data.length + "]";
   if (v instanceof EList) {
@@ -1364,6 +1362,19 @@ function bothInt(a: any, b: any): boolean {
   return isInt(a) && isInt(b);
 }
 
+// The gradual operator keeps the static rule: two values of one
+// fixed-width kind, never a coercion across kinds — `to_float64()`
+// names the conversion, and the runtime is not a place to skip it.
+function bothFloat(a: any, b: any): boolean {
+  return isFloat(a) && isFloat(b);
+}
+
+function numMix(op: string, expects: string, a: any, b: any): never {
+  throw new EEmoException(
+    `operator \`${op}\` expects ${expects}, got ${tag(a)} and ${tag(b)}`,
+  );
+}
+
 function wrap64(x: bigint): bigint {
   return BigInt.asIntN(64, x);
 }
@@ -1432,85 +1443,116 @@ const E: any = {
   add(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return a + b;
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) + (b as bigint));
-    if (bothInt(a, b)) return (a as number) + (b as number);
-    return new EFloat(unfloat(a) + unfloat(b));
+    if (bothInt(a, b)) return E.byteAdd(a as number, b as number);
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) + unfloat(b));
+    return numMix("+", "two numbers or two strings", a, b);
   },
   sub(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) - (b as bigint));
-    if (bothInt(a, b)) return (a as number) - (b as number);
-    return new EFloat(unfloat(a) - unfloat(b));
+    if (bothInt(a, b)) return E.byteSub(a as number, b as number);
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) - unfloat(b));
+    return numMix("-", "two numbers", a, b);
   },
   mul(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) * (b as bigint));
-    if (bothInt(a, b)) return (a as number) * (b as number);
-    return new EFloat(unfloat(a) * unfloat(b));
+    if (bothInt(a, b)) return E.byteMul(a as number, b as number);
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) * unfloat(b));
+    return numMix("*", "two numbers", a, b);
   },
   div(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Div(a as bigint, b as bigint);
-    if (bothInt(a, b)) return Math.trunc((a as number) / (b as number));
-    return new EFloat(unfloat(a) / unfloat(b));
+    if (bothInt(a, b)) return E.byteDiv(a as number, b as number);
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) / unfloat(b));
+    return numMix("/", "two numbers", a, b);
   },
   mod(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Mod(a as bigint, b as bigint);
-    if (bothInt(a, b)) return (a as number) % (b as number);
-    return new EFloat(unfloat(a) % unfloat(b));
+    if (bothInt(a, b)) return E.byteMod(a as number, b as number);
+    if (bothFloat(a, b)) return new EFloat(unfloat(a) % unfloat(b));
+    return numMix("%", "two numbers", a, b);
   },
-  // Bitwise work is integer work. JS bitwise ops run on int32, so
-  // results past 2^31 follow the platform's word — the width family
-  // (Int64/Byte) carries the exact contract later.
+  // `~` is the one bitwise operator with one operand to name.
   requireInt(v: any, op: string): number {
     if (!isInt(v)) throw new EEmoException(`operator \`${op}\` expects an Int64, got ${tag(v)}`);
     return v as number;
   },
+  // Bitwise work is integer work: two Int64s or two Bytes, never a
+  // coercion across kinds — a mixed pair refuses with the interpreter's
+  // own sentence, where a JS TypeError about BigInt stood. JS bitwise
+  // ops run on int32, so the Byte pair stays exact only because a byte
+  // is below 256; the width family (Int64/Byte) carries the contract.
   bitAnd(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) & (b as bigint));
-    return this.requireInt(a, "&") & this.requireInt(b, "&");
+    if (bothInt(a, b)) return (a as number) & (b as number);
+    return numMix("&", "two Int64s or two Bytes", a, b);
   },
   bitOr(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) | (b as bigint));
-    return this.requireInt(a, "|") | this.requireInt(b, "|");
+    if (bothInt(a, b)) return (a as number) | (b as number);
+    return numMix("|", "two Int64s or two Bytes", a, b);
   },
   bitXor(a: any, b: any) {
     if (isI64(a) && isI64(b)) return wrap64((a as bigint) ^ (b as bigint));
-    return this.requireInt(a, "^") ^ this.requireInt(b, "^");
+    if (bothInt(a, b)) return (a as number) ^ (b as number);
+    return numMix("^", "two Int64s or two Bytes", a, b);
   },
   shl(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Shl(a as bigint, b as bigint);
-    const n = this.requireInt(b, "<<");
-    if (n < 0) throw new EEmoException("shift count must be non-negative");
-    return this.requireInt(a, "<<") << n;
+    if (bothInt(a, b)) return E.byteShl(a as number, b as number);
+    return numMix("<<", "two Int64s or two Bytes", a, b);
   },
   shr(a: any, b: any) {
     if (isI64(a) && isI64(b)) return E.i64Shr(a as bigint, b as bigint);
-    const n = this.requireInt(b, ">>");
-    if (n < 0) throw new EEmoException("shift count must be non-negative");
-    return this.requireInt(a, ">>") >> n;
+    if (bothInt(a, b)) return E.byteShr(a as number, b as number);
+    return numMix(">>", "two Int64s or two Bytes", a, b);
   },
   bitNot(a: any) {
     if (isI64(a)) return wrap64(~(a as bigint));
+    if (isInt(a)) return E.byteBitNot(a as number);
     return ~this.requireInt(a, "~");
   },
+  // The evaluator's rule: `!` takes a Bool, and `&&`/`||` check each
+  // side the run actually evaluates — the refusal names the operator
+  // and the kind it met.
+  boolOf(v: any, op: string): boolean {
+    if (v === true || v === false) return v as boolean;
+    throw new EEmoException(
+      `operator \`${op}\` expects two Bools, got ${tag(v)}`,
+    );
+  },
+  not(v: any): boolean {
+    if (v === true) return false;
+    if (v === false) return true;
+    throw new EEmoException(`operator \`!\` expects a Bool, got ${tag(v)}`);
+  },
+  // The evaluator's rule: an Int64 or a Float64 negates, and a Byte
+  // does not — the refusal names the kind.
   neg(a: any) {
-    if (isInt(a)) return -(a as number);
-    return new EFloat(-unfloat(a));
+    if (isI64(a)) return E.i64Neg(a as bigint);
+    if (isFloat(a)) return new EFloat(-a.v);
+    throw new EEmoException(`operator \`-\` expects a number, got ${tag(a)}`);
   },
   lt(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return emoStrLt(a, b);
-    return unfloat(a) < unfloat(b);
+    if (bothInt(a, b) || bothFloat(a, b)) return unfloat(a) < unfloat(b);
+    return numMix("<", "two numbers", a, b);
   },
   le(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string")
       return !emoStrLt(b, a);
-    return unfloat(a) <= unfloat(b);
+    if (bothInt(a, b) || bothFloat(a, b)) return unfloat(a) <= unfloat(b);
+    return numMix("<=", "two numbers", a, b);
   },
   gt(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string") return emoStrLt(b, a);
-    return unfloat(a) > unfloat(b);
+    if (bothInt(a, b) || bothFloat(a, b)) return unfloat(a) > unfloat(b);
+    return numMix(">", "two numbers", a, b);
   },
   ge(a: any, b: any) {
     if (typeof a === "string" && typeof b === "string")
       return !emoStrLt(a, b);
-    return unfloat(a) >= unfloat(b);
+    if (bothInt(a, b) || bothFloat(a, b)) return unfloat(a) >= unfloat(b);
+    return numMix(">=", "two numbers", a, b);
   },
 
   // The fixed-width family. Int64 values are BigInts — arithmetic wraps
@@ -1607,6 +1649,9 @@ const E: any = {
       }
       if (name === "load" && recv instanceof EAtomic) return recv.v;
       if (name === "to_string" && recv instanceof EAtomic) return "<atomic>";
+      if (name === "to_string" && recv instanceof EPid)
+        return "<pid " + recv.id + ">";
+      if (name === "to_string" && recv instanceof EBox) return "<box>";
       if (name === "store" && recv instanceof EAtomic) {
         recv.v = args[0];
         return undefined;

@@ -1613,18 +1613,12 @@ let loop_tests =
     tc "the loop body opens on the header's line" (fun () ->
         let diagnostic = program_err "while x < 10\n{ x = x + 1 }" in
         Alcotest.(check string) "code" "E2001" (code_of diagnostic));
-    tc "emo is not an expression" (fun () ->
-        List.iter
-          (fun source ->
-            let diagnostic = program_err source in
-            Alcotest.(check string)
-              ("code of " ^ source) "E2028" (code_of diagnostic))
-          [
-            "println(emo.to_string(p))";
-            "const x = emo";
-            "const f = emo.to_string";
-            "println(emo.length(name: p))";
-          ]);
+    tc "a bare emo is not an expression" (fun () ->
+        (* `emo.<member>` is the runtime namespace's syntax — the member's
+           existence is the checker's question (an unknown door is E5004),
+           so only the bare token is the parser's own refusal. *)
+        let diagnostic = program_err "const x = emo" in
+        Alcotest.(check string) "code" "E2028" (code_of diagnostic));
   ]
 
 let atomic_tests =

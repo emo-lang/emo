@@ -189,6 +189,7 @@ emo_value emo_box_f64(double v);
 emo_value emo_box_str(emo_str s);
 emo_value emo_vbool(bool v);
 emo_value emo_vchar(int32_t v);
+emo_value emo_vbyte(uint8_t v);
 
 /* Unboxing: the dynamic world into a native scalar. A wrong-kind
    word is a runtime type error: printed like the interpreter's and
@@ -197,7 +198,10 @@ int64_t emo_unbox_i64(emo_value v);
 double emo_unbox_f64(emo_value v);
 emo_str emo_str_of(emo_value v); /* borrows the cell's bytes */
 bool emo_bool_of(emo_value v);
+bool emo_bool_dyn(emo_value v, const char *op);
+bool emo_not_dyn(emo_value v);
 int32_t emo_char_of(emo_value v);
+uint8_t emo_byte_of(emo_value v);
 
 /* Tuples, arrays, and Box. Tuples and arrays are value-semantic:
    the constructors copy the element words and equality is
@@ -350,16 +354,30 @@ int64_t emo_length(emo_value v);
 /* Dynamic operations — the runtime dispatches the interpreter's
    semantics when the static type is Unknown. Arithmetic and
    comparisons require the same kind on both sides, `+` on two
-   strings concatenates, and equality is structural. */
+   strings concatenates, and equality is structural. A mixed pair
+   refuses with the interpreter's own sentence: the operator, the rule,
+   and both kinds. */
 emo_value emo_add_dyn(emo_value a, emo_value b);
 emo_value emo_sub_dyn(emo_value a, emo_value b);
 emo_value emo_mul_dyn(emo_value a, emo_value b);
 emo_value emo_div_dyn(emo_value a, emo_value b);
 emo_value emo_mod_dyn(emo_value a, emo_value b);
 emo_value emo_neg_dyn(emo_value v);
+double emo_div_f64(double x, double y);
+double emo_fmod_f64(double x, double y);
+emo_value emo_bnot_dyn(emo_value v);
+emo_value emo_bit_and_dyn(emo_value a, emo_value b);
+emo_value emo_bit_or_dyn(emo_value a, emo_value b);
+emo_value emo_bit_xor_dyn(emo_value a, emo_value b);
+emo_value emo_shl_dyn(emo_value a, emo_value b);
+emo_value emo_shr_dyn(emo_value a, emo_value b);
+
+#include <math.h>
 bool emo_eq_dyn(emo_value a, emo_value b);
 bool emo_lt_dyn(emo_value a, emo_value b);
 bool emo_le_dyn(emo_value a, emo_value b);
+bool emo_gt_dyn(emo_value a, emo_value b);
+bool emo_ge_dyn(emo_value a, emo_value b);
 int64_t emo_str_cmp(emo_value a, emo_value b); /* byte order, the sort's compare */
 
 /* The one stringification rule over dynamic values: the scalar

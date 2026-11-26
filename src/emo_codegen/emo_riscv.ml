@@ -536,19 +536,21 @@ let sp_store env reg (off : int) : unit =
 
 (* Whether a value of this type may be an identity the claims track:
    the Unknown of a dynamic body, the class and interface names, the
-   Box, the closure. The value kinds — the numerics, the string, the
-   tuple, the array, the enum family, the Pid — carry no claims, and
-   the Atomic crosses processes, so its cell carries no count either:
-   the helpers would answer no-ops, and the emitter skips the work.
-   The Ref does count (step 91): its cell is the root registry's
-   resident, and a dropped root leaves the table the moment its last
-   claim releases — the same exactness the c runtime's EMO_REF gives
-   the collector. *)
+   Box, the closure, the Bytes. The value kinds — the numerics, the
+   string, the tuple, the array, the enum family, the Pid — carry no
+   claims, and the Atomic crosses processes, so its cell carries no
+   count either: the helpers would answer no-ops, and the emitter skips
+   the work. The Bytes counts (the crypto engines construct per
+   operation and the bump never gave a byte back): the cargo is raw
+   bytes, so its release is the freelist and no holdings walk. The Ref
+   does count (step 91): its cell is the root registry's resident, and
+   a dropped root leaves the table the moment its last claim releases —
+   the same exactness the c runtime's EMO_REF gives the collector. *)
 let may_own (t : Emo_check.t) : bool =
   match t with
   | Emo_check.Unknown | Emo_check.ClassType _ | Emo_check.InterfaceType _
   | Emo_check.BoxType _ | Emo_check.FuncType _ | Emo_check.Ref
-  | Emo_check.MapType _ ->
+  | Emo_check.MapType _ | Emo_check.Bytes ->
       true
   | _ -> false
 
@@ -616,6 +618,19 @@ let rec unwind_owned env (mark : int) : unit =
     put env "    call emo_release\n";
     unwind_owned env mark
   end
+
+(* A nested block's names live no longer than the block. The claim stack
+   unwinds at its exit (the caller's mark); the bound list has to come
+   back with it. A name that stayed bound past its scope made a sibling
+   block's same-named `const` a re-binding: the write barrier released
+   the slot's word — a block the previous scope had already released —
+   and the dead block entered the freelist twice, so two live
+   allocations answered one address (the metal's Digest sum read a box
+   the freelist had handed out again). *)
+let block env (body : unit -> unit) : unit =
+  let saved = env.bound in
+  body ();
+  env.bound <- saved
 
 (* ---- The pre-pass ---- *)
 
@@ -766,7 +781,10 @@ let rec expr_depth (e : Emo_ir.expr) : int =
   | Method { self_; args; _ } ->
       1 + List.length args
       + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 (self_ :: args)
-  | Box_new x | Atomic_new x -> 1 + expr_depth x
+  | Box_new x | Atomic_new x | Bytes_new x -> 1 + expr_depth x
+  | Make_exception { message; _ } -> 1 + expr_depth message
+  | Map_lit pairs ->
+      1 + List.fold_left (fun acc pair -> max acc (expr_depth pair)) 0 pairs
   | Do_spawn { args; _ } ->
       List.length args
       + List.fold_left (fun acc a -> max acc (expr_depth a)) 0 args
@@ -793,6 +811,14 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
         | Set_global_var { value; _ } -> expr_depth value
         | Set_field { self_; value; _ } ->
             1 + max (expr_depth self_) (expr_depth value)
+        | Assign_index { target; index; value } ->
+            (* the base, the index, and the value spill into slots of
+               their own, and the value evaluates a region deeper *)
+            2
+            + List.fold_left
+                (fun acc e -> max acc (expr_depth e))
+                0 [ target; index; value ]
+        | Raise e -> expr_depth e
         | If { cond; then_; else_ } ->
             max (expr_depth cond) (max (stmts_depth then_) (stmts_depth else_))
         | Return_stmt e -> expr_depth e
@@ -823,8 +849,7 @@ let rec stmts_depth (stmts : Emo_ir.stmt list) : int =
                     | Some g -> max (expr_depth g) (stmts_depth b.Emo_ir.body)
                     | None -> stmts_depth b.Emo_ir.body))
                 0 branches
-        | Break | Continue -> 0
-        | _ -> 0))
+        | Break | Continue -> 0))
     0 stmts
 
 (* The loop's hot reads (feat/modern-desktop): the names a body reads
@@ -1029,7 +1054,14 @@ let rec pool_expr env (ctr : int ref) (e : Emo_ir.expr) : unit =
   | Do_spawn { args; _ } -> List.iter (pool_expr env ctr) args
   | Builtin { args; _ } | Runtime_impl { args; _ } ->
       List.iter (pool_expr env ctr) args
-  | List_new x | Bytes_new x -> pool_expr env ctr x
+  | List_new x | Bytes_new x ->
+      pool_expr env ctr x;
+      (* a Bytes birth is a counted block: its claim pools like any
+         identity's *)
+      if
+        (match e.Emo_ir.desc with Bytes_new _ -> true | _ -> false)
+        && may_own e.Emo_ir.ety
+      then incr ctr
   | Make_exception { message; data } ->
       pool_expr env ctr message;
       Option.iter (pool_expr env ctr) data
@@ -1771,7 +1803,8 @@ let rec emit_expr env d (e : Emo_ir.expr) : unit =
         put env "    andi a0, a0, -32\n";
         put env "    ld a0, 8(a0)\n"
       end;
-      call_runtime env "emo_bytes_new"
+      call_runtime env "emo_bytes_new";
+      pool_result env e.Emo_ir.ety
   | Builder_new ->
       (* the growing array's empty birth (T8.25): one backing Array of
          no elements, one cell holding zero and it *)
@@ -2294,7 +2327,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
   (* A dynamic operand: the runtime dispatches on the values (the c
      target's emo_*_dyn family). A raw numeric operand boxes at the
      dynamic boundary — the helper reads tagged words. *)
-  if l.Emo_ir.ety = Emo_check.Unknown || r.Emo_ir.ety = Emo_check.Unknown then
+  if l.Emo_ir.ety = Emo_check.Unknown || r.Emo_ir.ety = Emo_check.Unknown then (
     match op with
     | Emo_ast.Eq | Emo_ast.Ne ->
         emit_expr env (d + 1) l;
@@ -2328,22 +2361,72 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
            here, the Call arm's rule *)
         if not boxed then unbox_if_numeric env ty
     | Emo_ast.Lt | Emo_ast.Le | Emo_ast.Gt | Emo_ast.Ge ->
-        (* Gt/Ge swap the operands onto Lt/Le, the c target's trick *)
-        let a, b =
-          if op = Emo_ast.Gt || op = Emo_ast.Ge then (r, l) else (l, r)
-        in
-        emit_expr env (d + 1) a;
-        box_if_numeric env a.Emo_ir.ety;
+        (* the operands ride in the source order, left then right:
+           `>` and `>=` have their own doors, so a mixed pair refuses
+           with the operator's own words and both kinds in order *)
+        emit_expr env (d + 1) l;
+        box_if_numeric env l.Emo_ir.ety;
         let spill = temp_offset env d in
         put env "    sd a0, %d(sp)\n" spill;
-        emit_expr env (d + 1) b;
-        box_if_numeric env b.Emo_ir.ety;
+        emit_expr env (d + 1) r;
+        box_if_numeric env r.Emo_ir.ety;
         put env "    mv a1, a0\n";
         put env "    ld a0, %d(sp)\n" spill;
         call_runtime env
-          (if op = Emo_ast.Lt || op = Emo_ast.Gt then "emo_lt_dyn"
-           else "emo_le_dyn")
-    | _ -> refuse "this operator on a dynamic value"
+          (match op with
+          | Emo_ast.Lt -> "emo_lt_dyn"
+          | Emo_ast.Le -> "emo_le_dyn"
+          | Emo_ast.Gt -> "emo_gt_dyn"
+          | _ -> "emo_ge_dyn")
+    | Emo_ast.Div | Emo_ast.Mod | Emo_ast.Bit_and | Emo_ast.Bit_or
+    | Emo_ast.Bit_xor | Emo_ast.Shl | Emo_ast.Shr ->
+        (* the dynamic lanes (item 7(f)): the runtime dispatches on the
+           values, Int64 and Byte only, with the evaluator's count and
+           zero rules *)
+        emit_expr env (d + 1) l;
+        box_if_numeric env l.Emo_ir.ety;
+        let spill = temp_offset env d in
+        put env "    sd a0, %d(sp)\n" spill;
+        emit_expr env (d + 1) r;
+        box_if_numeric env r.Emo_ir.ety;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" spill;
+        let helper =
+          match op with
+          | Emo_ast.Div -> "emo_div_dyn"
+          | Emo_ast.Mod -> "emo_mod_dyn"
+          | Emo_ast.Bit_and -> "emo_band_dyn"
+          | Emo_ast.Bit_or -> "emo_bor_dyn"
+          | Emo_ast.Bit_xor -> "emo_bxor_dyn"
+          | Emo_ast.Shl -> "emo_shl_dyn"
+          | _ -> "emo_shr_dyn"
+        in
+        call_runtime env helper;
+        if not boxed then unbox_if_numeric env ty
+    | (Emo_ast.And | Emo_ast.Or) as sop ->
+        (* the short-circuit on checked operands: the left decides or
+           the right answers, each side through the runtime's check —
+           the build used to refuse these on a dynamic value where the
+           evaluator runs them *)
+        let op_id = if sop = Emo_ast.And then 0 else 1 in
+        let short_word =
+          if sop = Emo_ast.And then "    li a0, 1\n" else "    li a0, 17\n"
+        in
+        let l_end = fresh_label env "sc" in
+        emit_expr env d l;
+        put env "    li a1, %d\n" op_id;
+        call_runtime env "emo_bool_checked";
+        if sop = Emo_ast.And then put env "    beqz a0, %s\n" l_end
+        else put env "    bnez a0, %s\n" l_end;
+        emit_expr env d r;
+        put env "    li a1, %d\n" op_id;
+        call_runtime env "emo_bool_checked";
+        put env "    slli a0, a0, 4\n";
+        put env "    ori a0, a0, 1\n";
+        put env "    j 1f\n";
+        put env "%s:\n" l_end;
+        put env "%s" short_word;
+        put env "1:\n")
   else
     match (op, ty) with
     | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
@@ -2452,6 +2535,19 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
     | (Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Div), Emo_check.Float64
       ->
         emit_float_pair env d l r;
+        if op = Emo_ast.Div then begin
+          (* the evaluator refuses a zero divisor for floats too (IEEE
+             would answer an infinity) *)
+          put env "    li t0, 0\n";
+          put env "    fcvt.d.w fa2, t0\n";
+          put env "    feq.d t0, fa1, fa2\n";
+          put env "    beqz t0, 1f\n";
+          let label = string_label env "division by zero" in
+          put env "    la a0, %s\n" label;
+          put env "    la a1, %s_end\n" label;
+          call_runtime env "emo_fail";
+          put env "1:\n"
+        end;
         let mnemonic =
           match op with
           | Emo_ast.Add -> "fadd.d"
@@ -2568,8 +2664,22 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         else put env "    bnez t0, %s\n" l_end;
         emit_expr env d r;
         put env "%s:\n" l_end
-    | Emo_ast.Div, _ | Emo_ast.Mod, _ ->
-        refuse "`/` and `%` (they arrive with runtime exceptions)"
+    | Emo_ast.Mod, Emo_check.Float64 ->
+        (* the evaluator refuses a zero divisor, and the remainder is
+           the exact binary long division (emo_fmod_d) *)
+        emit_float_pair env d l r;
+        put env "    li t0, 0\n";
+        put env "    fcvt.d.w fa2, t0\n";
+        put env "    feq.d t0, fa1, fa2\n";
+        put env "    beqz t0, 1f\n";
+        let label = string_label env "division by zero" in
+        put env "    la a0, %s\n" label;
+        put env "    la a1, %s_end\n" label;
+        call_runtime env "emo_fail";
+        put env "1:\n";
+        call_runtime env "emo_fmod_d";
+        if boxed then box_result env "emo_box_f64"
+    | Emo_ast.Div, _ | Emo_ast.Mod, _ -> refuse "this operator on this type"
     | _ -> refuse "this operator on this type"
 
 (* The int pair's operands (feat/modern-desktop): a mapped local's
@@ -2681,47 +2791,62 @@ and emit_float_pair env d (l : Emo_ir.expr) (r : Emo_ir.expr) : unit =
 
 and emit_unary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.unop)
     (x : Emo_ir.expr) : unit =
-  match (op, ty) with
-  | Emo_ast.Neg, Emo_check.Int64 ->
-      emit_expr env d x;
-      if not boxed then put env "    sub a0, x0, a0\n"
-      else begin
-        put env "    andi a0, a0, -32\n";
-        put env "    ld t0, 8(a0)\n";
-        put env "    sub t0, x0, t0\n";
-        put env "    mv a0, t0\n";
-        box_result env "emo_box_i64"
-      end
-  | Emo_ast.Neg, Emo_check.Float64 ->
-      emit_expr env d x;
-      if not boxed then put env "    fneg.d fa0, fa0\n"
-      else begin
-        put env "    andi a0, a0, -32\n";
-        put env "    fld fa0, 8(a0)\n";
-        put env "    fneg.d fa0, fa0\n";
-        box_result env "emo_box_f64"
-      end
-  | Emo_ast.Bit_not, Emo_check.Int64 ->
-      emit_expr env d x;
-      if not boxed then put env "    not a0, a0\n"
-      else begin
-        put env "    andi a0, a0, -32\n";
-        put env "    ld t0, 8(a0)\n";
+  (* A gradual operand's `-` and `~` take the runtime doors, which read
+     the value's own kind. The typed arms below key on the result's
+     static type, and a String read as an Int64 cell answered -1 for
+     `-"s"` before the doors (found 2026-11-25). *)
+  if
+    x.Emo_ir.ety = Emo_check.Unknown
+    && (op = Emo_ast.Neg || op = Emo_ast.Bit_not)
+  then begin
+    emit_expr env d x;
+    call_runtime env
+      (if op = Emo_ast.Neg then "emo_neg_dyn" else "emo_bnot_dyn");
+    if not boxed then unbox_if_numeric env ty
+  end
+  else
+    match (op, ty) with
+    | Emo_ast.Neg, Emo_check.Int64 ->
+        emit_expr env d x;
+        if not boxed then put env "    sub a0, x0, a0\n"
+        else begin
+          put env "    andi a0, a0, -32\n";
+          put env "    ld t0, 8(a0)\n";
+          put env "    sub t0, x0, t0\n";
+          put env "    mv a0, t0\n";
+          box_result env "emo_box_i64"
+        end
+    | Emo_ast.Neg, Emo_check.Float64 ->
+        emit_expr env d x;
+        if not boxed then put env "    fneg.d fa0, fa0\n"
+        else begin
+          put env "    andi a0, a0, -32\n";
+          put env "    fld fa0, 8(a0)\n";
+          put env "    fneg.d fa0, fa0\n";
+          box_result env "emo_box_f64"
+        end
+    | Emo_ast.Bit_not, Emo_check.Int64 ->
+        emit_expr env d x;
+        if not boxed then put env "    not a0, a0\n"
+        else begin
+          put env "    andi a0, a0, -32\n";
+          put env "    ld t0, 8(a0)\n";
+          put env "    not t0, t0\n";
+          put env "    mv a0, t0\n";
+          box_result env "emo_box_i64"
+        end
+    | Emo_ast.Bit_not, Emo_check.Byte ->
+        emit_expr env d x;
+        put env "    srli t0, a0, 4\n";
         put env "    not t0, t0\n";
-        put env "    mv a0, t0\n";
-        box_result env "emo_box_i64"
-      end
-  | Emo_ast.Bit_not, Emo_check.Byte ->
-      emit_expr env d x;
-      put env "    srli t0, a0, 4\n";
-      put env "    not t0, t0\n";
-      put env "    andi t0, t0, 255\n";
-      put env "    slli a0, t0, 4\n";
-      put env "    ori a0, a0, 7\n"
-  | Emo_ast.Not, _ ->
-      emit_expr env d x;
-      put env "    xori a0, a0, 16\n"
-  | _ -> refuse "this unary operator"
+        put env "    andi t0, t0, 255\n";
+        put env "    slli a0, t0, 4\n";
+        put env "    ori a0, a0, 7\n"
+    | Emo_ast.Not, _ ->
+        emit_expr env d x;
+        if x.Emo_ir.ety = Emo_check.Unknown then call_runtime env "emo_not_dyn"
+        else put env "    xori a0, a0, 16\n"
+    | _ -> refuse "this unary operator"
 
 and emit_interpolate env d (parts : Emo_ir.expr list) : unit =
   (* Every part becomes a String block through the runtime's to-string
@@ -3464,16 +3589,28 @@ and emit_tail env (e : Emo_ir.expr) : bool =
      instance on every read from a def (found on the way to
      emo-desktop A8.3, pinned in examples/def_values) *)
   let memo_thunk = List.mem (frame ()).fname !const_thunks in
+  (* A claim-bearing word crossing a non-self tail jump would be owned by
+     nobody: the caller retains it for the link, its own claim goes back
+     at the drain before the jump, and the callee — which borrows, the
+     entry edges' rule — never releases the link's claim, so the block
+     leaks with the dying frame. Such a call takes the plain road
+     instead: the frame lives until the callee returns, and the drain at
+     the ret label releases what the call borrowed. *)
+  let crossing (args : Emo_ir.expr list) : bool =
+    List.exists (fun (a : Emo_ir.expr) -> may_own a.Emo_ir.ety) args
+  in
   match e.Emo_ir.desc with
   | _ when memo_thunk -> false
   | Call { func; args } -> (
+      let self = String.equal func (frame ()).fname in
       match List.assoc_opt func env.fsigs with
-      | Some conv when result_compatible conv.cresult (mine ()) ->
+      | Some conv
+        when result_compatible conv.cresult (mine ())
+             && (self || not (crossing args)) ->
           if List.length args > 8 then
             refuse "a call with more than eight arguments";
           let n = List.length args in
           let f = frame () in
-          let self = String.equal func f.fname in
           List.iteri
             (fun i arg ->
               let spill = temp_offset env i in
@@ -3550,7 +3687,7 @@ and emit_tail env (e : Emo_ir.expr) : bool =
             true
           end
       | Some _ -> false
-      | None when result_compatible R_word (mine ()) ->
+      | None when result_compatible R_word (mine ()) && not (crossing args) ->
           let f = frame () in
           let n = List.length args in
           emit_args env 0 args;
@@ -3577,7 +3714,8 @@ and emit_tail env (e : Emo_ir.expr) : bool =
           put env "    tail %s\n" (func_label func);
           true
       | None -> false)
-  | Call_value { f; args } when result_compatible R_word (mine ()) ->
+  | Call_value { f; args }
+    when result_compatible R_word (mine ()) && not (crossing args) ->
       let ff = frame () in
       let fslot = temp_offset env 0 in
       emit_expr env 1 f;
@@ -3915,11 +4053,11 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         put env "    andi t0, a0, 16\n";
         put env "    beqz t0, %s\n" l_else
       end;
-      emit_stmts env then_;
+      block env (fun () -> emit_stmts env then_);
       unwind_owned env mark;
       put env "    j %s\n" l_end;
       put env "%s:\n" l_else;
-      emit_stmts env else_;
+      block env (fun () -> emit_stmts env else_);
       unwind_owned env mark;
       put env "%s:\n" l_end
   | Case { scrutinee; branches } ->
@@ -3941,24 +4079,25 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
              into the bind, the guard, and the body *)
           let l_next = fresh_label env "skip" in
           let l_fail = fresh_label env "guardfail" in
-          emit_pattern_test env scrut_slot b.Emo_ir.pattern l_next;
-          rec_pattern_bind env scrut_slot b.Emo_ir.pattern;
-          match b.Emo_ir.guard with
-          | Some g ->
-              emit_expr env 2 g;
-              put env "    andi t0, a0, 16\n";
-              put env "    beqz t0, %s\n" l_fail;
-              emit_stmts env b.Emo_ir.body;
-              unwind_owned env mark;
-              put env "    j %s\n" l_end;
-              put env "%s:\n" l_fail;
-              unwind_owned env mark;
-              put env "%s:\n" l_next
-          | None ->
-              emit_stmts env b.Emo_ir.body;
-              unwind_owned env mark;
-              put env "    j %s\n" l_end;
-              put env "%s:\n" l_next)
+          block env (fun () ->
+              emit_pattern_test env scrut_slot b.Emo_ir.pattern l_next;
+              rec_pattern_bind env scrut_slot b.Emo_ir.pattern;
+              match b.Emo_ir.guard with
+              | Some g ->
+                  emit_expr env 2 g;
+                  put env "    andi t0, a0, 16\n";
+                  put env "    beqz t0, %s\n" l_fail;
+                  emit_stmts env b.Emo_ir.body;
+                  unwind_owned env mark;
+                  put env "    j %s\n" l_end;
+                  put env "%s:\n" l_fail;
+                  unwind_owned env mark;
+                  put env "%s:\n" l_next
+              | None ->
+                  emit_stmts env b.Emo_ir.body;
+                  unwind_owned env mark;
+                  put env "    j %s\n" l_end;
+                  put env "%s:\n" l_next))
         branches;
       put env "%s:\n" l_end
   | Return_stmt e ->
@@ -4034,8 +4173,13 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
          (unsigned — a negative index reads as huge), then the store
          runs Set_field's own barrier order: the new word's retain
          before the old word's release, the element's address riding
-         a3 across both calls alone *)
+         a3 across both calls alone. The index spills into a slot of
+         its own before the value evaluates: a value's evaluation
+         spends the temp registers — a call's, a nested read's own
+         index — and the bounds check reads the index after it *)
       let self_slot = temp_offset env 0 in
+      let index_slot = temp_offset env 1 in
+      let value_slot = temp_offset env 2 in
       emit_expr env 1 target;
       put env "    sd a0, %d(sp)\n" self_slot;
       emit_expr env 1 index;
@@ -4045,18 +4189,20 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         put env "    andi a0, a0, -32\n";
         put env "    ld t2, 8(a0)\n"
       end;
-      emit_expr env 1 value;
+      sp_store env "t2" index_slot;
+      emit_expr env 2 value;
       box_if_numeric env value.Emo_ir.ety;
-      put env "    sd a0, %d(sp)\n" (temp_offset env 1);
+      sp_store env "a0" value_slot;
       put env "    ld t0, %d(sp)\n" self_slot;
       put env "    andi t0, t0, -32\n";
       let l_oob = fresh_label env "stoob" in
       put env "    ld t1, 8(t0)\n";
+      put env "    ld t2, %d(sp)\n" index_slot;
       put env "    bgeu t2, t1, %s\n" l_oob;
       put env "    slli t2, t2, 3\n";
       put env "    addi a3, t0, 16\n";
       put env "    add a3, a3, t2\n";
-      put env "    ld a0, %d(sp)\n" (temp_offset env 1);
+      put env "    ld a0, %d(sp)\n" value_slot;
       put env "    call emo_retain\n";
       put env "    mv a5, a0\n";
       put env "    ld a0, 0(a3)\n";
@@ -4123,52 +4269,54 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         (fun (b : Emo_ir.branch) ->
           let l_next = fresh_label env "skip" in
           let l_fail = fresh_label env "guardfail" in
-          emit_pattern_test env msg_slot b.Emo_ir.pattern l_next;
-          (* accepted by the pattern: the message crosses heaps now —
-             the copy-out (T5.2) lands it in this process's own arena
-             before any binding reads a word of it, because the
-             sender's arena reclaims the moment this receive clears
-             the last pin. The sender ring decides what is a value: a
-             gate request (the kernel's raw word) rides as-is. A guard
-             that still fails wastes the copy's quota and nothing else;
-             the pin holds and the scan continues over the copy, which
-             answers exactly as the snapshot would. *)
-          put env "    ld a0, %d(sp)\n" msg_slot;
-          put env "    mv a1, s0\n";
-          put env "    call emo_copy_out_at\n";
-          put env "    sd a0, %d(sp)\n" msg_slot;
-          (* the clone's claim: the frame pool's, released at the scan's
-             drain (a failed candidate) or the statement's end (an
-             accepted one — the bindings hold their own) *)
-          pool_result env Emo_check.Unknown;
-          rec_pattern_bind env msg_slot b.Emo_ir.pattern;
-          match b.Emo_ir.guard with
-          | Some g ->
-              emit_expr env 3 g;
-              put env "    andi t0, a0, 16\n";
-              put env "    beqz t0, %s\n" l_fail;
-              (* accepted: the message leaves the mailbox, the body runs *)
-              put env "    mv a0, s0\n";
-              put env "    call emo_mb_remove\n";
-              emit_stmts env b.Emo_ir.body;
-              unwind_owned env mark;
-              put env "    j %s\n" l_end;
-              put env "%s:\n" l_fail;
-              unwind_owned env mark;
-              (* the failed candidate's clone releases here, so the next
-                 candidate's clone pools into a fresh window (T8.7's
-                 pool) *)
-              (match env.cur with
-              | Some f -> pool_drain env f
-              | None -> ());
-              put env "%s:\n" l_next
-          | None ->
-              put env "    mv a0, s0\n";
-              put env "    call emo_mb_remove\n";
-              emit_stmts env b.Emo_ir.body;
-              unwind_owned env mark;
-              put env "    j %s\n" l_end;
-              put env "%s:\n" l_next)
+          block env (fun () ->
+              emit_pattern_test env msg_slot b.Emo_ir.pattern l_next;
+              (* accepted by the pattern: the message crosses heaps now —
+                 the copy-out (T5.2) lands it in this process's own arena
+                 before any binding reads a word of it, because the
+                 sender's arena reclaims the moment this receive clears
+                 the last pin. The sender ring decides what is a value: a
+                 gate request (the kernel's raw word) rides as-is. A guard
+                 that still fails wastes the copy's quota and nothing else;
+                 the pin holds and the scan continues over the copy, which
+                 answers exactly as the snapshot would. *)
+              put env "    ld a0, %d(sp)\n" msg_slot;
+              put env "    mv a1, s0\n";
+              put env "    call emo_copy_out_at\n";
+              put env "    sd a0, %d(sp)\n" msg_slot;
+              (* the clone's claim: the frame pool's, released at the
+                 scan's drain (a failed candidate) or the statement's end
+                 (an accepted one — the bindings hold their own) *)
+              pool_result env Emo_check.Unknown;
+              rec_pattern_bind env msg_slot b.Emo_ir.pattern;
+              match b.Emo_ir.guard with
+              | Some g ->
+                  emit_expr env 3 g;
+                  put env "    andi t0, a0, 16\n";
+                  put env "    beqz t0, %s\n" l_fail;
+                  (* accepted: the message leaves the mailbox, the body
+                     runs *)
+                  put env "    mv a0, s0\n";
+                  put env "    call emo_mb_remove\n";
+                  emit_stmts env b.Emo_ir.body;
+                  unwind_owned env mark;
+                  put env "    j %s\n" l_end;
+                  put env "%s:\n" l_fail;
+                  unwind_owned env mark;
+                  (* the failed candidate's clone releases here, so the
+                     next candidate's clone pools into a fresh window
+                     (T8.7's pool) *)
+                  (match env.cur with
+                  | Some f -> pool_drain env f
+                  | None -> ());
+                  put env "%s:\n" l_next
+              | None ->
+                  put env "    mv a0, s0\n";
+                  put env "    call emo_mb_remove\n";
+                  emit_stmts env b.Emo_ir.body;
+                  unwind_owned env mark;
+                  put env "    j %s\n" l_end;
+                  put env "%s:\n" l_next))
         branches;
       put env "    addi s0, s0, 1\n";
       put env "    j %s\n" l_test;
@@ -4201,7 +4349,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         put env "    beqz t0, %s\n" exit_l
       end;
       env.loops <- (exit_l, head, mark) :: env.loops;
-      emit_stmts env body;
+      block env (fun () -> emit_stmts env body);
       env.loops <- List.tl env.loops;
       unwind_owned env mark;
       put env "    j %s\n" head;
@@ -4214,6 +4362,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
          at the exit; the body's release at every back edge, and at
          every break and continue. *)
       let outer = List.length env.owned in
+      let saved_bound = env.bound in
       emit_stmt env init;
       let mark = List.length env.owned in
       let head = fresh_label env "loop" in
@@ -4226,7 +4375,7 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
         put env "    beqz t0, %s\n" exit_l
       end;
       env.loops <- (exit_l, post_l, mark) :: env.loops;
-      emit_stmts env body;
+      block env (fun () -> emit_stmts env body);
       env.loops <- List.tl env.loops;
       unwind_owned env mark;
       put env "%s:\n" post_l;
@@ -4236,7 +4385,10 @@ and emit_stmt env (st : Emo_ir.stmt) : unit =
       emit_stmt env post;
       put env "    j %s\n" head;
       put env "%s:\n" exit_l;
-      unwind_owned env outer
+      unwind_owned env outer;
+      (* the header's names (the loop variable among them) leave with
+         the loop *)
+      env.bound <- saved_bound
   | Break -> (
       match env.loops with
       | (exit_l, _, mark) :: _ ->
@@ -4745,8 +4897,10 @@ let emit_ctor env (c : Emo_ir.class_) (info : class_info) : unit =
   gput env "    call emo_instance_new\n";
   (* the fresh self's birth claim is the frame's own — the owned stack
      holds it, never the pool: the init body's statement boundaries
-     must not reclaim the object under construction (T8.7's pool) *)
-  gput env "    call emo_retain\n";
+     must not reclaim the object under construction (T8.7's pool). No
+     second retain here: the birth claim IS the frame's, and the exit's
+     unwind gives it back — a retain on top left every construction one
+     claim over its owner, and the object never reached zero *)
   env.owned <- [ ("self", 8 + (8 * nparams)) ];
   gput env "    sd a0, %d(sp)\n" (8 + (8 * nparams));
   (* the pool word starts at zero, like every body's (T8.7's pool) *)
@@ -5266,6 +5420,8 @@ emo_retain:
     beq t0, t1, .Lret_bump
     li t1, 6                # Closure
     beq t0, t1, .Lret_bump
+    li t1, 10               # Bytes: the counted buffer (the wall's close)
+    beq t0, t1, .Lret_bump
     li t1, 12               # Ref: the root registry counts its cells
     beq t0, t1, .Lret_bump
     li t1, 13               # Map: the entries' claims ride the cell
@@ -5293,6 +5449,7 @@ emo_release:
     la t1, emo_cur_slot
     ld t1, 0(t1)
     j emo_release_walk
+
     .globl emo_release_in
 emo_release_in:
     mv t1, a1               # the slot whose freelist serves the push
@@ -5320,6 +5477,8 @@ emo_release_walk:
     beq t0, t2, .Lrel_ident
     li t2, 7                # Instance
     beq t0, t2, .Lrel_ident
+    li t2, 10               # Bytes: counted, its cargo raw bytes
+    beq t0, t2, .Lrel_ident
     li t2, 12               # Ref: counted like the identity kinds —
     beq t0, t2, .Lrel_ident #   the registry's exact oracle (step 91)
     li t2, 13               # Map: counted like the identity kinds
@@ -5341,6 +5500,8 @@ emo_release_walk:
     sd t3, 0(t2)
     srli t4, t3, 32
     bnez t4, .Lrel_done     # still held
+    li t4, 10               # the Bytes: raw cargo, straight to the freelist
+    beq t0, t4, .Lrel_free
     li t4, 12               # the Ref's cell: unlink, no holdings walk —
     beq t0, t4, .Lrel_ref   #   the payload is a raw heap word, never a
                             #   tagged value the release may walk
@@ -5359,12 +5520,31 @@ emo_release_walk:
     call emo_release
     j .Lrel_free
 .Lrel_seq_loop:
-    beqz t5, .Lrel_free
-    ld a0, 0(t6)
+    # the field walk's state rides s-regs saved on a sub-frame of the
+    # release's own: a field that is itself a Closure or Instance runs
+    # this walk recursively, and its t5/t6 would otherwise be the
+    # cursor and count the caller resumes on — the nested walk's own
+    # count then steers the outer loop off the block (found in the
+    # desktop corpus: nested instances walked the arena's end).
+    addi sp, sp, -40
+    sd s2, 0(sp)
+    sd s3, 8(sp)
+    sd s4, 16(sp)
+    mv s2, t6               # the cursor
+    mv s3, t5               # the fields left
+.Lrel_seq:
+    beqz s3, .Lrel_seq_out
+    ld a0, 0(s2)
     call emo_release
-    addi t6, t6, 8
-    addi t5, t5, -1
-    j .Lrel_seq_loop
+    addi s2, s2, 8
+    addi s3, s3, -1
+    j .Lrel_seq
+.Lrel_seq_out:
+    ld s2, 0(sp)
+    ld s3, 8(sp)
+    ld s4, 16(sp)
+    addi sp, sp, 40
+    j .Lrel_free
 .Lrel_map:
     # the entries' own words release first, then the entries block and
     # the buckets block go home to the freelist — the cell itself rides
@@ -5494,6 +5674,7 @@ emo_print_bytes:
     call emo_console_emit
     addi s0, s0, 1
     j .Lpb
+
 .Lpb_done:
     ld ra, 0(sp)
     ld s0, 8(sp)
@@ -6397,27 +6578,67 @@ emo_string_eq:
 
 # ---- Bytes (T8.24): the mutable byte buffer ----
 # A Bytes block is a String-layout block of kind 10 — [header][length]
-# [bytes padded to 8] — the mutability the difference: copy_deep copies
-# it (the generic container walk its payload count already serves), eq
-# compares it by content (the String's own comparator), and it carries
-# no refcount (not an identity kind).
+# [bytes padded to 8] — with an identity's refcount in the header's
+# high half: the crypto engines construct per operation, and the bump
+# never gave a byte back, so the buffer joined the counted kinds (the
+# metal's Bytes wall's close). Its cargo is raw bytes, not values: a
+# release reaching zero goes straight to the freelist, no holdings
+# walk. The birth serves the freelist first, like every identity's.
 
-# emo_alloc_bytes: a0 = length; a0 = a zeroed, tagged Bytes.
+# emo_alloc_bytes: a0 = length; a0 = a zeroed, tagged Bytes, refcount 1.
     .globl emo_alloc_bytes
 emo_alloc_bytes:
-    addi sp, sp, -16
+    addi sp, sp, -32
     sd ra, 0(sp)
-    sd a0, 8(sp)
+    sd s0, 8(sp)
+    sd a0, 16(sp)           # the length
     addi t0, a0, 7
     srli t0, t0, 3
-    addi t0, t0, 1
-    mv a0, t0
+    addi t0, t0, 1          # payload words = the length word + the bytes
+    sd t0, 24(sp)
+    la t1, emo_cur_slot
+    ld t1, 0(t1)
+    ld t5, 584(t1)          # the arena's end; the freelist head at -8
+    ld t2, -8(t5)
+    li t3, 0                # the walk's predecessor
+.Lab_scan:
+    beqz t2, .Lab_bump
+    ld t4, 0(t2)            # the freed header: refcount 0, the count below
+    slli t6, t4, 32
+    srli t6, t6, 32         # the count, zero-extended
+    ld t0, 24(sp)
+    bgeu t6, t0, .Lab_fit
+    mv t3, t2
+    ld t2, 8(t2)            # the link
+    j .Lab_scan
+.Lab_fit:
+    ld t4, 8(t2)            # the successor
+    beqz t3, 1f
+    sd t4, 8(t3)
+    j 2f
+1:  sd t4, -8(t5)           # the head moves
+2:  li t4, 1
+    slli t4, t4, 32
+    ld t0, 24(sp)
+    or t4, t4, t0           # refcount 1, the requested count
+    sd t4, 0(t2)
+    mv s0, t2
+    j .Lab_shape
+.Lab_bump:
+    ld a0, 24(sp)
     call emo_alloc
-    ld t1, 8(sp)
-    sd t1, 8(a0)
-    addi t0, t1, 7           # zero the payload words: the interpreter's
-    srli t0, t0, 3           #   Bytes.new is a zero-filled buffer
-    add t2, a0, 16
+    ld t4, 0(a0)
+    li t3, 1
+    slli t3, t3, 32
+    or t4, t4, t3
+    sd t4, 0(a0)            # refcount 1
+    mv s0, a0
+.Lab_shape:
+    ld t1, 16(sp)
+    sd t1, 8(s0)            # the length word
+    addi t0, t1, 7          # zero the payload words: the interpreter's
+    srli t0, t0, 3          #   Bytes.new is a zero-filled buffer, and a
+    add t2, s0, 16          #   freelist block arrives holding garbage
 .Lab_zero:
     beqz t0, .Lab_zdone
     sd zero, 0(t2)
@@ -6425,9 +6646,11 @@ emo_alloc_bytes:
     addi t0, t0, -1
     j .Lab_zero
 .Lab_zdone:
+    mv a0, s0
     ori a0, a0, 20
     ld ra, 0(sp)
-    addi sp, sp, 16
+    ld s0, 8(sp)
+    addi sp, sp, 32
     ret
 
 # emo_bytes_new: a0 = the raw byte count (the emitter detags a boxed
@@ -6774,15 +6997,30 @@ emo_builder_new:
 # a0 = the builder (the pushes chain). A builder a raw push has claimed
 # (the mark below the size) refuses a tagged value loudly — one
 # representation per builder, the mixing the arena track's chase died
-# of twice.
+# of twice. The tagged path takes the builder's claim on the word it
+# stores — a counted Bytes would free under it — and only that path:
+# a raw builder's payload is a number, and a retain over it would read
+# the number as a tagged word and write a header somewhere no block
+# stands (the Inter face's outline words hang the machine that way).
     .globl emo_builder_push
 emo_builder_push:
     andi t0, a0, -32
     ld t0, 24(t0)
-    beqz t0, emo_builder_store
+    beqz t0, .Lbp_tagged
     la a0, msg_builder_mix
     la a1, msg_builder_mix_end
     tail emo_fail
+.Lbp_tagged:
+    addi sp, sp, -16
+    sd ra, 0(sp)
+    sd a0, 8(sp)
+    mv a0, a1
+    call emo_retain
+    mv a1, a0
+    ld a0, 8(sp)
+    ld ra, 0(sp)
+    addi sp, sp, 16
+    tail emo_builder_store
 
 # the store itself, value verbatim: the grow, the copy, the size step.
 emo_builder_store:
@@ -6969,9 +7207,21 @@ emo_builder_to_array:
     addi t3, t3, 8
     addi s2, s2, -1
     bnez s2, 5b
-    beqz s4, .Lbta_done
+    beqz s4, .Lbta_claim
     li t0, -1
     sd t0, 0(s5)              # a raw builder's array wears the raw mark
+    j .Lbta_done
+.Lbta_claim:
+    # a tagged array holds every element's claim — the builder keeps its
+    # own, and a counted Bytes would free under the array otherwise
+    ld s2, 8(s5)
+    addi s1, s5, 16
+6:  beqz s2, .Lbta_done
+    ld a0, 0(s1)
+    call emo_retain
+    addi s1, s1, 8
+    addi s2, s2, -1
+    j 6b
 .Lbta_done:
     mv a0, s5
     ori a0, a0, 8
@@ -7125,11 +7375,14 @@ emo_string_index_of:
 # with the value on the end (the original is untouched).
     .globl emo_array_append
 emo_array_append:
-    addi sp, sp, -48
+    addi sp, sp, -64
     sd ra, 0(sp)
     sd s0, 8(sp)
     sd s1, 16(sp)
     sd s2, 24(sp)
+    sd s3, 32(sp)             # the source cursor
+    sd s4, 40(sp)             # the destination cursor
+    sd s5, 48(sp)             # the new block
     mv s1, a1                 # the value, out of the call's way
     andi s0, a0, -32
     ld t0, 0(s0)
@@ -7140,27 +7393,35 @@ emo_array_append:
     ld s2, 8(s0)
     addi a0, s2, 2
     call emo_alloc
+    mv s5, a0
     addi t1, s2, 1
     sd t1, 8(a0)
-    addi t2, a0, 16
-    addi t3, s0, 16
+    addi s4, a0, 16
+    addi s3, s0, 16
     mv t5, s2
     beqz t5, .Lap_last
 .Lap_copy:
-    ld t4, 0(t3)
-    sd t4, 0(t2)
-    addi t3, t3, 8
-    addi t2, t2, 8
+    ld a0, 0(s3)
+    call emo_retain           # the new array holds every element it
+    sd a0, 0(s4)              #   copies — the source keeps its own
+    addi s3, s3, 8
+    addi s4, s4, 8
     addi t5, t5, -1
     bnez t5, .Lap_copy
 .Lap_last:
-    sd s1, 0(t2)
+    mv a0, s1
+    call emo_retain           # and the appended value's
+    sd a0, 0(s4)
+    mv a0, s5
     ori a0, a0, 8
     ld ra, 0(sp)
     ld s0, 8(sp)
     ld s1, 16(sp)
     ld s2, 24(sp)
-    addi sp, sp, 48
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 64
     ret
 
 # emo_sort_cmp: a0 = a, a1 = b, a2 = the compare mode; a0 = -1 / 0 / 1.
@@ -7947,12 +8208,26 @@ emo_dyn_method:
 
 # ---- Dynamic arithmetic ----
 #
-# emo_add_dyn / emo_sub_dyn / emo_mul_dyn / emo_lt_dyn / emo_le_dyn:
-# a0 = a1 = dynamic values; the result boxed or a Bool immediate
-# (Gt/Ge swap their operands at the call site).
+# emo_add_dyn / emo_sub_dyn / emo_mul_dyn / emo_lt_dyn / emo_le_dyn /
+# emo_gt_dyn / emo_ge_dyn: a0 = a1 = dynamic values; the result boxed
+# or a Bool immediate. The kind test reads the low five bits: 0 the
+# boxed Int64, 2 the boxed Float64, 4 the String, 7 the Byte immediate
+# (kind 3, bit 0 set) — a Byte answers a Byte, the eight-bit wrap the
+# typed lane's own, and the kinds' equality test below keeps a mixed
+# Byte/Int64 pair the loud refusal the interpreter is. An immediate's
+# bit 4 is payload, not kind, so an odd tag masks to its low four bits
+# first (the cell tags are even and wider — 16 the Atomic, 18 the Pid —
+# and must keep the five).
+#
+# Each entry sets t3 to its operator's id before the dispatch, and a
+# mixed pair ends at .Ldyn_bad with the sentence the interpreter
+# answers (E3001): the operator's own words, both kinds. `>` and `>=`
+# compare through `<` and `<=` over the swapped operands, so their
+# entries swap first and the fail path swaps the sentence back.
 
     .globl emo_add_dyn
 emo_add_dyn:
+    li t3, 0
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -7961,13 +8236,29 @@ emo_add_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Lad_int
     li t2, 2
     beq t0, t2, .Lad_float
     li t2, 4
     beq t0, t2, .Lad_str
+    li t2, 7
+    beq t0, t2, .Lad_byte
     j .Ldyn_bad
+.Lad_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    add t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
 .Lad_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -7996,6 +8287,7 @@ emo_add_dyn:
 
     .globl emo_sub_dyn
 emo_sub_dyn:
+    li t3, 1
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8004,11 +8296,27 @@ emo_sub_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Lsb_int
     li t2, 2
     beq t0, t2, .Lsb_float
+    li t2, 7
+    beq t0, t2, .Lsb_byte
     j .Ldyn_bad
+.Lsb_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    sub t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
 .Lsb_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -8024,6 +8332,7 @@ emo_sub_dyn:
 
     .globl emo_mul_dyn
 emo_mul_dyn:
+    li t3, 2
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8032,11 +8341,27 @@ emo_mul_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Lmu_int
     li t2, 2
     beq t0, t2, .Lmu_float
+    li t2, 7
+    beq t0, t2, .Lmu_byte
     j .Ldyn_bad
+.Lmu_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    mul t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
 .Lmu_int:
     ld a0, 8(s0)
     ld a1, 8(s1)
@@ -8050,8 +8375,16 @@ emo_mul_dyn:
     call emo_box_f64
     j .Ldyn_done
 
-    .globl emo_lt_dyn
-emo_lt_dyn:
+
+# The bitwise, shift, division and remainder doors: the same
+# prologue as the arithmetic family, Int64 and Byte only — the
+# evaluator's own domains. The shifts carry its count rules (a
+# negative count refuses, at or past the width answers zero, the
+# right shift sign-extending), the divisions its zero refusal.
+
+    .globl emo_div_dyn
+emo_div_dyn:
+    li t3, 7
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8060,13 +8393,420 @@ emo_lt_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Ldiv_int
+    li t2, 2
+    beq t0, t2, .Ldiv_float
+    li t2, 7
+    beq t0, t2, .Ldiv_byte
+    j .Ldyn_bad
+.Ldiv_float:
+    # the evaluator refuses a zero divisor for floats too (IEEE would
+    # answer an infinity)
+    fld fa0, 8(s0)
+    fld fa1, 8(s1)
+    li t0, 0
+    fcvt.d.w fa2, t0
+    feq.d t0, fa1, fa2
+    bnez t0, .Ldiv_zero
+    fdiv.d fa0, fa0, fa1
+    call emo_box_f64
+    j .Ldyn_done
+.Ldiv_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    beqz a1, .Ldiv_zero
+    div a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Ldiv_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    beqz t1, .Ldiv_zero
+    div t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Ldiv_zero:
+    la a0, msg_div_zero
+    la a1, msg_div_zero_end
+    call emo_fail
+
+    .globl emo_mod_dyn
+emo_mod_dyn:
+    li t3, 8
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lmod_int
+    li t2, 2
+    beq t0, t2, .Lmod_float
+    li t2, 7
+    beq t0, t2, .Lmod_byte
+    j .Ldyn_bad
+.Lmod_float:
+    fld fa0, 8(s0)
+    fld fa1, 8(s1)
+    li t0, 0
+    fcvt.d.w fa2, t0
+    feq.d t0, fa1, fa2
+    bnez t0, .Lmod_zero
+    call emo_fmod_d
+    call emo_box_f64
+    j .Ldyn_done
+.Lmod_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    beqz a1, .Lmod_zero
+    rem a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lmod_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    beqz t1, .Lmod_zero
+    rem t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Lmod_zero:
+    la a0, msg_div_zero
+    la a1, msg_div_zero_end
+    call emo_fail
+
+    .globl emo_band_dyn
+emo_band_dyn:
+    li t3, 9
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lband_int
+    li t2, 7
+    beq t0, t2, .Lband_byte
+    j .Ldyn_bad
+.Lband_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    and a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lband_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    and t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+
+    .globl emo_bor_dyn
+emo_bor_dyn:
+    li t3, 10
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lbor_int
+    li t2, 7
+    beq t0, t2, .Lbor_byte
+    j .Ldyn_bad
+.Lbor_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    or a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lbor_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    or t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+
+    .globl emo_bxor_dyn
+emo_bxor_dyn:
+    li t3, 11
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lbxor_int
+    li t2, 7
+    beq t0, t2, .Lbxor_byte
+    j .Ldyn_bad
+.Lbxor_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    xor a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lbxor_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    xor t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+
+    .globl emo_shl_dyn
+emo_shl_dyn:
+    li t3, 12
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lshl_int
+    li t2, 7
+    beq t0, t2, .Lshl_byte
+    j .Ldyn_bad
+.Lshl_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    bltz a1, .Lshl_neg
+    li t2, 64
+    bge a1, t2, .Lshl_zero
+    sll a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lshl_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    bltz t1, .Lshl_neg
+    li t2, 8
+    bge t1, t2, .Lshl_zero
+    sll t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Lshl_zero:
+    li a0, 0
+    call emo_box_i64
+    j .Ldyn_done
+.Lshl_neg:
+    la a0, msg_shift_neg
+    la a1, msg_shift_neg_end
+    call emo_fail
+
+    .globl emo_shr_dyn
+emo_shr_dyn:
+    li t3, 13
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lshr_int
+    li t2, 7
+    beq t0, t2, .Lshr_byte
+    j .Ldyn_bad
+.Lshr_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    bltz a1, .Lshr_neg
+    li t2, 64
+    bge a1, t2, .Lshr_sat
+    sra a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lshr_sat:
+    srai a0, a0, 63
+    call emo_box_i64
+    j .Ldyn_done
+.Lshr_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    bltz t1, .Lshr_neg
+    li t2, 8
+    bge t1, t2, .Lshr_bytezero
+    srl t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Lshr_bytezero:
+    li t0, 0
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Lshr_neg:
+    la a0, msg_shift_neg
+    la a1, msg_shift_neg_end
+    call emo_fail
+
+# emo_fmod_d: fa0 = x, fa1 = y (y not zero); fa0 = fmod(x, y) — the
+# sign of x, exact. The D extension has no remainder instruction, so
+# this is the binary long division the wasm target carries: |y| doubles
+# while it is at most x/2 (a power-of-two scale, exact), then the loop
+# subtracts it down — every subtraction runs with d <= x < 2d, where
+# Sterbenz's lemma makes it exact — halving d back toward |y| after
+# each pass. The gates answer the special cases first: a NaN operand
+# answers NaN, an infinite y answers x, an infinite x answers NaN, and
+# |x| < |y| answers x (the equal pair falls through to a signed zero).
+    .globl emo_fmod_d
+emo_fmod_d:
+    li t0, 0
+    fcvt.d.w fa7, t0            # 0.0, the NaN recipe's dividend
+    feq.d t0, fa0, fa0
+    beqz t0, .Lfmod_nan         # x is NaN
+    feq.d t0, fa1, fa1
+    beqz t0, .Lfmod_nan         # y is NaN
+    fsub.d fa5, fa1, fa1
+    feq.d t0, fa5, fa5
+    beqz t0, .Lfmod_retx        # y is infinite: x
+    fsub.d fa5, fa0, fa0
+    feq.d t0, fa5, fa5
+    beqz t0, .Lfmod_nan         # x is infinite: NaN
+    fsgnjx.d fa2, fa0, fa0      # |x|, the running remainder
+    fsgnjx.d fa3, fa1, fa1      # |y|
+    flt.d t0, fa2, fa3
+    bnez t0, .Lfmod_retx        # |x| < |y|: x
+    li t0, 2
+    fcvt.d.w fa5, t0            # 2.0
+    li t0, 1
+    fcvt.d.w fa6, t0
+    fdiv.d fa6, fa6, fa5        # 0.5
+    fmv.d fa4, fa3              # d = |y|
+.Lfmod_scale:
+    fmul.d fa7, fa2, fa6        # x/2 (the zero constant is spent by now)
+    fle.d t0, fa4, fa7
+    beqz t0, .Lfmod_sub
+    fmul.d fa4, fa4, fa5        # d *= 2 — never past x, so never overflows
+    j .Lfmod_scale
+.Lfmod_sub:
+    flt.d t0, fa2, fa4
+    bnez t0, .Lfmod_halve       # x < d: no subtraction this pass
+    fsub.d fa2, fa2, fa4        # exact (d <= x < 2d)
+.Lfmod_halve:
+    feq.d t0, fa4, fa3
+    bnez t0, .Lfmod_retx        # d is back at |y|: the remainder stands
+    fmul.d fa4, fa4, fa6        # d /= 2
+    j .Lfmod_sub
+.Lfmod_retx:
+    fsgnj.d fa0, fa2, fa0       # the remainder with x's sign
+    ret
+.Lfmod_nan:
+    fdiv.d fa0, fa7, fa7        # 0.0/0.0 — the quiet NaN
+    ret
+
+    .globl emo_lt_dyn
+emo_lt_dyn:
+    li t3, 3
+    j .Llt_body
+    .globl emo_gt_dyn
+emo_gt_dyn:
+    mv t0, a0
+    mv a0, a1
+    mv a1, t0
+    li t3, 5
+    j .Llt_body
+.Llt_body:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Llt_int
     li t2, 2
     beq t0, t2, .Llt_float
     li t2, 4
     beq t0, t2, .Llt_str
+    li t2, 7
+    beq t0, t2, .Llt_byte
     j .Ldyn_bad
+.Llt_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    slt t0, t0, t1
+    j .Lcmp_pack
 .Llt_str:
     # the strings' order is the sort's compare (mode 2: bytes, the
     # shorter length settling a matched prefix); `<` is its -1
@@ -8087,6 +8827,16 @@ emo_lt_dyn:
 
     .globl emo_le_dyn
 emo_le_dyn:
+    li t3, 4
+    j .Lle_body
+    .globl emo_ge_dyn
+emo_ge_dyn:
+    mv t0, a0
+    mv a0, a1
+    mv a1, t0
+    li t3, 6
+    j .Lle_body
+.Lle_body:
     addi sp, sp, -32
     sd ra, 0(sp)
     sd s0, 8(sp)
@@ -8095,13 +8845,27 @@ emo_le_dyn:
     andi s1, a1, -32
     andi t0, a0, 31
     andi t1, a1, 31
-    bne t0, t1, .Ldyn_bad
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
     beqz t0, .Lle_int
     li t2, 2
     beq t0, t2, .Lle_float
     li t2, 4
     beq t0, t2, .Lle_str
+    li t2, 7
+    beq t0, t2, .Lle_byte
     j .Ldyn_bad
+.Lle_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    slt t0, t1, t0
+    xori t0, t0, 1
+    j .Lcmp_pack
 .Lle_str:
     # `<=` on the sort's -1/0/1 is the compare below 1
     li a2, 2
@@ -8129,9 +8893,371 @@ emo_le_dyn:
     addi sp, sp, 32
     ret
 .Ldyn_bad:
-    la a0, msg_arith
-    la a1, msg_arith_end
+    # The interpreter's own sentence (E3001): the operator's words — t3
+    # the id the entry set — then the two kinds. `>` and `>=` arrive
+    # swapped for the compare; the sentence takes them back in the
+    # source order.
+    li t4, 5
+    beq t3, t4, .Ldyn_bad_swap
+    li t4, 6
+    beq t3, t4, .Ldyn_bad_swap
+    j .Ldyn_bad_go
+.Ldyn_bad_swap:
+    mv t4, a0
+    mv a0, a1
+    mv a1, t4
+.Ldyn_bad_go:
+    mv a2, a0
+    mv a3, a1
+    beqz t3, .Ldyn_bad_add
+    li t4, 1
+    beq t3, t4, .Ldyn_bad_sub
+    li t4, 2
+    beq t3, t4, .Ldyn_bad_mul
+    li t4, 3
+    beq t3, t4, .Ldyn_bad_lt
+    li t4, 4
+    beq t3, t4, .Ldyn_bad_le
+    li t4, 5
+    beq t3, t4, .Ldyn_bad_gt
+    li t4, 6
+    beq t3, t4, .Ldyn_bad_ge2
+    li t4, 7
+    beq t3, t4, .Ldyn_bad_div
+    li t4, 8
+    beq t3, t4, .Ldyn_bad_mod
+    li t4, 9
+    beq t3, t4, .Ldyn_bad_band
+    li t4, 10
+    beq t3, t4, .Ldyn_bad_bor
+    li t4, 11
+    beq t3, t4, .Ldyn_bad_bxor
+    li t4, 12
+    beq t3, t4, .Ldyn_bad_shl
+    j .Ldyn_bad_shr
+.Ldyn_bad_add:
+    la a0, msg_op_add
+    la a1, msg_op_add_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_sub:
+    la a0, msg_op_sub
+    la a1, msg_op_sub_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_mul:
+    la a0, msg_op_mul
+    la a1, msg_op_mul_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_lt:
+    la a0, msg_op_lt
+    la a1, msg_op_lt_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_le:
+    la a0, msg_op_le
+    la a1, msg_op_le_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_gt:
+    la a0, msg_op_gt
+    la a1, msg_op_gt_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_ge2:
+    la a0, msg_op_ge
+    la a1, msg_op_ge_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_div:
+    la a0, msg_op_div
+    la a1, msg_op_div_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_mod:
+    la a0, msg_op_mod
+    la a1, msg_op_mod_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_band:
+    la a0, msg_op_band
+    la a1, msg_op_band_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_bor:
+    la a0, msg_op_bor
+    la a1, msg_op_bor_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_bxor:
+    la a0, msg_op_bxor
+    la a1, msg_op_bxor_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_shl:
+    la a0, msg_op_shl
+    la a1, msg_op_shl_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_shr:
+    la a0, msg_op_shr
+    la a1, msg_op_shr_end
+.Ldyn_bad_fail:
+    call emo_op_fail
+
+# emo_op_fail: a0 = the start and a1 = the end of the operator's own
+# words (through "got "), a2 = the left operand, a3 = the right one (0
+# for a unary operator, which names one kind). The kinds join the words
+# in a stack buffer — s0 the cursor — and the whole sentence reaches
+# emo_fail: this never returns.
+    .globl emo_op_fail
+emo_op_fail:
+    addi sp, sp, -160
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd a3, 16(sp)
+    addi s0, sp, 32
+    jal .Lof_append
+    mv a0, a2
+    call emo_type_name
+    jal .Lof_append
+    ld a2, 16(sp)
+    beqz a2, .Lof_emit
+    la a0, msg_op_and
+    la a1, msg_op_and_end
+    jal .Lof_append
+    mv a0, a2
+    call emo_type_name
+    jal .Lof_append
+.Lof_emit:
+    addi a0, sp, 32
+    mv a1, s0
     call emo_fail
+.Lof_append:
+    # a0 = start, a1 = end: the bytes land at s0, which walks on
+    bgeu a0, a1, .Lof_appended
+    lbu t0, 0(a0)
+    sb t0, 0(s0)
+    addi a0, a0, 1
+    addi s0, s0, 1
+    j .Lof_append
+.Lof_appended:
+    ret
+
+# emo_type_name: a0 = a dynamic value; a0 = the start and a1 = the end
+# of its kind's name, the interpreter's own. The immediates carry their
+# kind in bits 3:1 (0 Bool, 1 Char, 2 an enum member, 3 Byte), the cells
+# in bits 4:1.
+    .globl emo_type_name
+emo_type_name:
+    andi t0, a0, 1
+    bnez t0, .Ltn_imm
+    andi t0, a0, 31
+    beqz t0, .Ltn_int64
+    li t1, 2
+    beq t0, t1, .Ltn_float64
+    li t1, 4
+    beq t0, t1, .Ltn_string
+    li t1, 6
+    beq t0, t1, .Ltn_tuple
+    li t1, 8
+    beq t0, t1, .Ltn_array
+    li t1, 10
+    beq t0, t1, .Ltn_box
+    li t1, 12
+    beq t0, t1, .Ltn_arrow
+    li t1, 14
+    beq t0, t1, .Ltn_instance
+    li t1, 16
+    beq t0, t1, .Ltn_atomic
+    li t1, 18
+    beq t0, t1, .Ltn_pid
+    li t1, 20
+    beq t0, t1, .Ltn_bytes
+    li t1, 22
+    beq t0, t1, .Ltn_builder
+    li t1, 24
+    beq t0, t1, .Ltn_ref
+    li t1, 26
+    beq t0, t1, .Ltn_map
+    j .Ltn_value
+.Ltn_imm:
+    srli t0, a0, 1
+    andi t0, t0, 7
+    beqz t0, .Ltn_bool
+    li t1, 1
+    beq t0, t1, .Ltn_char
+    li t1, 2
+    beq t0, t1, .Ltn_enum
+    li t1, 3
+    beq t0, t1, .Ltn_byte
+    j .Ltn_value
+.Ltn_bool:
+    la a0, msg_kind_bool
+    la a1, msg_kind_bool_end
+    ret
+.Ltn_char:
+    la a0, msg_kind_char
+    la a1, msg_kind_char_end
+    ret
+.Ltn_byte:
+    la a0, msg_kind_byte
+    la a1, msg_kind_byte_end
+    ret
+.Ltn_enum:
+    la a0, msg_kind_enum
+    la a1, msg_kind_enum_end
+    ret
+.Ltn_int64:
+    la a0, msg_kind_int64
+    la a1, msg_kind_int64_end
+    ret
+.Ltn_float64:
+    la a0, msg_kind_float64
+    la a1, msg_kind_float64_end
+    ret
+.Ltn_string:
+    la a0, msg_kind_string
+    la a1, msg_kind_string_end
+    ret
+.Ltn_tuple:
+    la a0, msg_kind_tuple
+    la a1, msg_kind_tuple_end
+    ret
+.Ltn_array:
+    la a0, msg_kind_array
+    la a1, msg_kind_array_end
+    ret
+.Ltn_box:
+    la a0, msg_kind_box
+    la a1, msg_kind_box_end
+    ret
+.Ltn_arrow:
+    la a0, msg_kind_arrow
+    la a1, msg_kind_arrow_end
+    ret
+.Ltn_instance:
+    la a0, msg_kind_instance
+    la a1, msg_kind_instance_end
+    ret
+.Ltn_atomic:
+    la a0, msg_kind_atomic
+    la a1, msg_kind_atomic_end
+    ret
+.Ltn_pid:
+    la a0, msg_kind_pid
+    la a1, msg_kind_pid_end
+    ret
+.Ltn_bytes:
+    la a0, msg_kind_bytes
+    la a1, msg_kind_bytes_end
+    ret
+.Ltn_builder:
+    la a0, msg_kind_builder
+    la a1, msg_kind_builder_end
+    ret
+.Ltn_ref:
+    la a0, msg_kind_ref
+    la a1, msg_kind_ref_end
+    ret
+.Ltn_map:
+    la a0, msg_kind_map
+    la a1, msg_kind_map_end
+    ret
+.Ltn_value:
+    la a0, msg_kind_value
+    la a1, msg_kind_value_end
+    ret
+
+# ---- The unary doors ----
+#
+# emo_neg_dyn / emo_bnot_dyn: a0 = a gradual value; a0 = its negation
+# or complement, by the value's own kind — the evaluator's rule, `-` on
+# an Int64 or a Float64, `~` on an Int64 or a Byte. Anything else is
+# the refusal naming the kind: the typed lanes key on the result's
+# static type, and a String read as an Int64 cell answered -1 for
+# `-"s"` before these doors (found 2026-11-25).
+    .globl emo_neg_dyn
+emo_neg_dyn:
+    mv a2, a0
+    andi t0, a0, 31
+    beqz t0, .Lneg_int
+    li t1, 2
+    beq t0, t1, .Lneg_float
+    j .Lneg_bad
+.Lneg_int:
+    andi a0, a0, -32
+    ld a0, 8(a0)
+    sub a0, x0, a0
+    j emo_box_i64
+.Lneg_float:
+    andi a0, a0, -32
+    fld fa0, 8(a0)
+    fneg.d fa0, fa0
+    j emo_box_f64
+.Lneg_bad:
+    la a0, msg_op_neg
+    la a1, msg_op_neg_end
+    li a3, 0
+    j emo_op_fail
+
+    .globl emo_bnot_dyn
+emo_bnot_dyn:
+    mv a2, a0
+    andi t0, a0, 15
+    li t1, 7
+    beq t0, t1, .Lbnot_byte
+    andi t0, a0, 31
+    beqz t0, .Lbnot_int
+    la a0, msg_op_bnot
+    la a1, msg_op_bnot_end
+    li a3, 0
+    j emo_op_fail
+.Lbnot_int:
+    andi a0, a0, -32
+    ld a0, 8(a0)
+    not a0, a0
+    j emo_box_i64
+.Lbnot_byte:
+    srli t0, a0, 4
+    not t0, t0
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    ret
+
+# emo_not_dyn: a0 = a gradual value; a0 = its negation. The
+# evaluator's rule: `!` takes a Bool (the word whose bit 16 is the
+# value) — anything else is the refusal naming the kind, where the
+# bare `xori` answered a corrupted word (`1Bytes[]` for `!"s"`).
+    .globl emo_not_dyn
+emo_not_dyn:
+    andi t0, a0, 15
+    li t1, 1
+    beq t0, t1, .Lnotd_bool
+    mv a2, a0
+    la a0, msg_op_not
+    la a1, msg_op_not_end
+    li a3, 0
+    j emo_op_fail
+.Lnotd_bool:
+    xori a0, a0, 16
+    ret
+
+# emo_bool_checked: a0 = a gradual word, a1 = the operator's id
+# (0 = `&&`, 1 = `||`); a0 = the Bool as 0/1. Anything else meets the
+# interpreter's sentence in the operator's own words. `&&`/`||` check
+# each side the run actually evaluates, so the short-circuit keeps its
+# shortness.
+    .globl emo_bool_checked
+emo_bool_checked:
+    mv a2, a0
+    andi t0, a0, 15
+    li t1, 1
+    beq t0, t1, .Lbc_bool
+    li t2, 1
+    beq a1, t2, .Lbc_or
+    la a0, msg_op_bool_and
+    la a1, msg_op_bool_and_end
+    li a3, 0
+    j emo_op_fail
+.Lbc_or:
+    la a0, msg_op_bool_or
+    la a1, msg_op_bool_or_end
+    li a3, 0
+    j emo_op_fail
+.Lbc_bool:
+    srli a0, a0, 4
+    andi a0, a0, 1
+    ret
 
 # ---- to-string ----
 
@@ -8188,6 +9314,85 @@ emo_i64_to_string:
     addi sp, sp, 80
     ret
 
+# emo_kv_string: a0 = a dynamic word; a0 = its display for the Map's
+# entries — the kinds through emo_to_string, a String quoted and
+# escaped (the backslash and the double quote) the way the
+# interpreter's %S shows it.
+    .globl emo_kv_string
+emo_kv_string:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    andi t0, a0, 31
+    li t1, 4
+    beq t0, t1, .Lkv_quote
+    call emo_to_string
+    j .Lkv_out
+.Lkv_quote:
+    andi s0, a0, -32
+    ld s1, 8(s0)            # the length
+    addi t1, s0, 16         # the bytes
+    li t2, 0                # the index
+    li s2, 0                # the escapes
+.Lkv_count:
+    bge t2, s1, .Lkv_alloc
+    add t3, t1, t2
+    lbu t3, 0(t3)
+    li t4, 34
+    beq t3, t4, .Lkv_hit
+    li t4, 92
+    beq t3, t4, .Lkv_hit
+    j .Lkv_step
+.Lkv_hit:
+    addi s2, s2, 1
+.Lkv_step:
+    addi t2, t2, 1
+    j .Lkv_count
+.Lkv_alloc:
+    addi a0, s1, 2
+    add a0, a0, s2
+    call emo_alloc_string
+    mv t4, a0
+    andi t4, t4, -32
+    addi t5, t4, 16         # the write cursor
+    li t6, 34
+    sb t6, 0(t5)
+    addi t5, t5, 1
+    li t2, 0
+.Lkv_write:
+    bge t2, s1, .Lkv_tail
+    add t3, s0, 16
+    add t3, t3, t2
+    lbu t3, 0(t3)
+    li a2, 34
+    beq t3, a2, .Lkv_esc
+    li a2, 92
+    beq t3, a2, .Lkv_esc
+    j .Lkv_put
+.Lkv_esc:
+    li a2, 92
+    sb a2, 0(t5)
+    addi t5, t5, 1
+.Lkv_put:
+    sb t3, 0(t5)
+    addi t5, t5, 1
+    addi t2, t2, 1
+    j .Lkv_write
+.Lkv_tail:
+    li t6, 34
+    sb t6, 0(t5)
+    mv a0, t4
+    ori a0, a0, 4           # the String word
+.Lkv_out:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    addi sp, sp, 32
+    ret
+
 # emo_to_string: a0 = any dynamic value; a0 = a String. The dispatch a
 # String part or a println argument rides.
     .globl emo_to_string
@@ -8212,6 +9417,8 @@ emo_to_string:
     beq t0, t1, .Lts_array
     li t1, 22
     beq t0, t1, .Lts_builder
+    li t1, 26
+    beq t0, t1, .Lts_map
     la a0, msg_kind
     la a1, msg_kind_end
     call emo_fail
@@ -8358,6 +9565,81 @@ emo_to_string:
     ld s0, 8(sp)
     ld s1, 24(sp)
     addi sp, sp, 48
+    j .Lts_done
+.Lts_map:
+    # {"k": v, …} — the interpreter's own display: the keys through
+    # emo_map_keys (insertion order), each entry composed "key: value"
+    # with the Strings quoted and escaped, the value at the entry's
+    # +8 (the stride is 24), the whole joined with ", " between the
+    # braces
+    addi sp, sp, -64
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    mv s0, a0               # the map word
+    call emo_map_keys
+    andi s1, a0, -32        # the keys array block
+    ld s2, 8(s1)            # the count
+    addi a0, s2, 1
+    call emo_alloc          # the composed entries' slots
+    mv s3, a0               # the slots' block head
+    addi s4, a0, 16         # the slots' cursor
+    li s5, 0                # the index
+.Lts_map_walk:
+    bge s5, s2, .Lts_map_join
+    slli t0, s5, 3
+    add t1, s1, 16
+    add t1, t1, t0
+    ld a0, 0(t1)            # the key
+    call emo_kv_string
+    sd a0, 56(sp)           # the spill rides above the saved s5 — the
+    la a0, msg_colon_sp     #   entry frame's ra slot is not scratch
+    li a1, 2
+    call emo_string_lit
+    mv a1, a0
+    ld a0, 56(sp)
+    call emo_string_concat
+    sd a0, 56(sp)
+    andi t2, s0, -32
+    ld t2, 32(t2)           # the entries' raw pointer — the mask rides
+    slli t3, s5, 3          #   the word first, the field is not tagged
+    slli t4, s5, 4
+    add t3, t3, t4
+    add t3, t2, t3
+    ld a0, 8(t3)            # the value, at the entry's +8
+    call emo_kv_string
+    mv a1, a0
+    ld a0, 56(sp)
+    call emo_string_concat
+    sd a0, 0(s4)
+    addi s4, s4, 8
+    addi s5, s5, 1
+    j .Lts_map_walk
+.Lts_map_join:
+    la a0, msg_lbrace
+    li a1, 1
+    call emo_string_lit
+    mv s4, a0               # the opening "{"
+    la a0, msg_rbrace
+    li a1, 1
+    call emo_string_lit
+    mv a3, a0               # the closing "}"
+    addi a1, s3, 16         # the composed entries
+    mv a2, s2               # the count
+    mv a0, s4               # the opening
+    call emo_join_string
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 64
     j .Lts_done
 .Lts_imm:
     srli t1, a0, 1
@@ -8908,9 +10190,129 @@ msg_field_end:
 msg_method:
     .ascii "no such method on this value"
 msg_method_end:
-msg_arith:
-    .ascii "arithmetic on values of these kinds"
-msg_arith_end:
+msg_op_add:
+    .ascii "operator `+` expects two numbers or two strings, got "
+msg_op_add_end:
+msg_op_sub:
+    .ascii "operator `-` expects two numbers, got "
+msg_op_sub_end:
+msg_op_mul:
+    .ascii "operator `*` expects two numbers, got "
+msg_op_mul_end:
+msg_op_lt:
+    .ascii "operator `<` expects two numbers, got "
+msg_op_lt_end:
+msg_op_le:
+    .ascii "operator `<=` expects two numbers, got "
+msg_op_le_end:
+msg_op_gt:
+    .ascii "operator `>` expects two numbers, got "
+msg_op_gt_end:
+msg_op_ge:
+    .ascii "operator `>=` expects two numbers, got "
+msg_op_ge_end:
+msg_op_div:
+    .ascii "operator `/` expects two numbers, got "
+msg_op_div_end:
+msg_op_mod:
+    .ascii "operator `%` expects two numbers, got "
+msg_op_mod_end:
+msg_op_band:
+    .ascii "operator `&` expects two Int64s or two Bytes, got "
+msg_op_band_end:
+msg_op_bor:
+    .ascii "operator `|` expects two Int64s or two Bytes, got "
+msg_op_bor_end:
+msg_op_bxor:
+    .ascii "operator `^` expects two Int64s or two Bytes, got "
+msg_op_bxor_end:
+msg_op_shl:
+    .ascii "operator `<<` expects two Int64s or two Bytes, got "
+msg_op_shl_end:
+msg_op_shr:
+    .ascii "operator `>>` expects two Int64s or two Bytes, got "
+msg_op_shr_end:
+msg_div_zero:
+    .ascii "division by zero"
+msg_div_zero_end:
+msg_shift_neg:
+    .ascii "shift count must be non-negative"
+msg_shift_neg_end:
+msg_op_neg:
+    .ascii "operator `-` expects a number, got "
+msg_op_neg_end:
+msg_op_bnot:
+    .ascii "operator `~` expects an Int64, got "
+msg_op_bnot_end:
+msg_op_not:
+    .ascii "operator `!` expects a Bool, got "
+msg_op_not_end:
+msg_op_bool_and:
+    .ascii "operator `&&` expects two Bools, got "
+msg_op_bool_and_end:
+msg_op_bool_or:
+    .ascii "operator `||` expects two Bools, got "
+msg_op_bool_or_end:
+msg_op_and:
+    .ascii " and "
+msg_op_and_end:
+msg_kind_bool:
+    .ascii "Bool"
+msg_kind_bool_end:
+msg_kind_char:
+    .ascii "Char"
+msg_kind_char_end:
+msg_kind_byte:
+    .ascii "Byte"
+msg_kind_byte_end:
+msg_kind_enum:
+    .ascii "an enum member"
+msg_kind_enum_end:
+msg_kind_int64:
+    .ascii "Int64"
+msg_kind_int64_end:
+msg_kind_float64:
+    .ascii "Float64"
+msg_kind_float64_end:
+msg_kind_string:
+    .ascii "String"
+msg_kind_string_end:
+msg_kind_tuple:
+    .ascii "Tuple"
+msg_kind_tuple_end:
+msg_kind_array:
+    .ascii "Array"
+msg_kind_array_end:
+msg_kind_box:
+    .ascii "Box"
+msg_kind_box_end:
+msg_kind_arrow:
+    .ascii "an arrow block"
+msg_kind_arrow_end:
+msg_kind_instance:
+    .ascii "an instance"
+msg_kind_instance_end:
+msg_kind_atomic:
+    .ascii "Atomic"
+msg_kind_atomic_end:
+msg_kind_pid:
+    .ascii "Pid"
+msg_kind_pid_end:
+msg_kind_bytes:
+    .ascii "Bytes"
+msg_kind_bytes_end:
+msg_kind_builder:
+    .ascii "ArrayBuilder"
+msg_kind_builder_end:
+msg_kind_ref:
+    .ascii "Ref"
+msg_kind_ref_end:
+msg_kind_map:
+    .ascii "Map"
+msg_kind_map_end:
+msg_kind_value:
+    .ascii "value"
+msg_kind_value_end:
 msg_divzero:
     .ascii "division by zero"
 msg_divzero_end:
@@ -8938,6 +10340,12 @@ msg_builder_range_end:
 msg_builder_mix:
     .ascii "a builder fed raw numbers cannot take a tagged value"
 msg_builder_mix_end:
+msg_lbrace:
+    .ascii "{"
+msg_rbrace:
+    .ascii "}"
+msg_colon_sp:
+    .ascii ": "
 msg_lbrack:
     .ascii "["
 msg_rbrack:
@@ -10514,6 +11922,17 @@ emo_copy_deep:
     addi t6, t6, 1
     j 1b
 2:  sd a0, 16(sp)
+    # the clone is born with one claim of its own: the verbatim header
+    #   carried the source's refcount, and a copy that inherited it would
+    #   answer a count nobody holds
+    andi t4, a0, -32
+    ld t5, 0(t4)
+    slli t5, t5, 32
+    srli t5, t5, 32
+    li t6, 1
+    slli t6, t6, 32
+    or t5, t5, t6
+    sd t5, 0(t4)
     j .Lcd_wrap                 # 48(sp) already holds the tag (20)
 .Lcd_builder:
     # the builder's clone: the size word verbatim, the array deep
@@ -10577,7 +11996,8 @@ emo_copy_out:
     beq t0, t1, .Lco_string
     li t1, 20
     beq t0, t1, .Lco_string  # a Bytes: the byte payload clones verbatim,
-                             #   the String's own walk (T8.24)
+                             #   the clone born with a claim of its own
+                             #   (the String's own walk, T8.24)
     li t1, 10
     beq t0, t1, .Lco_box
     li t1, 22
@@ -10696,7 +12116,20 @@ emo_copy_out:
 .Lco_wraps:
     ld a0, 16(sp)
     ld t2, 48(sp)
-    or a0, a0, t2
+    li t3, 20
+    bne t2, t3, 3f
+    # a Bytes clone is born with one claim of its own: the verbatim
+    #   header carried the sender's refcount, which the receiver never
+    #   held (a String has no count and rides as it came)
+    andi t4, a0, -32
+    ld t5, 0(t4)
+    slli t5, t5, 32
+    srli t5, t5, 32
+    li t6, 1
+    slli t6, t6, 32
+    or t5, t5, t6
+    sd t5, 0(t4)
+3:  or a0, a0, t2
     j .Lco_ret
 .Lco_box:
     # a Box's payload rides in its first word: unbox, recurse, rebox
@@ -11986,6 +13419,14 @@ emo_fail:
     .section .text
     .globl emo_fail
 emo_fail:
+    # a spawned pass's refusal ends only that pass — the interpreter's
+    # own rule (the whole program was ending here, sentence and all) —
+    # and the boot pass's refusal is the program's outcome
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t1, 8(t0)
+    li t2, 1
+    bne t1, t2, emo_process_done
     addi sp, sp, -32
     sd ra, 0(sp)
     sd a0, 8(sp)
@@ -12811,11 +14252,11 @@ emo_map_keys:
     andi t0, t6, 1
     beqz t0, .Lmk_key_tag   # a pointer key rides as it is
     srli t0, t6, 1
-    andi t0, t0, 0xF
-    beqz t0, .Lmk_key_tag   # the Int64 cell rides as it is
-    li t2, 1
-    beq t0, t2, .Lmk_key_tag
-    li t2, 2
+    andi t0, t0, 7          # the odd words are the immediates — the
+    beqz t0, .Lmk_key_tag   #   kind sits in bits 1-3: the Bool (0), the
+    li t2, 1                #   Char (1) and the Byte (3) ride as the
+    beq t0, t2, .Lmk_key_tag #  tagged words they are (the old test read
+    li t2, 3                #   five bits and boxed every `true` into 17)
     beq t0, t2, .Lmk_key_tag
     mv a0, t6
     call emo_box_i64        # the raw Int64's key boxes here: the answer
@@ -12823,7 +14264,9 @@ emo_map_keys:
     j .Lmk_put              #   reads its elements through the box
 .Lmk_key_tag:
 .Lmk_put:
-    sd t6, 0(s4)
+    mv a0, t6
+    call emo_retain           # the array holds the key's claim — the map
+    sd a0, 0(s4)              #   keeps its own
     addi s4, s4, 8
     addi s5, s5, 1
     j .Lmk_walk
@@ -12940,6 +14383,7 @@ emo_print_dec:
     ld ra, 0(sp)
     addi sp, sp, 16
     ret
+
 |asm}
   | "user" | "app" ->
       {asm|

@@ -167,7 +167,9 @@ let arithmetic_main =
 let () =
   p (Emo_runtime.add (Emo_eval.Int64 2L) (Emo_eval.Int64 3L));
   p (Emo_runtime.add (Emo_eval.Int64 Int64.max_int) (Emo_eval.Int64 1L));
-  p (Emo_runtime.add (Emo_eval.Float 1.5) (Emo_eval.Int64 2L));
+  (* the width rule: an operator takes two values of one fixed-width kind —
+     a mixed pair refuses (the errors fixture pins it), never promotes *)
+  p (Emo_runtime.add (Emo_eval.Float 1.5) (Emo_eval.Float 2.0));
   p (Emo_runtime.add (Emo_eval.String "a") (Emo_eval.String "b"));
   p (Emo_runtime.add (Emo_eval.Byte 250) (Emo_eval.Byte 10));
   p (Emo_runtime.sub (Emo_eval.Int64 2L) (Emo_eval.Int64 5L));
@@ -182,10 +184,12 @@ let () =
   p (Emo_runtime.bit_or (Emo_eval.Int64 12L) (Emo_eval.Int64 10L));
   p (Emo_runtime.bit_xor (Emo_eval.Int64 12L) (Emo_eval.Int64 10L));
   p (Emo_runtime.bit_not (Emo_eval.Int64 0L));
-  p (Emo_runtime.lt (Emo_eval.Int64 1L) (Emo_eval.Float 1.5));
-  p (Emo_runtime.le (Emo_eval.Int64 2L) (Emo_eval.Float 2.0));
+  p (Emo_runtime.lt (Emo_eval.Float 1.0) (Emo_eval.Float 1.5));
+  p (Emo_runtime.le (Emo_eval.Float 2.0) (Emo_eval.Float 2.0));
   p (Emo_runtime.gt (Emo_eval.Byte 3) (Emo_eval.Byte 2));
   p (Emo_runtime.ge (Emo_eval.Int64 5L) (Emo_eval.Int64 5L));
+  (* equality is total and never coerces: kinds apart are unequal *)
+  p (Emo_runtime.eq (Emo_eval.Int64 2L) (Emo_eval.Float 2.0));
   p (Emo_runtime.not_ (Emo_eval.Bool false));
   (* the short-circuit pair: the thunk form, and a false left operand
      whose right side must never run *)
@@ -215,6 +219,7 @@ let arithmetic_out =
    true\n\
    true\n\
    true\n\
+   false\n\
    true\n\
    false\n\
    false\n"
@@ -296,6 +301,14 @@ let () =
   show "index" (fun () ->
       Emo_runtime.index (Emo_eval.Array [| |]) (Emo_eval.Int64 0L));
   show "box" (fun () -> Emo_runtime.apply_value (Emo_eval.Int64 1L) []);
+  (* the width rule: a mixed Int64/Float64 pair is a refusal naming the
+     operator, never a promotion *)
+  show "mixed add" (fun () ->
+      Emo_runtime.add (Emo_eval.Float 1.5) (Emo_eval.Int64 2L));
+  show "mixed lt" (fun () ->
+      Emo_runtime.lt (Emo_eval.Int64 1L) (Emo_eval.Float 1.5));
+  show "mixed le" (fun () ->
+      Emo_runtime.le (Emo_eval.Int64 2L) (Emo_eval.Float 2.0));
   (try ignore (Emo_runtime.arity_error "f" 2 1)
    with Emo_runtime.Arity_error msg -> print_string ("arity: " ^ msg ^ "\n"))
 |}
@@ -307,6 +320,10 @@ let errors_out =
    tag: expected Bool, got String\n\
    index: index 0 is out of bounds\n\
    box: calling a non-function\n\
+   mixed add: operator `+` expects two numbers or two strings, got Float64 and \
+   Int64\n\
+   mixed lt: operator `<` expects two numbers, got Int64 and Float64\n\
+   mixed le: operator `<=` expects two numbers, got Int64 and Float64\n\
    arity: `f` expects 2 arguments, got 1\n"
 
 (* The process program: a spawned child echoes a message back through

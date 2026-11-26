@@ -780,7 +780,7 @@ let build_file ~(entry : string) ~(output : string) ~(specialize : bool)
                       "emo build: linking the program's TLS failed — install \
                        the OpenSSL development files (Linux: the libssl-dev \
                        package or its equivalent), or pass a custom location \
-                       with --cclib -L<dir> --cclib -lssl --cclib -lcrypto \
+                       with --cclib=-L<dir> --cclib=-lssl --cclib=-lcrypto \
                        (Homebrew's openssl@3, say). Headers are never needed — \
                        the runtime declares its TLS subset itself.";
                     69

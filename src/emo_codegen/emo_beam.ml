@@ -69,7 +69,9 @@ let beam_temps =
     "__recv";
     "__inst_recv";
     "__thread";
+    "__field_recv";
     "_spawnarg";
+    "_spawnn";
     "_spawnpid";
     "_spawnself";
     "case";
@@ -229,6 +231,18 @@ let instance_pattern (classes : Emo_ir.class_ list) (cname : string) : string =
   | 0 -> Printf.sprintf "{'emo_inst', %s}" (atom cname)
   | _ -> Printf.sprintf "{'emo_inst', %s, %s}" (atom cname) wilds
 
+(* A class's display name as the interpreter says it: the entry module
+   renders bare — the interpreter names the entry file's module nothing
+   — and a main/ subdirectory keeps its full path. The instance rendering
+   and the runtime field refusal both speak it. *)
+let entry_bare (d : string) =
+  let drop = "main." in
+  if
+    String.starts_with ~prefix:drop d
+    && not (String.contains (String.sub d 5 (String.length d - 5)) '.')
+  then String.sub d 5 (String.length d - 5)
+  else d
+
 let put env s = Buffer.add_string env.buf s
 
 (* 'emo_inst_str'/1 over a whole program: every instance renders as its
@@ -237,14 +251,6 @@ let put env s = Buffer.add_string env.buf s
    ride into the dump as literals. The caller — emo_to_str's tuple arm —
    has already established the instance shape. *)
 let inst_str_source (program : Emo_ir.program) : string =
-  let entry_bare (d : string) =
-    let drop = "main." in
-    if
-      String.starts_with ~prefix:drop d
-      && not (String.contains (String.sub d 5 (String.length d - 5)) '.')
-    then String.sub d 5 (String.length d - 5)
-    else d
-  in
   let arms =
     String.concat ""
       (List.map
@@ -272,7 +278,7 @@ let inst_str_source (program : Emo_ir.program) : string =
 let rec expr env (x : Emo_ir.expr) : unit =
   match x.Emo_ir.desc with
   | Const (L_int n) -> put env (Int64.to_string n)
-  | Const (L_byte n) -> put env (string_of_int n)
+  | Const (L_byte n) -> put env (Printf.sprintf "{'emo_byte', %d}" n)
   | Const (L_float f) -> put env (float_lit f)
   | Const (L_bool b) -> put env (if b then "'true'" else "'false'")
   | Const (L_char c) -> put env (char_lit c)
@@ -378,19 +384,28 @@ let rec expr env (x : Emo_ir.expr) : unit =
   | Binary (((Emo_ast.And | Emo_ast.Or) as op), l, r) ->
       (* the other targets short-circuit these, so beam does too —
          Core Erlang has no `andalso` call, only the operator, and the
-         operator is not a Core form; a case gives the same shape *)
+         operator is not a Core form; a case gives the same shape.
+         Each side the run actually evaluates goes through the checked
+         call first: a value that is not a Bool meets the
+         interpreter's own sentence, the operator's words over the one
+         kind it met — the unchecked case answered `false` for any
+         non-Bool left before. *)
       let lcode = expr_block env l in
       let rcode = expr_block env r in
+      let op_lit = binary_lit (if op = Emo_ast.And then "&&" else "||") in
+      let check code =
+        Printf.sprintf "apply 'emo_bool_checked'/2 (%s, %s)" code op_lit
+      in
       if op = Emo_ast.And then
         put env
           (Printf.sprintf
              "case %s of\n\
-              \t  <'true'> when 'true' ->\n\
-             \    %s\n\
-              \t  <_other> when 'true' ->\n\
+              \t  <'false'> when 'true' ->\n\
              \    'false'\n\
+              \t  <_other> when 'true' ->\n\
+             \    %s\n\
               \tend"
-             lcode rcode)
+             (check lcode) (check rcode))
       else
         put env
           (Printf.sprintf
@@ -400,11 +415,13 @@ let rec expr env (x : Emo_ir.expr) : unit =
               \t  <_other> when 'true' ->\n\
              \    %s\n\
               \tend"
-             lcode rcode)
+             (check lcode) (check rcode))
   | Binary (op, l, r) ->
       (* Int64 is the target's own 64-bit wrapping integer — every
          integer operator already masks at 64 bits — so only Byte needs
-         its own path, wrapping at 256. *)
+         its own path, wrapping at 256. Every operator reaches its kind
+         dispatch through its door (op_refusal_source), which names it
+         when a mixed pair refuses. *)
       let name =
         match (op, x.Emo_ir.ety) with
         | Emo_ast.Add, Emo_check.Byte -> "byte_add"
@@ -432,18 +449,23 @@ let rec expr env (x : Emo_ir.expr) : unit =
             (* the logical operators lower through the case above *)
             | Emo_ast.And | Emo_ast.Or -> assert false)
       in
-      put env (Printf.sprintf "apply 'emo_%s'/2 " name);
+      (* `==`/`!=` are total — no kind ever refuses — so they alone go
+         straight to their dispatch *)
+      put env
+        (Printf.sprintf "apply 'emo_%s%s'/2 "
+           (if name = "eq" || name = "ne" then "" else "op_")
+           name);
       args_list env [ l; r ]
   | Unary (Emo_ast.Neg, x) ->
-      put env "apply 'emo_neg'/1 ";
+      put env "apply 'emo_op_neg'/1 ";
       args_list env [ x ]
   | Unary (Emo_ast.Not, x) ->
-      put env "apply 'emo_not'/1 ";
+      put env "apply 'emo_op_not'/1 ";
       args_list env [ x ]
   | Unary (Emo_ast.Bit_not, x) ->
       put env
-        (if x.Emo_ir.ety = Emo_check.Byte then "apply 'emo_byte_bnot'/1 "
-         else "apply 'emo_bnot'/1 ");
+        (if x.Emo_ir.ety = Emo_check.Byte then "apply 'emo_op_byte_bnot'/1 "
+         else "apply 'emo_op_bnot'/1 ");
       args_list env [ x ]
   | Tuple es ->
       put env "{";
@@ -511,40 +533,51 @@ let rec expr env (x : Emo_ir.expr) : unit =
       match obj.Emo_ir.desc with
       | Emo_ir.Type_ref m -> put env (binary_lit (m ^ "__" ^ name))
       | _ -> (
-          let class_name =
+          let known_class =
             match obj.Emo_ir.ety with
             | Emo_check.ClassType c -> (
                 match mangled_of_display env.classes c with
-                | Some cname -> cname
+                | Some cname -> Some cname
                 | None -> (
-                    match env.current_class with
-                    | Some c -> c
-                    | None -> failwith "beam: field read without a known class")
-                )
+                    (* The span type table keys on span start, so
+                       `self.x` and the chain it opens share a start
+                       and the receiver's type is lost; inside a class
+                       member, self is the class. Any other open
+                       receiver takes the runtime field walk — it was
+                       read at self's class index here whatever it was,
+                       another class's field or a build error *)
+                    match (env.current_class, obj.Emo_ir.desc) with
+                    | Some c, Emo_ir.Var "self" -> Some c
+                    | _ -> None))
             | _ -> (
-                match env.current_class with
-                | Some c -> c
-                | None -> failwith "beam: field read without a known class")
+                match (env.current_class, obj.Emo_ir.desc) with
+                | Some c, Emo_ir.Var "self" -> Some c
+                | _ -> None)
           in
-          match List.assoc_opt class_name env.class_field with
-          | Some fields -> (
-              match List.assoc_opt name fields with
-              | Some fidx ->
-                  put env
-                    (Printf.sprintf "call 'erlang':'element'(%d, " (fidx + 3));
-                  expr env obj;
-                  put env ")"
-              | None ->
-                  failwith ("beam: unknown field " ^ class_name ^ "." ^ name))
-          | None -> failwith ("beam: unknown class " ^ class_name)))
+          match known_class with
+          | Some class_name -> (
+              match List.assoc_opt class_name env.class_field with
+              | Some fields -> (
+                  match List.assoc_opt name fields with
+                  | Some fidx ->
+                      put env
+                        (Printf.sprintf "call 'erlang':'element'(%d, " (fidx + 3));
+                      expr env obj;
+                      put env ")"
+                  | None ->
+                      failwith ("beam: unknown field " ^ class_name ^ "." ^ name)
+                  )
+              | None -> failwith ("beam: unknown class " ^ class_name))
+          | None -> gradual_field_read env obj name))
   | Make_enum { enum_name; member } ->
       put env
         (Printf.sprintf "{'emo_enum', %s, %s}" (atom enum_name) (atom member))
   | Box_new v ->
-      (* a Box is a process-dictionary key (T18.4 upgrades to a
-         holding process for cross-process boxes) *)
+      (* the cell key lives in the root's shared cells table: a spawn's
+         argument shares the Box (the interpreter's identity), a send
+         packs the value and the receiver parks a fresh key *)
       put env "let <_boxref> = call 'erlang':'make_ref'() in ";
-      put env "do call 'erlang':'put'(_boxref, ";
+      put env "do apply 'emo_cell_put'/2 (_boxref, ";
       expr env v;
       put env ") _boxref"
   | Atomic_new v ->
@@ -974,10 +1007,10 @@ and builtin_method_call env self_ name args =
   | "to_int64", [] when self_.Emo_ir.ety = Emo_check.String ->
       put env "apply 'emo_str_to_int64'/1 ";
       args_list env [ self_ ]
-  | "to_int64", []
-    when self_.Emo_ir.ety = Emo_check.Int64 || self_.Emo_ir.ety = Emo_check.Byte
-    ->
-      expr env self_
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Int64 -> expr env self_
+  | "to_int64", [] when self_.Emo_ir.ety = Emo_check.Byte ->
+      put env "apply 'emo_byte_to_int'/1 ";
+      args_list env [ self_ ]
   | "to_int64", [] ->
       (* the static type did not settle it: the runtime tells a binary
          (parsed), a float (truncated), and an integer (kept) apart *)
@@ -1022,7 +1055,7 @@ and builtin_method_call env self_ name args =
           put env "apply 'emo_str_chars'/1 ";
           args_list env [ self_ ]
       | "read", [] ->
-          put env "call 'erlang':'get'(";
+          put env "apply 'emo_cell_get'/1 (";
           expr env self_;
           put env ")"
       | "replace", [ v ] ->
@@ -1138,6 +1171,50 @@ and builtin_method_call env self_ name args =
               put env (atom name);
               put env "})\nend"))
 
+(* The runtime field walk: a receiver the checker could not type — a
+   mailbox binding, most often — reads its field by the value's own
+   class. An instance is {'emo_inst', ClassAtom, fields…}, so one
+   pattern per class names the field's own slot: a class carrying the
+   field reads it, a class without it refuses the way the interpreter
+   does (E3007, "`C` has no field `x`"), and anything that is not an
+   instance answers the interpreter's other sentence — on this target
+   both ride the runtime-error envelope the operator doors opened. The
+   read used to refuse the build with an internal error (exit 125). *)
+and gradual_field_read env (obj : Emo_ir.expr) (name : string) : unit =
+  let recv = fresh_var env "__field_recv" in
+  let refuse text =
+    Printf.sprintf "call 'erlang':'error'({'emo_runtime_error', %s})"
+      (binary_lit text)
+  in
+  put env (Printf.sprintf "let <%s> = " recv);
+  expr env obj;
+  put env (Printf.sprintf "\nin case %s of\n" recv);
+  let field_of (c : Emo_ir.class_) =
+    List.assoc_opt name
+      (Option.value ~default:[] (List.assoc_opt c.Emo_ir.cname env.class_field))
+  in
+  List.iter
+    (fun (c : Emo_ir.class_) ->
+      match field_of c with
+      | Some fidx ->
+          put env
+            (Printf.sprintf "\t  <%s> when 'true' -> _f%d\n"
+               (instance_pattern env.classes c.Emo_ir.cname)
+               fidx)
+      | None ->
+          put env
+            (Printf.sprintf "\t  <%s> when 'true' -> %s\n"
+               (instance_pattern env.classes c.Emo_ir.cname)
+               (refuse
+                  (Printf.sprintf "`%s` has no field `%s`"
+                     (entry_bare c.Emo_ir.cdisplay)
+                     name))))
+    env.classes;
+  put env
+    ("\t  <_other> when 'true' -> "
+    ^ refuse "a member access must be a call, like `x.read()`"
+    ^ "\nend")
+
 and args_list env args =
   put env "(";
   List.iteri
@@ -1165,7 +1242,7 @@ and builtin env name args =
       put env ", ";
       expr env data;
       put env ")"
-  | "self_pid", [] -> put env "call 'erlang':'self'()"
+  | "self_pid", [] -> put env "apply 'emo_pid_self'/0 ()"
   | "halt", [] -> put env "call 'erlang':'throw'('emo_halt')"
   (* the exact no-op: a literal keeps the statement chain's `do` pair
      well-formed *)
@@ -1177,8 +1254,11 @@ and builtin env name args =
 
 and binary_lit_newline = "#<10>(8,1,'integer',['unsigned'|['big']])"
 
-(* A Char value is its UTF-8 bytes as a binary — one code point. *)
-and char_lit (cp : int) : string = binary_lit (Emo_support.Utf8.encode cp)
+(* A Char value is {'emo_char', its UTF-8 bytes as a binary} — one code
+   point behind a tag, so the sentences can name the kind the way the
+   interpreter does (the bytes alone read as a String everywhere). *)
+and char_lit (cp : int) : string =
+  "{'emo_char', " ^ binary_lit (Emo_support.Utf8.encode cp) ^ "}"
 
 (* an expression's code as a string, without disturbing the buffer *)
 and expr_block env (x : Emo_ir.expr) : string =
@@ -1191,33 +1271,41 @@ and expr_block env (x : Emo_ir.expr) : string =
 (* A `do` spawns [call_text] and the child records itself in the root's
    table, so 'main'/0 can kill whatever is still alive when it ends. The
    child removes itself on the way out, so the table holds exactly the
-   children still running. The expression's value is the pid. *)
+   children still running. The expression's value is the pid: the emo
+   number the spawner takes here — the step that numbers a spawn on
+   every target — beside the BEAM's own, and the child keeps the number
+   for its own `self_pid()`. *)
 and spawn_registered env (call_text : string) : unit =
+  let n = fresh_var env "_spawnn" in
   let pid = fresh_var env "_spawnpid" in
   let self = fresh_var env "_spawnself" in
-  put env (Printf.sprintf "let <%s> =\n" pid);
-  put env "call 'erlang':'spawn'(fun () -> ";
+  put env (Printf.sprintf "let <%s> = apply 'emo_pid_next'/0 ()\n" n);
+  put env (Printf.sprintf "in let <%s> =\n" pid);
+  put env "apply 'emo_spawn_and_reg'/1 (fun () -> ";
   let saved = env.local_map in
   env.local_map <- [];
   put env (Printf.sprintf "let <%s> = call 'erlang':'self'()\nin " self);
   put env (Printf.sprintf "do apply 'emo_spawn_reg'/1 (%s) " self);
+  put env (Printf.sprintf "do apply 'emo_pid_reg'/1 (%s) " n);
   put env
     (body_wrapper ~halt:true
        ~on_exit:(Printf.sprintf "apply 'emo_unreg'/1 (%s)" self)
        call_text);
   env.local_map <- saved;
   put env ")";
-  put env (Printf.sprintf "\nin %s" pid)
+  put env (Printf.sprintf "\nin apply 'emo_pid_make'/2 (%s, %s)" n pid)
 
 (* Every function/closure body runs under this wrapper: a `return`
    anywhere in the body throws the tagged result and the wrapper
-   unwraps it as the function's value. A process wrapper also swallows
+   unwinds it as the function's value. A process wrapper also swallows
    `halt`: the spawned fun returns and the process ends. [on_exit] is
    the entry's: Core Erlang has no `after`, so the root process ending —
    by return, `halt`, or an uncaught raise — runs it on both ways out,
-   killing every child that is still alive. *)
-and body_wrapper ?(halt : bool = false) ?(on_exit : string = "") (body : string)
-    : string =
+   killing every child that is still alive. [on_error] is the entry's
+   too: the one arm it keeps for a runtime refusal, which the operator
+   doors raise as {'emo_runtime_error', Bin}. *)
+and body_wrapper ?(halt : bool = false) ?(on_exit : string = "")
+    ?(on_error : string = "") (body : string) : string =
   let halt_arm =
     if halt then "\n\t  <'emo_halt'> when 'true' -> 'ok'" else ""
   in
@@ -1230,10 +1318,10 @@ of
 catch
     <_C, _T, _S> ->
 	%scase _T of
-	  <{'emo_return', _rv}> when 'true' -> _rv%s
+	  <{'emo_return', _rv}> when 'true' -> _rv%s%s
 	  <_other> when 'true' -> call 'erlang':'throw'(_T)
 	end|json}
-    body exit_run exit_run halt_arm
+    body exit_run exit_run halt_arm on_error
 
 (* ---- Statements ----
 
@@ -1577,7 +1665,7 @@ and stmt env (s : Emo_ir.stmt) : unit =
          buffer ({'emo_bytes_val', Bin}), because the tag's process-
          dictionary entry stays behind — the receiver's branch bindings
          unpack and re-register under their own keys *)
-      put env "call 'erlang':'!'(";
+      put env "apply 'emo_send'/2 (";
       expr env target;
       put env ", apply 'emo_msg_pack'/1 (";
       expr env message;
@@ -1593,12 +1681,38 @@ and stmt env (s : Emo_ir.stmt) : unit =
          keys. (A guard runs before the lets, so a guard dereferencing
          a sent Bytes's methods stays in the cannot-cross class's
          shadow — guards read patterns, not buffers, in practice.) *)
-      put env "receive\n";
+      (* the gate is one top-level function so the poll can re-enter
+         it: its parameters carry every binding live at the receive
+         (the loop continuations' threading), because the hoisted body
+         leaves this function's scope *)
+      let rec live_uniq acc = function
+        | [] -> List.rev acc
+        | name :: tl ->
+            if List.mem name acc || temp_key name || List.mem name tl then
+              live_uniq acc tl
+            else live_uniq (name :: acc) tl
+      in
+      let live = live_uniq [] (List.map fst env.local_map) in
+      (* saved before the parameters are minted: fresh_var pushes its
+         name onto the map, and the restore below must answer the
+         enclosing function's own bindings, not the gate's *)
       let saved = env.local_map in
+      let param_of = List.map (fun name -> (name, fresh_var env name)) live in
+      let n3 = env.fresh + 1 in
+      env.fresh <- n3;
+      let recv_gate = Printf.sprintf "'__recv_gate_%d'" n3 in
+      let before_gate = Buffer.length env.buf in
+      put env
+        (Printf.sprintf "%s/%d =\n    fun (_dlref%s) ->\n" recv_gate
+           (1 + List.length param_of)
+           (String.concat "" (List.map (fun (_, v) -> ", " ^ v) param_of)));
+      put env "receive\n";
+      env.local_map <- param_of;
       List.iter
         (fun b ->
-          (* each branch from the receive's own scope, as the `if`'s arms *)
-          env.local_map <- saved;
+          (* each branch from the gate's own parameters, as the `if`'s
+             arms *)
+          env.local_map <- param_of;
           put env "  <";
           emit_pattern env b.Emo_ir.pattern;
           put env "> ";
@@ -1608,6 +1722,7 @@ and stmt env (s : Emo_ir.stmt) : unit =
               guard_expr env g;
               put env " ->\n"
           | None -> put env "when 'true' ->\n");
+          put env "do apply 'emo_blocked_unmark'/1 (call 'erlang':'self'()) ";
           List.iter
             (fun name ->
               match List.assoc_opt name env.local_map with
@@ -1622,7 +1737,59 @@ and stmt env (s : Emo_ir.stmt) : unit =
           put env "\n")
         branches;
       env.local_map <- saved;
-      put env "after 'infinity' ->\n    primop 'recv_wait'()"
+      (* the mark persists through the wait: it goes down only at a
+         matching delivery (the send's unmark), a consumed branch (the
+         door's unmark), or the process's exit (emo_unreg). The poll's
+         false arm therefore re-enters the gate without unmarking —
+         the re-entry rescans the mailbox first, so a message that
+         landed in the wait is consumed, never declared dead. The
+         recursion rides the gate's own parameters. *)
+      put env
+        "after 1 ->\n\
+        \    case apply 'emo_blocked_mark'/0 () of\n\
+         \t  <'true'> when 'true' -> {'emo_deadlock', _dlref, call \
+         'ets':'info'('emo_blocked', 'size')}\n\
+         \t  <'false'> when 'true' -> ";
+      put env
+        (Printf.sprintf "apply %s/%d (_dlref%s)" recv_gate
+           (1 + List.length param_of)
+           (String.concat "" (List.map (fun (_, v) -> ", " ^ v) param_of)));
+      put env "\n\t     end";
+      (* the gate's slice joins the loop functions at the top level; the
+         statement's own position binds the deadlock ref, tail-calls the
+         gate, and raises the E3012 in plain statement context — the
+         operator doors' proven shape, never inside the receive's
+         after-arm *)
+      let gate_slice =
+        Buffer.sub env.buf before_gate (Buffer.length env.buf - before_gate)
+      in
+      Buffer.truncate env.buf before_gate;
+      Buffer.add_string env.loops_buf gate_slice;
+      Buffer.add_string env.loops_buf "\n\n";
+      put env
+        (Printf.sprintf
+           "let <_dlref> = call 'erlang':'make_ref'()\n\
+            in let <_recv_r> = apply %s/%d (_dlref%s)\n\
+            in case _recv_r of\n\
+            \t  <{'emo_deadlock', _r2, _n}> when call 'erlang':'=:='(_r2, \
+            _dlref) ->\n\
+            \t      apply 'emo_runtime_fail'/1\n\
+            \t\t(call 'erlang':'iolist_to_binary'\n\
+            \t\t\t([\"all \",\n\
+            \t\t\t  call 'erlang':'integer_to_binary'(_n),\n\
+            \t\t\t  \" waiting processes are blocked; no message will ever \
+            arrive\"]))\n\
+            \t  <_other> when 'true' -> 'ok'\n\
+            end"
+           recv_gate
+           (1 + List.length param_of)
+           (String.concat ""
+              (List.map
+                 (fun name ->
+                   match List.assoc_opt name env.local_map with
+                   | Some v -> ", " ^ v
+                   | None -> failwith ("beam: unbound recv var " ^ name))
+                 live)))
   | Emo_ir.Raise x -> (
       (* an ordinary Emo exception: a throw the entry reports. The
          raised value is the exception object; Exception.new's object
@@ -2171,7 +2338,8 @@ and emit_pattern env (p : Emo_ast.pattern) : unit =
       let v = fresh_var env name in
       put env v
   | Emo_ast.Pattern_literal (L_int n) -> put env (Int64.to_string n)
-  | Emo_ast.Pattern_literal (L_byte n) -> put env (string_of_int n)
+  | Emo_ast.Pattern_literal (L_byte n) ->
+      put env (Printf.sprintf "{'emo_byte', %d}" n)
   | Emo_ast.Pattern_literal (L_bool b) ->
       put env (if b then "'true'" else "'false'")
   | Emo_ast.Pattern_literal (L_char c) -> put env (char_lit c)
@@ -2260,6 +2428,277 @@ and guard_expr env (x : Emo_ir.expr) : unit =
            "beam: guard expressions are limited to comparisons, \
             boolean             operators, and constants on this target")
 
+(* ---- The gradual operators' refusal ----
+
+   The kind dispatches (emo_add, emo_band, emo_lt, …) raise the bare
+   {'emo_bad_type', A, B} tag on a mixed pair — a dispatch has no operator
+   to speak of — so every operator reaches its dispatch through a door
+   that names it, and the door answers the interpreter's own sentence
+   (E3001): the operator, the rule, and both kinds. The doors and the
+   type names are written out here rather than by hand: one shape, twenty-
+   one names, and every string rides as the per-byte binary literal the
+   rest of the runtime takes.
+
+   The sentence travels as an {'emo_runtime_error', Bin} error. The
+   root's wrapper announces it the way the c target does — `runtime
+   error: …` on standard error, exit 70 — and a spawned process dies on
+   it as on any error, the root going on. The target had no clean
+   runtime refusal before this: every one was an Erlang crash report,
+   and the other refusals still are. *)
+
+let gradual_op_doors : (string * int * string * string) list =
+  [
+    ("add", 2, "+", "two numbers or two strings");
+    ("byte_add", 2, "+", "two numbers or two strings");
+    ("sub", 2, "-", "two numbers");
+    ("byte_sub", 2, "-", "two numbers");
+    ("mul", 2, "*", "two numbers");
+    ("byte_mul", 2, "*", "two numbers");
+    ("div", 2, "/", "two numbers");
+    ("mod", 2, "%", "two numbers");
+    ("lt", 2, "<", "two numbers");
+    ("le", 2, "<=", "two numbers");
+    ("gt", 2, ">", "two numbers");
+    ("ge", 2, ">=", "two numbers");
+    ("band", 2, "&", "two Int64s or two Bytes");
+    ("bor", 2, "|", "two Int64s or two Bytes");
+    ("bxor", 2, "^", "two Int64s or two Bytes");
+    ("shl", 2, "<<", "two Int64s or two Bytes");
+    ("shr", 2, ">>", "two Int64s or two Bytes");
+    ("byte_shl", 2, "<<", "two Int64s or two Bytes");
+    ("not", 1, "!", "a Bool");
+    ("neg", 1, "-", "a number");
+    ("bnot", 1, "~", "an Int64");
+    ("byte_bnot", 1, "~", "an Int64");
+  ]
+
+let op_refusal_source : string =
+  let lit s = binary_lit s in
+  (* (pattern, the name it answers); a Char wears its UTF-8 bytes here,
+     so it reads as a String — the target has no Char of its own *)
+  let name_arms =
+    [
+      ("<'true'> when 'true'", "Bool");
+      ("<'false'> when 'true'", "Bool");
+      ("<'ok'> when 'true'", "Void");
+      ("<{'emo_char', _x}> when 'true'", "Char");
+      ("<{'emo_byte', _x}> when 'true'", "Byte");
+      ("<{'emo_bytes', _k}> when 'true'", "Bytes");
+      ("<{'emo_list', _k}> when 'true'", "List");
+      ("<{'emo_builder', _k}> when 'true'", "ArrayBuilder");
+      ("<{'emo_map', _k}> when 'true'", "Map");
+      ("<{'emo_array', _k}> when 'true'", "Array");
+      ("<{'emo_atomic', _r}> when 'true'", "Atomic");
+      ("<{'emo_pid', _n, _p}> when 'true'", "Pid");
+      ("<_i> when call 'erlang':'is_integer'(_i)", "Int64");
+      ("<_f> when call 'erlang':'is_float'(_f)", "Float64");
+      ("<_s> when call 'erlang':'is_binary'(_s)", "String");
+      ("<_r> when call 'erlang':'is_reference'(_r)", "Box");
+      ("<_l> when call 'erlang':'is_list'(_l)", "Array");
+      ("<_p> when call 'erlang':'is_pid'(_p)", "Pid");
+    ]
+  in
+  let type_name =
+    String.concat "\n"
+      ([
+         "%% The kind a value wears, by the interpreter's own name.";
+         "'emo_type_name'/1 =";
+         "    fun (_v) ->";
+         "\tcase _v of";
+       ]
+      @ List.map
+          (fun (pat, n) -> Printf.sprintf "\t  %s -> %s" pat (lit n))
+          name_arms
+      @ [
+          "\t  <{}> when 'true' ->";
+          lit "Tuple";
+          "\t  <{'emo_enum', _n, _m}> when 'true' ->";
+          lit "an enum member";
+          "\t  <_t> when call 'erlang':'is_tuple'(_t) ->";
+          "\t      case call 'erlang':'element'(1, _t) of";
+          "\t\t<'emo_inst'> when 'true' ->";
+          lit "an instance";
+          "\t\t<_> when 'true' ->";
+          lit "Tuple";
+          "\t      end";
+          "\t  <_fn> when call 'erlang':'is_function'(_fn) ->";
+          lit "an arrow block";
+          "\t  <_other> when 'true' ->";
+          lit "value";
+          "\tend";
+          "";
+        ])
+  in
+  let reporters =
+    String.concat "\n"
+      [
+        "%% The interpreter's own sentence, as a binary.";
+        "'emo_mismatch'/4 =";
+        "    fun (_op, _expects, _a, _b) ->";
+        Printf.sprintf
+          "\tcall 'erlang':'iolist_to_binary' ([%s, _op, %s, _expects, %s, \
+           apply 'emo_type_name'/1 (_a), %s, apply 'emo_type_name'/1 (_b)])"
+          (lit "operator `") (lit "` expects ") (lit ", got ") (lit " and ");
+        "";
+        "'emo_unary_mismatch'/3 =";
+        "    fun (_op, _expects, _a) ->";
+        Printf.sprintf
+          "\tcall 'erlang':'iolist_to_binary' ([%s, _op, %s, _expects, %s, \
+           apply 'emo_type_name'/1 (_a)])"
+          (lit "operator `") (lit "` expects ") (lit ", got ");
+        "";
+        Printf.sprintf
+          "%% The logical operators' checked operand: `!` rides it with %s, %s \
+           with %s — each side the run actually evaluates is checked as it \
+           evaluates."
+          (lit "a Bool") (lit "&&") (lit "two Bools");
+        "";
+        "'emo_bool_checked'/2 =";
+        "    fun (_v, _op) ->";
+        "\tcase _v of";
+        "\t  <'true'> when 'true' -> 'true'";
+        "\t  <'false'> when 'true' -> 'false'";
+        "\t  <_other> when 'true' ->";
+        Printf.sprintf
+          "\t      call 'erlang':'error'\n\
+           \t\t({'emo_runtime_error', apply 'emo_unary_mismatch'/3 (_op, %s, \
+           _other)})"
+          (lit "two Bools");
+        "\tend";
+        "";
+        "%% A runtime refusal reaches the root: announce the sentence the way";
+        "%%   the c target does, and end the program with 70 — the \
+         interpreter's";
+        "%%   own exit for it. The write is the port's own, so nothing is left";
+        "%%   in a buffer when the halt comes.";
+        "'emo_no_method'/2 =";
+        "    fun (_v, _name) ->";
+        "\tcall 'erlang':'error'";
+        Printf.sprintf
+          "\t  ({'emo_runtime_error',\n\
+           \t\t    call 'erlang':'iolist_to_binary'\n\
+           \t\t      ([%s, apply 'emo_type_name'/1 (_v), %s, _name, %s])})"
+          (lit "`") (lit "` has no method `") (lit "`");
+        "";
+        "%% The leftover refusal tags render here, at the root's own";
+        "%%   catch-all: each family's own words, the interpreter's";
+        "%%   shape, one envelope for everything the runtime raises.";
+        "'emo_refusal_text'/1 =";
+        "    fun (_t) ->";
+        "\tcase _t of";
+        "\t  <{'emo_runtime_error', _b}> when 'true' -> _b";
+        Printf.sprintf
+          "\t  <{'emo_no_match', _x}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_x), %s])"
+          (lit "no `case` branch matched this ")
+          (lit " value");
+        Printf.sprintf
+          "\t  <{'emo_bad_type', _a, _b}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_a), %s, apply 'emo_type_name'/1 (_b)])"
+          (lit "a runtime kind mismatch: ")
+          (lit " and ");
+        Printf.sprintf
+          "\t  <{'emo_no_method', _v, _n}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_v), %s, call 'erlang':'atom_to_binary'(_n, \
+           'utf8'), %s])"
+          (lit "`") (lit "` has no method `") (lit "`");
+        Printf.sprintf
+          "\t  <{'emo_empty_list', _op}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([call \
+           'erlang':'atom_to_binary'(_op, 'utf8'), %s])"
+          (lit " on an empty List");
+        Printf.sprintf "\t  <{'emo_bad_substring', _s, _l}> when 'true' -> %s"
+          (lit "the byte range is outside the Bytes");
+        "\t  <{'emo_builder_index', _i, _n}> when 'true' ->";
+        "\t      call 'erlang':'iolist_to_binary'([\"index \", call \
+         'erlang':'integer_to_binary'(_i), \" is out of bounds (the length is \
+         \", call 'erlang':'integer_to_binary'(_n), \")\"])";
+        Printf.sprintf "\t  <{'emo_printf_count', _n}> when 'true' -> %s"
+          (lit "printf: the format wants a different argument count");
+        Printf.sprintf "\t  <{'emo_printf_wrong', _c, _k}> when 'true' -> %s"
+          (lit "printf: the format met a value of the wrong kind");
+        Printf.sprintf
+          "\t  <{'emo_printf_bad_conversion', _x}> when 'true' -> %s"
+          (lit "printf: an unknown conversion");
+        Printf.sprintf "\t  <{'emo_no_to_str', _x}> when 'true' -> %s"
+          (lit "a value the beam cannot render");
+        Printf.sprintf "\t  <{'emo_bad_byte', _x}> when 'true' -> %s"
+          (lit "a Byte out of range");
+        Printf.sprintf "\t  <{'emo_nan_bits', _x}> when 'true' -> %s"
+          (lit "from_bits met a NaN payload");
+        Printf.sprintf "\t  <{'emo_cell_gone', _k}> when 'true' -> %s"
+          (lit "the Box's cell is gone");
+        Printf.sprintf "\t  <{'emo_map_pairs', _x}> when 'true' -> %s"
+          (lit "the Map's pairs met a value that is not a Map");
+        Printf.sprintf "\t  <{'emo_no_inst', _c}> when 'true' -> %s"
+          (lit "the runtime met a class it does not know");
+        Printf.sprintf
+          "\t  <{'emo_no_array', _x}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_x)])"
+          (lit "cannot index this ");
+        Printf.sprintf
+          "\t  <{'emo_no_atomic', _x}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_x)])"
+          (lit "the Atomic door met a value that is not an Atomic: ");
+        Printf.sprintf "\t  <{'emo_bad_utf8', _b}> when 'true' -> _b";
+        Printf.sprintf "\t  <{'emo_bad_int64', _b}> when 'true' -> _b";
+        Printf.sprintf "\t  <{'emo_empty_sep', _b}> when 'true' -> _b";
+        Printf.sprintf "\t  <{'emo_no_key', _b}> when 'true' -> _b";
+        "\t  <_other> when 'true' ->";
+        "\t      call 'erlang':'iolist_to_binary'";
+        "\t\t(call 'io_lib':'format'(\"internal: ~p\", [_other]))";
+        "\tend";
+        "";
+        "'emo_runtime_fail'/1 =";
+        "    fun (_msg) ->";
+        Printf.sprintf
+          "\tdo call 'file':'write'(call 'erlang':'whereis'('standard_error'), \
+           [%s, _msg, %s])"
+          (lit "runtime error: ") (lit "\n");
+        "\t    call 'erlang':'halt'(70)";
+        "";
+      ]
+  in
+  let door (name, arity, op, expects) =
+    let args =
+      String.concat ", " (List.init arity (fun i -> Printf.sprintf "_a%d" i))
+    in
+    let report =
+      if arity = 2 then
+        Printf.sprintf "apply 'emo_mismatch'/4 (%s, %s, _x, _y)" (lit op)
+          (lit expects)
+      else
+        Printf.sprintf "apply 'emo_unary_mismatch'/3 (%s, %s, _x)" (lit op)
+          (lit expects)
+    in
+    String.concat "\n"
+      ([
+         Printf.sprintf "'emo_op_%s'/%d =" name arity;
+         Printf.sprintf "    fun (%s) ->" args;
+         Printf.sprintf "\ttry apply 'emo_%s'/%d (%s)" name arity args;
+         "of";
+         "    <_r> -> _r";
+         "catch";
+         "    <_C, _T, _S> ->";
+         "\tcase _T of";
+         "\t  <{'emo_bad_type', _x, _y}> when 'true' ->";
+         "\t      call 'erlang':'error'";
+         "\t\t({'emo_runtime_error',";
+       ]
+      @ [ Printf.sprintf "\t\t  %s})" report ]
+      @ [ "\t  <_other> when 'true' -> call 'erlang':'throw'(_T)"; "\tend"; "" ]
+      )
+  in
+  String.concat "\n"
+    ([ "%% ---- The gradual operators' doors ----"; "" ]
+    @ [ type_name; reporters ]
+    @ List.map door gradual_op_doors)
+
 let rt_source =
   {|
 %% The Int64 wrap: the low 64 bits of the bignum (band works in two's
@@ -2286,6 +2725,7 @@ let rt_source =
 'emo_to_str'/1 =
     fun (_v) ->
 	case _v of
+	  <{'emo_char', _b}> when 'true' -> _b
 	  <_i> when call 'erlang':'is_integer'(_i) ->
 	      call 'erlang':'integer_to_binary'(_i)
 	  <_f> when call 'erlang':'is_float'(_f) ->
@@ -2310,8 +2750,18 @@ let rt_source =
 		#<105>(8,1,'integer',['unsigned'|['big']]),
 		#<99>(8,1,'integer',['unsigned'|['big']]),
 		#<62>(8,1,'integer',['unsigned'|['big']])}#
+	  <{'emo_byte', _x}> when 'true' ->
+	      call 'erlang':'integer_to_binary'(_x)
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_bytes_label'/1 ({'emo_bytes', _k})
+	  <_r> when call 'erlang':'is_reference'(_r) ->
+	      %% a Box is the bare process-dictionary key — every other
+	      %%   reference rides inside a tag, so a bare one is a Box
+	      #{#<60>(8,1,'integer',['unsigned'|['big']]),
+		#<98>(8,1,'integer',['unsigned'|['big']]),
+		#<111>(8,1,'integer',['unsigned'|['big']]),
+		#<120>(8,1,'integer',['unsigned'|['big']]),
+		#<62>(8,1,'integer',['unsigned'|['big']])}#
 	  <{'emo_list', _k}> when 'true' ->
 	      apply 'emo_list_to_str'/1 ({'emo_list', _k})
 	  <{'emo_builder', _k}> when 'true' ->
@@ -2322,6 +2772,10 @@ let rt_source =
 	      apply 'emo_array_to_str'/1 ({'emo_array', _t})
 	  <{'emo_enum', _n, _m}> when 'true' ->
 	      call 'erlang':'atom_to_binary'(_m, 'utf8')
+	  <{'emo_pid', _n, _p}> when 'true' ->
+	      call 'erlang':'iolist_to_binary'
+		([60, 112, 105, 100, 32,
+		  call 'erlang':'integer_to_binary'(_n), 62])
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
 	      %% an instance is a tagged tuple: it reaches the per-program
 	      %% structure dump
@@ -2471,12 +2925,16 @@ let rt_source =
 'emo_add'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'+'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
 		    apply 'emo_mask'/1 (call 'erlang':'+'(_x, _y))
-		<_y> when call 'erlang':'is_float'(_y) ->
-		    call 'erlang':'+'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_x> when call 'erlang':'is_binary'(_x) ->
@@ -2487,8 +2945,6 @@ let rt_source =
 	      end
 	  <_x> when call 'erlang':'is_float'(_x) ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'+'(_x, _y)
 		<_y> when call 'erlang':'is_float'(_y) ->
 		    call 'erlang':'+'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2499,18 +2955,20 @@ let rt_source =
 'emo_sub'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'-'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
 		    apply 'emo_mask'/1 (call 'erlang':'-'(_x, _y))
-		<_y> when call 'erlang':'is_float'(_y) ->
-		    call 'erlang':'-'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_x> when call 'erlang':'is_float'(_x) ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'-'(_x, _y)
 		<_y> when call 'erlang':'is_float'(_y) ->
 		    call 'erlang':'-'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2521,6 +2979,12 @@ let rt_source =
 'emo_band'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'band'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2533,6 +2997,12 @@ let rt_source =
 'emo_bor'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bor'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2545,6 +3015,12 @@ let rt_source =
 'emo_bxor'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bxor'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2557,6 +3033,12 @@ let rt_source =
 'emo_shl'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bsl'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2569,6 +3051,12 @@ let rt_source =
 'emo_shr'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bsr'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2581,6 +3069,8 @@ let rt_source =
 'emo_bnot'/1 =
     fun (_a) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      {'emo_byte', call 'erlang':'band'(call 'erlang':'bnot'(_x), 255)}
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      apply 'emo_mask'/1 (call 'erlang':'bnot'(_x))
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
@@ -2589,18 +3079,20 @@ let rt_source =
 'emo_mul'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'*'(_x, _y), 255)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
 		    apply 'emo_mask'/1 (call 'erlang':'*'(_x, _y))
-		<_y> when call 'erlang':'is_float'(_y) ->
-		    call 'erlang':'*'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_x> when call 'erlang':'is_float'(_x) ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'*'(_x, _y)
 		<_y> when call 'erlang':'is_float'(_y) ->
 		    call 'erlang':'*'(_x, _y)
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2611,6 +3103,12 @@ let rt_source =
 'emo_div'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'div'(_x, _y)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2629,6 +3127,12 @@ let rt_source =
 'emo_mod'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'rem'(_x, _y)}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) ->
@@ -2657,10 +3161,10 @@ let rt_source =
 'emo_byte_add'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
+	  <{'emo_byte', _x}> when 'true' ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'band'(call 'erlang':'+'(_x, _y), 255)
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'+'(_x, _y), 255)}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2669,10 +3173,10 @@ let rt_source =
 'emo_byte_sub'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
+	  <{'emo_byte', _x}> when 'true' ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'band'(call 'erlang':'-'(_x, _y), 255)
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'-'(_x, _y), 255)}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2681,10 +3185,10 @@ let rt_source =
 'emo_byte_mul'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
+	  <{'emo_byte', _x}> when 'true' ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'band'(call 'erlang':'*'(_x, _y), 255)
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'*'(_x, _y), 255)}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2693,10 +3197,10 @@ let rt_source =
 'emo_byte_shl'/2 =
     fun (_a, _b) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
+	  <{'emo_byte', _x}> when 'true' ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) ->
-		    call 'erlang':'band'(call 'erlang':'bsl'(_x, _y), 255)
+		<{'emo_byte', _y}> when 'true' ->
+		    {'emo_byte', call 'erlang':'band'(call 'erlang':'bsl'(_x, _y), 255)}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
@@ -2705,8 +3209,19 @@ let rt_source =
 'emo_byte_bnot'/1 =
     fun (_a) ->
 	case _a of
-	  <_x> when call 'erlang':'is_integer'(_x) ->
-	      call 'erlang':'band'(call 'erlang':'bnot'(_x), 255)
+	  <{'emo_byte', _x}> when 'true' ->
+	      {'emo_byte', call 'erlang':'band'(call 'erlang':'bnot'(_x), 255)}
+	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
+	end
+
+%% A Byte is the {'emo_byte', N} tag — its own value, never the plain
+%%   integer an Int64 is, so `b == 7` is false and `b + 1` refuses the
+%%   way the checker refuses them when it can see the types.
+
+'emo_byte_to_int'/1 =
+    fun (_a) ->
+	case _a of
+	  <{'emo_byte', _x}> when 'true' -> _x
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 
@@ -2727,7 +3242,7 @@ let rt_source =
 		<'false'> when 'true' ->
 		    case call 'erlang':'>'(_x, 255) of
 		      <'true'> when 'true' -> call 'erlang':'error'({'emo_bad_byte', _x})
-		      <'false'> when 'true' -> _x
+		      <'false'> when 'true' -> {'emo_byte', _x}
 		    end
 	      end
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
@@ -2737,7 +3252,7 @@ let rt_source =
     fun (_a) ->
 	case _a of
 	  <_x> when call 'erlang':'is_integer'(_x) ->
-	      call 'erlang':'band'(_x, 255)
+	      {'emo_byte', call 'erlang':'band'(_x, 255)}
 	  <_other> when 'true' -> apply 'emo_type_error'/2 (_a, _a)
 	end
 
@@ -2816,15 +3331,19 @@ let rt_source =
 'emo_cmp'/2 =
     fun (_a, _b) ->
 	case _a of
+	  <{'emo_byte', _x}> when 'true' ->
+	      case _b of
+		<{'emo_byte', _y}> when 'true' ->
+		    {_x, _y}
+		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
+	      end
 	  <_x> when call 'erlang':'is_integer'(_x) ->
 	      case _b of
 		<_y> when call 'erlang':'is_integer'(_y) -> {_x, _y}
-		<_y> when call 'erlang':'is_float'(_y) -> {_x, _y}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
 	  <_x> when call 'erlang':'is_float'(_x) ->
 	      case _b of
-		<_y> when call 'erlang':'is_integer'(_y) -> {_x, _y}
 		<_y> when call 'erlang':'is_float'(_y) -> {_x, _y}
 		<_other> when 'true' -> apply 'emo_type_error'/2 (_a, _b)
 	      end
@@ -2889,9 +3408,7 @@ let rt_source =
 	      let <_bin> = apply 'emo_cell_get'/1 (_k)
 	      in let <_pid> =
 		      call 'erlang':'spawn'(fun () ->
-			  do
-			      apply 'emo_spawn_reg'/1 (call 'erlang':'self'())
-			      apply 'emo_atomic_holder'/1 (_bin))
+			  apply 'emo_atomic_holder'/1 (_bin))
 	      in {'emo_atomic_bytes', _pid}
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_atomic', _other})
@@ -2908,9 +3425,11 @@ let rt_source =
 %% the calling process, and a load or exchange wraps the holder's
 %% answer into this process's own Bytes value — so the cell's
 %% operations carry byte content across process boundaries, the one
-%% shape on this target that does. The holder rides the root's child
-%% table ('emo_spawn_reg'), so the cell lives exactly as long as the
-%% program does.
+%% shape on this target that does. The holder parks in its own
+%% hand-written receive, outside the registry and the deadlock poll's
+%% count alike — a row in the table would keep the all-blocked sizes
+%% apart forever, and it runs no Emo code to deserve one. The
+%% program's end halts the VM, which is what reaps it.
 
 'emo_atomic_holder'/1 =
     fun (_bin) ->
@@ -2996,7 +3515,7 @@ let rt_source =
 		     (apply 'emo_atomic_bytes_call'/4
 			  (_pid, _ref, 'load', 'ok'))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_atomic', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_atomic_store'/2 =
@@ -3016,7 +3535,7 @@ let rt_source =
 			  apply 'emo_atomic_bytes_bin'/1 (_v))
 		     _a
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_atomic', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<115>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_atomic_encode'/2 =
@@ -3064,7 +3583,7 @@ let rt_source =
 			  (_pid, _ref, 'exchange',
 			   apply 'emo_atomic_bytes_bin'/1 (_v)))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_atomic', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<101>(8,1,'integer',['unsigned'|['big']]),#<120>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_atomic_compare_exchange'/3 =
@@ -3097,7 +3616,7 @@ let rt_source =
 			    (_old, apply 'emo_atomic_bytes_bin'/1 (_expected))
 		    in {_swapped, apply 'emo_atomic_bytes_wrap'/1 (_old)}
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_atomic', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<99>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<109>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<120>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 %% The fetch family: a compare-exchange loop over the encoded value —
@@ -3201,7 +3720,7 @@ let rt_source =
 'emo_box_replace'/2 =
     fun (_k, _v) ->
 	do
-	    call 'erlang':'put'(_k, _v)
+	    apply 'emo_cell_put'/2 (_k, _v)
 	    _v
 
 'emo_bytes_new'/1 =
@@ -3216,7 +3735,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      call 'erlang':'byte_size'(apply 'emo_cell_get'/1 (_k))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_get'/2 =
@@ -3225,7 +3744,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      call 'binary':'at'(apply 'emo_cell_get'/1 (_k), _i)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_set'/3 =
@@ -3238,7 +3757,7 @@ let rt_source =
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 1), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 1)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 _v
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u16_get'/2 =
@@ -3247,7 +3766,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 2), 'little')
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<49>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u32_get'/2 =
@@ -3256,7 +3775,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 4), 'little')
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<51>(8,1,'integer',['unsigned'|['big']]),#<50>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u64_get'/2 =
@@ -3265,7 +3784,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_mask'/1 (call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 8), 'little'))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<52>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u16_set'/3 =
@@ -3279,7 +3798,7 @@ let rt_source =
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 2), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 2)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 apply 'emo_mask'/1 (_v)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<49>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u32_set'/3 =
@@ -3295,7 +3814,7 @@ let rt_source =
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 4), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 4)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 apply 'emo_mask'/1 (_v)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<51>(8,1,'integer',['unsigned'|['big']]),#<50>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u64_set'/3 =
@@ -3315,7 +3834,7 @@ let rt_source =
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 8), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 8)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 apply 'emo_mask'/1 (_v)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<52>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_str_to_bytes'/1 =
@@ -3330,7 +3849,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_cell_get'/1 (_k)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<116>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 %% String.substring(start, length): in-bounds only, the same range
@@ -3405,14 +3924,16 @@ let rt_source =
 	case _cps of
 	  <[]> when 'true' -> []
 	  <[_cp | _rest]> when 'true' ->
-	      [ call 'unicode':'characters_to_binary'([_cp])
+	      [ {'emo_char',
+		 call 'unicode':'characters_to_binary'([_cp])}
 	      | apply 'emo_char_bins'/1 (_rest) ]
 	end
 
 %% The code point a one-Char binary names.
 'emo_char_to_int'/1 =
     fun (_b) ->
-	case call 'unicode':'characters_to_list'(_b) of
+	case call 'unicode':'characters_to_list'
+		   (call 'erlang':'element'(2, _b)) of
 	  <[_cp]> when 'true' -> _cp
 	  <_bad> when 'true' ->
 	      call 'erlang':'error'
@@ -3559,12 +4080,16 @@ let rt_source =
 
 'emo_to_int64'/1 =
     fun (_v) ->
-	case call 'erlang':'is_binary'(_v) of
-	  <'true'> when 'true' -> apply 'emo_str_to_int64'/1 (_v)
-	  <'false'> when 'true' ->
-	      case call 'erlang':'is_float'(_v) of
-		<'true'> when 'true' -> call 'erlang':'trunc'(_v)
-		<'false'> when 'true' -> _v
+	case _v of
+	  <{'emo_byte', _x}> when 'true' -> _x
+	  <_other> when 'true' ->
+	      case call 'erlang':'is_binary'(_v) of
+		<'true'> when 'true' -> apply 'emo_str_to_int64'/1 (_v)
+		<'false'> when 'true' ->
+		    case call 'erlang':'is_float'(_v) of
+		      <'true'> when 'true' -> call 'erlang':'trunc'(_v)
+		      <'false'> when 'true' -> _v
+		    end
 	      end
 	end
 
@@ -3577,22 +4102,71 @@ let rt_source =
 	      call 'erlang':'error'({'emo_no_bytes', _other})
 	end
 
+%% The List is a row-backed deque: the cells table (the root's shared
+%%   one) holds {{K, 'f'}, Front}, {{K, 'b'}, Back} and {{K, 'n'}, Len},
+%%   one row per element at {{K, 'i', I}, V}. Every operation touches
+%%   O(1) rows, so a push costs no more than a map write; the tag is a
+%%   key, so a spawn's argument shares the deque (the interpreter's
+%%   alias) while a send re-rows a copy.
 'emo_list_new'/1 =
     fun (_arr) ->
 	let <_k> = call 'erlang':'make_ref'()
-	in do call 'erlang':'put'
-		 (_k,
-	  {apply 'emo_array_elems'/1 (_arr), []})
-	   {'emo_list', _k}
+	in let <_es> = apply 'emo_array_elems'/1 (_arr)
+	   in let <_n> = call 'erlang':'length'(_es)
+	      in do apply 'emo_list_fill'/3 (_es, _k, 0)
+		 do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'f'}, 0})
+		 do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'b'}, _n})
+		    do call 'ets':'insert'
+			 (apply 'emo_cells_table'/0 (), {{_k, 'n'}, _n})
+		       {'emo_list', _k}
+
+'emo_list_fill'/3 =
+    fun (_es, _k, _i) ->
+	case _es of
+	  <[_h | _t]> when 'true' ->
+	      do call 'ets':'insert'
+		   (apply 'emo_cells_table'/0 (), {{_k, 'i', _i}, _h})
+		 apply 'emo_list_fill'/3
+		   (_t, _k, call 'erlang':'+'(_i, 1))
+	  <[]> when 'true' -> 'ok'
+	end
+
+'emo_list_row'/2 =
+    fun (_k, _tag) ->
+	call 'ets':'lookup_element'
+	  (apply 'emo_cells_table'/0 (), {_k, _tag}, 2)
+
+'emo_list_set_row'/3 =
+    fun (_k, _tag, _v) ->
+	call 'ets':'insert'
+	  (apply 'emo_cells_table'/0 (), {{_k, _tag}, _v})
+
+'emo_list_bump'/2 =
+    fun (_k, _d) ->
+	let <_n> = apply 'emo_list_row'/2 (_k, 'n')
+	in apply 'emo_list_set_row'/3
+	     (_k, 'n', call 'erlang':'+'(_n, _d))
+
+'emo_list_walk'/3 =
+    fun (_k, _i, _b) ->
+	case call 'erlang':'<'(_i, _b) of
+	  <'true'> when 'true' ->
+	      [call 'ets':'lookup_element'
+		 (apply 'emo_cells_table'/0 (), {_k, 'i', _i}, 2)
+	       | apply 'emo_list_walk'/3
+		   (_k, call 'erlang':'+'(_i, 1), _b)]
+	  <'false'> when 'true' -> []
+	end
 
 'emo_list_elems'/1 =
     fun (_l) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    call 'erlang':'++'(_f, call 'lists':'reverse'(_r))
-	      end
+	      apply 'emo_list_walk'/3
+		(_k, apply 'emo_list_row'/2 (_k, 'f'),
+		 apply 'emo_list_row'/2 (_k, 'b'))
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_list', _other})
 	end
@@ -3601,89 +4175,85 @@ let rt_source =
     fun (_l, _v) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    do call 'erlang':'put'(_k, {[_v | _f], _r})
-		       _l
-	      end
+	      let <_f> = apply 'emo_list_row'/2 (_k, 'f')
+	      in let <_i> = call 'erlang':'-'(_f, 1)
+		 in do call 'ets':'insert'
+			 (apply 'emo_cells_table'/0 (), {{_k, 'i', _i}, _v})
+		    do apply 'emo_list_set_row'/3 (_k, 'f', _i)
+		       do apply 'emo_list_bump'/2 (_k, 1)
+			  _l
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_push_back'/2 =
     fun (_l, _v) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    do call 'erlang':'put'(_k, {_f, [_v | _r]})
+	      let <_b> = apply 'emo_list_row'/2 (_k, 'b')
+	      in do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'i', _b}, _v})
+		 do apply 'emo_list_set_row'/3
+		      (_k, 'b', call 'erlang':'+'(_b, 1))
+		    do apply 'emo_list_bump'/2 (_k, 1)
 		       _l
-	      end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<98>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<107>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_pop_front'/1 =
     fun (_l) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    case _f of
-		      <[_h | _t]> when 'true' ->
-			  do call 'erlang':'put'(_k, {_t, _r})
-			     _h
-		      <[]> when 'true' ->
-			  case call 'lists':'reverse'(_r) of
-			    <[_h | _t]> when 'true' ->
-				do call 'erlang':'put'(_k, {_t, []})
-				   _h
-			    <[]> when 'true' ->
-				call 'erlang':'error'({'emo_empty_list',
-						       'pop_front', _l})
-			  end
-		    end
+	      case apply 'emo_list_row'/2 (_k, 'n') of
+		<0> when 'true' ->
+		    call 'erlang':'error'({'emo_empty_list', 'pop_front', _l})
+		<_> when 'true' ->
+		    let <_f> = apply 'emo_list_row'/2 (_k, 'f')
+		    in let <_v> = call 'ets':'lookup_element'
+				    (apply 'emo_cells_table'/0 (),
+				     {_k, 'i', _f}, 2)
+		       in do call 'ets':'delete'
+			       (apply 'emo_cells_table'/0 (), {_k, 'i', _f})
+			  do apply 'emo_list_set_row'/3
+			       (_k, 'f', call 'erlang':'+'(_f, 1))
+			     do apply 'emo_list_bump'/2 (_k, -1)
+				_v
 	      end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_pop_back'/1 =
     fun (_l) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    case _r of
-		      <[_h | _t]> when 'true' ->
-			  do call 'erlang':'put'(_k, {_f, _t})
-			     _h
-		      <[]> when 'true' ->
-			  case call 'lists':'reverse'(_f) of
-			    <[_h | _t]> when 'true' ->
-				do call 'erlang':'put'(_k, {[], _t})
-				   _h
-			    <[]> when 'true' ->
-				call 'erlang':'error'({'emo_empty_list',
-						       'pop_back', _l})
-			  end
-		    end
+	      case apply 'emo_list_row'/2 (_k, 'n') of
+		<0> when 'true' ->
+		    call 'erlang':'error'({'emo_empty_list', 'pop_back', _l})
+		<_> when 'true' ->
+		    let <_i> = call 'erlang':'-'
+				 (apply 'emo_list_row'/2 (_k, 'b'), 1)
+		    in let <_v> = call 'ets':'lookup_element'
+				    (apply 'emo_cells_table'/0 (),
+				     {_k, 'i', _i}, 2)
+		       in do call 'ets':'delete'
+			       (apply 'emo_cells_table'/0 (), {_k, 'i', _i})
+			  do apply 'emo_list_set_row'/3 (_k, 'b', _i)
+			     do apply 'emo_list_bump'/2 (_k, -1)
+				_v
 	      end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<98>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<107>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_len'/1 =
     fun (_l) ->
 	case _l of
 	  <{'emo_list', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_f, _r}> when 'true' ->
-		    call 'erlang':'+'(call 'erlang':'length'(_f),
-				      call 'erlang':'length'(_r))
-	      end
+	      apply 'emo_list_row'/2 (_k, 'n')
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_to_str'/1 =
@@ -3701,77 +4271,403 @@ let rt_source =
 %% process dictionary — the same mechanism emo_list_new uses. Push
 %% conses onto the reversed list, so it is O(1); get is O(n) (it walks to
 %% the index), which only push is required to avoid.
+%% The ArrayBuilder is the List's row shape without the two ends: a row
+%%   per element at {{K, 'i', I}, V} and a count at {{K, 'n'}, N}, so
+%%   push is O(1) and get reads one row.
 'emo_builder_new'/0 =
     fun () ->
 	let <_k> = call 'erlang':'make_ref'()
-	in do call 'erlang':'put'(_k, {0, []})
+	in do call 'ets':'insert'
+	      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, 0})
 	   {'emo_builder', _k}
 
 'emo_builder_push'/2 =
     fun (_b, _v) ->
 	case _b of
 	  <{'emo_builder', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_n, _r}> when 'true' ->
-		    do call 'erlang':'put'(_k, {call 'erlang':'+'(_n, 1), [_v | _r]})
-		       _b
-	      end
+	      let <_n> = apply 'emo_builder_row'/2 (_k, 'n')
+	      in do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'i', _n}, _v})
+		 do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, call 'erlang':'+'(_n, 1)})
+		    _b
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_builder', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+'emo_builder_row'/2 =
+    fun (_k, _tag) ->
+	call 'ets':'lookup_element'
+	  (apply 'emo_cells_table'/0 (), {_k, _tag}, 2)
+
+'emo_builder_walk'/3 =
+    fun (_k, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'true'> when 'true' ->
+	      [call 'ets':'lookup_element'
+		 (apply 'emo_cells_table'/0 (), {_k, 'i', _i}, 2)
+	       | apply 'emo_builder_walk'/3
+		   (_k, call 'erlang':'+'(_i, 1), _n)]
+	  <'false'> when 'true' -> []
 	end
 
 'emo_builder_elems'/1 =
     fun (_b) ->
 	case _b of
 	  <{'emo_builder', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_n, _r}> when 'true' -> call 'lists':'reverse'(_r)
-	      end
+	      apply 'emo_builder_walk'/3
+		(_k, 0, apply 'emo_builder_row'/2 (_k, 'n'))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_builder', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<116>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<121>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_builder_len'/1 =
     fun (_b) ->
 	case _b of
 	  <{'emo_builder', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_n, _r}> when 'true' -> _n
-	      end
+	      apply 'emo_builder_row'/2 (_k, 'n')
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_builder', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_builder_get'/2 =
     fun (_b, _i) ->
 	case _b of
 	  <{'emo_builder', _k}> when 'true' ->
-	      case call 'erlang':'get'(_k) of
-		<{_n, _r}> when 'true' ->
-		    case call 'erlang':'is_integer'(_i) of
-		      <'true'> when 'true' ->
-			  case call 'erlang':'>='(_i, 0) of
-			    <'true'> when 'true' ->
-				case call 'erlang':'<'(_i, _n) of
-				  <'true'> when 'true' ->
-				      call 'lists':'nth'(call 'erlang':'-'(_n, _i), _r)
-				  <'false'> when 'true' ->
-				      call 'erlang':'error'({'emo_builder_index', _i, _n})
-				end
-			    <'false'> when 'true' ->
-				call 'erlang':'error'({'emo_builder_index', _i, _n})
-			  end
-		      <'false'> when 'true' ->
-			  call 'erlang':'error'({'emo_builder_index', _i, _n})
-		    end
-	      end
+	      let <_n> = apply 'emo_builder_row'/2 (_k, 'n')
+	      in case call 'erlang':'is_integer'(_i) of
+		   <'true'> when 'true' ->
+		       case call 'erlang':'>='(_i, 0) of
+			 <'true'> when 'true' ->
+			     case call 'erlang':'<'(_i, _n) of
+			       <'true'> when 'true' ->
+				   call 'ets':'lookup_element'
+				     (apply 'emo_cells_table'/0 (),
+				      {_k, 'i', _i}, 2)
+			       <'false'> when 'true' ->
+				   call 'erlang':'error'
+				     ({'emo_builder_index', _i, _n})
+			     end
+			 <'false'> when 'true' ->
+			     call 'erlang':'error'
+			       ({'emo_builder_index', _i, _n})
+		       end
+		   <'false'> when 'true' ->
+		       call 'erlang':'error'({'emo_builder_index', _i, _n})
+		 end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_builder', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
-%% to_array hands out a fresh {'emo_array', Key} tag over a fresh
-%%   tuple — a copy, so the builder stays free to grow without touching
-%%   the array it already returned.
+'emo_map_key'/1 =
+    fun (_k) ->
+	case call 'erlang':'is_float'(_k) of
+	  <'true'> when 'true' -> call 'erlang':'+'(_k, 0.0)
+	  <_other> when 'true' -> _k
+	end
+
+%% The Map's order is a row per position ({{K, 'o', I}, Key}) and its
+%%   values a row per normalized key ({{K, 'v', Kn}, Value}), so a set
+%%   replaces one row instead of copying a pairs map. The cells table is
+%%   the root's shared one: a spawn's argument shares the map, a send
+%%   re-rows a copy.
+%% The Map's order is a row per position ({{K, 'o', I}, Key}) and its
+%%   values a row per normalized key ({{K, 'v', Kn}, Value}), so a set
+%%   replaces one row instead of copying a pairs map. The cells table is
+%%   the root's shared one: a spawn's argument shares the map, a send
+%%   re-rows a copy.
+'emo_map_new'/1 =
+    fun (_pairs) ->
+	let <_k> = call 'erlang':'make_ref'()
+	in do call 'ets':'insert'
+	      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, 0})
+	   do apply 'emo_map_new_walk'/2 (_pairs, _k)
+	      {'emo_map', _k}
+
+'emo_map_new_walk'/2 =
+    fun (_pairs, _k) ->
+	case _pairs of
+	  <[{_key, _v} | _rest]> when 'true' ->
+	      do apply 'emo_map_set'/3 ({'emo_map', _k}, _key, _v)
+		 apply 'emo_map_new_walk'/2 (_rest, _k)
+	  <[]> when 'true' -> 'ok'
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_map_pairs', _other})
+	end
+
+'emo_map_count'/1 =
+    fun (_k) ->
+	call 'ets':'lookup_element'
+	  (apply 'emo_cells_table'/0 (), {_k, 'n'}, 2)
+
+'emo_map_order_at'/2 =
+    fun (_k, _i) ->
+	call 'ets':'lookup_element'
+	  (apply 'emo_cells_table'/0 (), {_k, 'o', _i}, 2)
+
+'emo_map_value'/2 =
+    fun (_k, _kn) ->
+	case call 'ets':'lookup'
+	       (apply 'emo_cells_table'/0 (), {_k, 'v', _kn}) of
+	  <[{{_kk, 'v', _kn2}, _v}]> when 'true' -> {'ok', _v}
+	  <[]> when 'true' -> 'error'
+	end
+
+'emo_map_set'/3 =
+    fun (_m, _key, _v) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      let <_kn> = apply 'emo_map_key'/1 (_key)
+	      in case call 'ets':'lookup'
+			(apply 'emo_cells_table'/0 (), {_k, 'v', _kn}) of
+		   <[_row]> when 'true' ->
+		       do call 'ets':'insert'
+			    (apply 'emo_cells_table'/0 (),
+			     {{_k, 'v', _kn}, _v})
+			  _m
+		   <[]> when 'true' ->
+		       let <_n> = apply 'emo_map_count'/1 (_k)
+		       in do call 'ets':'insert'
+			      (apply 'emo_cells_table'/0 (),
+			       {{_k, 'o', _n}, _key})
+			  do call 'ets':'insert'
+			       (apply 'emo_cells_table'/0 (),
+				{{_k, 'v', _kn}, _v})
+			     do call 'ets':'insert'
+				  (apply 'emo_cells_table'/0 (),
+				   {{_k, 'n'}, call 'erlang':'+'(_n, 1)})
+				_m
+		 end
+	  <_other> when 'true' ->
+	      apply 'emo_no_method'/2 (_other, #{#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+'emo_map_get'/2 =
+    fun (_m, _key) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      case apply 'emo_map_value'/2
+		     (_k, apply 'emo_map_key'/1 (_key)) of
+		{'ok', _v} when 'true' -> _v
+		'error' when 'true' ->
+		    call 'erlang':'error'
+		      ({'emo_no_key',
+			call 'erlang':'iolist_to_binary'
+			  ([110, 111, 32, 107, 101, 121, 32,
+			    apply 'emo_map_dbg'/1 (_key),
+			    32, 105, 110, 32, 116, 104, 105, 115, 32,
+			    77, 97, 112])})
+	      end
+	  <_other> when 'true' ->
+	      apply 'emo_no_method'/2 (_other, #{#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+'emo_map_has'/2 =
+    fun (_m, _key) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      case apply 'emo_map_value'/2
+		     (_k, apply 'emo_map_key'/1 (_key)) of
+		{'ok', _v} when 'true' -> 'true'
+		'error' when 'true' -> 'false'
+	      end
+	  <_other> when 'true' ->
+	      apply 'emo_no_method'/2 (_other, #{#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+%% One walk over the order rows with two cursors: the removed key's
+%%   row is skipped and every other row is written at the write cursor,
+%%   so the order stays dense. A remove is the one O(n) operation.
+'emo_map_compact'/5 =
+    fun (_k, _r, _w, _n, _kn) ->
+	case call 'erlang':'<'(_r, _n) of
+	  <'true'> when 'true' ->
+	      let <_key> = apply 'emo_map_order_at'/2 (_k, _r)
+	      in case call 'erlang':'=:='
+		      (apply 'emo_map_key'/1 (_key), _kn) of
+		   <'true'> when 'true' ->
+		       apply 'emo_map_compact'/5
+			 (_k, call 'erlang':'+'(_r, 1), _w, _n, _kn)
+		   <'false'> when 'true' ->
+		       do call 'ets':'insert'
+			    (apply 'emo_cells_table'/0 (),
+			     {{_k, 'o', _w}, _key})
+			  apply 'emo_map_compact'/5
+			    (_k, call 'erlang':'+'(_r, 1),
+			     call 'erlang':'+'(_w, 1), _n, _kn)
+		 end
+	  <'false'> when 'true' ->
+	      case call 'erlang':'<'(_w, _n) of
+		<'true'> when 'true' ->
+		    do call 'ets':'delete'
+			 (apply 'emo_cells_table'/0 (), {_k, 'o', _w})
+		       apply 'emo_map_compact'/5
+			 (_k, _n, call 'erlang':'+'(_w, 1), _n, _kn)
+		<'false'> when 'true' -> 'ok'
+	      end
+	end
+
+'emo_map_remove'/2 =
+    fun (_m, _key) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      let <_kn> = apply 'emo_map_key'/1 (_key)
+	      in case call 'ets':'lookup'
+			(apply 'emo_cells_table'/0 (), {_k, 'v', _kn}) of
+		   <[]> when 'true' -> _m
+		   <[_row]> when 'true' ->
+		       let <_n> = apply 'emo_map_count'/1 (_k)
+		       in do call 'ets':'delete'
+			      (apply 'emo_cells_table'/0 (), {_k, 'v', _kn})
+			  do apply 'emo_map_compact'/5 (_k, 0, 0, _n, _kn)
+			     do call 'ets':'insert'
+				  (apply 'emo_cells_table'/0 (),
+				   {{_k, 'n'}, call 'erlang':'-'(_n, 1)})
+				_m
+		 end
+	  <_other> when 'true' ->
+	      apply 'emo_no_method'/2 (_other, #{#<114>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<109>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<118>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+'emo_map_order'/3 =
+    fun (_k, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'true'> when 'true' ->
+	      [apply 'emo_map_order_at'/2 (_k, _i)
+	       | apply 'emo_map_order'/3
+		   (_k, call 'erlang':'+'(_i, 1), _n)]
+	  <'false'> when 'true' -> []
+	end
+
+'emo_map_keys'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      apply 'emo_array_lit'/1
+		(apply 'emo_map_order'/3 (_k, 0, apply 'emo_map_count'/1 (_k)))
+	  <_other> when 'true' ->
+	      apply 'emo_no_method'/2 (_other, #{#<107>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<121>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+'emo_map_values_walk'/3 =
+    fun (_k, _i, _n) ->
+	case call 'erlang':'<'(_i, _n) of
+	  <'true'> when 'true' ->
+	      let <_key> = apply 'emo_map_order_at'/2 (_k, _i)
+	      in case apply 'emo_map_value'/2
+		     (_k, apply 'emo_map_key'/1 (_key)) of
+		   {'ok', _v} when 'true' ->
+		       [_v | apply 'emo_map_values_walk'/3
+			       (_k, call 'erlang':'+'(_i, 1), _n)]
+		   'error' when 'true' ->
+		       apply 'emo_map_values_walk'/3
+			 (_k, call 'erlang':'+'(_i, 1), _n)
+		 end
+	  <'false'> when 'true' -> []
+	end
+
+'emo_map_values'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      apply 'emo_array_lit'/1
+		(apply 'emo_map_values_walk'/3
+		   (_k, 0, apply 'emo_map_count'/1 (_k)))
+	  <_other> when 'true' ->
+	      apply 'emo_no_method'/2 (_other, #{#<118>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+'emo_map_length'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      apply 'emo_map_count'/1 (_k)
+	  <_other> when 'true' ->
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+'emo_map_equal'/2 =
+    fun (_a, _b) ->
+	case _a of
+	  <{'emo_map', _ka}> when 'true' ->
+	      case _b of
+		<{'emo_map', _kb}> when 'true' ->
+		    case call 'erlang':'=:='
+			   (apply 'emo_map_count'/1 (_ka),
+			    apply 'emo_map_count'/1 (_kb)) of
+		      <'false'> when 'true' -> 'false'
+		      <'true'> when 'true' ->
+			  apply 'emo_map_equal_walk'/3
+			    (apply 'emo_map_order'/3
+			       (_ka, 0, apply 'emo_map_count'/1 (_ka)),
+			     _ka, _kb)
+		    end
+		<_other> when 'true' -> 'false'
+	      end
+	  <_other> when 'true' ->
+	      call 'erlang':'error'({'emo_no_map', _a})
+	end
+
+'emo_map_equal_walk'/3 =
+    fun (_keys, _ka, _kb) ->
+	case _keys of
+	  <[_key | _rest]> when 'true' ->
+	      let <_kn> = apply 'emo_map_key'/1 (_key)
+	      in case apply 'emo_map_value'/2 (_kb, _kn) of
+		   'error' when 'true' -> 'false'
+		   {'ok', _vb} when 'true' ->
+		       case apply 'emo_map_value'/2 (_ka, _kn) of
+			 'error' when 'true' -> 'false'
+			 {'ok', _va} when 'true' ->
+			     case apply 'emo_eq'/2 (_va, _vb) of
+			       <'false'> when 'true' -> 'false'
+			       <'true'> when 'true' ->
+				   apply 'emo_map_equal_walk'/3
+				     (_rest, _ka, _kb)
+			     end
+		       end
+	      end
+	  <[]> when 'true' -> 'true'
+	end
+
+'emo_map_str'/1 =
+    fun (_m) ->
+	case _m of
+	  <{'emo_map', _k}> when 'true' ->
+	      call 'erlang':'iolist_to_binary'
+		(apply 'emo_map_str_walk'/3
+		   (apply 'emo_map_order'/3
+		      (_k, 0, apply 'emo_map_count'/1 (_k)),
+		    _k, 1))
+	  <_other> when 'true' ->
+	      apply 'emo_no_method'/2 (_other, #{#<116>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']])}#)
+	end
+
+'emo_map_str_walk'/3 =
+    fun (_keys, _k, _first) ->
+	case _keys of
+	  <[_key | _rest]> when 'true' ->
+	      let <_kd> = apply 'emo_map_dbg'/1 (_key)
+	      in let <_vd> =
+		     case apply 'emo_map_value'/2
+			    (_k, apply 'emo_map_key'/1 (_key)) of
+		       {'ok', _v} when 'true' -> apply 'emo_map_dbg'/1 (_v)
+		     end
+		 in case _first of
+		      <1> when 'true' ->
+			  [123, _kd, 58, 32, _vd
+			   | apply 'emo_map_str_walk'/3 (_rest, _k, 0)]
+		      <_> when 'true' ->
+			  [44, 32, _kd, 58, 32, _vd
+			   | apply 'emo_map_str_walk'/3 (_rest, _k, 0)]
+		    end
+	  <[]> when 'true' ->
+	      case _first of
+		<1> when 'true' -> [123, 125]
+		<_> when 'true' -> [125]
+	      end
+	end
+
 'emo_builder_to_array'/1 =
     fun (_b) -> apply 'emo_array_lit'/1 (apply 'emo_builder_elems'/1 (_b))
 
@@ -3862,6 +4758,15 @@ let rt_source =
 
 'emo_eq'/2 =
     fun (_a, _b) ->
+	case call 'erlang':'is_reference'(_a) of
+	  <'true'> when 'true' ->
+	      case call 'erlang':'is_reference'(_b) of
+		<'true'> when 'true' ->
+		    apply 'emo_eq'/2
+		      (apply 'emo_cell_get'/1 (_a), apply 'emo_cell_get'/1 (_b))
+		<'false'> when 'true' -> 'false'
+	      end
+	  <'false'> when 'true' ->
 	case _a of
 	  <{'emo_array', _ka}> when 'true' ->
 	      case _b of
@@ -3936,6 +4841,7 @@ let rt_source =
 		    end
 	      end
 	end
+	end
 
 %% The element-wise walk behind emo_eq's tuple arm: a class instance
 %%   ('emo_inst', ...) or a plain tuple may carry a Bytes, List, Map, or
@@ -3992,236 +4898,6 @@ let rt_source =
 %%   position. Keys are the six hashable primitives; a float key
 %%   reaches the pairs map through one normalization (`-0.0 + 0.0`),
 %%   so -0.0 and 0.0 are one key while 1 and 1.0 stay distinct.
-
-'emo_map_key'/1 =
-    fun (_k) ->
-	case call 'erlang':'is_float'(_k) of
-	  <'true'> when 'true' -> call 'erlang':'+'(_k, 0.0)
-	  <_other> when 'true' -> _k
-	end
-
-'emo_map_new'/1 =
-    fun (_pairs) ->
-	apply 'emo_map_new_walk'/3 (_pairs, call 'maps':'from_list'([]), [])
-
-'emo_map_new_walk'/3 =
-    fun (_pairs, _m, _order) ->
-	case _pairs of
-	  <[{_k, _v} | _rest]> when 'true' ->
-	      case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _m) of
-		<'true'> when 'true' ->
-		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _m), _order)
-		<'false'> when 'true' ->
-		    apply 'emo_map_new_walk'/3 (_rest, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _m), call 'erlang':'++'(_order, [_k]))
-	      end
-	  <[]> when 'true' ->
-	      let <_k> = call 'erlang':'make_ref'()
-	      in do call 'erlang':'put'(_k, {_order, _m})
-		 {'emo_map', _k}
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_map_pairs', _other})
-	end
-
-'emo_map_get'/2 =
-    fun (_m, _k) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'find'(apply 'emo_map_key'/1 (_k), _pairs) of
-		      <{'ok', _v}> when 'true' -> _v
-		      <'error'> when 'true' ->
-			  call 'erlang':'error'
-			    ({'emo_no_key',
-			      call 'erlang':'iolist_to_binary'
-				([110, 111, 32, 107, 101, 121, 32,
-				  apply 'emo_map_dbg'/1 (_k),
-				  32, 105, 110, 32, 116, 104, 105, 115, 32, 77, 97, 112])})
-		    end
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_set'/3 =
-    fun (_m, _k, _v) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs) of
-		      <'true'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {_order, call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _pairs)})
-			     _m
-		      <'false'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {call 'erlang':'++'(_order, [_k]), call 'maps':'put'(apply 'emo_map_key'/1 (_k), _v, _pairs)})
-			     _m
-		    end
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_has'/2 =
-    fun (_m, _k) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs)
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_remove'/2 =
-    fun (_m, _k) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    case call 'maps':'is_key'(apply 'emo_map_key'/1 (_k), _pairs) of
-		      <'true'> when 'true' ->
-			  do call 'erlang':'put'(_mk, {apply 'emo_map_order_drop'/2 (_order, _k), call 'maps':'remove'(apply 'emo_map_key'/1 (_k), _pairs)})
-			     _m
-		      <'false'> when 'true' -> _m
-		    end
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_order_drop'/2 =
-    fun (_keys, _k) ->
-	case _keys of
-	  <[_h | _t]> when 'true' ->
-	      case call 'erlang':'=='(_h, _k) of
-		<'true'> when 'true' -> _t
-		<'false'> when 'true' ->
-		    [_h | apply 'emo_map_order_drop'/2 (_t, _k)]
-	      end
-	  <[]> when 'true' -> []
-	end
-
-'emo_map_length'/1 =
-    fun (_m) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    call 'maps':'size'(_pairs)
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_keys'/1 =
-    fun (_m) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    apply 'emo_array_lit'/1 (_order)
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_values'/1 =
-    fun (_m) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    apply 'emo_array_lit'/1
-		      (apply 'emo_map_values_walk'/2 (_order, _pairs))
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_values_walk'/2 =
-    fun (_keys, _pairs) ->
-	case _keys of
-	  <[_k | _rest]> when 'true' ->
-	      [call 'maps':'get'(apply 'emo_map_key'/1 (_k), _pairs)
-	       | apply 'emo_map_values_walk'/2 (_rest, _pairs)]
-	  <[]> when 'true' -> []
-	end
-
-'emo_map_str'/1 =
-    fun (_m) ->
-	case _m of
-	  <{'emo_map', _mk}> when 'true' ->
-	      case call 'erlang':'get'(_mk) of
-		<{_order, _pairs}> when 'true' ->
-		    call 'erlang':'iolist_to_binary'
-		      (apply 'emo_map_str_walk'/3 (_order, _pairs, 1))
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
-	end
-
-'emo_map_str_walk'/3 =
-    fun (_keys, _pairs, _first) ->
-	case _keys of
-	  <[_k | _rest]> when 'true' ->
-	      let <_kd> = apply 'emo_map_dbg'/1 (_k)
-	      in let <_vd> = apply 'emo_map_dbg'/1 (call 'maps':'get'(apply 'emo_map_key'/1 (_k), _pairs))
-		 in case _first of
-		      <1> when 'true' ->
-			  [123, _kd, 58, 32, _vd
-			   | apply 'emo_map_str_walk'/3 (_rest, _pairs, 0)]
-		      <_> when 'true' ->
-			  [44, 32, _kd, 58, 32, _vd
-			   | apply 'emo_map_str_walk'/3 (_rest, _pairs, 0)]
-		    end
-	  <[]> when 'true' ->
-	      case _first of
-		<1> when 'true' -> [123, 125]
-		<_> when 'true' -> [125]
-	      end
-	end
-
-'emo_map_equal'/2 =
-    fun (_a, _b) ->
-	case _a of
-	  <{'emo_map', _ka}> when 'true' ->
-	      case _b of
-		<{'emo_map', _kb}> when 'true' ->
-		    case call 'erlang':'get'(_ka) of
-		      <{_oa, _pa}> when 'true' ->
-			  case call 'erlang':'get'(_kb) of
-			    <{_ob, _pb}> when 'true' ->
-				case call 'erlang':'=:='(call 'maps':'size'(_pa), call 'maps':'size'(_pb)) of
-				  <'false'> when 'true' -> 'false'
-				  <'true'> when 'true' ->
-				      apply 'emo_map_equal_walk'/3 (_oa, _pa, _pb)
-				end
-			  end
-		    end
-		<_other> when 'true' -> 'false'
-	      end
-	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _a})
-	end
-
-'emo_map_equal_walk'/3 =
-    fun (_keys, _pa, _pb) ->
-	case _keys of
-	  <[_k | _rest]> when 'true' ->
-	      let <_kn> = apply 'emo_map_key'/1 (_k)
-	      in case call 'maps':'is_key'(_kn, _pb) of
-		<'false'> when 'true' -> 'false'
-		<'true'> when 'true' ->
-		    case apply 'emo_eq'/2 (call 'maps':'get'(_kn, _pa), call 'maps':'get'(_kn, _pb)) of
-		      <'false'> when 'true' -> 'false'
-		      <'true'> when 'true' ->
-			  apply 'emo_map_equal_walk'/3 (_rest, _pa, _pb)
-		    end
-	      end
-	  <[]> when 'true' -> 'true'
-	end
 
 %% Inside a Map's rendering and its get-miss message, a string shows
 %% quoted — the interpreter's debug form; everything else goes through
@@ -4409,6 +5085,7 @@ let rt_source =
 		<'true'> when 'true' -> #{#<67>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']])}#
 		<'false'> when 'true' -> #{#<83>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']])}#
 	      end
+	  <_x> when call 'erlang':'=:='(call 'erlang':'element'(1, _x), 'emo_char') -> #{#<67>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']])}#
 	  <_x> when call 'erlang':'is_list'(_x) -> #{#<65>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<121>(8,1,'integer',['unsigned'|['big']])}#
 	  <_other> when 'true' -> #{#<118>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#
 	end
@@ -4552,6 +5229,10 @@ let rt_source =
 'emo_emit_char'/6 =
     fun (_f, _w, _p, _rest, _args, _acc) ->
 	case _args of
+	  <[_v | _a2]> when call 'erlang':'=:='(call 'erlang':'element'(1, _v), 'emo_char') ->
+	      let <_b> = call 'erlang':'element'(2, _v)
+	      in let <_out> = apply 'emo_pad'/4 (call 'erlang':'setelement'(5, _f, 'false'), _w, #{}#, _b)
+	      in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
 	  <[_v | _a2]> when call 'erlang':'is_binary'(_v) ->
 	      let <_out> = apply 'emo_pad'/4 (call 'erlang':'setelement'(5, _f, 'false'), _w, #{}#, _v)
 	      in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
@@ -5019,7 +5700,7 @@ let rt_source =
 	      call 'ets':'lookup_element'
 		(apply 'emo_cells_table'/0 (), {_k, 'n'}, 2)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_array', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_array_elem'/2 =
@@ -5064,7 +5745,7 @@ let rt_source =
 			   {{_k2, 'n'}, call 'erlang':'+'(_len, 1)})
 		 {'emo_array', _k2}
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_array', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<97>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_array_copy_walk'/4 =
@@ -5115,7 +5796,7 @@ let rt_source =
 		   (fun (_u, _v) -> apply 'emo_sort_le'/2 (_u, _v),
 		     apply 'emo_array_elems'/1 (_a)))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_array', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<115>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_array_elems'/1 =
@@ -5158,9 +5839,9 @@ let rt_source =
 %%   copy is a reference — and the receiver's unpack re-registers the
 %%   buffer under its own fresh keys. Both walks recurse through
 %%   tuples and instances (plain element rebuilds when nothing packed
-%%   hides inside). The pd-backed containers (List, Map, Builder) keep
-%%   their tags untouched — their contents not crossing is the
-%%   pre-existing class this walk neither widens nor closes.
+%%   hides inside), and the List, Map, and Builder re-row their contents
+%%   under a fresh key — the cells table is the root's shared one, so the
+%%   child reads a whole container of its own.
 
 'emo_msg_pack'/1 =
     fun (_m) ->
@@ -5175,15 +5856,72 @@ let rt_source =
 		    (apply 'emo_cells_table'/0 (), {_k, 'n'}, 2),
 		  0,
 		  call 'erlang':'make_ref'())}
+	  <{'emo_list', _k}> when 'true' ->
+	      {'emo_list_val',
+	       apply 'emo_msg_pack_list'/1 (apply 'emo_list_elems'/1 (_m))}
+	  <{'emo_builder', _k}> when 'true' ->
+	      {'emo_builder_val',
+	       apply 'emo_msg_pack_list'/1 (apply 'emo_builder_elems'/1 (_m))}
+	  <{'emo_map', _k}> when 'true' ->
+	      {'emo_map_val',
+	       apply 'emo_msg_pack_list'/1
+		 (apply 'emo_map_order'/3
+		    (_k, 0, apply 'emo_map_count'/1 (_k))),
+	       apply 'emo_msg_pack_list'/1
+		 (apply 'emo_map_values_walk'/3
+		    (_k, 0, apply 'emo_map_count'/1 (_k)))}
+	  <_r> when call 'erlang':'is_reference'(_r) ->
+	      {'emo_box_val', apply 'emo_msg_pack'/1 (apply 'emo_cell_get'/1 (_r))}
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
 	      apply 'emo_msg_pack_tuple'/2 (_t, call 'erlang':'tuple_size'(_t))
 	  <_other> when 'true' -> _other
 	end
 
+%% A list's elements each walk the pack/unpack pair into a fresh series
+%%   — a Bytes inside re-registers on the shared table, a nested
+%%   container re-rows, and the sender's later pushes stay invisible.
+'emo_msg_pack_list'/1 =
+    fun (_xs) ->
+	case _xs of
+	  <[_h | _t]> when 'true' ->
+	      [apply 'emo_msg_pack'/1 (_h)
+	       | apply 'emo_msg_pack_list'/1 (_t)]
+	  <[]> when 'true' -> []
+	end
+
+%% The receiver's unpack of a list's two halves, element by element.
+'emo_msg_unpack_list'/1 =
+    fun (_xs) ->
+	case _xs of
+	  <[_h | _t]> when 'true' ->
+	      [apply 'emo_msg_unpack'/1 (_h) | apply 'emo_msg_unpack_list'/1 (_t)]
+	  <[]> when 'true' -> []
+	end
+
+%% A map's order and values re-row the receiver's own map, the key
+%%   normalization reapplied.
+'emo_msg_unpack_map'/3 =
+    fun (_order, _vals, _k) ->
+	case _order of
+	  <[_key | _rest]> when 'true' ->
+	      case _vals of
+		<[_v | _vt]> when 'true' ->
+		    do apply 'emo_map_set'/3
+			 ({'emo_map', _k},
+			  apply 'emo_msg_unpack'/1 (_key),
+			  apply 'emo_msg_unpack'/1 (_v))
+		       apply 'emo_msg_unpack_map'/3 (_rest, _vt, _k)
+	      end
+	  <[]> when 'true' -> 'ok'
+	end
+
 %% The send's array copy: the elements walk into fresh rows under the
-%%   new key, each element packed (a Bytes inside a sent array crosses,
-%%   a nested array re-rows), the length row last. The receiver's tag
-%%   is the new key's own — the rows are already shared.
+%%   new key, each element packed and unpacked in one step — the cells
+%%   table is the root's shared one, so the re-registration a Bytes
+%%   needs happens here and the row holds a value the receiver reads
+%%   as-is (a nested array re-rows the same way), the length row last.
+%%   The receiver's tag is the new key's own — the rows are already
+%%   shared, and already whole.
 'emo_msg_pack_array'/4 =
     fun (_k, _len, _i, _k2) ->
 	case call 'erlang':'>='(_i, _len) of
@@ -5195,9 +5933,10 @@ let rt_source =
 	      do call 'ets':'insert'
 		   (apply 'emo_cells_table'/0 (),
 		    {{_k2, _i},
-		     apply 'emo_msg_pack'/1
-		       (call 'ets':'lookup_element'
-			  (apply 'emo_cells_table'/0 (), {_k, _i}, 2))})
+		     apply 'emo_msg_unpack'/1
+		       (apply 'emo_msg_pack'/1
+			  (call 'ets':'lookup_element'
+			     (apply 'emo_cells_table'/0 (), {_k, _i}, 2)))})
 		 apply 'emo_msg_pack_array'/4
 		   (_k, _len, call 'erlang':'+'(_i, 1), _k2)
 	end
@@ -5227,6 +5966,36 @@ let rt_source =
 	      in {'emo_array', _k}
 	  <{'emo_array', _k}> when 'true' ->
 	      _v
+	  <{'emo_box_val', _v}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in do apply 'emo_cell_put'/2 (_k, apply 'emo_msg_unpack'/1 (_v))
+		 _k
+	  <{'emo_list_val', _es}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in let <_vs> = apply 'emo_msg_unpack_list'/1 (_es)
+		 in let <_n> = call 'erlang':'length'(_vs)
+		    in do apply 'emo_list_fill'/3 (_vs, _k, 0)
+		       do call 'ets':'insert'
+			    (apply 'emo_cells_table'/0 (), {{_k, 'f'}, 0})
+			  do call 'ets':'insert'
+			       (apply 'emo_cells_table'/0 (), {{_k, 'b'}, _n})
+			     do call 'ets':'insert'
+				  (apply 'emo_cells_table'/0 (), {{_k, 'n'}, _n})
+				{'emo_list', _k}
+	  <{'emo_builder_val', _es}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in let <_vs> = apply 'emo_msg_unpack_list'/1 (_es)
+		 in let <_n> = call 'erlang':'length'(_vs)
+		    in do apply 'emo_list_fill'/3 (_vs, _k, 0)
+		       do call 'ets':'insert'
+			    (apply 'emo_cells_table'/0 (), {{_k, 'n'}, _n})
+			  {'emo_builder', _k}
+	  <{'emo_map_val', _order, _vals}> when 'true' ->
+	      let <_k> = call 'erlang':'make_ref'()
+	      in do call 'ets':'insert'
+		      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, 0})
+		 do apply 'emo_msg_unpack_map'/3 (_order, _vals, _k)
+		    {'emo_map', _k}
 	  <_t> when call 'erlang':'is_tuple'(_t) ->
 	      apply 'emo_msg_unpack_tuple'/2 (_t, call 'erlang':'tuple_size'(_t))
 	  <_other> when 'true' -> _other
@@ -5249,7 +6018,116 @@ let rt_source =
 
 'emo_unreg'/1 =
     fun (_pid) ->
-	do call 'ets':'delete'('emo_procs', _pid) _pid
+	do call 'ets':'delete'('emo_procs', _pid)
+	   apply 'emo_blocked_unmark'/1 (_pid)
+
+%% The root's own exit: its row leaves the registry first, so the
+%%   kill sweep spares the process running it.
+'emo_root_exit'/0 =
+    fun () ->
+	do apply 'emo_unreg'/1 (call 'erlang':'self'())
+	   apply 'emo_kill_spawned'/0 ()
+
+%% ---- The deadlock gate (the scheduler's E3012) ----
+%%
+%%   A receive whose scan matches nothing parks 1 ms and marks the
+%%   process in the emo_blocked set (emo_blocked_mark answers the
+%%   all-blocked flag: the set's size against emo_procs's — every
+%%   live process parked with nothing left to wake any of them). The
+%%   poll returns the flag to the statement site, which raises
+%%   through the runtime-error door in plain statement context —
+%%   `runtime error: all N waiting processes are blocked; no message
+%%   will ever arrive`, exit 70, the scheduler's E3012. A send clears
+%%   the receiver's mark at delivery (a send makes the receiver
+%%   runnable, the interpreter's own rule), so a message already in
+%%   flight never lets the sizes meet. The spawn registers the child
+%%   in the parent, before the parent can park.
+
+'emo_spawn_and_reg'/1 =
+    fun (_entry_fun) ->
+	let <_pid> = call 'erlang':'spawn'(_entry_fun)
+	in do call 'ets':'insert'('emo_procs', {_pid}) _pid
+
+'emo_blocked_table'/0 =
+    fun () ->
+	case call 'ets':'whereis'('emo_blocked') of
+	  <'undefined'> when 'true' ->
+	      call 'ets':'new'('emo_blocked', ['named_table', 'public', 'set'])
+	  <_t> when 'true' -> _t
+	end
+
+'emo_blocked_mark'/0 =
+    fun () ->
+	let <_t> = apply 'emo_blocked_table'/0 ()
+	in do call 'ets':'insert'(_t, {call 'erlang':'self'()})
+	   call 'erlang':'=:='
+	     (call 'ets':'info'('emo_procs', 'size'),
+	      call 'ets':'info'('emo_blocked', 'size'))
+
+'emo_blocked_unmark'/1 =
+    fun (_pid) ->
+	do call 'ets':'delete'
+	       (apply 'emo_blocked_table'/0 (), _pid)
+	   _pid
+
+%% ---- The pid ----
+%%
+%%   A Pid is {'emo_pid', N, Pid}: the emo number rides beside the
+%%   BEAM's own pid. The interpreter, c, typescript, and the metal
+%%   number processes in spawn order from the root's 1 and print
+%%   `<pid N>`, and the BEAM's own numbering (<0.87.0>) is the VM's — so
+%%   the spawner takes the number, the same step that numbers a spawn
+%%   everywhere else. The child keeps its
+%%   number in its process dictionary for its own `self_pid()` (the
+%%   root puts 1 before the entry runs), and the send reaches the BEAM
+%%   pid inside the tag — the spawn table and the exit hook take it
+%%   from `self()`, as before. The atomic holder takes no number: it
+%%   runs no Emo code, and a number spent there would shift every later
+%%   spawn off the other targets' count.
+
+%% The next number: one row of the shared cells table under an atom key
+%%   no cell uses (the cells are refs and {ref, index} pairs). The
+%%   default is 1, the root's own, so the first spawn answers 2.
+'emo_pid_next'/0 =
+    fun () ->
+	call 'ets':'update_counter'
+	  (apply 'emo_cells_table'/0 (), 'emo_next', 1, {'emo_next', 1})
+
+%% A process's own number, where its `self_pid()` reads it.
+'emo_pid_reg'/1 =
+    fun (_n) ->
+	do call 'erlang':'put'('emo_pid_n', _n) _n
+
+%% The tag, through a call: a `do` used as a statement ends in this
+%%   value, and a tuple literal built there draws erlc's "constructed,
+%%   but never used" — a call returns the same term quietly.
+'emo_pid_make'/2 =
+    fun (_n, _p) ->
+	{'emo_pid', _n, _p}
+
+%% A process that never registered has no number to answer: named, not
+%%   rendered as `<pid undefined>`.
+'emo_pid_self'/0 =
+    fun () ->
+	case call 'erlang':'get'('emo_pid_n') of
+	  <'undefined'> when 'true' ->
+	      call 'erlang':'error'('emo_pid_unregistered')
+	  <_n> when 'true' ->
+	      apply 'emo_pid_make'/2 (_n, call 'erlang':'self'())
+	end
+
+%% The send reaches the BEAM pid inside the tag; anything else meets the
+%%   send operator as it always did — the same badarg on a non-pid.
+'emo_send'/2 =
+    fun (_to, _m) ->
+	case _to of
+	  <{'emo_pid', _n, _p}> when 'true' ->
+	      do call 'erlang':'!'(_p, _m)
+		 do call 'ets':'delete'
+		      (apply 'emo_blocked_table'/0 (), _p) _m
+	  <_other> when 'true' ->
+	      call 'erlang':'!'(_other, _m)
+	end
 
 'emo_kill_spawned'/0 =
     fun () ->
@@ -5367,6 +6245,7 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env "    attributes []\n";
   put env rt_source;
   put env (inst_str_source program);
+  put env op_refusal_source;
   (* a def emitter shared by program functions and class methods *)
   let emit_def ~(cc : string option) ~(params : (string * string) list)
       ~(fname : string) ~(body : Emo_ir.stmt list) : unit =
@@ -5515,6 +6394,20 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env "    fun () ->\n";
   put env "        do apply 'emo_root_table'/0 ()\n";
   put env "        do apply 'emo_cells_table'/0 ()\n";
-  put env (body_wrapper ~on_exit:"apply 'emo_kill_spawned'/0 ()" body);
+  put env "        do apply 'emo_blocked_table'/0 ()\n";
+  put env "        do apply 'emo_pid_reg'/1 (1)\n";
+  put env "        do apply 'emo_spawn_reg'/1 (call 'erlang':'self'())\n";
+  put env
+    (body_wrapper ~on_exit:"apply 'emo_root_exit'/0 ()"
+       ~on_error:
+         "\n\
+          \t  <{'emo_raise', _er}> when 'true' ->\n\
+          \t      call 'erlang':'throw'({'emo_raise', _er})\n\
+          \t  <{'emo_runtime_error', _msg}> when 'true' ->\n\
+          \t      apply 'emo_runtime_fail'/1 (_msg)\n\
+          \t  <_T5> when 'true' ->\n\
+          \t      apply 'emo_runtime_fail'/1\n\
+          \t\t(apply 'emo_refusal_text'/1 (_T5))"
+       body);
   put env "\nend\n";
   Buffer.contents buf

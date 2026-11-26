@@ -2986,7 +2986,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             (Printf.sprintf "operator `!` expects a Bool, got %s"
                (to_string other));
           Bool
-      | Ast.Neg, (Int64 | Unknown) -> Int64
+      | Ast.Neg, Int64 -> Int64
+      | Ast.Neg, Unknown ->
+          (* the value keeps the runtime's kind — a gradual operand may
+             be a Float, and an Int64-typed result unboxed it as an
+             integer (garbage on c) *)
+          Unknown
       | Ast.Neg, Byte ->
           report ctx span "E4004"
             "operator `-` does not apply to the unsigned Byte";
@@ -2997,7 +3002,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             (Printf.sprintf "operator `-` expects a number, got %s"
                (to_string other));
           Unknown
-      | Ast.Bit_not, (Int64 | Unknown) -> Int64
+      | Ast.Bit_not, Int64 -> Int64
+      | Ast.Bit_not, Unknown ->
+          (* the value keeps the runtime's kind — a gradual operand may
+             be a Byte, and an Int64-typed result unboxed it as an
+             integer (the negation's rule) *)
+          Unknown
       | Ast.Bit_not, Byte -> Byte
       | Ast.Bit_not, other ->
           report ctx span "E4004"
@@ -3430,6 +3440,59 @@ and check_method_call ctx env span recv mname args : t =
             (Printf.sprintf "`Bytes.new` expects 1 argument, got %d"
                (List.length arg_values));
           Bytes)
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Byte", "from_int64" -> true
+      | _ -> false
+    then (
+      (* Byte.from_int64(n) — the range-checked narrowing, and the answer
+       carries the Byte type (the `Bytes.new` rule's own): a receiver the
+       emitters can key on, where it was Unknown before and the value fell
+       to the dynamic dispatch — the metal's arithmetic helpers refuse a
+       Byte whose type they cannot see. The argument reads a gradual Int64
+       the way the Bytes accessors do; the runtime binds positionally, so
+       the name is not the checker's question. *)
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      match arg_values with
+      | [ (_, (Int64 | Unknown)) ] -> Byte
+      | [ (_, vt) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`Byte.from_int64` expects an Int64, got %s"
+               (to_string vt));
+          Byte
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Byte.from_int64` expects 1 argument, got %d"
+               (List.length arg_values));
+          Byte)
+    else if
+      match (recv.Ast.desc, mname) with
+      | Ast.Type_ident "Float64", "from_bits" -> true
+      | _ -> false
+    then (
+      (* Float64.from_bits(n) — the bit-pattern reading, its answer carrying
+       the Float64 type for the same reason. *)
+      let arg_values =
+        List.map
+          (fun a -> (a.Ast.arg_name, check_expr ctx env a.Ast.arg_value))
+          args
+      in
+      match arg_values with
+      | [ (_, (Int64 | Unknown)) ] -> Float64
+      | [ (_, vt) ] ->
+          report ctx span "E4004"
+            (Printf.sprintf "`Float64.from_bits` expects an Int64, got %s"
+               (to_string vt));
+          Float64
+      | _ ->
+          report ctx span "E4009"
+            (Printf.sprintf "`Float64.from_bits` expects 1 argument, got %d"
+               (List.length arg_values));
+          Float64)
     else if
       match (recv.Ast.desc, mname) with
       | Ast.Type_ident "Exception", ("new" | "with_data") -> true
@@ -4128,7 +4191,11 @@ and check_binary ctx env span op l r =
         | _ -> false
       in
       if not width_ok then mismatch "two values of the same fixed-width type";
-      if lt = Int64 || rt = Int64 then Int64
+      (* a gradual side keeps the runtime's kind: the values could be
+         Int64s or Bytes, and a fixed-width result unboxed the other
+         kind's word as an integer *)
+      if lt = Unknown || rt = Unknown then Unknown
+      else if lt = Int64 || rt = Int64 then Int64
       else if lt = Byte || rt = Byte then Byte
       else Unknown
   | (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge)
@@ -4162,7 +4229,11 @@ and check_binary ctx env span op l r =
         | _ -> false
       in
       if not width_ok then mismatch "two values of the same fixed-width type";
-      if lt = Int64 || rt = Int64 then Int64
+      (* a gradual side keeps the runtime's kind: the values could be
+         Int64s or Bytes, and a fixed-width result unboxed the other
+         kind's word as an integer *)
+      if lt = Unknown || rt = Unknown then Unknown
+      else if lt = Int64 || rt = Int64 then Int64
       else if lt = Byte || rt = Byte then Byte
       else Unknown
   | Ast.Add ->
@@ -4190,7 +4261,8 @@ and check_binary ctx env span op l r =
       (* Bitwise work is integer work: no float coercion, ever. *)
       let int_side_ok t = t = Int64 || t = Unknown in
       if not (int_side_ok lt && int_side_ok rt) then mismatch "two Int64s";
-      Int64
+      (* a gradual side keeps the runtime's kind - the negation's rule *)
+      if lt = Unknown || rt = Unknown then Unknown else Int64
   | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge ->
       (* Strings order byte-wise — the code point order `sort` answers
          — and nothing else the numbers leave behind: a String against
@@ -5068,27 +5140,65 @@ let check_directive_args ctx (item : Ast.item) : unit =
 let check_items ctx (items : Ast.item list) : unit =
   (* The entry script's plain bindings: names a def cannot reach (E5016).
      The lowering keeps each one a statement-scope local of the entry body
-     — a `var`, a const whose initializer reads a destructured name or a
-     `do` (the lowering's own thunk-unsafe rule), and a destructuring's
-     names. The scan mirrors it: the destructured names first, every
-     item's, because the const rule answers membership regardless of the
-     order the file declares them in. *)
+     — a `var`, a destructuring's names, and every const whose initializer
+     holds a `do` or names one of these, transitively (the lowering's own
+     thunk-unsafe closure). The scan mirrors it: the invisible names and
+     the closure over the consts run over every item up front, because
+     membership answers regardless of the order the file declares them
+     in — a const reading a later spawn-initialized const refuses at the
+     def's read just like one reading an earlier binding. *)
   let script_module =
     match ctx.entry with Some e -> e = ctx.current | None -> false
   in
-  let script_destructured =
+  let script_invisible =
     if not script_module then []
     else
       List.concat_map
         (fun item ->
           match item.Ast.item_desc with
-          | Ast.Item_stmt { stmt_desc = Ast.Binding { pattern; _ }; _ } -> (
+          | Ast.Item_stmt
+              { stmt_desc = Ast.Binding { mutable_; pattern; _ }; _ } -> (
               match pattern.Ast.pattern_desc with
-              | Ast.Pattern_binding _ -> []
+              | Ast.Pattern_binding _ when not mutable_ -> []
               | _ -> pattern_bound_names pattern)
           | _ -> [])
         items
   in
+  let script_consts =
+    if not script_module then []
+    else
+      List.filter_map
+        (fun item ->
+          match item.Ast.item_desc with
+          | Ast.Item_stmt
+              {
+                stmt_desc =
+                  Ast.Binding
+                    {
+                      mutable_ = false;
+                      pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                      init;
+                      _;
+                    };
+                _;
+              } ->
+              Some (name, init)
+          | _ -> None)
+        items
+  in
+  let rec script_grow acc =
+    let visible = script_invisible @ acc in
+    let acc' =
+      List.fold_left
+        (fun a (name, init) ->
+          if List.mem name a then a
+          else if scan_script_dep visible init then name :: a
+          else a)
+        acc script_consts
+    in
+    if List.length acc' = List.length acc then acc else script_grow acc'
+  in
+  let script_destructured = script_invisible @ script_grow [] in
   let script_bind name span =
     ctx.script_only := (name, span) :: !(ctx.script_only)
   in

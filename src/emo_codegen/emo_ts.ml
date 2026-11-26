@@ -296,16 +296,31 @@ let rec expr env (e : Emo_ir.expr) : string =
         "(E._r = E.interpolate([%s]), (E._r instanceof Promise) ? (await E._r) \
          : E._r)"
         (String.concat ", " (List.map (expr env) es))
-  | Unary (Ast.Neg, x) -> (
-      match e.Emo_ir.ety with
-      | Emo_check.Int64 -> Printf.sprintf "E.i64Neg(%s)" (expr env x)
-      | _ -> Printf.sprintf "E.neg(%s)" (expr env x))
-  | Unary (Ast.Not, x) -> Printf.sprintf "(!E.truthy(%s))" (expr env x)
-  | Unary (Ast.Bit_not, x) -> (
-      match e.Emo_ir.ety with
-      | Emo_check.Int64 -> Printf.sprintf "E.i64BitNot(%s)" (expr env x)
-      | Emo_check.Byte -> Printf.sprintf "E.byteBitNot(%s)" (expr env x)
-      | _ -> Printf.sprintf "E.bitNot(%s)" (expr env x))
+  | Unary (((Ast.Neg | Ast.Bit_not) as uop), x) ->
+      (* The fixed-width paths read the operand's own static type, never
+         the result's: a gradual operand is typed Int64 by result, and
+         the fixed path reached past every kind check — into a JS
+         TypeError, or a wrong Byte answer. A gradual operand takes the
+         dynamic path, which reads the runtime kind and refuses with the
+         interpreter's sentence. *)
+      let fixed =
+        match (uop, x.Emo_ir.ety) with
+        | Ast.Neg, Emo_check.Int64 -> Some "i64Neg"
+        | Ast.Bit_not, Emo_check.Int64 -> Some "i64BitNot"
+        | Ast.Bit_not, Emo_check.Byte -> Some "byteBitNot"
+        | Ast.Neg, _ | Ast.Bit_not, _ -> None
+        | Ast.Not, _ -> assert false
+      in
+      let fn =
+        match fixed with
+        | Some name -> name
+        | None -> if uop = Ast.Neg then "neg" else "bitNot"
+      in
+      Printf.sprintf "E.%s(%s)" fn (expr env x)
+  | Unary (Ast.Not, x) ->
+      (* the checked path answers for a typed Bool and refuses for
+         anything else the run meets, so no truthiness leaks *)
+      Printf.sprintf "E.not(%s)" (expr env x)
   | Cond { c; t; e = else_ } ->
       Printf.sprintf "(E.truthy(%s) ? (%s) : (%s))" (expr env c) (expr env t)
         (expr env else_)
@@ -314,12 +329,17 @@ let rec expr env (e : Emo_ir.expr) : string =
       let rcode = expr env r in
       (* Fixed-width arithmetic takes its own runtime path: Int64 is a
          BigInt wrapping at 64 bits, Byte a number wrapping at 256.
-         Comparisons and equality read either operand shape directly. *)
+         Comparisons and equality read either operand shape directly.
+         A gradual operand keeps the dynamic path whatever the result's
+         static type — the same rule the unary operators follow. *)
       let fixed =
-        match e.Emo_ir.ety with
-        | Emo_check.Int64 -> "i64"
-        | Emo_check.Byte -> "byte"
-        | _ -> ""
+        match (l.Emo_ir.ety, r.Emo_ir.ety) with
+        | Emo_check.Unknown, _ | _, Emo_check.Unknown -> ""
+        | _ -> (
+            match e.Emo_ir.ety with
+            | Emo_check.Int64 -> "i64"
+            | Emo_check.Byte -> "byte"
+            | _ -> "")
       in
       let call fn =
         Printf.sprintf "E.%s%s(%s, %s)" fixed
@@ -327,8 +347,12 @@ let rec expr env (e : Emo_ir.expr) : string =
           lcode rcode
       in
       match op with
-      | Ast.And -> Printf.sprintf "(E.truthy(%s) && E.truthy(%s))" lcode rcode
-      | Ast.Or -> Printf.sprintf "(E.truthy(%s) || E.truthy(%s))" lcode rcode
+      | Ast.And ->
+          Printf.sprintf "(E.boolOf(%s, \"&&\") && E.boolOf(%s, \"&&\"))" lcode
+            rcode
+      | Ast.Or ->
+          Printf.sprintf "(E.boolOf(%s, \"||\") || E.boolOf(%s, \"||\"))" lcode
+            rcode
       | Ast.Eq -> call "eq"
       | Ast.Ne -> call "ne"
       | Ast.Lt -> call "lt"

@@ -2174,11 +2174,7 @@ and binary_value env span op left right =
       (Printf.sprintf "operator `%s` expects %s, got %s and %s" (op_name op)
          expects (type_name left) (type_name right))
   in
-  let as_float = function
-    | Int64 x -> Int64.to_float x
-    | Float f -> f
-    | v -> type_mismatch "two numbers"
-  in
+  let as_float = function Float f -> f | v -> type_mismatch "two numbers" in
   let check_bool v =
     match v with Bool b -> b | v -> type_mismatch "two Bools"
   in
@@ -2284,21 +2280,15 @@ and binary_value env span op left right =
   | Ast.Add -> (
       match (left, right) with
       | Float x, Float y -> Float (x +. y)
-      | Int64 x, Float y -> Float (Int64.to_float x +. y)
-      | Float x, Int64 y -> Float (x +. Int64.to_float y)
       | String x, String y -> String (x ^ y)
       | _ -> type_mismatch "two numbers or two strings")
   | Ast.Sub -> (
       match (left, right) with
       | Float x, Float y -> Float (x -. y)
-      | Int64 x, Float y -> Float (Int64.to_float x -. y)
-      | Float x, Int64 y -> Float (x -. Int64.to_float y)
       | _ -> type_mismatch "two numbers")
   | Ast.Mul -> (
       match (left, right) with
       | Float x, Float y -> Float (x *. y)
-      | Int64 x, Float y -> Float (Int64.to_float x *. y)
-      | Float x, Int64 y -> Float (x *. Int64.to_float y)
       | _ -> type_mismatch "two numbers")
   | Ast.Div | Ast.Mod -> (
       let zero_check d =
@@ -2310,14 +2300,6 @@ and binary_value env span op left right =
       | Float x, Float y ->
           zero_check right;
           if op = Ast.Div then Float (x /. y) else Float (Float.rem x y)
-      | Int64 x, Float y ->
-          zero_check right;
-          if op = Ast.Div then Float (Int64.to_float x /. y)
-          else Float (Float.rem (Int64.to_float x) y)
-      | Float x, Int64 y ->
-          zero_check right;
-          if op = Ast.Div then Float (x /. Int64.to_float y)
-          else Float (Float.rem x (Int64.to_float y))
       | _ -> type_mismatch "two numbers")
   | Ast.Bit_and | Ast.Bit_or | Ast.Bit_xor | Ast.Shl | Ast.Shr ->
       type_mismatch "two Int64s or two Bytes"

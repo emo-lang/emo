@@ -759,6 +759,10 @@ let beam_goldens =
     "memoize_macro_demo";
     "derive_eq_macro_demo";
     "derive_shared_macro_demo";
+    (* processes: the last two lines print a dead process's pid, so the
+       golden carries the Pid render — `<pid 7>`, the emo number the
+       spawner takes, counted the way the interpreter counts *)
+    "processes";
   ]
 
 let erl_available =
@@ -6468,6 +6472,467 @@ let check_hosted ?(files = []) name source expected =
              "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
              (Filename.quote dir)))
 
+(* The mixed-kind refusal is one sentence on every target (the width
+   rule's text half, closed 2026-11-25). Each kind arrives as a mailbox
+   binding, so the checker cannot refuse the pair and the runtime must —
+   and it answers the interpreter's own words: the operator, the rule,
+   both kinds. Each target keeps its envelope: c and beam print `runtime
+   error: …` and exit 70, typescript `error[E3010]: uncaught exception:
+   …` and exit 70 (it printed the sentence and exited 0 before), wasm
+   `ABORT: …` and exit 1, the metal `emo runtime: …`. Three rows: the
+   addition the ledger named; `>`, compared as a swapped `<` on c and
+   the metal, which read the operator and the order backwards; and a
+   unary `-`, which met a JS TypeError on typescript and answered a bare
+   -1 on the metal. *)
+let mixed_kind_rows =
+  [
+    ( "add",
+      {|self_pid() <- (7, 7.5, Byte.from_int64(3), "s", true)
+receive {
+  (i, f, b, s, t) then {
+    println(i + f)
+  }
+}
+|},
+      "operator `+` expects two numbers or two strings, got Int64 and Float64"
+    );
+    ( "order",
+      {|self_pid() <- (7, 7.5, Byte.from_int64(3), "s", true)
+receive {
+  (i, f, b, s, t) then {
+    println(f > b)
+  }
+}
+|},
+      "operator `>` expects two numbers, got Float64 and Byte" );
+    ( "neg",
+      {|self_pid() <- (7, 7.5, Byte.from_int64(3), "s", true)
+receive {
+  (i, f, b, s, t) then {
+    println(-s)
+  }
+}
+|},
+      "operator `-` expects a number, got String" );
+  ]
+
+let mixed_kind_targets =
+  [
+    ( "c",
+      "runtime error: ",
+      70,
+      fun () -> if not (Lazy.force cc_available) then Alcotest.skip () );
+    ( "typescript",
+      "error[E3010]: uncaught exception: ",
+      70,
+      fun () -> if not (Lazy.force node_available) then Alcotest.skip () );
+    ( "wasm",
+      "ABORT: ",
+      1,
+      fun () -> if not (Lazy.force node_available) then Alcotest.skip () );
+    ( "beam",
+      "runtime error: ",
+      70,
+      fun () ->
+        skip_unless_beam ();
+        if not (Lazy.force erl_available) then Alcotest.skip () );
+    ( "riscv64",
+      "emo runtime: ",
+      0,
+      fun () -> if not (Lazy.force riscv64_available) then Alcotest.skip () );
+  ]
+
+let cross_target_refusal_tests =
+  List.concat_map
+    (fun (target, prefix, code, available) ->
+      List.map
+        (fun (row, source, sentence) ->
+          tc
+            (Printf.sprintf
+               "a mixed pair refuses in the interpreter's words on %s: %s"
+               target row) (fun () ->
+              available ();
+              let entry =
+                scratch_entry (Printf.sprintf "mixed-%s-%s" target row) source
+              in
+              let dir = Filename.dirname entry in
+              let out = Filename.concat dir "app" in
+              Alcotest.(check int)
+                "build exit" 0
+                (build_entry ~target entry out);
+              let text, status =
+                match target with
+                | "c" ->
+                    let _, err, status = run_cmd (Filename.quote out) in
+                    (err, status)
+                | "typescript" ->
+                    let _, err, status =
+                      run_cmd ("node " ^ Filename.quote (out ^ ".ts"))
+                    in
+                    (err, status)
+                | "wasm" ->
+                    let _, err, status =
+                      run_cmd
+                        (Printf.sprintf "node %s %s"
+                           (Filename.quote (Lazy.force wasm_runner_path))
+                           (Filename.quote (out ^ ".wasm")))
+                    in
+                    (err, status)
+                | "beam" ->
+                    let _, err, status =
+                      run_cmd
+                        (Printf.sprintf
+                           "erl -noshell -pa %s -eval 'app:main(), \
+                            erlang:halt(0).'"
+                           (Filename.quote dir))
+                    in
+                    (err, status)
+                | "riscv64" ->
+                    let serial, _, status =
+                      run_cmd
+                        (Printf.sprintf
+                           "qemu-system-riscv64 -machine virt -nographic \
+                            -kernel %s"
+                           (Filename.quote (out ^ ".elf")))
+                    in
+                    (riscv64_payload serial, status)
+                | _ -> assert false
+              in
+              Alcotest.(check bool)
+                "the sentence in the target's envelope" true
+                (contains text (prefix ^ sentence));
+              match status with
+              | Unix.WEXITED n -> Alcotest.(check int) "exit" code n
+              | Unix.WSIGNALED n ->
+                  Alcotest.fail (Printf.sprintf "died on signal %d" n)
+              | Unix.WSTOPPED n ->
+                  Alcotest.fail (Printf.sprintf "stopped on signal %d" n)))
+        mixed_kind_rows)
+    mixed_kind_targets
+
+(* The gradual paths the shape tests never learned (2026-11-25): an
+   instance that arrives through a mailbox binding has no static class,
+   and its field read refused the build with an internal error on wasm
+   and the beam; a Map arriving the same way had two doors on wasm and
+   refused the other five. Both lower through the runtime now — one
+   ref.test on wasm, one pattern on the beam, per class — and a read no
+   class can answer refuses with the interpreter's own words: on wasm
+   the target's `ABORT: …` and exit 1, on the beam `runtime error: …`
+   and exit 70. The interpreter and every other target answered already. *)
+let gradual_field_source =
+  {|class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+def worker(boss Pid) {
+  boss <- Point.new(x: 3, y: 4)
+}
+
+const me = self_pid()
+const w = do worker(me)
+receive {
+  p then {
+    println(p.x)
+    println(p.y)
+  }
+}
+|}
+
+let gradual_map_source =
+  {|def worker(boss Pid) {
+  const m = { "a": 1, "b": 2 }
+  boss <- m
+}
+
+const me = self_pid()
+const w = do worker(me)
+receive {
+  m then {
+    println(m.get("a"))
+    println(m.length())
+    println(m.has("a"))
+    println(m.has("zz"))
+    println(m.keys())
+    println(m.values())
+    m.set("c", 3)
+    println(m.set("a", 10))
+    println(m.remove("b"))
+    println(m.remove("zz"))
+    println(m)
+    println(m.length())
+  }
+}
+|}
+
+let gradual_map_out =
+  "1\n\
+   2\n\
+   true\n\
+   false\n\
+   [a, b]\n\
+   [1, 2]\n\
+   {\"a\": 10, \"b\": 2, \"c\": 3}\n\
+   {\"a\": 10, \"c\": 3}\n\
+   {\"a\": 10, \"c\": 3}\n\
+   {\"a\": 10, \"c\": 3}\n\
+   2\n"
+
+let gradual_lack_source =
+  {|class Point {
+  def init(x Int64, y Int64) {
+    self.x = x
+    self.y = y
+  }
+}
+
+def worker(boss Pid) {
+  boss <- Point.new(x: 3, y: 4)
+}
+
+const me = self_pid()
+const w = do worker(me)
+receive {
+  p then {
+    println(p.z)
+  }
+}
+|}
+
+(* Builds a scratch entry for [target] and runs the artifact the way the
+   goldens do; the answer is (stdout, stderr, status). *)
+let gradual_run ~target ~entry ~out () =
+  let dir = Filename.dirname entry in
+  Alcotest.(check int) "build exit" 0 (build_entry ~target entry out);
+  match target with
+  | "wasm" ->
+      run_cmd
+        (Printf.sprintf "node %s %s"
+           (Filename.quote (Lazy.force wasm_runner_path))
+           (Filename.quote (out ^ ".wasm")))
+  | "beam" ->
+      run_cmd
+        (Printf.sprintf
+           "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+           (Filename.quote dir))
+  | _ -> assert false
+
+let cross_target_gradual_tests =
+  let wasm_case name source check =
+    tc (Printf.sprintf "%s on wasm" name) (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry ("gradual-wasm-" ^ name) source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        check (gradual_run ~target:"wasm" ~entry ~out ()))
+  in
+  let beam_case name source check =
+    tc (Printf.sprintf "%s on the beam" name) (fun () ->
+        skip_unless_beam ();
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry = scratch_entry ("gradual-beam-" ^ name) source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        check (gradual_run ~target:"beam" ~entry ~out ()))
+  in
+  let answers expected (out, err, status) =
+    check_run "run" (out, err, status) expected
+  in
+  let refuses prefix sentence code (_out, err, status) =
+    Alcotest.(check bool)
+      "the interpreter's words in the envelope" true
+      (contains err (prefix ^ sentence));
+    match status with
+    | Unix.WEXITED n -> Alcotest.(check int) "exit" code n
+    | Unix.WSIGNALED n -> Alcotest.fail (Printf.sprintf "died on signal %d" n)
+    | Unix.WSTOPPED n -> Alcotest.fail (Printf.sprintf "stopped on signal %d" n)
+  in
+  [
+    wasm_case "a sent instance's field reads" gradual_field_source
+      (answers "3\n4\n");
+    beam_case "a sent instance's field reads" gradual_field_source
+      (answers "3\n4\n");
+    wasm_case "the gradual Map's whole surface answers" gradual_map_source
+      (answers gradual_map_out);
+    beam_case "the gradual Map's whole surface answers" gradual_map_source
+      (answers gradual_map_out);
+    wasm_case "a field no class carries refuses in words" gradual_lack_source
+      (refuses "ABORT: " "`Point` has no field `z`" 1);
+    beam_case "a field no class carries refuses in words" gradual_lack_source
+      (refuses "runtime error: " "`Point` has no field `z`" 70);
+  ]
+
+(* The metal's memory model after the Bytes wall's close (2026-11-25):
+   a Bytes is a counted kind, and the three shapes below are the ones
+   the counting exposed. The element write's index used to ride a temp
+   register across the value's evaluation — a call, a nested read, a
+   box — so the bounds check read whatever the callee left behind and
+   the metal answered `index out of bounds` (or wrote the wrong slot);
+   a `const` bound in one block stayed on the emitter's bound list past
+   its scope, so a sibling block's same-named binding took the write
+   barrier over a dead slot and the block entered the freelist twice;
+   and the bump arena never gave a byte back, so a loop of 2000
+   64-KiB buffers exhausted the image heap. Each row answers what the
+   interpreter answers. *)
+let metal_element_write_source =
+  {|def five() Int64 { return 5 }
+
+def scaled(n Int64) Int64 {
+  const a = [10, 20, 30]
+  a[1] = n
+  a[2] = n * 2 + 1
+  return a[1] + a[2]
+}
+
+const a = [1, 2, 3]
+a[0] = five()
+a[1] = a[2] - 2
+println(a)
+println(scaled(9))
+const nested = [[1, 2], [3, 4]]
+nested[1] = nested[0]
+println(nested)
+const i = 1
+a[i] = i + 40
+println(a)
+|}
+
+let metal_element_write_out = "[5, 1, 3]\n28\n[[1, 2], [1, 2]]\n[5, 41, 3]\n"
+
+let metal_received_array_source =
+  {|def worker(boss Pid) {
+  receive {
+    a then {
+      a[0] = 55
+      boss <- a
+    }
+  }
+}
+
+const me = self_pid()
+const w = do worker(me)
+const a = [1, 2, 3]
+w <- a
+a[0] = 77
+receive {
+  got then { println(got) }
+}
+println(a)
+|}
+
+let metal_received_array_out = "[55, 2, 3]\n[77, 2, 3]\n"
+
+let metal_sibling_scope_source =
+  {|def two(a Bytes, b Bytes) Bytes {
+  const out = Bytes.new(4)
+  out.set(0, a.get(0))
+  return out
+}
+
+class Digest {
+  def init(is224 Bool) {
+    self.box = Bytes.new(112)
+  }
+
+  def sum() Bytes {
+    return two(self.box, self.box)
+  }
+}
+
+var i = 0
+while i < 20 {
+  const d = Digest.new(false)
+  i = i + 1
+}
+
+var j = 0
+while j < 40 {
+  const d = Digest.new(false)
+  const h = d.sum()
+  j = j + h.length()
+}
+println(j)
+|}
+
+let metal_arena_reuse_source =
+  {|def churn(n Int64) Int64 {
+  var i = 0
+  var s = 0
+  while i < n {
+    const b = Bytes.new(65536)
+    b.set(0, 7)
+    s = s + b.get(0)
+    i = i + 1
+  }
+  return s
+}
+
+println(churn(2000))
+println("done")
+|}
+
+(* A Map literal was the metal's silence: `const m = { "a": 1 }` printed
+   nothing and never returned, every door behind it hung, and a Map sent
+   to another process parked its sender inside the send. The cause was
+   the freelist a dead block had entered twice: its walk cycled. The
+   doors answer now — length, get, has, keys, set and remove, each the
+   interpreter's own answer. A Map's *rendering* has no metal arm yet
+   (`to_string` refuses it), so this probe prints through the doors and
+   never the Map itself. *)
+let metal_map_source =
+  {|const m = { "a": 1, "b": 2 }
+println(m.length())
+println(m.get("a"))
+println(m.has("b"))
+println(m.has("zz"))
+println(m.keys())
+const s = m.set("c", 3)
+println(s.length())
+const t = s.set("a", 10)
+println(t.get("a"))
+const u = t.remove("b")
+println(u.length())
+println(u.has("b"))
+println(u.keys())
+|}
+
+let metal_map_out = "2\n1\ntrue\nfalse\n[a, b]\n3\n10\n2\nfalse\n[a, c]\n"
+
+let metal_memory_tests =
+  let boot name source expected =
+    if not (Lazy.force riscv64_available) then Alcotest.skip ();
+    let entry = scratch_entry name source in
+    let elf = Filename.concat (Filename.dirname entry) "app.elf" in
+    Alcotest.(check int)
+      "riscv64 build" 0
+      (build_entry ~target:"riscv64" entry elf);
+    let serial, err, status =
+      run_cmd
+        (Printf.sprintf
+           "qemu-system-riscv64 -machine virt -nographic -kernel %s"
+           (Filename.quote elf))
+    in
+    check_run "riscv64" (riscv64_payload serial, err, status) expected
+  in
+  [
+    tc "an element write survives its value's evaluation on the metal"
+      (fun () ->
+        boot "metal-element-write" metal_element_write_source
+          metal_element_write_out);
+    tc "a received Array is the array the sender described on the metal"
+      (fun () ->
+        boot "metal-received-array" metal_received_array_source
+          metal_received_array_out);
+    tc "a sibling scope's same-named binding is a fresh one on the metal"
+      (fun () -> boot "metal-sibling-scope" metal_sibling_scope_source "40\n");
+    (* 2000 × 64 KiB is 128 MiB against the image's 96 MiB heap: only a
+       model that gives a dead Bytes back finishes this. *)
+    tc "the metal's arena gives a dead Bytes back" (fun () ->
+        boot "metal-arena-reuse" metal_arena_reuse_source "14000\ndone\n");
+    tc "a Map literal's doors answer on the metal" (fun () ->
+        boot "metal-map" metal_map_source metal_map_out);
+  ]
+
 let hosted_bindings_tests =
   [
     tc "a module-level const keeps its identity on every hosted target"
@@ -7738,6 +8203,121 @@ let pid_render_tests =
           "<pid 1>\n<pid 1>\n<pid 1>\ntrue\n");
   ]
 
+(* The rest of the Pid family, off the beam (2026-11-25): a Pid equals by
+   its number (typescript's E.self built a fresh EPid per call and the
+   equality answered `a === b` — always false across calls), and
+   `pid.to_string()` answers `<pid N>` (the NoMethodError the generic
+   dispatch raised). The wasm's value model gains the $vpid shape — a
+   lone mutable i32 is $vchar's exact shape, and the engine's canonical
+   maps would let the char arm claim a Pid. The root numbers itself 1 and
+   the first spawn 2, the interpreter's count. A guard naming a pattern
+   binding (`who == me`) lowers on the c target — the scan peeks the
+   candidate's projections before the guard — and `do blk(..)` spawns the
+   closure value: the block rides the spawn's arguments as word 0 and the
+   child calls it. *)
+let pid_identity_source =
+  {|
+def child(boss Pid) {
+  boss <- self_pid()
+}
+
+const me = self_pid()
+const w = do child(me)
+receive {
+  theirs then {
+    println(theirs == me)
+    println(theirs == theirs)
+    println(theirs)
+    println(theirs.to_string())
+  }
+}
+|}
+
+let pid_identity_out = "false\ntrue\n<pid 2>\n<pid 2>\n"
+
+let pid_guard_source =
+  {|
+const me = self_pid()
+me <- (5, 7)
+receive {
+  (who, n) when who == me then { println("tuple match ${n}") }
+  (a, b) then { println("${a} ${b}") }
+}
+|}
+
+let pid_guard_out = "5 7\n"
+
+let pid_spawn_tests =
+  [
+    tc "typescript: a Pid equals by its number and renders" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry "ts-pid-identity" pid_identity_source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"typescript" entry out);
+        check_run "typescript"
+          (run_cmd (Printf.sprintf "node %s" (Filename.quote (out ^ ".ts"))))
+          pid_identity_out);
+    tc "wasm: a Pid equals by its number and renders" (fun () ->
+        if not (Lazy.force node_available) then Alcotest.skip ();
+        let entry = scratch_entry "wasm-pid-identity" pid_identity_source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"wasm" entry out);
+        check_run "wasm"
+          (run_cmd
+             (Printf.sprintf "node %s %s"
+                (Filename.quote (Lazy.force wasm_runner_path))
+                (Filename.quote (out ^ ".wasm"))))
+          pid_identity_out);
+    tc "c: a guard names a pattern binding" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry = scratch_entry "c-pid-guard" pid_guard_source in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry out);
+        check_run "c run" (run_cmd (Filename.quote out)) pid_guard_out);
+    tc "c: a block value spawns" (fun () ->
+        if not (Lazy.force cc_available) then Alcotest.skip ();
+        let entry =
+          scratch_entry "c-pid-spawn"
+            {|
+const me = self_pid()
+const blk = ->(boss Pid) { boss <- 11 }
+do blk(me)
+receive {
+  n then { println(n) }
+}
+|}
+        in
+        let out = Filename.concat (Filename.dirname entry) "app" in
+        Alcotest.(check int) "build exit" 0 (build_entry ~target:"c" entry out);
+        check_run "c run" (run_cmd (Filename.quote out)) "11\n");
+  ]
+
+(* The same family on the beam, where a Pid is the emo number beside the
+   BEAM's own pid: the root answers `<pid 1>` through all four doors. A
+   Pid there used to be the bare BEAM pid, which no arm of emo_to_str
+   rendered — `examples/processes` died on its `println(gone)`. *)
+let beam_pid_tests =
+  [
+    tc "the Pid render family answers the root's pid" (fun () ->
+        skip_unless_beam ();
+        if not (Lazy.force erl_available) then Alcotest.skip ();
+        let entry = scratch_entry "beam-pid-render" pid_render_source in
+        let dir = Filename.dirname entry in
+        Alcotest.(check int)
+          "build exit" 0
+          (build_entry ~target:"beam" entry (Filename.concat dir "app"));
+        check_run "beam"
+          (run_cmd
+             (Printf.sprintf
+                "erl -noshell -pa %s -eval 'app:main(), erlang:halt(0).'"
+                (Filename.quote dir)))
+          "<pid 1>\n<pid 1>\n<pid 1>\ntrue\n");
+  ]
+
 let () =
   let suite =
     [
@@ -7757,12 +8337,17 @@ let () =
       ("beam_naming", beam_naming_tests);
       ("beam_block", beam_block_tests);
       ("beam_var", beam_var_tests);
+      ("beam_pid", beam_pid_tests);
+      ("pid_render", pid_render_tests);
+      ("pid_spawn", pid_spawn_tests);
       ("c_examples", c_examples_tests);
       ("c_tls", c_tls_tests);
       ("root_end", root_end_tests);
       ("wasm_block", wasm_block_tests);
       ("cross_target", cross_target_tests);
-      ("pid_render", pid_render_tests);
+      ("cross_target_refusal", cross_target_refusal_tests);
+      ("cross_target_gradual", cross_target_gradual_tests);
+      ("metal_memory", metal_memory_tests);
       ("hosted_bindings", hosted_bindings_tests);
       ("atomic_surface", atomic_surface_tests);
       ("atomic_wasm", atomic_wasm_tests);
@@ -7805,7 +8390,7 @@ let () =
     ]
   in
   let beam_groups =
-    [ "beam_examples"; "beam_naming"; "beam_block"; "beam_var" ]
+    [ "beam_examples"; "beam_naming"; "beam_block"; "beam_var"; "beam_pid" ]
   in
   let suite =
     if beam_enabled then suite

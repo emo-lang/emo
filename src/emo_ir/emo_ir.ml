@@ -1295,29 +1295,78 @@ let lower (input : input) : program =
      seeded — `R.ok` / `R.error` lower as the enum constructions they
      are, on every target. *)
   Hashtbl.replace symbols ([], "R") S_enum;
-  (* The names the entry module binds by destructuring: top-level locals
-     with no symbol, which a const thunk — a function of its own — cannot
-     read. A const that mentions one keeps its plain binding. *)
-  let entry_locals =
-    List.concat_map
-      (fun (m : module_input) ->
-        if m.mpath <> input.entry then []
-        else
-          List.concat_map
-            (fun (item : Ast.item) ->
-              match item.Ast.item_desc with
-              | Ast.Item_stmt { stmt_desc = Ast.Binding { pattern; _ }; _ } -> (
-                  match pattern.Ast.pattern_desc with
-                  | Ast.Pattern_binding _ -> []
-                  | _ -> pattern_names pattern)
-              | _ -> [])
-            m.mitems)
-      input.modules
+  (* The names the entry module binds that a const thunk — a function
+     of its own — cannot read: a destructuring's names (no symbol), a
+     `var` (a statement-scope cell), and — transitively — every const
+     that stays a plain binding because its initializer holds the spawn
+     marker or names one of these. A const that mentions one keeps its
+     own plain binding: the value exists only after the entry's
+     statements run, so a module-level thunk could never read it
+     either — the narrow rule covered only the destructured names, and
+     a const thunk reading a spawn-initialized const lowered the read
+     to a Type_ref. The closure runs over the whole file, so the order
+     the consts declare in never matters. *)
+  let entry_script_names =
+    let entry_items =
+      List.concat_map
+        (fun (m : module_input) ->
+          if m.mpath = input.entry then m.mitems else [])
+        input.modules
+    in
+    let invisible =
+      List.concat_map
+        (fun (item : Ast.item) ->
+          match item.Ast.item_desc with
+          | Ast.Item_stmt
+              { stmt_desc = Ast.Binding { mutable_; pattern; _ }; _ } -> (
+              match pattern.Ast.pattern_desc with
+              | Ast.Pattern_binding _ when not mutable_ -> []
+              | _ -> pattern_names pattern)
+          | _ -> [])
+        entry_items
+    in
+    let consts =
+      List.filter_map
+        (fun (item : Ast.item) ->
+          match item.Ast.item_desc with
+          | Ast.Item_stmt
+              {
+                stmt_desc =
+                  Ast.Binding
+                    {
+                      mutable_ = false;
+                      pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                      init;
+                      _;
+                    };
+                _;
+              } ->
+              Some (name, init)
+          | _ -> None)
+        entry_items
+    in
+    let rec grow acc =
+      let acc' =
+        List.fold_left
+          (fun a (name, init) ->
+            if List.mem name a then a
+            else
+              let names = mentioned_expr init [] in
+              if
+                List.mem spawn_marker names
+                || List.exists (fun n -> List.mem n acc) names
+              then name :: a
+              else a)
+          acc consts
+      in
+      if List.length acc' = List.length acc then acc else grow acc'
+    in
+    grow invisible
   in
   let thunk_unsafe (init : Ast.expr) : bool =
     let names = mentioned_expr init [] in
     List.mem spawn_marker names
-    || List.exists (fun n -> List.mem n entry_locals) names
+    || List.exists (fun n -> List.mem n entry_script_names) names
   in
   (* pass 1: every program-wide symbol *)
   List.iter
