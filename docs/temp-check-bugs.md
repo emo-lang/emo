@@ -15,8 +15,8 @@ strip against a corpus chain with a different starting state); its (a) is
 closed for the crypto engines and open again for the desktop corpus, whose
 gate faults on a `Bytes` crossing a spawn/exec boundary. Item 5 closed the
 same day, and its beam deadlock end (E3012) closed with it on 2026-11-26.
-Item 10 was found while closing item 9.
-**Open: 4 (a, the desktop edge), 6, 7, 8, 10.**
+Item 6 closed on 2026-11-26. Item 10 was found while closing item 9.
+**Open: 4 (a, the desktop edge), 7, 8, 10.**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -291,7 +291,7 @@ processes say 3; the ping-pong probe (`<pid 1>`, `<pid 2>`, `false`,
 expected files; a program with one child spinning forever never hears the
 sentence.
 
-## 6. An entry binding that a const's initializer reads lowers to a type name
+## 6. An entry binding that a const's initializer reads lowers to a type name — closed 2026-11-26
 
 **Symptom.** A const the entry keeps as a plain binding — its initializer
 holds a `do` — reads back as an atom when another const's initializer names
@@ -326,11 +326,33 @@ const thunk reading a spawn-initialized const finds no symbol for it and
 `Ast.Ident` falls to its last arm, `Type_ref name`. Every compiled target
 takes that path; only the interpreter's own walk resolves the name.
 
-**Why it stayed hidden.** E5016 refuses the same read from a `def` on every
-target ("a top-level const whose initializer reads another script binding (or
-a `do`) cannot become the module const a def could call"). A const's
-initializer is the one reader it does not cover, and `examples/processes`
-reads its `gone` only from entry statements.
+**Fix (2026-11-26).** The plain-kept set is a closure now, on both sides
+that mirror it. In `lower`, `entry_script_names` seeds with a
+destructuring's names and a `var`'s (both statement-scope locals a thunk
+cannot see — a const reading a `var` was the same hole one shape over),
+then adds every const whose initializer holds the spawn marker or names a
+seeded or already-added name, until it stops growing; the file is scanned
+whole, so declaration order never matters. `thunk_unsafe` tests that set,
+so a const mentioning a plain-kept const keeps its own plain binding — the
+value exists only after the entry's statements run, and no module-level
+thunk could ever read it. The checker's E5016 scan
+(`script_invisible` + `script_grow` in `check_items`) computes the same
+closure from the same shapes, so a `def` reading the transitively plain
+const is refused exactly like one reading the spawn-initialized const —
+before the fix such a read resolved to the broken thunk and died at build
+or at run, target by target.
+
+**Verified.** The documented probe answers `true` then `<pid 2>` on the
+interpreter, typescript, the beam, and c (c used to refuse the build with
+`does not support this expression form (Type_ref) yet`); the `var` chain
+(`var n = 5; const m = n`) snapshots `5 / 5 / 6` on the interpreter and c
+alike; `def peek()` reading `wrapped` and `a` draws two E5016s, and the
+direct `a` read keeps its own; `examples/processes` and
+`examples/atomic_cell` stay byte-identical with their `expected.txt` on
+the beam and the interpreter. A const initializer reading a *later* const
+is E4003 at the checker regardless (forward reference), so the closure's
+order-independence is load-bearing only for the lowering's whole-file
+scan. The dune suite was not run.
 
 ## 7. What the operator round found and left
 

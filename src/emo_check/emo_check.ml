@@ -5121,27 +5121,65 @@ let check_directive_args ctx (item : Ast.item) : unit =
 let check_items ctx (items : Ast.item list) : unit =
   (* The entry script's plain bindings: names a def cannot reach (E5016).
      The lowering keeps each one a statement-scope local of the entry body
-     — a `var`, a const whose initializer reads a destructured name or a
-     `do` (the lowering's own thunk-unsafe rule), and a destructuring's
-     names. The scan mirrors it: the destructured names first, every
-     item's, because the const rule answers membership regardless of the
-     order the file declares them in. *)
+     — a `var`, a destructuring's names, and every const whose initializer
+     holds a `do` or names one of these, transitively (the lowering's own
+     thunk-unsafe closure). The scan mirrors it: the invisible names and
+     the closure over the consts run over every item up front, because
+     membership answers regardless of the order the file declares them
+     in — a const reading a later spawn-initialized const refuses at the
+     def's read just like one reading an earlier binding. *)
   let script_module =
     match ctx.entry with Some e -> e = ctx.current | None -> false
   in
-  let script_destructured =
+  let script_invisible =
     if not script_module then []
     else
       List.concat_map
         (fun item ->
           match item.Ast.item_desc with
-          | Ast.Item_stmt { stmt_desc = Ast.Binding { pattern; _ }; _ } -> (
+          | Ast.Item_stmt
+              { stmt_desc = Ast.Binding { mutable_; pattern; _ }; _ } -> (
               match pattern.Ast.pattern_desc with
-              | Ast.Pattern_binding _ -> []
+              | Ast.Pattern_binding _ when not mutable_ -> []
               | _ -> pattern_bound_names pattern)
           | _ -> [])
         items
   in
+  let script_consts =
+    if not script_module then []
+    else
+      List.filter_map
+        (fun item ->
+          match item.Ast.item_desc with
+          | Ast.Item_stmt
+              {
+                stmt_desc =
+                  Ast.Binding
+                    {
+                      mutable_ = false;
+                      pattern = { pattern_desc = Ast.Pattern_binding name; _ };
+                      init;
+                      _;
+                    };
+                _;
+              } ->
+              Some (name, init)
+          | _ -> None)
+        items
+  in
+  let rec script_grow acc =
+    let visible = script_invisible @ acc in
+    let acc' =
+      List.fold_left
+        (fun a (name, init) ->
+          if List.mem name a then a
+          else if scan_script_dep visible init then name :: a
+          else a)
+        acc script_consts
+    in
+    if List.length acc' = List.length acc then acc else script_grow acc'
+  in
+  let script_destructured = script_invisible @ script_grow [] in
   let script_bind name span =
     ctx.script_only := (name, span) :: !(ctx.script_only)
   in
