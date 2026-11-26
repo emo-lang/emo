@@ -59,7 +59,20 @@
 #define EMO_NORETURN
 #endif
 
+/* The process state the fatal split reads: defined with the process
+   machinery below, forward-declared here because every refusal rides
+   this function. */
+/* Whether the refusing process is a spawned one: defined with the
+   process machinery below, forward-declared here because every
+   refusal rides the fatal split. emo_process_halt_current rides
+   emo_c_runtime.h's declarations. */
+static int emo_fatal_is_child(void);
+
 static EMO_NORETURN void emo_fatal(const char *message) {
+  /* A spawned process's refusal ends only that process, silently — the
+     interpreter's own rule (the raised-exception path, T23.6, already
+     splits the same way); the root's is the program's outcome. */
+  if (emo_fatal_is_child()) emo_process_halt_current();
   fprintf(stderr, "runtime error: %s\n", message);
   exit(70);
 }
@@ -2881,6 +2894,10 @@ void emo_process_halt_current(void) {
   abort(); /* unreachable */
 }
 
+static int emo_fatal_is_child(void) {
+  return emo_current != NULL && emo_current->pid != emo_root_pid;
+}
+
 /* An uncaught raise. The root's is the program's outcome (T23.6): render
    the interpreter's E3010 message and exit 1. A spawned process's ends
    only that process, the interpreter's `Exit_raised` — the scheduler
@@ -3174,7 +3191,9 @@ void emo_scheduler_run(void) {
       for (emo_process *q = emo_process_table; q; q = q->next_table)
         if (!q->finished) deadlocked++;
       if (deadlocked > 0) {
-        fprintf(stderr, "runtime error: deadlock: %d process(es) waiting\n",
+        fprintf(stderr,
+                "runtime error: all %d waiting processes are blocked; no "
+                "message will ever arrive\n",
                 deadlocked);
         exit(70);
       }

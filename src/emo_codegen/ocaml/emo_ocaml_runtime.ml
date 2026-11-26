@@ -3555,6 +3555,13 @@ module Emo_runtime = struct
           | Emo_eval.Error (code, message) ->
               if proc == state.root then raise (Emo_eval.Error (code, message))
               else Some (Emo_eval.Exit_failed message)
+          (* The runtime helpers' refusals ride `failwith`: a spawned
+             process's ends only that process — the interpreter's own
+             rule, the same scope `Emo_eval.Error` already answers —
+             and the root's is the program's outcome. *)
+          | Failure message ->
+              if proc == state.root then raise exn
+              else Some (Emo_eval.Exit_failed message)
           | e -> raise e);
       effc =
         (fun (type a) (eff : a Effect.t) ->

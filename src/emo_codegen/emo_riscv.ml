@@ -12907,6 +12907,14 @@ emo_fail:
     .section .text
     .globl emo_fail
 emo_fail:
+    # a spawned pass's refusal ends only that pass — the interpreter's
+    # own rule (the whole program was ending here, sentence and all) —
+    # and the boot pass's refusal is the program's outcome
+    la t0, emo_cur_slot
+    ld t0, 0(t0)
+    ld t1, 8(t0)
+    li t2, 1
+    bne t1, t2, emo_process_done
     addi sp, sp, -32
     sd ra, 0(sp)
     sd a0, 8(sp)

@@ -23,7 +23,10 @@ Item 7's boolean operators, wrong answers and c warning closed on
 Items 8 and 10 closed on 2026-11-26, and item 4's (a) closed with them —
 the EmoOS smoke is green on both legs. Item 7's (a) closed 2026-11-26 —
 the beam's every runtime refusal now rides the envelope (stderr,
-`runtime error: …`, exit 70, no crash report). **Open: 7 (b, e, f).**
+`runtime error: …`, exit 70, no crash report). 7(b)'s death scope closed
+the same day (the beam already answered, c and ocaml scoped their
+children, the metal's split rides the proven death machinery — wasm's
+constraint stands). **Open: 7 (e, f).**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -406,10 +409,33 @@ own round — the raise sites are scattered across the runtime helpers.
 `i + f` in a `do` process: the interpreter and typescript end the offending
 process silently and the root goes on — the interpreter's root then deadlocks
 with E3012 once it waits for the message, typescript exits 0 with nothing
-printed; ocaml, c and the metal end the whole program with the sentence;
-beam prints an `=ERROR REPORT====` on stdout carrying the sentence and the
-root goes on — forever, when it was waiting for the message. wasm refuses the
-program at the build (a `receive` must be the last statement of its body).
+printed. **The death scope closed 2026-11-26 — every target now answers the
+interpreter's shape.** The beam already did: the child's refusal rethrows
+out of the child, whose death is silent (no `=ERROR REPORT====` on stdout —
+that report is gone), and the root's wait ends in the deadlock gate's own
+E3012, byte-identical with the interpreter. The c runtime's fatal split
+follows its raised-exception path's own precedent (T23.6): a spawned
+process's refusal ends only that fiber, silently, through
+`emo_process_halt_current`; the root's is the program's outcome — and its
+deadlock sentence aligns with the interpreter's (`all N waiting processes
+are blocked; no message will ever arrive`, exit 70). The ocaml scheduler's
+effect handler gained the `Failure` arm the runtime helpers' refusals
+ride: a spawned process's ends with `Exit_failed` (the scope
+`Emo_eval.Error` already answered), the root's keeps raising. The metal's
+`emo_fail` splits on the slot: a spawned pass's refusal ends that pass
+through `emo_process_done` (the death every natural child takes), the
+boot pass's announces and keeps the heap-death route. Verified with two
+children — one refusing, one answering: the root prints the answer and
+`root still here`, exit 0, on c and ocaml; the single-child repro ends in
+the deadlock sentence, exit 70, on c, ocaml and the beam. The metal's
+split is in and rides the proven natural-death machinery (its live-fire
+probe parked: a spawn at the boot phase trips a *pre-existing* fault,
+`user fault 1 cause 2` in `emo_spawn`, on the tree before this round
+too). wasm keeps its two constraints: the repro shape refuses at the
+build (a `receive` must be the last statement of its body), and the
+module's instruction set has no exception handling, so a child's throw
+cannot be scoped without it — the one target the death scope stays open
+on, and its own round.
 
 **(c) The boolean operators are the one family still in every target's own
 words. — closed 2026-11-26.** Every target now answers the interpreter's
