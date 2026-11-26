@@ -153,7 +153,8 @@ case color {
   must end in `return` on every path; there is no implicit "last expression is
   the return value" rule. A Void function takes no `return` at all.
 - **`raise`** raises an exception. Its operand must be an `Exception` instance,
-  and a raise cannot be caught.
+  and a raise cannot be caught. The `:raise` sugar borrows the word as its name
+  and rewrites to the constructor calls written out below.
 
 ```emo
 def discount(cart Cart) Int64 {
@@ -259,10 +260,11 @@ side (`@`) resolves the macro name in scope. The rules live in
 
 ## The sugar namespace
 
-The colon-plus-name forms (`:chain` and later sugar) are not reserved words
-at all: the colon pairs with an ordinary identifier, looked up in the
-compiler's sugar table. An unknown `:name` is a compile error, but the words
-sugar forms use — `chain`, `from` — remain legal identifiers everywhere else.
-(`:chain`'s success body is written with `then`, the same reserved word that
-introduces every `case` and `receive` branch body.) See
+The colon-plus-name forms (`:chain`, `:foreach`, `:raise`, and later sugar)
+are not reserved words at all: the colon pairs with an ordinary identifier —
+or with a keyword a sugar borrows, as `:raise` borrows `raise` — looked up
+in the compiler's sugar table. An unknown `:name` is a compile error, but the
+words sugar forms use — `chain`, `from` — remain legal identifiers everywhere
+else. (`:chain`'s success body is written with `then`, the same reserved word
+that introduces every `case` and `receive` branch body.) See
 [syntax.md](intro/syntax.md).

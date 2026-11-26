@@ -696,6 +696,41 @@ let stmt_tests =
         Alcotest.(check string)
           "span" "test.emo:3:1"
           (Span.to_string diagnostic.Diagnostic.span));
+    tc "the raise sugar rewrites to the constructor call" (fun () ->
+        Alcotest.(check string)
+          "shape" "(raise (((type Exception).new) call message: \"bug\"))"
+          (render pp_item (List.hd (parse_program {|:raise "bug"|})));
+        Alcotest.(check string)
+          "tree"
+          (render pp_item (List.hd (parse_program {|:raise "bug"|})))
+          (render pp_item
+             (List.hd (parse_program {|raise Exception.new(message: "bug")|}))));
+    tc "the raise sugar carries the data map to with_data" (fun () ->
+        Alcotest.(check string)
+          "shape"
+          "(raise (((type Exception).with_data) call message: \"bug\" data: \
+           (map)))"
+          (render pp_item (List.hd (parse_program {|:raise "bug", {}|})));
+        Alcotest.(check string)
+          "tree"
+          (render pp_item (List.hd (parse_program {|:raise "bug", {}|})))
+          (render pp_item
+             (List.hd
+                (parse_program
+                   {|raise Exception.with_data(message: "bug", data: {})|}))));
+    tc "the sugar borrows the raise keyword as its name" (fun () ->
+        (* `raise` is a reserved word, not an identifier — the sugar name
+           lookup reads keyword spellings, so the keyword itself can head
+           the sugar while any other keyword still reads as unknown. *)
+        Alcotest.(check string)
+          "code" "E2037"
+          (code_of (program_err {|:receive "bug"|})));
+    tc "bare `:raise` is rejected" (fun () ->
+        let diagnostic = program_err {|:raise|} in
+        Alcotest.(check string) "code" "E2023" (code_of diagnostic));
+    tc "the data map must stay on the `:raise`'s line" (fun () ->
+        let diagnostic = program_err {|:raise "bug",\n{}|} in
+        Alcotest.(check string) "code" "E2023" (code_of diagnostic));
   ]
 
 let string_tests =

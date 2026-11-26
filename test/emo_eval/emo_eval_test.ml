@@ -647,6 +647,20 @@ println(check(1))|}));
         Alcotest.(check string)
           "span" "test.emo:1:1"
           (Span.to_string diagnostic.Diagnostic.span));
+    tc "the raise sugar unwinds exactly as the written raise" (fun () ->
+        let diagnostic = program_err {|:raise "boom"|} in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "uncaught exception: boom" diagnostic.Diagnostic.message;
+        Alcotest.(check string)
+          "span" "test.emo:1:1"
+          (Span.to_string diagnostic.Diagnostic.span));
+    tc "the raise sugar carries the data map to with_data" (fun () ->
+        let diagnostic = program_err {|:raise "disk blew up", { "fd": 3 }|} in
+        Alcotest.(check string) "code" "E3010" (code_of diagnostic);
+        Alcotest.(check string)
+          "message" "uncaught exception: disk blew up (data: {\"fd\": 3})"
+          diagnostic.Diagnostic.message);
     tc "the raise operand discipline holds at run time" (fun () ->
         let diagnostic = program_err {|raise "boom"|} in
         Alcotest.(check string) "code" "E4024" (code_of diagnostic);

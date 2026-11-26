@@ -931,15 +931,18 @@ and parse_stmt st =
       in
       stmt start_span stmt_desc
 
-(* The sugar table: `:name` with the name an ordinary identifier (the
-   colon pairs with it, nothing is reserved). `chain` rewrites to nested
-   cases, `foreach` to a `for` over indices. *)
+(* The sugar table: `:name` with the name an ordinary identifier, or a
+   keyword the sugar borrows (the colon pairs with it, nothing new is
+   reserved). `chain` rewrites to nested cases, `foreach` to a `for`
+   over indices, `raise` to a `raise` of the built-in exception
+   constructor. *)
 and parse_sugar st =
   let colon_tok = advance st in
   let name_tok = advance st in
   let name =
     match name_tok.Tok.kind with
     | Tok.Lower_ident n -> n
+    | Tok.Keyword k -> keyword_spelling k
     | t ->
         error "E2037" name_tok.Tok.span
           (Printf.sprintf "expected a sugar name after `:`, found %s"
@@ -948,10 +951,68 @@ and parse_sugar st =
   match name with
   | "chain" -> parse_chain st
   | "foreach" -> parse_foreach st colon_tok
+  | "raise" -> parse_raise st colon_tok
   | _ ->
       error "E2037" colon_tok.Tok.span
         (Printf.sprintf "unknown sugar form `:%s`" name)
-        ~hint:"the sugar namespace holds `:chain` and `:foreach`"
+        ~hint:"the sugar namespace holds `:chain`, `:foreach`, and `:raise`"
+
+(* `:raise` — the raise sugar: `:raise "bug"` rewrites to
+   `raise Exception.new(message: "bug")`, and the two-expression form
+   `:raise "bug", {}` to `raise Exception.with_data(message: "bug",
+   data: {})`. The word is the raise keyword itself — the sugar borrows
+   it, it does not stay an identifier. The checker reads the rewritten
+   call like a hand-written one: a non-String message is the
+   constructor's E4004, a non-Map data the same. *)
+and parse_raise st colon_tok =
+  if at_eof st || newline_before st then
+    error "E2023" (span st) "`:raise` needs a message"
+      ~hint:
+        "write `:raise \"bug\"`, or `:raise \"bug\", {}` to carry a data map";
+  let message = parse_expr st in
+  let data =
+    match kind st with
+    | Tok.Op Tok.Comma when not (newline_before st) ->
+        advance st |> ignore;
+        if at_eof st || newline_before st then
+          error "E2023" (span st)
+            "the data map must stay on the `:raise`'s line";
+        Some (parse_expr st)
+    | _ -> None
+  in
+  end_statement st;
+  (* Every fabricated node needs its own span: the checker keys the type
+     table by (file, start, stop), so synthetic nodes sharing a span
+     with a real one would overwrite its type. The offsets sit in the
+     same reserved high range as `:foreach`'s, disjoint from every real
+     node; file, line, and column stay the `:raise`'s, so diagnostics
+     point where the sugar was written. *)
+  let synth = ref 0 in
+  let fresh_span () =
+    incr synth;
+    let start = 0x4000_0000 + (colon_tok.Tok.span.stop lsl 8) + !synth in
+    Emo_support.Span.make ~file:colon_tok.Tok.span.file
+      ~line:colon_tok.Tok.span.line ~col:colon_tok.Tok.span.col ~start
+      ~stop:start
+  in
+  let constructor = match data with None -> "new" | Some _ -> "with_data" in
+  let args =
+    { Ast.arg_name = Some "message"; arg_value = message }
+    ::
+    (match data with
+    | Some d -> [ { Ast.arg_name = Some "data"; arg_value = d } ]
+    | None -> [])
+  in
+  let last_expr = match data with Some d -> d | None -> message in
+  let raise_expr =
+    node (fresh_span ())
+      (Ast.Call
+         ( node (fresh_span ())
+             (Ast.Member
+                (node (fresh_span ()) (Ast.Type_ident "Exception"), constructor)),
+           args ))
+  in
+  stmt (merge_span colon_tok.Tok.span last_expr.Ast.span) (Ast.Raise raise_expr)
 
 (* `:chain` — the success-chain sugar, a pure rewrite into nested cases.
    Each step line states the shape the next value must have (a bare line
