@@ -53,14 +53,12 @@ class Conn {
     case m.finish() {
       (bytes, has_fd, fd) then {
         if has_fd {
-          case emo.net_sendmsg_fd(self.side.conn, bytes.to_string(), fd) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, _) then { return (R.ok, self) }
+          :when emo.net_sendmsg_fd(self.side.conn, bytes.to_string(), fd) {
+            _ then { return (R.ok, self) }
           }
         }
-        case self.side.conn.write(bytes.to_string()) {
-          (R.error, why) then { return (R.error, why) }
-          (R.ok, _) then { return (R.ok, self) }
+        :when self.side.conn.write(bytes.to_string()) {
+          _ then { return (R.ok, self) }
         }
       }
     }
@@ -70,10 +68,8 @@ class Conn {
 // The connection to the compositor: the socket at `path`, spoken to
 // in direct style. The c target's Unix-socket tier carries it.
 def connect(path String, timeout Float64) (R, Conn) {
-  const got = emo.net_connect_unix(path, timeout)
-  case got {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, c) then { return (R.ok, Conn.new(Side.new(c), 2, 1)) }
+  :when emo.net_connect_unix(path, timeout) {
+    c then { return (R.ok, Conn.new(Side.new(c), 2, 1)) }
   }
 }
 
@@ -390,9 +386,8 @@ class Event {
 // Reads one frame off the wire: the header, then exactly the bytes
 // its size word names.
 def next_event(side Side) (R, Event) {
-  case side.need(8) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then {
+  :when side.need(8) {
+    _ then {
       const hb = side.take(8)
       const size = get_u16(hb, 6)
       if size < 8 {
@@ -401,9 +396,8 @@ def next_event(side Side) (R, Event) {
       if size % 4 != 0 {
         return (R.error, "wayland: frame size " + size.to_string() + " is not a multiple of four")
       }
-      case side.need(size - 8) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, _) then {
+      :when side.need(size - 8) {
+        _ then {
           const oid = get_u32(hb, 0)
           const opcode = get_u16(hb, 4)
           return (R.ok, Event.new(side, oid, opcode, side.take(size - 8)))
@@ -587,9 +581,8 @@ def display_sync(c Conn) (R, Int64) {
   const cb = c.alloc()
   const m = Message.new(c.display_id, 0)
   m.u32(cb)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, cb) }
+  :when c.send(m) {
+    _ then { return (R.ok, cb) }
   }
 }
 
@@ -599,9 +592,8 @@ def display_get_registry(c Conn) (R, Int64) {
   const reg = c.alloc()
   const m = Message.new(c.display_id, 1)
   m.u32(reg)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then {
+  :when c.send(m) {
+    _ then {
       c.registry_id.replace(reg)
       return (R.ok, reg)
     }
@@ -623,9 +615,8 @@ def registry_bind(c Conn, name Int64, iface String, version Int64) (R, Int64) {
   m.text(iface)
   m.u32(version)
   m.u32(new_id)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, new_id) }
+  :when c.send(m) {
+    _ then { return (R.ok, new_id) }
   }
 }
 
@@ -665,12 +656,10 @@ def collect_more(c Conn, callback_id Int64, found Globals) (R, Globals) {
 // The whole handshake: registry out, sync pinned, every global
 // collected until the callback closes the exchange.
 def handshake(c Conn) (R, Globals) {
-  case display_get_registry(c) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then {
-      case display_sync(c) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, cb) then { return collect_more(c, cb, Globals.new()) }
+  :when display_get_registry(c) {
+    _ then {
+      :when display_sync(c) {
+        cb then { return collect_more(c, cb, Globals.new()) }
       }
     }
   }
@@ -696,9 +685,8 @@ def compositor_create_surface(c Conn, compositor_id Int64) (R, Int64) {
   const surface_id = c.alloc()
   const m = Message.new(compositor_id, 0)
   m.u32(surface_id)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, surface_id) }
+  :when c.send(m) {
+    _ then { return (R.ok, surface_id) }
   }
 }
 
@@ -760,9 +748,8 @@ def shm_create_pool(c Conn, shm_id Int64, fd Int64, size Int64) (R, Int64) {
   m.u32(pool_id)
   m.fd(fd)
   m.u32(size)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, pool_id) }
+  :when c.send(m) {
+    _ then { return (R.ok, pool_id) }
   }
 }
 
@@ -778,9 +765,10 @@ def pool_create_buffer(c Conn, pool_id Int64, offset Int64, width Int64, height 
   m.i32(height)
   m.i32(stride)
   m.u32(format)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, buffer_id) }
+  :when c.send(m) {
+    _ then {
+      return (R.ok, buffer_id)
+    }
   }
 }
 
@@ -811,9 +799,10 @@ def wm_base_get_xdg_surface(c Conn, wm_base_id Int64, surface_id Int64) (R, Int6
   const m = Message.new(wm_base_id, 2)
   m.u32(xdg_surface_id)
   m.u32(surface_id)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, xdg_surface_id) }
+  :when c.send(m) {
+    _ then {
+      return (R.ok, xdg_surface_id)
+    }
   }
 }
 
@@ -822,9 +811,10 @@ def xdg_surface_get_toplevel(c Conn, xdg_surface_id Int64) (R, Int64) {
   const toplevel_id = c.alloc()
   const m = Message.new(xdg_surface_id, 1)
   m.u32(toplevel_id)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, toplevel_id) }
+  :when c.send(m) {
+    _ then {
+      return (R.ok, toplevel_id)
+    }
   }
 }
 
@@ -1096,9 +1086,10 @@ def seat_get_pointer(c Conn, seat_id Int64) (R, Int64) {
   const pointer_id = c.alloc()
   const m = Message.new(seat_id, 0)
   m.u32(pointer_id)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, pointer_id) }
+  :when c.send(m) {
+    _ then {
+      return (R.ok, pointer_id)
+    }
   }
 }
 
@@ -1107,9 +1098,10 @@ def seat_get_keyboard(c Conn, seat_id Int64) (R, Int64) {
   const keyboard_id = c.alloc()
   const m = Message.new(seat_id, 1)
   m.u32(keyboard_id)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, keyboard_id) }
+  :when c.send(m) {
+    _ then {
+      return (R.ok, keyboard_id)
+    }
   }
 }
 
@@ -1151,9 +1143,10 @@ def virtual_pointer_create(c Conn, manager_id Int64, seat_id Int64) (R, Int64) {
   const m = Message.new(manager_id, 0)
   m.u32(seat_id)
   m.u32(ptr_id)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, ptr_id) }
+  :when c.send(m) {
+    _ then {
+      return (R.ok, ptr_id)
+    }
   }
 }
 
@@ -1198,9 +1191,10 @@ def virtual_keyboard_create(c Conn, manager_id Int64, seat_id Int64) (R, Int64) 
   const m = Message.new(manager_id, 0)
   m.u32(seat_id)
   m.u32(kb_id)
-  case c.send(m) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _) then { return (R.ok, kb_id) }
+  :when c.send(m) {
+    _ then {
+      return (R.ok, kb_id)
+    }
   }
 }
 
