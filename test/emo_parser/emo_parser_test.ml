@@ -729,7 +729,7 @@ let stmt_tests =
         let diagnostic = program_err {|:raise|} in
         Alcotest.(check string) "code" "E2023" (code_of diagnostic));
     tc "the data map must stay on the `:raise`'s line" (fun () ->
-        let diagnostic = program_err {|:raise "bug",\n{}|} in
+        let diagnostic = program_err ":raise \"bug\",\n{}" in
         Alcotest.(check string) "code" "E2023" (code_of diagnostic));
   ]
 
@@ -1654,6 +1654,10 @@ let loop_tests =
            so only the bare token is the parser's own refusal. *)
         let diagnostic = program_err "const x = emo" in
         Alcotest.(check string) "code" "E2028" (code_of diagnostic));
+    tc "`emo.` heads the runtime namespace" (fun () ->
+        Alcotest.(check string)
+          "shape" "((emo.file_read) call path)"
+          (render pp_expr (parse_expr "emo.file_read(path)")));
   ]
 
 let atomic_tests =
