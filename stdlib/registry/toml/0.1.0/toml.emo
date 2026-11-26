@@ -2508,40 +2508,38 @@ def fill_quoted(data Bytes, out Bytes, i Int64, w Int64) {
 // as `\e`, anything else as `\u00xx`.
 def fill_quoted_control(data Bytes, out Bytes, i Int64, w Int64, b Int64) {
   out.set(w, 92)
-  if b == 8 {
-    out.set(w + 1, 98)
-    fill_quoted(data, out, i + 1, w + 2)
-  } else {
-    if b == 9 {
+  case b {
+    8 then {
+      out.set(w + 1, 98)
+      fill_quoted(data, out, i + 1, w + 2)
+    }
+    9 then {
       out.set(w + 1, 116)
       fill_quoted(data, out, i + 1, w + 2)
-    } else {
-      if b == 10 {
-        out.set(w + 1, 110)
-        fill_quoted(data, out, i + 1, w + 2)
-      } else {
-        if b == 12 {
-          out.set(w + 1, 102)
-          fill_quoted(data, out, i + 1, w + 2)
-        } else {
-          if b == 13 {
-            out.set(w + 1, 114)
-            fill_quoted(data, out, i + 1, w + 2)
-          } else {
-            if b == 27 {
-              out.set(w + 1, 101)
-              fill_quoted(data, out, i + 1, w + 2)
-            } else {
-              out.set(w + 1, 117)
-              out.set(w + 2, 48)
-              out.set(w + 3, 48)
-              out.set(w + 4, hex_byte(b / 16))
-              out.set(w + 5, hex_byte(b % 16))
-              fill_quoted(data, out, i + 1, w + 6)
-            }
-          }
-        }
-      }
+    }
+    10 then {
+      out.set(w + 1, 110)
+      fill_quoted(data, out, i + 1, w + 2)
+    }
+    12 then {
+      out.set(w + 1, 102)
+      fill_quoted(data, out, i + 1, w + 2)
+    }
+    13 then {
+      out.set(w + 1, 114)
+      fill_quoted(data, out, i + 1, w + 2)
+    }
+    27 then {
+      out.set(w + 1, 101)
+      fill_quoted(data, out, i + 1, w + 2)
+    }
+    _ then {
+      out.set(w + 1, 117)
+      out.set(w + 2, 48)
+      out.set(w + 3, 48)
+      out.set(w + 4, hex_byte(b / 16))
+      out.set(w + 5, hex_byte(b % 16))
+      fill_quoted(data, out, i + 1, w + 6)
     }
   }
 }
@@ -2661,6 +2659,3 @@ def lookup(entries Array[(String, Toml)], key String, i Int64) Toml {
   }
   return lookup(entries, key, i - 1)
 }
-
-
-
