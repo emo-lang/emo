@@ -363,6 +363,14 @@ emo_value emo_mul_dyn(emo_value a, emo_value b);
 emo_value emo_div_dyn(emo_value a, emo_value b);
 emo_value emo_mod_dyn(emo_value a, emo_value b);
 emo_value emo_neg_dyn(emo_value v);
+double emo_div_f64(double x, double y);
+double emo_fmod_f64(double x, double y);
+emo_value emo_bnot_dyn(emo_value v);
+emo_value emo_bit_and_dyn(emo_value a, emo_value b);
+emo_value emo_bit_or_dyn(emo_value a, emo_value b);
+emo_value emo_bit_xor_dyn(emo_value a, emo_value b);
+emo_value emo_shl_dyn(emo_value a, emo_value b);
+emo_value emo_shr_dyn(emo_value a, emo_value b);
 
 #include <math.h>
 bool emo_eq_dyn(emo_value a, emo_value b);

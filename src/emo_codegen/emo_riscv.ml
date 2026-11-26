@@ -2327,7 +2327,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
   (* A dynamic operand: the runtime dispatches on the values (the c
      target's emo_*_dyn family). A raw numeric operand boxes at the
      dynamic boundary — the helper reads tagged words. *)
-  if l.Emo_ir.ety = Emo_check.Unknown || r.Emo_ir.ety = Emo_check.Unknown then
+  if l.Emo_ir.ety = Emo_check.Unknown || r.Emo_ir.ety = Emo_check.Unknown then (
     match op with
     | Emo_ast.Eq | Emo_ast.Ne ->
         emit_expr env (d + 1) l;
@@ -2378,6 +2378,31 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
           | Emo_ast.Le -> "emo_le_dyn"
           | Emo_ast.Gt -> "emo_gt_dyn"
           | _ -> "emo_ge_dyn")
+    | Emo_ast.Div | Emo_ast.Mod | Emo_ast.Bit_and | Emo_ast.Bit_or
+    | Emo_ast.Bit_xor | Emo_ast.Shl | Emo_ast.Shr ->
+        (* the dynamic lanes (item 7(f)): the runtime dispatches on the
+           values, Int64 and Byte only, with the evaluator's count and
+           zero rules *)
+        emit_expr env (d + 1) l;
+        box_if_numeric env l.Emo_ir.ety;
+        let spill = temp_offset env d in
+        put env "    sd a0, %d(sp)\n" spill;
+        emit_expr env (d + 1) r;
+        box_if_numeric env r.Emo_ir.ety;
+        put env "    mv a1, a0\n";
+        put env "    ld a0, %d(sp)\n" spill;
+        let helper =
+          match op with
+          | Emo_ast.Div -> "emo_div_dyn"
+          | Emo_ast.Mod -> "emo_mod_dyn"
+          | Emo_ast.Bit_and -> "emo_band_dyn"
+          | Emo_ast.Bit_or -> "emo_bor_dyn"
+          | Emo_ast.Bit_xor -> "emo_bxor_dyn"
+          | Emo_ast.Shl -> "emo_shl_dyn"
+          | _ -> "emo_shr_dyn"
+        in
+        call_runtime env helper;
+        if not boxed then unbox_if_numeric env ty
     | (Emo_ast.And | Emo_ast.Or) as sop ->
         (* the short-circuit on checked operands: the left decides or
            the right answers, each side through the runtime's check —
@@ -2401,8 +2426,7 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         put env "    j 1f\n";
         put env "%s:\n" l_end;
         put env "%s" short_word;
-        put env "1:\n"
-    | _ -> refuse "this operator on a dynamic value"
+        put env "1:\n")
   else
     match (op, ty) with
     | ( ( Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Bit_and
@@ -2511,6 +2535,19 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
     | (Emo_ast.Add | Emo_ast.Sub | Emo_ast.Mul | Emo_ast.Div), Emo_check.Float64
       ->
         emit_float_pair env d l r;
+        if op = Emo_ast.Div then begin
+          (* the evaluator refuses a zero divisor for floats too (IEEE
+             would answer an infinity) *)
+          put env "    li t0, 0\n";
+          put env "    fcvt.d.w fa2, t0\n";
+          put env "    feq.d t0, fa1, fa2\n";
+          put env "    beqz t0, 1f\n";
+          let label = string_label env "division by zero" in
+          put env "    la a0, %s\n" label;
+          put env "    la a1, %s_end\n" label;
+          call_runtime env "emo_fail";
+          put env "1:\n"
+        end;
         let mnemonic =
           match op with
           | Emo_ast.Add -> "fadd.d"
@@ -2628,7 +2665,9 @@ and emit_binary env d (ty : Emo_check.t) ~(boxed : bool) (op : Emo_ast.binop)
         emit_expr env d r;
         put env "%s:\n" l_end
     | Emo_ast.Div, _ | Emo_ast.Mod, _ ->
-        refuse "`/` and `%` (they arrive with runtime exceptions)"
+        refuse
+          "`%` on this type (the metal's float remainder needs a remainder \
+           routine; the integer forms ride)"
     | _ -> refuse "this operator on this type"
 
 (* The int pair's operands (feat/modern-desktop): a mapped local's
@@ -8324,6 +8363,339 @@ emo_mul_dyn:
     call emo_box_f64
     j .Ldyn_done
 
+
+# The bitwise, shift, division and remainder doors: the same
+# prologue as the arithmetic family, Int64 and Byte only — the
+# evaluator's own domains. The shifts carry its count rules (a
+# negative count refuses, at or past the width answers zero, the
+# right shift sign-extending), the divisions its zero refusal.
+
+    .globl emo_div_dyn
+emo_div_dyn:
+    li t3, 7
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Ldiv_int
+    li t2, 2
+    beq t0, t2, .Ldiv_float
+    li t2, 7
+    beq t0, t2, .Ldiv_byte
+    j .Ldyn_bad
+.Ldiv_float:
+    # the evaluator refuses a zero divisor for floats too (IEEE would
+    # answer an infinity)
+    fld fa0, 8(s0)
+    fld fa1, 8(s1)
+    li t0, 0
+    fcvt.d.w fa2, t0
+    feq.d t0, fa1, fa2
+    bnez t0, .Ldiv_zero
+    fdiv.d fa0, fa0, fa1
+    call emo_box_f64
+    j .Ldyn_done
+.Ldiv_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    beqz a1, .Ldiv_zero
+    div a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Ldiv_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    beqz t1, .Ldiv_zero
+    div t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Ldiv_zero:
+    la a0, msg_div_zero
+    la a1, msg_div_zero_end
+    call emo_fail
+
+    .globl emo_mod_dyn
+emo_mod_dyn:
+    li t3, 8
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lmod_int
+    li t2, 2
+    beq t0, t2, .Lmod_float
+    li t2, 7
+    beq t0, t2, .Lmod_byte
+    j .Ldyn_bad
+.Lmod_float:
+    # no remainder instruction: the evaluator's fmod needs the binary
+    # long division the wasm target carries, its own round
+    la a0, msg_fmod_gap
+    la a1, msg_fmod_gap_end
+    call emo_fail
+.Lmod_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    beqz a1, .Lmod_zero
+    rem a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lmod_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    beqz t1, .Lmod_zero
+    rem t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Lmod_zero:
+    la a0, msg_div_zero
+    la a1, msg_div_zero_end
+    call emo_fail
+
+    .globl emo_band_dyn
+emo_band_dyn:
+    li t3, 9
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lband_int
+    li t2, 7
+    beq t0, t2, .Lband_byte
+    j .Ldyn_bad
+.Lband_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    and a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lband_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    and t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+
+    .globl emo_bor_dyn
+emo_bor_dyn:
+    li t3, 10
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lbor_int
+    li t2, 7
+    beq t0, t2, .Lbor_byte
+    j .Ldyn_bad
+.Lbor_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    or a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lbor_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    or t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+
+    .globl emo_bxor_dyn
+emo_bxor_dyn:
+    li t3, 11
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lbxor_int
+    li t2, 7
+    beq t0, t2, .Lbxor_byte
+    j .Ldyn_bad
+.Lbxor_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    xor a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lbxor_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    xor t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+
+    .globl emo_shl_dyn
+emo_shl_dyn:
+    li t3, 12
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lshl_int
+    li t2, 7
+    beq t0, t2, .Lshl_byte
+    j .Ldyn_bad
+.Lshl_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    bltz a1, .Lshl_neg
+    li t2, 64
+    bge a1, t2, .Lshl_zero
+    sll a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lshl_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    bltz t1, .Lshl_neg
+    li t2, 8
+    bge t1, t2, .Lshl_zero
+    sll t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Lshl_zero:
+    li a0, 0
+    call emo_box_i64
+    j .Ldyn_done
+.Lshl_neg:
+    la a0, msg_shift_neg
+    la a1, msg_shift_neg_end
+    call emo_fail
+
+    .globl emo_shr_dyn
+emo_shr_dyn:
+    li t3, 13
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    andi s0, a0, -32
+    andi s1, a1, -32
+    andi t0, a0, 31
+    andi t1, a1, 31
+    andi t2, t0, 1
+    beqz t2, 1f
+    andi t0, t0, 15
+1:  andi t2, t1, 1
+    beqz t2, 2f
+    andi t1, t1, 15
+2:  bne t0, t1, .Ldyn_bad
+    beqz t0, .Lshr_int
+    li t2, 7
+    beq t0, t2, .Lshr_byte
+    j .Ldyn_bad
+.Lshr_int:
+    ld a0, 8(s0)
+    ld a1, 8(s1)
+    bltz a1, .Lshr_neg
+    li t2, 64
+    bge a1, t2, .Lshr_sat
+    sra a0, a0, a1
+    call emo_box_i64
+    j .Ldyn_done
+.Lshr_sat:
+    srai a0, a0, 63
+    call emo_box_i64
+    j .Ldyn_done
+.Lshr_byte:
+    srli t0, a0, 4
+    srli t1, a1, 4
+    bltz t1, .Lshr_neg
+    li t2, 8
+    bge t1, t2, .Lshr_bytezero
+    srl t0, t0, t1
+    andi t0, t0, 255
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Lshr_bytezero:
+    li t0, 0
+    slli a0, t0, 4
+    ori a0, a0, 7
+    j .Ldyn_done
+.Lshr_neg:
+    la a0, msg_shift_neg
+    la a1, msg_shift_neg_end
+    call emo_fail
+
     .globl emo_lt_dyn
 emo_lt_dyn:
     li t3, 3
@@ -8477,7 +8849,21 @@ emo_ge_dyn:
     beq t3, t4, .Ldyn_bad_le
     li t4, 5
     beq t3, t4, .Ldyn_bad_gt
-    j .Ldyn_bad_ge
+    li t4, 6
+    beq t3, t4, .Ldyn_bad_ge2
+    li t4, 7
+    beq t3, t4, .Ldyn_bad_div
+    li t4, 8
+    beq t3, t4, .Ldyn_bad_mod
+    li t4, 9
+    beq t3, t4, .Ldyn_bad_band
+    li t4, 10
+    beq t3, t4, .Ldyn_bad_bor
+    li t4, 11
+    beq t3, t4, .Ldyn_bad_bxor
+    li t4, 12
+    beq t3, t4, .Ldyn_bad_shl
+    j .Ldyn_bad_shr
 .Ldyn_bad_add:
     la a0, msg_op_add
     la a1, msg_op_add_end
@@ -8502,9 +8888,37 @@ emo_ge_dyn:
     la a0, msg_op_gt
     la a1, msg_op_gt_end
     j .Ldyn_bad_fail
-.Ldyn_bad_ge:
+.Ldyn_bad_ge2:
     la a0, msg_op_ge
     la a1, msg_op_ge_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_div:
+    la a0, msg_op_div
+    la a1, msg_op_div_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_mod:
+    la a0, msg_op_mod
+    la a1, msg_op_mod_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_band:
+    la a0, msg_op_band
+    la a1, msg_op_band_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_bor:
+    la a0, msg_op_bor
+    la a1, msg_op_bor_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_bxor:
+    la a0, msg_op_bxor
+    la a1, msg_op_bxor_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_shl:
+    la a0, msg_op_shl
+    la a1, msg_op_shl_end
+    j .Ldyn_bad_fail
+.Ldyn_bad_shr:
+    la a0, msg_op_shr
+    la a1, msg_op_shr_end
 .Ldyn_bad_fail:
     call emo_op_fail
 
@@ -9726,6 +10140,36 @@ msg_op_gt_end:
 msg_op_ge:
     .ascii "operator `>=` expects two numbers, got "
 msg_op_ge_end:
+msg_op_div:
+    .ascii "operator `/` expects two numbers, got "
+msg_op_div_end:
+msg_op_mod:
+    .ascii "operator `%` expects two numbers, got "
+msg_op_mod_end:
+msg_op_band:
+    .ascii "operator `&` expects two Int64s or two Bytes, got "
+msg_op_band_end:
+msg_op_bor:
+    .ascii "operator `|` expects two Int64s or two Bytes, got "
+msg_op_bor_end:
+msg_op_bxor:
+    .ascii "operator `^` expects two Int64s or two Bytes, got "
+msg_op_bxor_end:
+msg_op_shl:
+    .ascii "operator `<<` expects two Int64s or two Bytes, got "
+msg_op_shl_end:
+msg_op_shr:
+    .ascii "operator `>>` expects two Int64s or two Bytes, got "
+msg_op_shr_end:
+msg_div_zero:
+    .ascii "division by zero"
+msg_div_zero_end:
+msg_shift_neg:
+    .ascii "shift count must be non-negative"
+msg_shift_neg_end:
+msg_fmod_gap:
+    .ascii "the float remainder needs a remainder routine on the metal"
+msg_fmod_gap_end:
 msg_op_neg:
     .ascii "operator `-` expects a number, got "
 msg_op_neg_end:

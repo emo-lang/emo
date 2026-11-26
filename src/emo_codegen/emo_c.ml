@@ -1988,7 +1988,13 @@ and emit_unary env (result_ty : Emo_check.t) (op : Ast.unop) (x : Emo_ir.expr) :
         if is_dyn result_ty then wrap_owned result_ty code
         else wrap_owned Emo_check.Unknown code
     | Ast.Not -> Printf.sprintf "emo_not_dyn(%s)" (as_dyn env x)
-    | Ast.Bit_not -> refuse "the bitwise operators"
+    | Ast.Bit_not ->
+        (* the dynamic complement answers a fresh boxed word either
+           way, and the word's kind is the runtime's — the same rule
+           the negation follows *)
+        let code = Printf.sprintf "emo_bnot_dyn(%s)" (as_dyn env x) in
+        if is_dyn result_ty then wrap_owned result_ty code
+        else wrap_owned Emo_check.Unknown code
   else
     let v = emit_expr env x in
     match (op, x.Emo_ir.ety) with
@@ -2036,8 +2042,11 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
     | Or ->
         Printf.sprintf "(emo_bool_dyn(%s, \"||\") || emo_bool_dyn(%s, \"||\"))"
           a b
-    | Bit_and | Bit_or | Bit_xor | Shl | Shr ->
-        refuse "the bitwise operators in the dynamic world"
+    | Bit_and -> dyn_arith "emo_bit_and_dyn"
+    | Bit_or -> dyn_arith "emo_bit_or_dyn"
+    | Bit_xor -> dyn_arith "emo_bit_xor_dyn"
+    | Shl -> dyn_arith "emo_shl_dyn"
+    | Shr -> dyn_arith "emo_shr_dyn"
   else
     let a = emit_expr env l and b = emit_expr env r in
     let plain text = Printf.sprintf "(%s %s %s)" a text b in
@@ -2080,10 +2089,14 @@ and emit_binary env (result_ty : Emo_check.t) (op : Ast.binop) (l : Emo_ir.expr)
         Printf.sprintf "(uint8_t)emo_shr_i64((int64_t)(%s), (int64_t)(%s))" a b
     | Emo_check.Byte, _ -> refuse "this Byte operation"
     (* Float64: plain IEEE arithmetic and comparison. *)
-    | Emo_check.Float64, (Add | Sub | Mul | Div) -> plain (arith_text op)
+    | Emo_check.Float64, (Add | Sub | Mul) -> plain (arith_text op)
+    | Emo_check.Float64, Div ->
+        (* the evaluator refuses a zero divisor; IEEE would answer an
+           infinity *)
+        Printf.sprintf "emo_div_f64(%s, %s)" a b
     | Emo_check.Float64, (Eq | Ne | Lt | Le | Gt | Ge) ->
         plain (compare_text op)
-    | Emo_check.Float64, Mod -> Printf.sprintf "fmod(%s, %s)" a b
+    | Emo_check.Float64, Mod -> Printf.sprintf "emo_fmod_f64(%s, %s)" a b
     | Emo_check.Float64, _ -> refuse "this Float64 operation"
     (* Bool *)
     | Emo_check.Bool, (Eq | Ne) -> plain (compare_text op)

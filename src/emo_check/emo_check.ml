@@ -3002,7 +3002,12 @@ and check_expr_desc ctx env span (desc : Ast.expr_desc) : t =
             (Printf.sprintf "operator `-` expects a number, got %s"
                (to_string other));
           Unknown
-      | Ast.Bit_not, (Int64 | Unknown) -> Int64
+      | Ast.Bit_not, Int64 -> Int64
+      | Ast.Bit_not, Unknown ->
+          (* the value keeps the runtime's kind — a gradual operand may
+             be a Byte, and an Int64-typed result unboxed it as an
+             integer (the negation's rule) *)
+          Unknown
       | Ast.Bit_not, Byte -> Byte
       | Ast.Bit_not, other ->
           report ctx span "E4004"
@@ -4186,7 +4191,11 @@ and check_binary ctx env span op l r =
         | _ -> false
       in
       if not width_ok then mismatch "two values of the same fixed-width type";
-      if lt = Int64 || rt = Int64 then Int64
+      (* a gradual side keeps the runtime's kind: the values could be
+         Int64s or Bytes, and a fixed-width result unboxed the other
+         kind's word as an integer *)
+      if lt = Unknown || rt = Unknown then Unknown
+      else if lt = Int64 || rt = Int64 then Int64
       else if lt = Byte || rt = Byte then Byte
       else Unknown
   | (Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge)
@@ -4220,7 +4229,11 @@ and check_binary ctx env span op l r =
         | _ -> false
       in
       if not width_ok then mismatch "two values of the same fixed-width type";
-      if lt = Int64 || rt = Int64 then Int64
+      (* a gradual side keeps the runtime's kind: the values could be
+         Int64s or Bytes, and a fixed-width result unboxed the other
+         kind's word as an integer *)
+      if lt = Unknown || rt = Unknown then Unknown
+      else if lt = Int64 || rt = Int64 then Int64
       else if lt = Byte || rt = Byte then Byte
       else Unknown
   | Ast.Add ->
@@ -4248,7 +4261,8 @@ and check_binary ctx env span op l r =
       (* Bitwise work is integer work: no float coercion, ever. *)
       let int_side_ok t = t = Int64 || t = Unknown in
       if not (int_side_ok lt && int_side_ok rt) then mismatch "two Int64s";
-      Int64
+      (* a gradual side keeps the runtime's kind - the negation's rule *)
+      if lt = Unknown || rt = Unknown then Unknown else Int64
   | Ast.Lt | Ast.Le | Ast.Gt | Ast.Ge ->
       (* Strings order byte-wise — the code point order `sort` answers
          — and nothing else the numbers leave behind: a String against

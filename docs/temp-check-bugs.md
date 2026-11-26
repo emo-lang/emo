@@ -27,7 +27,10 @@ the beam's every runtime refusal now rides the envelope (stderr,
 the same day (the beam already answered, c and ocaml scoped their
 children, the metal's split rides the proven death machinery — wasm's
 constraint stands); 7(e) closed too — the sentence already named the
-Char and printf's `%c` learned the tagged shape. **Open: 7 (f).**
+Char and printf's `%c` learned the tagged shape; 7(f) closed the same
+day — c's and the metal's missing dynamic lanes landed. **Open: nothing — item 7 closed; the metal's float
+remainder, the one deliberate gap left, has its own paragraph inside
+7(f) and waits for its own round.**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -512,14 +515,39 @@ Verified by hand: the probe table above plus the printf leg;
 `examples/processes`, `atomic_cell` and `language_tour` byte-identical
 with their `expected.txt` on the beam.
 
-**(f) The build refusals are unchanged — open.** c refuses the bitwise
-operators and `~` on a dynamic value ("does not support the bitwise
-operators in the dynamic world yet"); the metal refuses `/`, `%`, the
-bitwise operators and the shifts on one ("does not support this operator
-on a dynamic value yet") — `&&`/`||` closed this round, and the metal's
-Float `%` is the same "arrives with runtime exceptions" shape. These are
-missing dynamic lanes, not wrong answers; the interpreter refuses at
-runtime where they refuse at the build.
+**(f) The build refusals are unchanged — closed 2026-11-26 (the float
+remainder form excepted, below).** c's dynamic world gained the bitwise
+family: `emo_bit_and_dyn`, `emo_bit_or_dyn`, `emo_bit_xor_dyn`,
+`emo_shl_dyn`, `emo_shr_dyn` and `emo_bnot_dyn` — the two-Int64s-or-two-
+Bytes domains with the evaluator's shift rules (`shift count must be
+non-negative`, a count at the width answers zero) and the mixed pair's
+own sentence (`operator `&` expects two Int64s or two Bytes, got Int64
+and String`, exit 70); the static lanes' shift guards back the dynamic
+ones. The metal gained seven doors (`emo_div_dyn`, `emo_mod_dyn`,
+`emo_band_dyn`, `emo_bor_dyn`, `emo_bxor_dyn`, `emo_shl_dyn`,
+`emo_shr_dyn`) on the arithmetic family's own prologue, their operator
+ids joining the sentence table (`/`, `%` "two numbers"; the bitwise
+five "two Int64s or two Bytes"), division's zero refusing
+`division by zero` in the c model's shape and the shifts saturating by
+the evaluator's rules; with every binop covered the dispatch's "this
+operator on a dynamic value" catch-all retired as dead. Verified: one
+nine-line probe — `& | ^ << >> ~ / %` over mailbox values — is
+byte-identical with the interpreter on c and on the metal (`0 45 33 160
+20 -41 13 5 2`); the shift saturation (`>> 65`, `>> 2`, `<< 70` over a
+negative) answers `-1 -2 0` on both; the mixed pair `x & y` (Int64 and
+String through two receives) answers the interpreter's sentence on the
+metal. The float lanes closed too, on the user's ruling that a zero
+divisor is an error and not an infinity, the interpreter's own shape:
+on c, `emo_div_f64`/`emo_fmod_f64` refuse `division by zero` for both
+the static and the dynamic float paths (IEEE's infinity and NaN are
+gone), and `7.5 % 2.0` still answers `1.5` through fmod; on the metal,
+the static float `Div` arm and the dynamic door gained the same zero
+check, so `7.5 / 0.0` refuses `division by zero` on both paths where it
+used to answer infinity. Left open, its own round: the metal's float
+`%` — no remainder instruction, so the evaluator's fmod needs the wasm
+round's binary long division in asm; it refuses loudly today
+(`the float remainder needs a remainder routine on the metal`) instead
+of answering a wrong number.
 
 **(g) The c emitter warns on an unused receive binding. — closed
 2026-11-26.** Every receive branch now casts its bindings `(void)` after

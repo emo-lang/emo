@@ -2224,9 +2224,9 @@ static emo_value emo_arith_dyn(emo_value a, emo_value b, char op) {
     switch (op) {
     case '-': return emo_box_f64(x - y);
     case '*': return emo_box_f64(x * y);
-    case '/': return emo_box_f64(x / y);
+    case '/': return emo_box_f64(emo_div_f64(x, y));
     /* the remainder the evaluator answers: fmod, sign of the left */
-    default: return emo_box_f64(fmod(x, y));
+    default: return emo_box_f64(emo_fmod_f64(x, y));
     }
   }
   char op_name[2] = {op, 0};
@@ -2267,6 +2267,78 @@ bool emo_not_dyn(emo_value v) {
 
 emo_value emo_mod_dyn(emo_value a, emo_value b) {
   return emo_arith_dyn(a, b, '%');
+}
+
+/* The bitwise and shift doors: two Int64s or two Bytes, the
+   evaluator's count rules on the shifts (a negative count refuses,
+   a count at or past the width answers zero — the shift helpers the
+   static lanes share carry the same rules). */
+static emo_value emo_bit_pair_dyn(emo_value a, emo_value b, char op) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101) {
+    int x = emo_byte_of(a), y = emo_byte_of(b), r;
+    switch (op) {
+    case '&': r = x & y; break;
+    case '|': r = x | y; break;
+    case '^': r = x ^ y; break;
+    default: r = x;
+    }
+    return emo_vbyte((uint8_t)r);
+  }
+  uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
+  if (ka == EMO_INT64 && kb == EMO_INT64) {
+    int64_t x = emo_unbox_i64(a), y = emo_unbox_i64(b), r;
+    switch (op) {
+    case '&': r = (int64_t)((uint64_t)x & (uint64_t)y); break;
+    case '|': r = (int64_t)((uint64_t)x | (uint64_t)y); break;
+    case '^': r = (int64_t)((uint64_t)x ^ (uint64_t)y); break;
+    default: r = x;
+    }
+    return emo_box_i64(r);
+  }
+  char op_name[2] = {op, 0};
+  emo_type_mismatch(op_name, "two Int64s or two Bytes", a, b);
+}
+
+emo_value emo_bit_and_dyn(emo_value a, emo_value b) {
+  return emo_bit_pair_dyn(a, b, '&');
+}
+
+emo_value emo_bit_or_dyn(emo_value a, emo_value b) {
+  return emo_bit_pair_dyn(a, b, '|');
+}
+
+emo_value emo_bit_xor_dyn(emo_value a, emo_value b) {
+  return emo_bit_pair_dyn(a, b, '^');
+}
+
+emo_value emo_shl_dyn(emo_value a, emo_value b) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101)
+    return emo_vbyte(
+        (uint8_t)emo_shl_i64(emo_byte_of(a), (int64_t)emo_byte_of(b)));
+  uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
+  if (ka == EMO_INT64 && kb == EMO_INT64)
+    return emo_box_i64(emo_shl_i64(emo_unbox_i64(a), emo_unbox_i64(b)));
+  emo_type_mismatch("<<", "two Int64s or two Bytes", a, b);
+}
+
+emo_value emo_shr_dyn(emo_value a, emo_value b) {
+  if ((a & 7) == 0b101 && (b & 7) == 0b101)
+    return emo_vbyte(
+        (uint8_t)emo_shr_i64(emo_byte_of(a), (int64_t)emo_byte_of(b)));
+  uintptr_t ka = emo_cell_kind(a), kb = emo_cell_kind(b);
+  if (ka == EMO_INT64 && kb == EMO_INT64)
+    return emo_box_i64(emo_shr_i64(emo_unbox_i64(a), emo_unbox_i64(b)));
+  emo_type_mismatch(">>", "two Int64s or two Bytes", a, b);
+}
+
+emo_value emo_bnot_dyn(emo_value v) {
+  if ((v & 7) == 0b101) return emo_vbyte((uint8_t)~emo_byte_of(v));
+  if (emo_cell_kind(v) == EMO_INT64)
+    return emo_box_i64((int64_t)~(uint64_t)emo_unbox_i64(v));
+  char message[96];
+  snprintf(message, sizeof message, "operator `~` expects an Int64, got %s",
+           emo_type_name(v));
+  emo_fatal(message);
 }
 
 emo_value emo_neg_dyn(emo_value v) {
@@ -5435,6 +5507,20 @@ double emo_f64_from_bits(int64_t bits) {
   double d;
   memcpy(&d, &bits, sizeof d);
   return d;
+}
+
+/* The float division and remainder: the evaluator refuses a zero
+   divisor for both (`division by zero`, E3005) where IEEE answers an
+   infinity or a NaN. -0.0 compares equal to 0.0, the evaluator's own
+   test. */
+double emo_div_f64(double x, double y) {
+  if (y == 0.0) emo_fatal("division by zero");
+  return x / y;
+}
+
+double emo_fmod_f64(double x, double y) {
+  if (y == 0.0) emo_fatal("division by zero");
+  return fmod(x, y);
 }
 
 double emo_f64_sqrt(double x) { return sqrt(x); }
