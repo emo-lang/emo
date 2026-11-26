@@ -32,6 +32,7 @@
 | `just package` | 把本平台的分发归档装配到 `dist/`——单平台,供快速检查;正式发布通过 `devtools/build-release.sh` 构建全部三个平台。 |
 | `just release TAG` | 在本机完成整个发布：打 tag 并推送到源码托管平台，在本机构建并测试全部三个归档（macOS arm64 原生、两个 Linux 架构走 Docker——镜像用 `just release-image` 一次性构建），公证，再发布到下载站点。 |
 | `just test` | 全量测试套件。 |
+| `just example [FILTER]` | 逐个示例做字节级金测:同时带 `main.emo` 与 `expected.txt` 的示例在解释器上运行,其 stdout 必须与金测文件逐字节一致。`FILTER` 只跑名字包含它的示例;每次运行的 stdout 与 stderr 留在 `.emo-build/example-golden/`。 |
 
 实现中的两个要点:dune 的产物是只读的,所以 install recipe 先拷贝
 到 `emo.incoming`、strip、再 `mv` 到位(`mv` 只需要目录的写权限,

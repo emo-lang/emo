@@ -36,6 +36,7 @@ phrase means its opposite — the division of labor is:
 | `just package` | Assemble this platform's distributable archive into `dist/` — one platform, for quick checks; a release builds all three through `devtools/build-release.sh`. |
 | `just release TAG` | The whole release on this machine: tag and push to the source host, build and test all three archives (macOS arm64 natively, both Linux architectures in Docker — `just release-image` builds their images once), notarize, and publish to the download site. |
 | `just test` | The full test suite. |
+| `just example [FILTER]` | Golden-test every example one program at a time: each example holding `main.emo` and `expected.txt` runs on the interpreter, and its stdout must match the golden byte for byte. `FILTER` keeps the names containing it; the run's stdout and stderr stay under `.emo-build/example-golden/`. |
 
 ## The ocaml target needs only the OCaml toolchain
 
