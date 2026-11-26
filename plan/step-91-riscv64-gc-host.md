@@ -1,6 +1,6 @@
 # Step 91 — The GC heap's host ring closes: the riscv64 metal admits the doors
 
-**Milestone:** M52 — The GC heap's riscv64 host · **Prereq:** step 90
+**Milestone:** M43 — The GC heap's riscv64 host · **Prereq:** step 90
 (the ladder) · **Related:** `docs/gc-heap.md`, `docs/stdlib/gc.md`,
 `examples/gc_demo/`, `examples/gc_metal/`, `CHECK.md` · **Status:**
 done — the admission, the doors, the kinds, the acceptance and the

@@ -1,6 +1,6 @@
 # Step 72 — The column format
 
-**Milestone:** M35 · **Prereq:** steps 65–71 (arc one closed) ·
+**Milestone:** M28 · **Prereq:** steps 65–71 (arc one closed) ·
 **Status:** landed 2026-11-13
 
 ## Why this step exists

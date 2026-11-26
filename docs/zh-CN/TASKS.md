@@ -46,32 +46,23 @@
 | M25 — postgres 客户端 | 62 | 标准库的第二个原生绑定包、第一个走线协议的数据库客户端:对包内携带的 C shim 的 `foreign def`,libpq 经 manifest 的 `pkg_config` 字段解析;`$1` 风格的 `Param` 参数(text/i64/f64/bool/none)、带类型化受检访问器与按名查找的 `Rows`、`net` 错误二分(宕掉的服务器与被数据破坏的约束以 `(R.error, reason)` 回答、携带服务器消息与 SQLSTATE,违约才 raise);`postgres_demo` 对活服务器骑临时表、三遍逐字节,随 `postgres_available` 探针加入 `c_goldens`;文档 EN+zh,含顺手补上的 `sqlite3` 表行(`CHECK.md`)。 |
 | M26 — Emo shell | 63 | `emosh`,用 Emo 写在 `os` 表面上的通用命令解释器:环境、信号与接线调用(`dup2`/`execvp`/`isatty`/`argv`)落进 `os`,与 fork 纪律并肩;shell 本体把词切成字面与可扩展部件,扩展 `$var`/`$?`/波浪号,逐段 fork 管道并用 `dup2` 接线,把 `<`/`>`/`>>` 开到子进程上,带着承接状态走 `;`/`&&`/`||`,应答八件内建,靠「忽略中断」的纪律活着——shell 忽略,fork 子进程在 exec 前恢复默认——行输入走终端自己的 cooked 模式;fixture 脚本在 ocaml 与 c 双 target 上逐字节一致,退出状态一并钉死(`CHECK.md`)。 |
 | M27 — `websocket` 与 `playwright` 包 | 64 | 用 Emo 做浏览器自动化:RFC 6455 的两端作为骑 `net` 的标准库包(客户端拨号并验证握手、服务端 accept 检查 upgrade/version/key、每轮交换一条文本消息、按角色掩码、ping 有应答、close 有应答、分片接收拼接过 4096 片),然后 `playwright` 客户端穿这些帧对官方 `playwright run-server` 说驱动的 channel 协议——pre-launched-browser 形态、根 channel 上的 initialize 握手、核心门集(goto/click/fill/press/title/content/text_content/screenshot/close)走 `net` 错误二分;两个 demo 各自带对手方(回声服务器;一个以真线格式应答、带分片消息、一个 ping 与八字节长度形态的迷你驱动),金测因此既不需要浏览器也不需要 Node,解释器与 `c` target 逐字节一致(`CHECK.md`)。 |
-| M28 —— RocksDB 半边 | 65 | emo-db 的第一笔落地:`projects/emo-db/` 脚手架与项目内的 `emo/rocksdb` 绑定——骑官方 RocksDB C API 的包内 C shim(open/close、get/put/delete、WriteBatch 原子写、iterator、快照、column family),经 `foreign def` 与 manifest 的 `pkg_config` 字段解析(`postgres` 先例);C ABI 长出 `Bytes` 借用视图(D10),键与值因此携带任意二进制数据,读操作填写调用方自己的 out 参数;调度器的协作模型让每次调用天然串行,shim 自己不长锁;其余 target 在解析处拒绝、解释器在运行时拒绝(E3009/E5007 活体验证);KV demo——文本与内嵌 NUL 的值、批量提交、读、前缀扫描、可见的快照隔离、关闭再重开——经 `projects/emo-db/check.sh` 在 `c` 上跑三遍逐字节一致(`CHECK.md`)。 |
-| M29 —— 记录层 | 66 | 数据库自己的数据模型骑在 KV 半边上:目录 column family(表、列、类型、索引与 oid 计数按 oid,经 shim 读写)、v0 类型子集上的行编码(空值位图、4 字节 INTEGER、8 字节 BIGINT/REAL/DOUBLE、boolean、带长度前缀的 TEXT/VARCHAR/BYTEA)、插入的 WriteBatch 里的 rowid 分配、以及每索引一个 column family(名 `idx_<oid>`,键由被索引值加 rowid 编成)的二级索引——共享的 `data` family 以表 oid + rowid 为键,目录经 `rocksdb.list_families` 重开并校验索引 CF,索引扫描是等值前缀;record demo 在目录里建表、插入覆盖每种类型的行(NULL、BYTEA 内嵌 NUL、UTF-8 TEXT)、按 rowid 读、扫表、经唯一与非唯一索引找行、并重开 store,`c` 上逐字节钉死(`CHECK.md`)。 |
-| M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包(纯 Emo、每个 target 逐字节一致)在 SELECT 旁长出语句集:带 v0 列类型与列级 NOT NULL/PRIMARY KEY 的 CREATE TABLE、带可选列清单的多行 INSERT ... VALUES、UPDATE ... SET ... [WHERE]、DELETE FROM ... [WHERE]——各自的 AST 类、解析器与规范的 `to_string()` 渲染,现有 SELECT 语法不动,解析器做形状检查(重复列/赋值、行宽、正的 VARCHAR 长度、按名拒绝不支持的尾部);语句级与表达式级金测在解释器与全部五个 hosted target 逐字节一致(`CHECK.md`)。 |
-| M31 —— 计划器与执行器 | 68 | 引擎里第一条完整的 SQL 到行全链路:`emo/engine` 包骑 `emo/sql` 与 `emo/record`——计划节点(scan、filter、project、insert、update、delete)、带 SQL 三值 NULL 逻辑的类型化表达式求值、单表 SELECT(投影、WHERE;索引列上的等值变成索引扫描)、CREATE TABLE(v0 类型、主键索引)、INSERT、UPDATE 与 DELETE(记录层新增的 update/delete 在一次批量里重写行与索引条目),以及 PG 形状的 `code: message` 错误(`42P01`、`42703`、`42883`、`42804`、`23505`、`23502`、`22001`、`22012`、`0A000`、`42601`)——嵌入式测试面(尚无线协议)在 `c` 上逐字节钉死 SQL 文本进、行出并打印计划树,经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
-| M32 —— 事务与会话面 | 69 | D6 的事务模型:BEGIN/COMMIT/ROLLBACK 骑记录层的 `Txn`——每事务一个 WriteBatch 原子提交、每语句一个快照(读已提交)、读己之写的 pending 覆盖层、commit 时发布 rowid 计数、目录的 next-rowid 变更在同一次写里;引擎的会话状态、`LockClient` 与持到 commit/rollback 的表级写锁;一个 Emo 锁管理器进程,FIFO 等待队列、wait-for 图,死锁时以 `40P01` 中止请求者;两会话金测展示读已提交对照、写-写阻塞与死锁,`c` 上逐字节钉死并经 `projects/emo-db/check.sh`(`CHECK.md`)。 |
-| M33 —— 线协议 | 70 | PostgreSQL 线协议 v3 的简单查询路径,在 `emo/wire`:启动(SSLRequest/GSSENCRequest 答 `N`、trust AuthenticationOk、只认协议 3.0)、psql 与 libpq 读的 ParameterStatus 集合、BackendKeyData、ReadyForQuery、带多语句字符串的 Query(由新 `sql.split` 在词法器自己的分号处切分)、带 v0 类型 OID 的 RowDescription(`Result` 新增 `types`)、文本格式 DataRow(布尔 `t`/`f`、BYTEA `\x` 十六进制、NULL -1)、CommandComplete、EmptyQueryResponse 与带 PG 字段的 ErrorResponse;错误停掉剩余语句并如实报告引擎的干净状态(`I`);每连接一个骑共享 Store 的会话 actor,锁管理器移进 `engine.locks` 并按会话挂上,`Engine.end_session` 释放而不关共享 store;`wire_demo`(临时端口经 ready 文件、有限连接数)与 `wire_client`(标准 `postgres` 包走 libpq 零参数 `PQexec` 路径)钉死 psql 的脚本与错误停止、客户端行与错误,经 `projects/emo-db/check.sh` 三遍全绿且金测逐字节一致,`psql`/`libpq` 探针之后(49 项检查);BEAM 的 `__inst_recv` 临时变量修复(`CHECK.md`)。 |
-| M34 —— 符合性与文档 | 71 | 语料与账目:SQLLogicTest 精神的 SQL 语句语料——六个文件、126 个用例(`statement ok` 钉标签、`statement error` 钉 `code: message` 行、`query` 钉 runner 规范渲染的行),每次调用一台全新数据库,经 `projects/emo-db/check.sh` 三遍逐字节(59 项检查);bench 模式与 `bench/run.sh`(预热加三次计时)与实测表——实测发现并修掉了只读语句的 WAL fsync,语料(连同)发现并修掉了事务内 DDL 拒绝后块未关闭;`docs/emo-db.md` 长成已交付表面(`已交付`、`实测`)、被修正的过时说法,以及对照行存实际插点的弧二复核(`CHECK.md`)。 |
-| M35 —— 列存格式 | 72 | 列存格式与目录选择:解析器里的 `CREATE TABLE ... STORE = COLUMN`(规范渲染只写出写下的列尾巴)、目录的版本 2 表定义带 `store` 字段(版本 1 记录读作行存)、记录层的列存半边——每列一个 column family(`col_<oid>`)、1024 行块(行数、null 位图、行编码自己的宽度)、尾部半块在事务里重读重写、按 rowid 序的块扫描、重开的列 family 校验,以及行路径的具名守卫;列存表不建索引(`PRIMARY KEY` 与二级索引在两层都拒绝);引擎的 DDL 映射与 DML/SELECT 的具名 `0A000` 桥;`column_demo` 金测(建表、1030 行跨块边界、重开、拒绝)经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
-| M36 —— 列执行器 | 73 | 同一表面背后的批量执行器:记录层的 `scan_column_batches` 与 `column_block_counts`,引擎的按存储路由(SELECT 走列执行器、INSERT 走列块、UPDATE/DELETE 答只插入的 `0A000`)、列计划节点,以及全局聚合 COUNT/SUM/AVG/MIN/MAX——零行时 COUNT 答 0、其余答 NULL,SUM 按参数拓宽,AVG 是 DOUBLE PRECISION,MIN/MAX 保持参数类型,`DISTINCT` 聚合拒绝,混用的选择列表答 `42803` 并点名列,无 WHERE 的 `count(*)` 走块计数快路径,计划文本显示 `column scan`/`aggregate`——由引擎 demo 的执行器用例钉死,经 `projects/emo-db/check.sh` 三遍逐字节(66 项检查)(`CHECK.md`)。 |
-| M37 —— 双引擎证明 | 74 | 一台数据库、一次会话、一个事务里跨过两台引擎,骑线协议:`htap_demo` 经引擎播种行表与列存表(1100 行跨过块边界)后服务线协议;psql 与 `postgres` 客户端各自驱动一个脚本——读两台引擎、在 BEGIN/COMMIT 里携带行表的 UPDATE 与列存表的 INSERT、再读提交后的聚合(播种 `1100|605550|1.0|row-999`,更新后 `1|11.0`,之后 `1101|606651`),在探针后逐字节钉死;语料的 `column.test` 抬到 141 个用例(DDL、投影、五个聚合、零行规则 `0|NULL`,以及混用/类型/DISTINCT/star/只插入/主键拒绝);bench 的列存模式记录首个实测对照——块扫描 304 ms / 32895 行每秒,对行存的 675 ms / 14815,聚合 142 ms / 70423——经 `projects/emo-db/check.sh` 三遍全绿(76 项检查)(`CHECK.md`)。 |
-| M38 — Wasm 能力 | 75–77 | 用 Emo 写的 wasm 运行时(步骤 20–22)成为可消费的能力:包搬进 bundled registry 成为 `wasm` 标准库包,执行面落在包根——`load`/`instantiate`/`call`/`get_global`/内存访问骑 R 错误拆分,`(kind, bits)` 值模型带构造器,宿主 import 表收 Emo 闭包——与其他 bundled 包同路解析;随后 `emo wasm run` 让 CLI 经解释器执行 `.wasm` 工件,编译器永不链接运行时;再往后 `emo` 宿主模块(及其牵出的 WASI 表面)跑其他工具链出的模块;一致性别名(`wasm_spec`/`wasm_runs`)随包同迁(`CHECK.md`)。 |
-| M39 — 文本模板 | 78 | `template` 包——从 `json` 上下文渲染带洞的文本,Go `text/template` 的机制、Emo 自己的表面,纯 Emo 写在共享运行时之上,五个托管目标逐字节一致:一次成型的 `render` 与解析一次渲染多次的 `Set`(new/with/render),`{{ }}` 数据洞配裸点分路径与七个 ASCII 安全的过滤器管道,`if`/`else if`/`else`/`end` 配"不是零值"的真值,数组与对象上的 `for` 带 `else`,`template` 引用(绑定不过边,深度上限点名链条),`{{- `-` -}}` 修剪标记与 `{{! }}` 注释;解析与渲染都从严,每次失败都是带字节位置的理由。两个 golden 冲出来的后端 bug:IR 的模块级 def mangle 漏了 `sanitize_ident`(`?` 后缀漏进 TS/OCaml 标识符),BEAM 发射器的 threaded-chain case 在 per-branch save 之前注册模式绑定——兄弟分支的绑定泄漏进后继 continuation 的 live 集,erlc 报 unbound variable。 |
-| M40 — repl 的行编辑器 | 79 | 交互会话迎来真正的编辑器:vendored 的上游 linenoise(BSD-2,钉在 `a473823d`,两处显式补丁——临时历史条目在 Ctrl-C 与输入结束时按 ENTER 的方式弹栈,阻塞读的判定 errno 越过 stop 的终端探测存活)经 dune 的 `foreign_stubs` 编进 CLI——OCaml CLI 链接的第一份 C——藏在一个绑定模块后面,其桩把库的 errno 判定映射为 OCaml 变体;输入 seam 携带提示文本,并把完成的一行、Ctrl-C 的放弃、输入的结束区分开;编辑器只在 stdin 与 stdout 都是终端时入座,管道与重定向保持普通路径逐字节不变;历史按行存储,会话结束存入 state 文件(`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`),读不动写不进在 stderr 上警告、文件缺失沉默;Ctrl-C 放弃当前待输入而非杀死进程;续行提示按每个未闭合括号缩进两个空格;测试经上游的 `LINENOISE_ASSUME_TTY` 钩子用管道驱动真实的 C 编辑器——敲入的行、上箭头召回、不漏空条目的打断、以及两会话的持久化往返(`CHECK.md`)。 |
-| M41 — 标准库:`uuid` | 80 | `uuid` 包:RFC 9562 的标识符是一个不可变的 16 字节 `Uuid` 值,经 `to_string` 协议方法自我渲染,回答 `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?`,并按 RFC 6.11 的大端 `compare` 排序;`v4` 经 `rand.bytes` 抽 122 个随机位,`v7(now_ms)` 从调用方自己的时钟取 Unix 毫秒时间骑 74 个随机位(负数或超出 48 位的时间戳 raise),`v3`/`v5` 是骑 `crypto.legacy` 的确定性 name-based 门,表 3 的四个 IANA namespace ID 在旁;`parse` 恰好接受规范的 36 字符形式,数字不区分大小写,每次拒绝点名第一个出错的字节,`from_bytes` 拒绝非 16 的长度;作用域对齐 Go 标准 `uuid` 的骨架,v1/v2/v6 与 v8 构造器点名不在包内;`uuid_demo` 骑 RFC 的向量、随机的门只打印结构,五个 target 名单逐字节一致(`CHECK.md`)。 |
-| M42 — 时钟与心跳 | 81 | `time` 包:墙钟与单调时钟经三个运行时门(`time_now_ms`、`time_mono_ns`、`time_sleep_ms`),其余一切是门上的纯 Emo——UTC 纪元毫秒的 `Time`,日历字段用纯 Emo 计算(Hinnant 的民用历算术),`mono()` 是显式的单调仪器,时长是普通 Int64 毫秒、转换家族(`time.seconds(n)` ……)扮演常量的角色,严格的九记号排版格式化(永远 UTC,`format_iso`/`format_http` 是预设,畸形记号点名字节抛出),以及说秒的定时家族——`sleep` 是精确的泊车(消息只排队,不唤醒),`after` 是自己进程里的排定单发,`tick` 是调用进程永不返回的心跳、块自己的 `halt()` 是停止;wasm 上时钟半经两个宿主导入,定时半在调用处抛出点名能力(os 进程半的先例);golden 冲出一个编译器结构缺口与四个发射器 bug——IR 的 Void 函数体出口位置的裸尾调用被降成 Effect,对每个后端的尾调用机器都不可见(现在降成本来的 Return,C 发射器的 Void return 路径发射它携带的表达式、不再把答案自己的声明重复入池,解释器的帧把 tailness 穿过语句走查),c 后端的 Void return 弃用路径把声明两次入池(emosh 因重复释放的 builder 单元段错误),c 后端的闭包捕获从没走过 `Send` 语句的操作数(只把要发送的 pid 当捕获的块现在能捕获了),TS 发射器的 `receive` 语句没带结尾 `;`(后面一个以 `(` 开头的语句被解析成调用),以及 BEAM 的通配符(一个模式里的两个 `_` 现在降成不同的新变量)(`CHECK.md`)。 |
-| M43 — 锁刷新 | 82 | `emo deps resolve` 按项目自己声明的 targets(或显式 `--target`)解析,并与其他命令一样尊重 `EMO_REGISTRY`;家族 staging 清单收敛到 `scripts/stage-registry.sh`,八个门禁逐字节消费它;`just lock-refresh` 遍历每个被跟踪锁的目录,一条命令重钉全树(118 个锁,零 diff);`test/emo_cli` 的 `resolve_targets` 组五个用例;CHECK.md 的 c-target-only 注记退役(`CHECK.md`)。 |
-| M44 — 严格性收口 | 83 | 四个在案 checker 缺口都在检查期拒绝:块内绑定不得遮蔽外层绑定(E4029)、同一枚举成员的各臂元组 payload 类型必须一致(E4030,`:chain` 经其重写继承),以及 Bytes 规则 Unknown 容忍之后的 `Bytes.new` 构造规则——旁边是记录时一并发现的运行期寿命 bug(链式内建形态 `b.to_bytes().length()` 现在在解释器与每个编译目标上答出 receiver 的真实值,钉进 `examples/builtin_names`);负例金测在 `test/emo_cli` 的 `strictness_refusal` 组,语料扫干净,规则落进 `docs/intro/type-system.md` 与 `docs/intro/syntax.md`(`CHECK.md`)。 |
-| M45 — 配置格式 | 84 | `toml` 包:TOML 1.1.0 解码进与 json、yaml 同构设计的 `Toml` 值树——七个类别、没有 null(TOML 没有)、四种日期时间形式共用一个 `TomlDateTime` 类(`datetime_kind()` 点名形式,`to_text()` 渲染规范文本)——float 包的精确十进制构造器托着每个数字的纯 Emo;decode 覆盖 1.1 全部表面(`\e` 与 `\xHH` 转义、秒可省略、小写 `t`/`z`、空格分隔符试错回退、多行 inline table 与尾逗号)与严格的重复定义规则,边解析边装配 origin 标签节点(点分键把表关上不让 header 打开、inline table 在闭括号处关死、`[[x]]` 只向数组追加、更深的 header 下钻最新元素、隐式超表最多声明一次);`inf`/`nan` 与越界整数像一切畸形输入一样以 `(R.error, reason)` 加字节偏移拒绝;encode 是文档形式、标量先行、`decode(encode(v)) == v`;edge 电池冲出七个包内 bug——字符串 fill 在该答下一个下标处答了写入长度、十六进制转义数字位权算错、浮点缓冲把下划线数进去、指数值把下划线当数字、`doc_inline?` 对全表数组答 true、段内行渲染完整点分路径、日期时间类缺接口——编译 golden 又冲出三个后端 bug,都是树上既有的:TS 的 Void 尾调用 driver 没有出口(每个 Void 尾递归在 TS 上永远旋转,整条 ts_golden 名单空烧 CPU)、BEAM 的运行时分派把 builtin 臂绑在可被覆盖的 map 上(两层接口深即被 erlc 拒绝)、wasm 的 `deep_eq` 没有 tuple 臂(任何 `Array[(A, B)]` 类字段的类与自己的孪生比都不相等,直到有 golden 比较解码树才现形)(`CHECK.md`)。 |
-| M46 — wasm target 说 WASI 0.3 | 85 | `emo build --target wasm --wasi` 把 WasmGC 模块包进 WASI 0.3 command component(`wasi:cli/run@0.3.0`),wasmtime 46+(`-S cli`)执行:stdout/stderr 走原生 stream 循环经 `wasi:cli/stdout`+`stderr`,退出码走 `wasi:cli/exit`,导入表从二十个 `emo.*` 门重映射为三十个标准门——`wasi:filesystem`(descriptor 以 `(sub resource)` export 声明,open-at、目录项流、单字符串变更),`wasi:filesystem/preopens`(路径解析所锚定的表),`wasi:random/random`,`wasi:cli/environment`,以及时钟(T85.9:`wasi:clocks` system/monotonic `now`——time 包的时钟半读取 `instant` 记录与平铺 mark);provider 模块加了宿主写回列表所依赖的 canonical realloc,与 guest 共享 bump cursor cell;五处 store 操作数序(value 先于 address)修复;文件链最后一层于 T85.7 修复、guest 侧 `%g` 浮点格式化器(fixed 与 exp 形式)于 T85.8 修复(provider realloc 的 cursor store 操作数序反了、两个裸循环从外层块的标签退出、写循环在 ok 分支读 error-code 单元、`os_write` 的 fd 分派读了恒假合取、目录门缺 `read-dir-entries` 导入、冒泡排序在降序时交换);`wasi_examples`——67 个金测与 Node 清单逐字节一致——与 wasmtime-smoke 的执行 rung 钉住各门(`CHECK.md`)。 |
-| M47 — 库的手册 | 86 | `emo man` 从二进制内部读取标准库的参考页:`emo man` 列出各包,`emo man <package>` 把一页渲染成 man page——NAME 取自总览表格,SYNOPSIS 取自内嵌 manifest 的版本钉与 `require`,DESCRIPTION 带着文档自己的各小节与示例,外加 SEE ALSO——`emo man stdlib` 渲染总览。文档仍是唯一权威来源:`docs/stdlib.md` 与 `docs/stdlib/*.md` 在构建时生成进 CLI 的页面数据(与标准库源码相同的内嵌路线),所以装好的二进制旁边不需要任何文件;渲染器读取文档所用的 Markdown 子集——正文折行到 `COLUMNS`,代码不折行,过宽表格逐单元格折行——`MANPAGER`/`PAGER` 只在能运行时使用,未知名字以 65 拒绝,`test/emo_cli` 的 `man` 组钉住列表、一个页面与拒绝(`plan/step-86-emo-man.md`)。 |
-| M48 — WASI 宿主的文件半边 | 87 | `emo wasm run` 的 preview1 宿主能在被授予的目录里读写文件:preopen 表就是授予(`wasm.set_wasi_preopens`、CLI 的 `--dir HOST[::GUEST]`),默认为空——不授予就没有文件系统——`fd_prestat_get`/`fd_prestat_dir_name` 走发现环,`path_open` 在 preopen 根内做词法解析(越出根即 ENOTCAPABLE),每个打开都骑一扇 os 门——读、写(建+截断,即 stdio 的 "w" 形状)、追加——`fd_read`/`fd_write`/`fd_seek`/`fd_close`/`fd_fdstat_get` 长出文件 fd。基座是 os 包自己的 POSIX 语义,不是第二套文件故事;本环还冲出三处既有漂移:errno 表的 ENOSYS 与 ESPIPE 对 wasip1.h 偏了一位(51/69 → 52/70),fd_seek 的导入形状把 i64 偏移钉成了 i32(真模块的导入会被拒),fixture 的链接拒绝探针换名 `fd_readdir`(`CHECK.md`)。 |
-| M49 — 文件半边的第二环 | 88 | 目录可列、路径可 stat、突变落地:DIRECTORY oflag 打开目录(开前一次 stat,对文件答 ENOTDIR),fd 表长出宿主路径与授予根使每次解析都被围住,`fd_readdir` 无状态列出(调用者的 cookie 即位置,整条目入缓冲,d_type UNKNOWN、类型通道交给 `path_filestat_get`),`fd_filestat_get`/`path_filestat_get` 经新的路径形 `os_stat` 门取 stat(毫秒时间放大到纳秒;stdio 答字符设备;开后被删的文件如实答 miss),四个路径突变(建目录/删目录/解链/改名)骑既有的 os 门,errno 文本通道补 EEXIST/ENOTEMPTY/EXDEV/EPERM;lookupflags 的 symlink-follow 位必带,fixture 的链接拒绝探针换名 `fd_pread`(`CHECK.md`)。 |
-| M50 — GC 自举 | 89 | 解释器运行承载的机器对象模型,与 Emo 写的收集器:十六个裸名门——定长 `struct` 块、带计数的 `array` 块、有根的 `ref`,以及行走所需(`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`)——只由解释器运行准入(以 target `interpreter` 检查;所有 build target 按名拒绝,E4032),词靠奇偶自描述(偶数为移位标量,奇数为引用,`0` 为 null),每块的槽 0 是收集器的头词;`gc` 包用纯 Emo 实现 mark-sweep——打标访问器、工作栈排空、标记位切环——应答收回的词数;弱注册的根表让宿主收集器当活性 oracle,根立起变异者纪律(要被收集尊重的句柄放进 `ref`);金测:`examples/gc_demo` 的九行只在解释器运行上(有根的链与被穿透标记的 array 活过四千个无根节点的清除;环在根松手的瞬间死去——引用计数永远收不回的形状)、`gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测(`CHECK.md`、`docs/gc-heap.md`)。 |
-| M51 — GC 阶梯 | 90 | 堆长出自己的分配器与翅膀:step 90 落地 arena——`heap_new` 造它,裸 `heap_load`/`heap_store` 通道搬词,`heap_carve`/`heap_release` 绑定与解绑区间——`gc` 包的自由表(两张 Map 上的首适配、切分、邻合并)成为唯一分配器,`struct_new`/`array_new`/`heap_free` 随门退休;句柄携带 offset+代数,陈旧句柄无需墓碑即响亮死去;头词打包 magic/kind/代数/标记/尺寸;demo 的第二代落进 sweep 自己的词里,arena 从不增长(`CHECK.md`)。 |
-| M52 — GC 堆的 riscv64 宿主 | 91 | 金属加入堆的宿主环:镜像在自己的 `.bss` 里给收集器授予一个区域(一 MiB arena、绑定表、根表、slide 暂存),二十四扇门落成随程序编译的运行时助手,`Ref` 以 kind 12、金属的 Map 以 kind 13 加入 tagged 值模型(运行时引用计数之下的 identity kind,归零的释放从根表摘链),hash 孪生以来本宿主背负的 raise 缺口就此关上(`Raise` 降为 `emo_raise`,异常值按 `c` 宿主的方式渲染),模块级 `var` 也就位(静态内存里的格、序言初始化),`gc` 包自己的几何骑进镜像;demo 的 24 行金测在解释器、`c` 宿主与金属上逐字节一致——三 boot 稳定,经 EmoOS 内核与直跑皆然——调试轮的六面墙记录在 `CHECK.md`(序言的双重入池、Map 只落一半的 +8 平移、slide 的裸数组对、前向表的分裂键形状、只拷 `next` 的 rehash、不圆整的 arena 游标),金测腿骑 `@emo_os` 的 `gc_metal` 组(`CHECK.md`、`docs/gc-heap.md`、`plan/step-91-riscv64-gc-host.md`)。 |
-| M53 — shell 的日用表面 | 92–95 | `emosh` 在已有的 `os`+`bufio` 面上长成日常驱动的 shell:脚本文件与 `-c` 调用及位置参数、花括号 `${…}` 形态、stderr 重定向与裸写 glob;基于 `os.waitpid_nohang` 的 `&` 后台作业——每个作业一个进程组、作业表、`jobs`/`fg`/`bg`/`wait`/`kill` 与 `$!`/`$$`;Emo 自己的控制流——大括号复合命令、`const`/`var`、带函数表的 `def`、break/continue/return 信号;以及写在 `os` 终端层之上的 Emo 行编辑器——raw 模式、1000 行历史、Tab 补全。全部 fixture 在 ocaml 与 c 两个 target 上逐字节一致(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-92-emosh-everyday.md`、`plan/step-93-emosh-jobs.md`、`plan/step-94-emosh-control-flow.md`、`plan/step-95-emosh-line-editor.md`)。 |
+| M28 — EmoDB | 65–74 | 数据库这条线,从 KV 半边到线协议:`projects/emo-db/` 脚手架与项目本地的 `emo/rocksdb` 绑定(官方 C API 之上的批写、迭代器、快照、column family),C ABI 的借用 `Bytes` 视图;记录层的目录、v0 类型子集上的行编码、rowid 分配、每个二级索引一个 column family;`sql` 包在 SELECT 之外长出 CREATE TABLE、多行 INSERT、UPDATE、DELETE;`emo/engine` 的计划器与执行器——计划节点、带 SQL 三值 NULL 逻辑的类型化表达式、PG 形状的错误码;BEGIN/COMMIT/ROLLBACK 与每条语句的快照、读己所写的叠加层,以及 Emo 写的锁管理器进程(死锁以 `40P01` 中止请求者);`emo/wire` 里的 PostgreSQL 线协议 v3(启动、简单查询路径、文本格式 DataRow)由每连接一个会话 actor 承载;SQLLogicTest 精神的语料与 bench 的实测账目;`STORE = COLUMN` 格式(1024 行块、每列一个 column family)与其批量执行器上的全局聚合;以及双引擎证明——同一数据库、同一会话、同一事务里跨行表与列表——全部金测在 `c` 上经 `projects/emo-db/check.sh` 逐字节一致(`CHECK.md`、`docs/emo-db.md`)。 |
+| M29 — Wasm 能力 | 75–77 | 用 Emo 写的 wasm 运行时(步骤 20–22)成为可消费的能力:包搬进 bundled registry 成为 `wasm` 标准库包,执行面落在包根——`load`/`instantiate`/`call`/`get_global`/内存访问骑 R 错误拆分,`(kind, bits)` 值模型带构造器,宿主 import 表收 Emo 闭包——与其他 bundled 包同路解析;随后 `emo wasm run` 让 CLI 经解释器执行 `.wasm` 工件,编译器永不链接运行时;再往后 `emo` 宿主模块(及其牵出的 WASI 表面)跑其他工具链出的模块;一致性别名(`wasm_spec`/`wasm_runs`)随包同迁(`CHECK.md`)。 |
+| M30 — 文本模板 | 78 | `template` 包——从 `json` 上下文渲染带洞的文本,Go `text/template` 的机制、Emo 自己的表面,纯 Emo 写在共享运行时之上,五个托管目标逐字节一致:一次成型的 `render` 与解析一次渲染多次的 `Set`(new/with/render),`{{ }}` 数据洞配裸点分路径与七个 ASCII 安全的过滤器管道,`if`/`else if`/`else`/`end` 配"不是零值"的真值,数组与对象上的 `for` 带 `else`,`template` 引用(绑定不过边,深度上限点名链条),`{{- `-` -}}` 修剪标记与 `{{! }}` 注释;解析与渲染都从严,每次失败都是带字节位置的理由。两个 golden 冲出来的后端 bug:IR 的模块级 def mangle 漏了 `sanitize_ident`(`?` 后缀漏进 TS/OCaml 标识符),BEAM 发射器的 threaded-chain case 在 per-branch save 之前注册模式绑定——兄弟分支的绑定泄漏进后继 continuation 的 live 集,erlc 报 unbound variable。 |
+| M31 — repl 的行编辑器 | 79 | 交互会话迎来真正的编辑器:vendored 的上游 linenoise(BSD-2,钉在 `a473823d`,两处显式补丁——临时历史条目在 Ctrl-C 与输入结束时按 ENTER 的方式弹栈,阻塞读的判定 errno 越过 stop 的终端探测存活)经 dune 的 `foreign_stubs` 编进 CLI——OCaml CLI 链接的第一份 C——藏在一个绑定模块后面,其桩把库的 errno 判定映射为 OCaml 变体;输入 seam 携带提示文本,并把完成的一行、Ctrl-C 的放弃、输入的结束区分开;编辑器只在 stdin 与 stdout 都是终端时入座,管道与重定向保持普通路径逐字节不变;历史按行存储,会话结束存入 state 文件(`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`),读不动写不进在 stderr 上警告、文件缺失沉默;Ctrl-C 放弃当前待输入而非杀死进程;续行提示按每个未闭合括号缩进两个空格;测试经上游的 `LINENOISE_ASSUME_TTY` 钩子用管道驱动真实的 C 编辑器——敲入的行、上箭头召回、不漏空条目的打断、以及两会话的持久化往返(`CHECK.md`)。 |
+| M32 — 标准库:`uuid` | 80 | `uuid` 包:RFC 9562 的标识符是一个不可变的 16 字节 `Uuid` 值,经 `to_string` 协议方法自我渲染,回答 `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?`,并按 RFC 6.11 的大端 `compare` 排序;`v4` 经 `rand.bytes` 抽 122 个随机位,`v7(now_ms)` 从调用方自己的时钟取 Unix 毫秒时间骑 74 个随机位(负数或超出 48 位的时间戳 raise),`v3`/`v5` 是骑 `crypto.legacy` 的确定性 name-based 门,表 3 的四个 IANA namespace ID 在旁;`parse` 恰好接受规范的 36 字符形式,数字不区分大小写,每次拒绝点名第一个出错的字节,`from_bytes` 拒绝非 16 的长度;作用域对齐 Go 标准 `uuid` 的骨架,v1/v2/v6 与 v8 构造器点名不在包内;`uuid_demo` 骑 RFC 的向量、随机的门只打印结构,五个 target 名单逐字节一致(`CHECK.md`)。 |
+| M33 — 时钟与心跳 | 81 | `time` 包:墙钟与单调时钟经三个运行时门(`time_now_ms`、`time_mono_ns`、`time_sleep_ms`),其余一切是门上的纯 Emo——UTC 纪元毫秒的 `Time`,日历字段用纯 Emo 计算(Hinnant 的民用历算术),`mono()` 是显式的单调仪器,时长是普通 Int64 毫秒、转换家族(`time.seconds(n)` ……)扮演常量的角色,严格的九记号排版格式化(永远 UTC,`format_iso`/`format_http` 是预设,畸形记号点名字节抛出),以及说秒的定时家族——`sleep` 是精确的泊车(消息只排队,不唤醒),`after` 是自己进程里的排定单发,`tick` 是调用进程永不返回的心跳、块自己的 `halt()` 是停止;wasm 上时钟半经两个宿主导入,定时半在调用处抛出点名能力(os 进程半的先例);golden 冲出一个编译器结构缺口与四个发射器 bug——IR 的 Void 函数体出口位置的裸尾调用被降成 Effect,对每个后端的尾调用机器都不可见(现在降成本来的 Return,C 发射器的 Void return 路径发射它携带的表达式、不再把答案自己的声明重复入池,解释器的帧把 tailness 穿过语句走查),c 后端的 Void return 弃用路径把声明两次入池(emosh 因重复释放的 builder 单元段错误),c 后端的闭包捕获从没走过 `Send` 语句的操作数(只把要发送的 pid 当捕获的块现在能捕获了),TS 发射器的 `receive` 语句没带结尾 `;`(后面一个以 `(` 开头的语句被解析成调用),以及 BEAM 的通配符(一个模式里的两个 `_` 现在降成不同的新变量)(`CHECK.md`)。 |
+| M34 — 锁刷新 | 82 | `emo deps resolve` 按项目自己声明的 targets(或显式 `--target`)解析,并与其他命令一样尊重 `EMO_REGISTRY`;家族 staging 清单收敛到 `scripts/stage-registry.sh`,八个门禁逐字节消费它;`just lock-refresh` 遍历每个被跟踪锁的目录,一条命令重钉全树(118 个锁,零 diff);`test/emo_cli` 的 `resolve_targets` 组五个用例;CHECK.md 的 c-target-only 注记退役(`CHECK.md`)。 |
+| M35 — 严格性收口 | 83 | 四个在案 checker 缺口都在检查期拒绝:块内绑定不得遮蔽外层绑定(E4029)、同一枚举成员的各臂元组 payload 类型必须一致(E4030,`:chain` 经其重写继承),以及 Bytes 规则 Unknown 容忍之后的 `Bytes.new` 构造规则——旁边是记录时一并发现的运行期寿命 bug(链式内建形态 `b.to_bytes().length()` 现在在解释器与每个编译目标上答出 receiver 的真实值,钉进 `examples/builtin_names`);负例金测在 `test/emo_cli` 的 `strictness_refusal` 组,语料扫干净,规则落进 `docs/intro/type-system.md` 与 `docs/intro/syntax.md`(`CHECK.md`)。 |
+| M36 — 配置格式 | 84 | `toml` 包:TOML 1.1.0 解码进与 json、yaml 同构设计的 `Toml` 值树——七个类别、没有 null(TOML 没有)、四种日期时间形式共用一个 `TomlDateTime` 类(`datetime_kind()` 点名形式,`to_text()` 渲染规范文本)——float 包的精确十进制构造器托着每个数字的纯 Emo;decode 覆盖 1.1 全部表面(`\e` 与 `\xHH` 转义、秒可省略、小写 `t`/`z`、空格分隔符试错回退、多行 inline table 与尾逗号)与严格的重复定义规则,边解析边装配 origin 标签节点(点分键把表关上不让 header 打开、inline table 在闭括号处关死、`[[x]]` 只向数组追加、更深的 header 下钻最新元素、隐式超表最多声明一次);`inf`/`nan` 与越界整数像一切畸形输入一样以 `(R.error, reason)` 加字节偏移拒绝;encode 是文档形式、标量先行、`decode(encode(v)) == v`;edge 电池冲出七个包内 bug——字符串 fill 在该答下一个下标处答了写入长度、十六进制转义数字位权算错、浮点缓冲把下划线数进去、指数值把下划线当数字、`doc_inline?` 对全表数组答 true、段内行渲染完整点分路径、日期时间类缺接口——编译 golden 又冲出三个后端 bug,都是树上既有的:TS 的 Void 尾调用 driver 没有出口(每个 Void 尾递归在 TS 上永远旋转,整条 ts_golden 名单空烧 CPU)、BEAM 的运行时分派把 builtin 臂绑在可被覆盖的 map 上(两层接口深即被 erlc 拒绝)、wasm 的 `deep_eq` 没有 tuple 臂(任何 `Array[(A, B)]` 类字段的类与自己的孪生比都不相等,直到有 golden 比较解码树才现形)(`CHECK.md`)。 |
+| M37 — wasm target 说 WASI 0.3 | 85 | `emo build --target wasm --wasi` 把 WasmGC 模块包进 WASI 0.3 command component(`wasi:cli/run@0.3.0`),wasmtime 46+(`-S cli`)执行:stdout/stderr 走原生 stream 循环经 `wasi:cli/stdout`+`stderr`,退出码走 `wasi:cli/exit`,导入表从二十个 `emo.*` 门重映射为三十个标准门——`wasi:filesystem`(descriptor 以 `(sub resource)` export 声明,open-at、目录项流、单字符串变更),`wasi:filesystem/preopens`(路径解析所锚定的表),`wasi:random/random`,`wasi:cli/environment`,以及时钟(T85.9:`wasi:clocks` system/monotonic `now`——time 包的时钟半读取 `instant` 记录与平铺 mark);provider 模块加了宿主写回列表所依赖的 canonical realloc,与 guest 共享 bump cursor cell;五处 store 操作数序(value 先于 address)修复;文件链最后一层于 T85.7 修复、guest 侧 `%g` 浮点格式化器(fixed 与 exp 形式)于 T85.8 修复(provider realloc 的 cursor store 操作数序反了、两个裸循环从外层块的标签退出、写循环在 ok 分支读 error-code 单元、`os_write` 的 fd 分派读了恒假合取、目录门缺 `read-dir-entries` 导入、冒泡排序在降序时交换);`wasi_examples`——67 个金测与 Node 清单逐字节一致——与 wasmtime-smoke 的执行 rung 钉住各门(`CHECK.md`)。 |
+| M38 — 库的手册 | 86 | `emo man` 从二进制内部读取标准库的参考页:`emo man` 列出各包,`emo man <package>` 把一页渲染成 man page——NAME 取自总览表格,SYNOPSIS 取自内嵌 manifest 的版本钉与 `require`,DESCRIPTION 带着文档自己的各小节与示例,外加 SEE ALSO——`emo man stdlib` 渲染总览。文档仍是唯一权威来源:`docs/stdlib.md` 与 `docs/stdlib/*.md` 在构建时生成进 CLI 的页面数据(与标准库源码相同的内嵌路线),所以装好的二进制旁边不需要任何文件;渲染器读取文档所用的 Markdown 子集——正文折行到 `COLUMNS`,代码不折行,过宽表格逐单元格折行——`MANPAGER`/`PAGER` 只在能运行时使用,未知名字以 65 拒绝,`test/emo_cli` 的 `man` 组钉住列表、一个页面与拒绝(`plan/step-86-emo-man.md`)。 |
+| M39 — WASI 宿主的文件半边 | 87 | `emo wasm run` 的 preview1 宿主能在被授予的目录里读写文件:preopen 表就是授予(`wasm.set_wasi_preopens`、CLI 的 `--dir HOST[::GUEST]`),默认为空——不授予就没有文件系统——`fd_prestat_get`/`fd_prestat_dir_name` 走发现环,`path_open` 在 preopen 根内做词法解析(越出根即 ENOTCAPABLE),每个打开都骑一扇 os 门——读、写(建+截断,即 stdio 的 "w" 形状)、追加——`fd_read`/`fd_write`/`fd_seek`/`fd_close`/`fd_fdstat_get` 长出文件 fd。基座是 os 包自己的 POSIX 语义,不是第二套文件故事;本环还冲出三处既有漂移:errno 表的 ENOSYS 与 ESPIPE 对 wasip1.h 偏了一位(51/69 → 52/70),fd_seek 的导入形状把 i64 偏移钉成了 i32(真模块的导入会被拒),fixture 的链接拒绝探针换名 `fd_readdir`(`CHECK.md`)。 |
+| M40 — 文件半边的第二环 | 88 | 目录可列、路径可 stat、突变落地:DIRECTORY oflag 打开目录(开前一次 stat,对文件答 ENOTDIR),fd 表长出宿主路径与授予根使每次解析都被围住,`fd_readdir` 无状态列出(调用者的 cookie 即位置,整条目入缓冲,d_type UNKNOWN、类型通道交给 `path_filestat_get`),`fd_filestat_get`/`path_filestat_get` 经新的路径形 `os_stat` 门取 stat(毫秒时间放大到纳秒;stdio 答字符设备;开后被删的文件如实答 miss),四个路径突变(建目录/删目录/解链/改名)骑既有的 os 门,errno 文本通道补 EEXIST/ENOTEMPTY/EXDEV/EPERM;lookupflags 的 symlink-follow 位必带,fixture 的链接拒绝探针换名 `fd_pread`(`CHECK.md`)。 |
+| M41 — GC 自举 | 89 | 解释器运行承载的机器对象模型,与 Emo 写的收集器:十六个裸名门——定长 `struct` 块、带计数的 `array` 块、有根的 `ref`,以及行走所需(`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`)——只由解释器运行准入(以 target `interpreter` 检查;所有 build target 按名拒绝,E4032),词靠奇偶自描述(偶数为移位标量,奇数为引用,`0` 为 null),每块的槽 0 是收集器的头词;`gc` 包用纯 Emo 实现 mark-sweep——打标访问器、工作栈排空、标记位切环——应答收回的词数;弱注册的根表让宿主收集器当活性 oracle,根立起变异者纪律(要被收集尊重的句柄放进 `ref`);金测:`examples/gc_demo` 的九行只在解释器运行上(有根的链与被穿透标记的 array 活过四千个无根节点的清除;环在根松手的瞬间死去——引用计数永远收不回的形状)、`gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测(`CHECK.md`、`docs/gc-heap.md`)。 |
+| M42 — GC 阶梯 | 90 | 堆长出自己的分配器与翅膀:step 90 落地 arena——`heap_new` 造它,裸 `heap_load`/`heap_store` 通道搬词,`heap_carve`/`heap_release` 绑定与解绑区间——`gc` 包的自由表(两张 Map 上的首适配、切分、邻合并)成为唯一分配器,`struct_new`/`array_new`/`heap_free` 随门退休;句柄携带 offset+代数,陈旧句柄无需墓碑即响亮死去;头词打包 magic/kind/代数/标记/尺寸;demo 的第二代落进 sweep 自己的词里,arena 从不增长(`CHECK.md`)。 |
+| M43 — GC 堆的 riscv64 宿主 | 91 | 金属加入堆的宿主环:镜像在自己的 `.bss` 里给收集器授予一个区域(一 MiB arena、绑定表、根表、slide 暂存),二十四扇门落成随程序编译的运行时助手,`Ref` 以 kind 12、金属的 Map 以 kind 13 加入 tagged 值模型(运行时引用计数之下的 identity kind,归零的释放从根表摘链),hash 孪生以来本宿主背负的 raise 缺口就此关上(`Raise` 降为 `emo_raise`,异常值按 `c` 宿主的方式渲染),模块级 `var` 也就位(静态内存里的格、序言初始化),`gc` 包自己的几何骑进镜像;demo 的 24 行金测在解释器、`c` 宿主与金属上逐字节一致——三 boot 稳定,经 EmoOS 内核与直跑皆然——调试轮的六面墙记录在 `CHECK.md`(序言的双重入池、Map 只落一半的 +8 平移、slide 的裸数组对、前向表的分裂键形状、只拷 `next` 的 rehash、不圆整的 arena 游标),金测腿骑 `@emo_os` 的 `gc_metal` 组(`CHECK.md`、`docs/gc-heap.md`、`plan/step-91-riscv64-gc-host.md`)。 |
+| M44 — shell 的日用表面 | 92–95 | `emosh` 在已有的 `os`+`bufio` 面上长成日常驱动的 shell:脚本文件与 `-c` 调用及位置参数、花括号 `${…}` 形态、stderr 重定向与裸写 glob;基于 `os.waitpid_nohang` 的 `&` 后台作业——每个作业一个进程组、作业表、`jobs`/`fg`/`bg`/`wait`/`kill` 与 `$!`/`$$`;Emo 自己的控制流——大括号复合命令、`const`/`var`、带函数表的 `def`、break/continue/return 信号;以及写在 `os` 终端层之上的 Emo 行编辑器——raw 模式、1000 行历史、Tab 补全。全部 fixture 在 ocaml 与 c 两个 target 上逐字节一致(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-92-emosh-everyday.md`、`plan/step-93-emosh-jobs.md`、`plan/step-94-emosh-control-flow.md`、`plan/step-95-emosh-line-editor.md`)。 |
 
 ## 设计闸门
 
@@ -1499,7 +1490,7 @@ SQL NULL)、带按名查找的类型化读取、带 SQLSTATE 的错误分支;
 - [x] **T64.6** — 文档:`docs/stdlib/websocket.md`、`docs/stdlib/playwright.md` EN+zh,`docs/stdlib.md` 行与节 + zh 镜像,README 引用行,CHECK.md 决策记录,`plan/step-64-playwright.md`,`plan/README.md` 行。途中发现并记录:json 包的转义长度按字符递归,120000 字符的 `json.encode` 在 c 目标上骑穿纤程栈(解释器扛得住;found-not-fixed,demo 手工拼装那条大应答绕开)。**2026-11-16 修复**:计长那一半改为 `while` 循环(唯一非尾的骑栈者;写出半与 decode 扫描本就是后端重绑的出口位尾调用),今天 8 MiB 纤程栈的阈值约 300000 字符,120 万逃逸字节在解释器与 `c` 二进制上逐字节一致;demo 的手工拼装退役——改走 `json.encode`,golden 未变,七个钉 json 的锁随摘要重钉。
 - [x] **T64.7** — 真实检查:`npm install -g playwright`(1.65.0,chromium headless shell 158.0.8127.18),再经 `examples/playwright_live` 对真 `playwright run-server` 跑完整门面阶梯——握手、带预 launch 浏览器的 initialize、先 context 后 page 两跳、对程序自带 httpd 页面的导航、标题、多字节 DOM 文本、缺失选择器按 30000 ms metadata 死线以错误值应答、真截图、告别——**在 `c` 目标上全绿**;解释器在同一等待中撞上 det 调度器的驻留读墙(found-not-fixed,记入 CHECK.md)。driver 版本已记入 CHECK.md。
 
-## M28 —— RocksDB 半边
+## M28 — EmoDB
 
 ### 步骤 65 —— emo-db 的 RocksDB 半边
 
@@ -1595,8 +1586,6 @@ SQL NULL)、带按名查找的类型化读取、带 SQLSTATE 的错误分支;
       `plan/step-65-emo-db-rocksdb.md`,以及 `dune build` /
       `dune build @fmt` 绿。
 
-## M29 —— 记录层
-
 ### 步骤 66 —— 记录层
 
 **前置:** Step 65(`emo/rocksdb` 绑定与 `Bytes` 视图)。
@@ -1610,7 +1599,7 @@ EN+zh;仓库可构建。
 - [x] **T66.1** —— 规格与追踪:`plan/step-66-record-layer.md`(编码契
       约)、plan README 行,以及本节的 EN+zh。
 - [x] **T66.2** —— 设计注记:`docs/emo-db.md` + zh——D7 的 REAL
-      注、架构里共享的 `data` CF、M29 行,以及开放项(范围扫描、
+      注、架构里共享的 `data` CF、M28 行,以及开放项(范围扫描、
       流式扫描)。
 - [x] **T66.3** —— `rocksdb.list_families(path)`:shim 的 list 句柄
       骑 `rocksdb_list_column_families`(`list_new`/`count`/`name`/
@@ -1646,10 +1635,8 @@ EN+zh;仓库可构建。
       遍对照 `expected.txt`,并保持 KV demo 与 E3009/E5007 钉死绿;
       record demo 的 lock 经 `emo deps resolve`。
 - [x] **T66.15** —— 项目 README + zh:记录层的格式、demo 与闸门。
-- [x] **T66.16** —— 收尾:TASKS EN+zh、plan README、M29 行、
+- [x] **T66.16** —— 收尾:TASKS EN+zh、plan README、M28 行、
       `CHECK.md` 条目,以及 `dune build`/`@fmt` 绿。
-
-## M30 —— SQL 门面长 DML 与 DDL
 
 ### 步骤 67 —— SQL 门面长 DML 与 DDL
 
@@ -1682,9 +1669,7 @@ EN+zh;仓库可构建。
 - [x] **T67.11** —— 包头注释、`docs/stdlib/sql.md` + zh,以及索引行
       (措辞若动)。
 - [x] **T67.12** —— 收尾:两个 `sql` lock 重解析、`plan/README.md`、
-      M30 行、`CHECK.md`、`dune build`/`@fmt`,以及证据。
-
-## M31 —— 计划器与执行器
+      M28 行、`CHECK.md`、`dune build`/`@fmt`,以及证据。
 
 ### 步骤 68 —— 计划器与执行器
 
@@ -1717,8 +1702,6 @@ engine demo 经 `projects/emo-db/check.sh` 跑三遍逐字节一致;record/KV
 - [x] **T68.13** —— 项目 README + zh、包文档、lock。
 - [x] **T68.14** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
 
-## M32 —— 事务与会话面
-
 ### 步骤 69 —— 事务与会话面
 
 **前置:** Step 66(记录层)、Step 67(SQL AST)、Step 68(引擎)。**完成
@@ -1742,8 +1725,6 @@ rowid 计数);引擎的会话面经 Emo 锁管理器进程持有表锁、阻塞�
 - [x] **T69.9** —— 闸门:第四个 demo 与构建失败守卫。
 - [x] **T69.10** —— 文档 EN+zh 与设计记录注记。
 - [x] **T69.11** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
-
-## M33 —— 线协议
 
 ### 步骤 70 —— 线协议
 
@@ -1781,8 +1762,6 @@ Step 69 的表锁;psql 端到端驱动整个表面,标准库 `postgres` 客户�
       `postgres` 零参数路径、`sql.split` API。
 - [x] **T70.11** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
 
-## M34 —— 符合性与文档
-
 ### 步骤 71 —— 符合性与文档
 
 **前置:** Step 65–70(整个行存弧)。**完成标准:** 引擎的 SQL 表面有一
@@ -1791,7 +1770,7 @@ Step 69 的表锁;psql 端到端驱动整个表面,标准库 `postgres` 客户�
 `projects/emo-db/check.sh` 三遍逐字节一致;实测性能表只记录 bench 脚
 本真正测出的数字,并写明机器、日期与方法;`docs/emo-db.md` 长出已交
 付表面一节、语料与基准的指针、被修正的过时说法,以及对照弧一实际建
-出东西的弧二复核(EN+zh);项目 README 带上新闸门与 M34 状态;仓库可
+出东西的弧二复核(EN+zh);项目 README 带上新闸门与 M28 状态;仓库可
 构建。
 
 - [x] **T71.1** —— 规格:本节 EN+zh 与
@@ -1807,10 +1786,8 @@ Step 69 的表锁;psql 端到端驱动整个表面,标准库 `postgres` 客户�
 - [x] **T71.7** —— `docs/emo-db.md` + zh:已交付表面、语料与基准两
       节、实测表、被修正的开放项,以及弧二复核。
 - [x] **T71.8** —— 项目 README EN+zh:语料、bench、闸门新检查与
-      M34 状态。
+      M28 状态。
 - [x] **T71.9** —— 收尾:TASKS、plan README、CHECK.md、build/fmt。
-
-## M35 —— 列存格式
 
 ### 步骤 72 —— 列存格式
 
@@ -1835,8 +1812,6 @@ family;列存表不建索引(`PRIMARY KEY` 与二级索引答 `0A000`);引擎
 - [x] **T72.6** —— 闸门:第五个 demo。
 - [x] **T72.7** —— 文档 EN+zh 与收尾。
 
-## M36 —— 列执行器
-
 ### 步骤 73 —— 列执行器
 
 **前置:** Step 72(列存格式)。**完成标准:** 列存表上的 SELECT 路由到
@@ -1860,8 +1835,6 @@ EN+zh;仓库可构建。
 - [x] **T73.5** —— 闸门三遍全绿。
 - [x] **T73.6** —— 文档 EN+zh 与收尾。
 
-## M37 —— 双引擎证明
-
 ### 步骤 74 —— 双引擎证明
 
 **前置:** Step 72–73(列存格式与列执行器)。**完成标准:** 一台数据库
@@ -1880,7 +1853,7 @@ DISTINCT/只插入/主键拒绝),runner 的输出保持三遍逐字节一致;ben
 - [x] **T74.4** —— 语料的 `column.test`。
 - [x] **T74.5** —— bench 的列存模式与实测数字。
 - [x] **T74.6** —— 文档 EN+zh 与收尾。
-## M38 — Wasm 能力
+## M29 — Wasm 能力
 
 ### 步骤 75 — wasm 包:执行面与宿主接口
 
@@ -1923,7 +1896,7 @@ DISTINCT/只插入/主键拒绝),runner 的输出保持三遍逐字节一致;ben
 - [x] **T77.5** — live check:`rustc --target wasm32-wasip1`(1.98.1,std 经用户授权安装)——hello world 经 fd_write 打印带 argv 计数;HashMap 模块经 random_get 播种;`process::exit(7)` 骑到 CLI 退出码且此前的打印存活。全绿。
 - [x] **T77.6** — 文档:`docs/stdlib/wasm.md` EN+zh 的 WASI 节(子集表、诚实边界:无时钟、无文件系统、仅 fd 1/2;`emo` 宿主模块缓议的论证);TASKS/plan/CHECK 更新。
 
-## M39 — 文本模板
+## M30 — 文本模板
 
 `template` 包从 `json` 上下文渲染带洞的文本——Go `text/template` 的机
 制、Emo 自己的表面,纯 Emo 写在共享运行时之上,每个托管目标逐字节给出
@@ -1974,7 +1947,7 @@ threaded-chain 的 case 路径里,把分支的模式绑定注册在 per-branch s
 了:动作之外的 `}}` 是文本,不是错误——代码生成模板的静态文本里到处
 是收口的嵌套花括号,Go 自己的扫描器也这么办。
 
-## M40 — repl 的行编辑器
+## M31 — repl 的行编辑器
 
 ### 步骤 79 — repl 的行编辑器(linenoise)
 
@@ -2008,7 +1981,7 @@ linenoise 编辑输入——跨会话持久化的方向键历史召回、长行�
 - [x] **T79.4** — 文档:`docs/toolchain.md` EN+zh 的 repl 节;
       TASKS/plan/CHECK 更新。
 
-## M41 — 标准库:`uuid`
+## M32 — 标准库:`uuid`
 
 ### Step 80 — `uuid` 包(RFC 9562)
 
@@ -2052,7 +2025,7 @@ linenoise 编辑输入——跨会话持久化的方向键历史召回、长行�
       stdlib.md` 的行与节 EN+zh;README 参考名单 EN+zh;
       TASKS/plan/CHECK 更新。
 
-## M42 — 时钟与心跳
+## M33 — 时钟与心跳
 
 ### 步骤 81 — 标准库:`time`
 
@@ -2088,7 +2061,7 @@ bootstrap、c、typescript、beam 四个名单;文档 EN+zh。
       录、httpd 的 `Date` 段、template 参考的边界列表)。
 - [x] **T81.5** — 跟踪:`plan/step-81-stdlib-time.md`、
       `plan/README.md` 的里程碑 bullet 与状态行、`docs/TASKS.md` 的
-      M42 节 + zh 镜像、CHECK.md 的定案记录。
+      M33 节 + zh 镜像、CHECK.md 的定案记录。
 
 ### 在这里发现并修掉
 
@@ -2124,7 +2097,7 @@ bootstrap、c、typescript、beam 四个名单;文档 EN+zh。
   的新变量。
 
 
-## M43 — 锁刷新
+## M34 — 锁刷新
 
 ### Step 82 — `emo deps resolve`:诚实地解析,廉价地刷新
 
@@ -2159,7 +2132,7 @@ targets(或显式 `--target`)解析,并与其他命令一样尊重
       刷新流程(EN + zh-CN 镜像,落在 `docs/intro/package-management.md`
       ——`toolchain.md` 无依赖节);CHECK.md 退役的注记指向这里。
 
-## M44 — 严格性收口
+## M35 — 严格性收口
 
 ### Step 83 — 严格性收口
 
@@ -2187,7 +2160,7 @@ Bytes 方法规则 Unknown 容忍之后的 `Bytes.new` 构造规则、混合 pay
       负例金测进 `test/emo_cli`,`docs/intro/type-system.md` 与
       `docs/intro/syntax.md`(+ zh-CN 镜像)的 checker 节写明四条规则。
 
-## M45 — 配置格式
+## M36 — 配置格式
 
 ### 步骤 84 — 标准库:`toml`
 
@@ -2220,7 +2193,7 @@ EN+zh。
       `docs/stdlib.md` 的表行 + 小节 + 镜像。
 - [x] **T84.5** — 跟踪:`plan/step-84-stdlib-toml.md`、
       `plan/README.md` 的里程碑 bullet 与状态行、`docs/TASKS.md` 的
-      M45 节 + zh 镜像、CHECK.md 的定案记录。
+      M36 节 + zh 镜像、CHECK.md 的定案记录。
 
 ### 在这里发现并修掉
 
@@ -2267,7 +2240,7 @@ EN+zh。
   解码出的树才现形)。数组臂参数化了操作数局部,tuple 臂把两个元素
   数组溢出到新鲜局部后复用它;元组像数组一样逐元素比较。
 
-## M46 — wasm target 说 WASI 0.3
+## M37 — wasm target 说 WASI 0.3
 
 ### Step 85 — WASI 0.3 生产者之门
 
@@ -2338,7 +2311,7 @@ EN+zh。
       齐——六腿逐字节一致。step-85 out 行里的拒绝("语言无时钟原
       语")就是压力本身:`time` 包在该步收口两天后落地。
 
-## M47 — 库的手册
+## M38 — 库的手册
 
 ### Step 86 — 标准库的 man 页:`emo man`
 
@@ -2362,7 +2335,7 @@ manifest 的版本钉与 `require`,DESCRIPTION 带着文档自己的各小节、
       zh-CN 镜像、`plan/README.md` 的里程碑条目与状态行、本节 +
       zh 镜像、CHECK.md 的定案记录。
 
-## M48 — WASI 宿主的文件半边
+## M39 — WASI 宿主的文件半边
 
 ### 步骤 87 — WASI 的文件半边:preopens 与 path_open
 
@@ -2393,7 +2366,7 @@ manifest 的版本钉与 `require`,DESCRIPTION 带着文档自己的各小节、
       `plan/step-87-wasi-files.md`、`docs/stdlib/wasm.md` + zh 镜像、
       CHECK.md 的定案记录。
 
-## M49 — 文件半边的第二环
+## M40 — 文件半边的第二环
 
 ### 步骤 88 — 列举、stat 与突变
 
@@ -2418,7 +2391,7 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       `plan/step-88-wasi-files2.md`、`docs/stdlib/wasm.md` + zh 镜像、
       CHECK.md 的定案记录。
 
-## M50 — GC 自举
+## M41 — GC 自举
 
 ### Step 89 — 解释器的对象模型:struct、array、ref,与 Emo 写的收集器
 
@@ -2450,7 +2423,7 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       `docs/stdlib.md` + zh 的 `gc` 行,本节 + zh 镜像,
       `plan/step-89-gc-bootstrap.md`,CHECK.md 的决策记录。
 
-## M51 — GC 阶梯
+## M42 — GC 阶梯
 
 ### Step 90 — GC 堆的阶梯:分配器、载荷、压缩、宿主
 
@@ -2496,7 +2469,7 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       初始化器在首次读取时重跑(CHECK.md 命名该边界)。riscv64 的
       tagged-word 堆仍是下一个宿主,未画。
 
-## M52 — GC 堆的 riscv64 宿主
+## M43 — GC 堆的 riscv64 宿主
 
 ### Step 91 — 金属自己的堆:区域、门、kind,与三宿主上的 demo 金测
 
@@ -2534,7 +2507,7 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       gc.md` + zh(三宿主),stdlib 索引行,本节 + zh 镜像,
       `plan/step-91-riscv64-gc-host.md`,CHECK.md 的记录。
 
-## M53 — shell 的日用表面
+## M44 — shell 的日用表面
 
 ### Step 92 — emosh 以脚本与 `-c` 开场、对准 stderr、glob 裸写的模式、应答日用的 `${…}`
 

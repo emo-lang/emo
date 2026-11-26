@@ -1,6 +1,6 @@
 # Step 73 — The column executor
 
-**Milestone:** M36 · **Prereq:** step 72 (the column format) ·
+**Milestone:** M28 · **Prereq:** step 72 (the column format) ·
 **Status:** landed 2026-11-13
 
 ## Why this step exists

@@ -1,6 +1,6 @@
 # Step 79 — The repl's line editor (linenoise)
 
-**Milestone:** M40 · **Prereq:** step 08 (the repl itself) · **Status:** done
+**Milestone:** M31 · **Prereq:** step 08 (the repl itself) · **Status:** done
 
 The repl's input seam (`repl_loop ~input ~output`) has always been
 injectable — the tests drive it with queued lines and no terminal at
@@ -83,7 +83,7 @@ stop sequence.
   keystrokes (Enter as CR, an up-arrow recall, Ctrl-C) so the real C
   editor runs under `dune test` with no terminal.
 - Docs: the repl section in `docs/toolchain.md` (EN + zh); TASKS
-  M40/step-79; `plan/README.md`; CHECK.md.
+  M31/step-79; `plan/README.md`; CHECK.md.
 
 ### Out
 
@@ -122,7 +122,7 @@ stop sequence.
       indented continuation prompts, the Ctrl-C abandon, and the
       cross-process recall.
 - [x] **T79.4** — The docs: the repl section in the toolchain guide
-      (EN + zh), TASKS M40/step-79, plan/README's step row, CHECK.md's
+      (EN + zh), TASKS M31/step-79, plan/README's step row, CHECK.md's
       decision record.
 
 ## Acceptance

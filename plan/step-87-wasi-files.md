@@ -1,6 +1,6 @@
 # Step 87 — WASI's file half: preopens and path_open
 
-**Milestone:** M48 · **Prereq:** step 77 (WASI preview1), the os
+**Milestone:** M39 · **Prereq:** step 77 (WASI preview1), the os
 package's fd half · **Status:** complete
 
 Step 77 answered the twelve preview1 functions a hello-world module

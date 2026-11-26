@@ -141,4 +141,4 @@ $ emo docs type-system
   与 [`devtools/publish-release.sh`](../../devtools/publish-release.sh)
   —— 把构建好的发布送过 Apple 公证、再送上下载站点的后续环节。
 - [`plan/step-79-repl-linenoise.md`](../../plan/step-79-repl-linenoise.md)
-  —— 给 repl 带来行编辑器的步骤(M39)。
+  —— 给 repl 带来行编辑器的步骤(M30)。

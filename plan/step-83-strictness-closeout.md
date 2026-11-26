@@ -1,6 +1,6 @@
 # Step 83 — The strictness closeout
 
-**Milestone:** M44 — Strictness first, finished · **Prereq:** none ·
+**Milestone:** M35 — Strictness first, finished · **Prereq:** none ·
 **Related:** `CHECK.md`'s four open checker gaps (the T45.2 shadow entry,
 the T45.3 chained-builtin entry, the atomic goldens' `Bytes.new` item,
 the `:chain` entry's mixed-payload note), `src/emo_check/emo_check.ml`,

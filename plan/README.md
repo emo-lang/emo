@@ -67,104 +67,22 @@ incrementally shippable steps — one file per step, executed in order.
   naming the capability), and `bufio` resolve and answer byte-for-byte
   alongside the pure packages; the sockets' refusal stands. The plan
   is `plan/step-56-wasm-file-io.md`.
-- **M28 — The RocksDB half (step 65):** emo-db's storage half as the
-  project-local `emo/rocksdb` binding — a package-carried C shim over
-  RocksDB's official C API, keys and values crossing as `Bytes`
-  through the C ABI's borrowed byte view (D10), resolved through the
-  manifest's `pkg_config` field, and a KV golden (writes, a batch
-  commit, a prefix scan, snapshot isolation, close/reopen) run three
-  times byte-identical on `c`. The design record is `docs/emo-db.md`;
-  the plan is `plan/step-65-emo-db-rocksdb.md`.
-- **M29 — The record layer (step 66):** the catalog over its own
-  column family, the v0 row encoding (null bitmap, fixed-width and
-  length-prefixed values), the rowid inside the insert's WriteBatch,
-  and one column family per secondary index; a table-creation, insert,
-  and index-scan golden on `c`. The format is
-  `plan/step-66-record-layer.md`.
-- **M30 — The SQL front-end's DML and DDL (step 67):** the `sql`
-  package grows `CREATE TABLE` (the v0 types, `NOT NULL`,
-  `PRIMARY KEY`), multi-row `INSERT ... VALUES`, `UPDATE ... SET ...
-  [WHERE]`, and `DELETE FROM ... [WHERE]` beside `SELECT`; pure Emo,
-  canonical renderings, the SELECT grammar untouched, and the two
-  examples' goldens byte-identical on all five hosted targets. The plan
-  is `plan/step-67-sql-dml-ddl.md`.
-- **M31 — The planner and executor (step 68):** the `emo/engine` package
-  over the SQL AST and the record layer — the analyzer's name/type
-  resolution, the typed expressions with three-valued NULL logic, the
-  scan/filter/project plan (an equality on an indexed column becomes an
-  index scan), CREATE TABLE/INSERT/UPDATE/DELETE, the plan text, and
-  the PG-shaped error strings; an embedded SQL-in/rows-out golden on
-  `c`. The record layer grows `Table.update`/`delete` with index
-  maintenance. The plan is `plan/step-68-planner-executor.md`.
-- **M32 — Transactions and the session plane (step 69):** BEGIN/COMMIT/
-  ROLLBACK over the record layer's `Txn` (one WriteBatch, a
-  per-statement snapshot, a pending overlay for read-your-writes, the
-  rowid counters published on commit), the engine's session state and
-  table locks, and an Emo lock-manager process with a wait-for graph and
-  the deadlock abort; a two-session golden shows read committed, the
-  write-write block, and the deadlock on `c`. The `sql` package grows
-  the three transaction statements. The plan is
-  `plan/step-69-transactions-session.md`.
-- **M37 — The two-engine proof (step 74):** `htap_demo` seeds a row
-  table and a column table (1100 rows, across the block boundary)
-  through the engine and serves the wire; psql and the `postgres`
-  client both drive a script that reads both engines, carries the row
-  table's UPDATE and the column table's INSERT inside one
-  BEGIN/COMMIT, and reads the post-commit aggregates — each phase a
-  fresh server, pinned byte-for-byte behind the availability probes;
-  the corpus gains `column.test` (15 cases: the DDL, the projections,
-  the five aggregates, the zero-row rule, and the refusals), and the
-  bench gains the column rows (the block scan 304 ms for 10000 rows
-  against the row store's 675; the aggregate 142 ms). The plan is
-  `plan/step-74-two-engines.md`.
-- **M36 — The column executor (step 73):** a column table's SELECT
-  routes to the blocks — plain projections and WHERE through the
-  shared typed expressions over block-materialized values, and the
-  global aggregates COUNT/SUM/AVG/MIN/MAX accumulating over the blocks
-  (the `count(*)` fast path sums the block counts without decoding);
-  the select list is all plain or all aggregate (`42803` names the
-  column otherwise), aggregates are whole select items only,
-  UPDATE/DELETE answer the insert-only `0A000`, and INSERT rides the
-  column blocks through the same transaction; the plan text shows
-  `column scan` and `aggregate`. The plan is
-  `plan/step-73-column-executor.md`.
-- **M35 — The column format (step 72):** `CREATE TABLE ... STORE =
-  COLUMN` in the parser (the canonical rendering spells only the
-  written column tail) and the catalog's version-2 table definition
-  (a `store` field; a version-1 record reads as row storage); the
-  record layer's column half — one column family per column, 1024-row
-  blocks (row count, null bitmap, the row encoding's widths), the
-  trailing partial block re-read and rewritten inside the transaction,
-  the block scan in rowid order, and the reopen's column-family
-  verification; no indexes on column tables (the engine and the record
-  layer both refuse `PRIMARY KEY` and secondary indexes), and the
-  engine's named `0A000` bridge for DML and SELECT until step 73's
-  batch executor. The plan is `plan/step-72-column-format.md`.
-- **M34 — Conformance and documentation (step 71):** the SQL corpus as
-  data — six `.test` files, 126 cases, `statement ok`/`statement
-  error`/`query` with pinned tags, rows, and `code: message` lines —
-  run against one fresh database by a data-only runner, three runs
-  byte-identical through the gate; the bench (`bench/run.sh`, warmup
-  plus three timed runs) and the measured table, which found and fixed
-  the read-only statement's fsync; the shipped-surface documentation,
-  the corrected stale claims, and the arc-two review against the row
-  store's actual plug points. The plan is
-  `plan/step-71-conformance.md`.
-- **M33 — The wire (step 70):** PostgreSQL protocol v3's simple query
-  path in a new `emo/wire` package over `net` — startup with the
-  SSL/GSSENC refusal and trust authentication, ParameterStatus /
-  BackendKeyData / ReadyForQuery, Query with a multi-statement string
-  (split by `sql.split` over the lexer's tokens), RowDescription with
-  the v0 type OIDs, text-format DataRow, CommandComplete,
-  EmptyQueryResponse, and ErrorResponse; one session actor per
-  connection over the shared Store with the table locks, and the
-  `postgres` client's zero-parameter statements taking libpq's simple
-  path. psql and the client are both goldens behind availability
-  probes. The engine's lock manager moves into the package
-  (`engine.locks`) for the server to share. The plan is
-  `plan/step-70-wire.md`.
+- **M28 — EmoDB (steps 65–74):** the database arc, from the storage
+  half to the wire: the project-local `emo/rocksdb` binding over the
+  official C API with `Bytes` crossing the C ABI's borrowed view; the
+  record layer's catalog, v0 row encoding, rowids, and per-index column
+  families; the `sql` package's DDL and DML beside SELECT; the
+  `emo/engine` planner and executor with three-valued NULL logic and
+  the PG-shaped errors; BEGIN/COMMIT/ROLLBACK with the session's
+  snapshots, overlay, and the lock-manager process's deadlock abort;
+  PostgreSQL protocol v3 in `emo/wire`; the SQL corpus and the bench's
+  measured record; the column format and its batch executor with global
+  aggregates; and the two-engine proof. Every golden runs byte-identical
+  on `c` through `projects/emo-db/check.sh`. The design record is
+  `docs/emo-db.md`; the plans are `plan/step-65-emo-db-rocksdb.md`
+  through `plan/step-74-two-engines.md`.
 
-- **M39 — Text templates (step 78):** the `template` package — text
+- **M30 — Text templates (step 78):** the `template` package — text
   with holes rendered from a `json` context, Go `text/template`'s
   mechanism with Emo's own surface, pure Emo over the shared runtimes
   and byte-identical on all five targets. One-shot `render` and the
@@ -181,7 +99,7 @@ incrementally shippable steps — one file per step, executed in order.
   No arithmetic, no comparison — the template renders, the program
   computes. The plan is `plan/step-78-stdlib-template.md`.
 
-- **M41 — The standard library: `uuid` (step 80):** the `uuid`
+- **M32 — The standard library: `uuid` (step 80):** the `uuid`
   package — the RFC 9562 identifier as one immutable 16-byte value,
   scoped to Go's standard `uuid` spine and filled in where the RFC
   pins the shape, pure Emo over `crypto` and `rand`, byte-identical
@@ -199,7 +117,7 @@ incrementally shippable steps — one file per step, executed in order.
   caller's trim, visibly. v1/v2/v6 and a v8 constructor are out,
   named. The plan is `plan/step-80-stdlib-uuid.md`.
 
-- **M42 — The clock and the heartbeat (step 81):** the `time`
+- **M33 — The clock and the heartbeat (step 81):** the `time`
   package — the wall clock and the monotonic clock over three runtime
   doors, the calendar, the formatting, and the timing family pure Emo
   over them, byte-identical wherever a golden can pin. A `Time` of UTC
@@ -210,7 +128,7 @@ incrementally shippable steps — one file per step, executed in order.
   process's never-returning heartbeat. The plan is
   `plan/step-81-stdlib-time.md`.
 
-- **M45 — The configuration format (step 84):** the `toml`
+- **M36 — The configuration format (step 84):** the `toml`
   package — TOML 1.1.0 decoded into a `Toml` value tree mirroring the
   json and yaml design (seven kinds, no null, the four date-time
   forms one `TomlDateTime` class with `datetime_kind()` naming the
@@ -226,7 +144,7 @@ incrementally shippable steps — one file per step, executed in order.
   with the byte offset. Encode is the document form, scalars first,
   `decode(encode(v)) == v`. The plan is `plan/step-84-stdlib-toml.md`.
 
-- **M46 — The wasm target speaks WASI 0.3 (step 85):** `emo build
+- **M37 — The wasm target speaks WASI 0.3 (step 85):** `emo build
   --target wasm --wasi` wraps the WasmGC module in a WASI 0.3 command
   component (`wasi:cli/run@0.3.0`) wasmtime 46+ (`-S cli`) executes —
   stdout/stderr through the standard stream cycles, the exit code
@@ -245,7 +163,7 @@ incrementally shippable steps — one file per step, executed in order.
   skipping without wasmtime — and wasmtime-smoke's execution rung
   runs the same list. The plan is `plan/step-85-wasi03.md`.
 
-- **M47 — The library's manual (step 86):** `emo man` — the standard
+- **M38 — The library's manual (step 86):** `emo man` — the standard
   library's reference pages read from inside the binary. The docs
   stay the source of truth: `docs/stdlib.md` and `docs/stdlib/*.md`
   are generated into the CLI's page data at build time, the route the
@@ -360,7 +278,7 @@ incrementally shippable steps — one file per step, executed in order.
 | 79 | The repl's line editor | landed — the interactive session edits its input with the vendored upstream linenoise (BSD-2, pinned at `a473823d`, two marked patches: the edit session's temporary history entry pops on Ctrl-C and end-of-input as ENTER pops it — upstream leaks one empty entry per Ctrl-C into the history file — and the blocking read's verdict errno is captured before the stop's cleanup and restored after, that cleanup's `isatty`/`tcsetattr` probe clobbering the verdict otherwise), compiled into the CLI through dune's `foreign_stubs` behind the `emo_linenoise` binding module whose stubs follow OCaml's mixed-variant encoding (constants and payload constructors numbered independently — the first global numbering read `Interrupted` as `End_of_input` and made `Ok ()` a read through address −7); the input seam carries the prompt text and answers `Line`/`Aborted`/`Eof`, `unbalanced` shares its bracket count with the continuation prompt (two spaces per open `{`/`(`/`[`, plain dots for an unlexable pending source), and the editor takes the seat only when stdin and stdout are both terminals — pipes, redirects, and the tests keep the plain path byte for byte; the history rides per line (1000 entries), loaded and saved at the session's edges to `EMO_STATE_DIR/repl-history` else `XDG_STATE_HOME/emo/repl-history` else `$HOME/.local/state/emo/repl-history` (unreadable/unwritable warns on stderr, missing says nothing, no home means no file), every non-empty line added as typed; Ctrl-C abandons the pending input and the session survives; the tests drive the real C editor over a pipe through upstream's `LINENOISE_ASSUME_TTY` hook — the typed line, the up-arrow recall, the leak-free interrupt, the input's end, and a two-session persistence round-trip; the live pty run on a real terminal pinned the indented continuation prompts, the Ctrl-C abandon, and the cross-process recall; TAB completion deliberately out (the callback rides the binding; what completes is a design of its own) (`plan/step-79-repl-linenoise.md`) |
 | 81 | The standard library: `time` | landed — the language's clock arrives as the standard library's `time` package over three runtime doors (`time_now_ms`, `time_mono_ns`, `time_sleep_ms`), the timing family pure Emo over them: a `Time` of UTC epoch milliseconds whose calendar fields compute in pure Emo (Hinnant's civil arithmetic, floor division everywhere, byte-identical on every target), `mono()` the explicit monotonic instrument, the strict nine-token layout formatting (UTC always, a token letter that opens no complete token raising naming the byte, `format_iso`/`format_http` the presets), durations as plain Int64 milliseconds with the conversion family playing the constants' role, and the seconds-speaking timing family (`sleep` the exact-ish park, `after` the scheduled one-shot in its own process, `tick` the calling process's never-returning heartbeat whose block's `halt()` is the stop); the doors ride the interpreter and both OCaml schedulers (a `Sleep` effect on the IO deadlines' timer lists), the C runtime (a sleeper field beside the fd park, send never waking it), the wasm host (the clock half as two imports, the timing half raising at the call), the TypeScript hosts (Node and browser), and BEAM (`os:system_time`, `erlang:monotonic_time`, `timer:sleep`); the goldens flushed a compiler-structure gap and four emitter bugs — the IR's Void-body exit positions lowered a bare trailing call as an Effect, invisible to every backend's tail machinery (the lowering now turns it into the Return it is, with the C emitter's Void return path emitting its expression without re-pooling the answer's own claim, and the interpreter's frame threading tailness through the statement walk), the c backend's Void-return discard pooling the claim twice (emosh segfaulted on a doubly-released builder cell), the c backend's closure capture never walking a `Send` statement's operands (the heartbeat's `owner <- ...` capture now lands), the TS emitter's `receive` statement carrying no trailing `;` (a following `(`-opening statement parsed as a call), and the BEAM emitter learned that Core Erlang has no wildcard (two `_` in one pattern now lower as distinct fresh variables); stale "the language has no clock" stances updated to name the owner (`plan/step-81-stdlib-time.md`) |
 | 76 | `emo wasm run`: the CLI rung | landed — the CLI executes a `.wasm` artifact through the embedded driver (the compiler never linking the runtime): the artifact's absolute path rides in as a host-injected binding, the driver reads it through `file` and loads it through `wasm` both shipped in the binary, instantiates (the start function runs), and walks the entry ladder (`_start`, then `main`, then the one-line summary for a module naming neither); results in the runtime's `value : kind` format, every failure the reason on stderr with exit 1; `run_embedded` generalized to `run_embedded_deps` (the publish/login paths delegating unchanged), the embedded scratch projects' lockfile notice quieted; six tests in `test/emo_cli`'s `wasm_run` group, artifacts as hex decoded in-test (no blob in the repository); docs EN+zh (`plan/step-76-wasm-cli.md`) |
-| 75 | The wasm package: the execution surface and the host interface | landed — the Emo-written runtime moves into the bundled registry as the `wasm` stdlib package with its execution layer on the root (`load`/`instantiate`/`call`/`get_global`/`read_memory`/`write_memory`/`register_instance`/`describe`, the value constructors and `as_*` accessors over the `(kind, bits)` model) over the R error split; the host-import table of `(module, name, fn)` triples with the uniform closure signature resolves ahead of the register namespace and the built-in `spectest` host and refuses an entry naming no import; the c backend grows module-level `var` (static cells, pooled-claim reads, the write-barrier assign, declaration-order init at the root entry) because the interpreter's dep-check universe resolves against `c` — all five fixtures and the demo golden byte-identical on the interpreter and the c target, the whole repo's runtest green, the manifest honestly claiming `ocaml` and `c`; the package reference at `docs/stdlib/wasm.md` EN+zh, the temp notes retired, and `examples/wasm_demo` riding the committed-lockfile suite; rung one of the M35 ladder (73 the CLI's `emo wasm run`, 74 the `emo` host module / WASI) (`plan/step-75-wasm-package.md`) |
+| 75 | The wasm package: the execution surface and the host interface | landed — the Emo-written runtime moves into the bundled registry as the `wasm` stdlib package with its execution layer on the root (`load`/`instantiate`/`call`/`get_global`/`read_memory`/`write_memory`/`register_instance`/`describe`, the value constructors and `as_*` accessors over the `(kind, bits)` model) over the R error split; the host-import table of `(module, name, fn)` triples with the uniform closure signature resolves ahead of the register namespace and the built-in `spectest` host and refuses an entry naming no import; the c backend grows module-level `var` (static cells, pooled-claim reads, the write-barrier assign, declaration-order init at the root entry) because the interpreter's dep-check universe resolves against `c` — all five fixtures and the demo golden byte-identical on the interpreter and the c target, the whole repo's runtest green, the manifest honestly claiming `ocaml` and `c`; the package reference at `docs/stdlib/wasm.md` EN+zh, the temp notes retired, and `examples/wasm_demo` riding the committed-lockfile suite; rung one of the wasm ladder (73 the CLI's `emo wasm run`, 74 the `emo` host module / WASI) (`plan/step-75-wasm-package.md`) |
 | 80 | The standard library: `uuid` | landed — the `uuid` package: the RFC 9562 identifier as one immutable 16-byte `Uuid` value rendering itself through the `to_string` protocol, answering `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?` and sorting through the RFC 6.11 big-endian `compare`; `v4` drawing 122 random bits over `rand.bytes`, `v7(now_ms)` taking the Unix time in milliseconds from the caller's own clock (`time.now()`) over 74 random bits with a negative or 48-bit-overflowing timestamp raising, and `v3`/`v5` the deterministic name-based doors over `crypto.legacy` with the four IANA namespace IDs of Table 3 beside them; `parse` taking exactly the canonical 36-character hex-and-dash form, case-insensitive on the digits, every rejection naming the first offending byte, and `from_bytes` refusing a length other than 16; scoped to Go's standard `uuid` spine with the name-based versions and the introspection pair filled in where the RFC pins the shape; v1/v2/v6 and a v8 constructor out, named; `uuid_demo` riding the RFC's Figure 1 and Appendix A vectors (verified against Python's standard implementation) structure-only on the random doors, byte-identical on the interpreter, c, typescript, wasm, and beam lists (`plan/step-80-stdlib-uuid.md`) |
 | 84 | The standard library: `toml` | landed — TOML 1.1.0 as the standard library's `toml` package: a `Toml` value tree mirroring the json and yaml design (seven kinds, no null — TOML has none), the four date-time forms one `TomlDateTime` class whose `datetime_kind()` names the form and whose `to_text()` renders the canonical text back, pure Emo over the shared runtimes with the float package's exact-decimal constructor under every number; decode covers the full 1.1 surface (the `\e` and `\xHH` escapes, seconds omittable, lowercase `t`/`z`, the space delimiter try-and-see so a plain date followed by other text still reads as the date, multi-line inline tables and trailing commas, arrays with comments) and the strict redefinition rules, assembling while it parses over origin-tagged nodes — dotted keys close their tables to headers, inline tables close at the brace, `[[x]]` appends only to arrays and a deeper header descends into the latest element, implicit supertables declare at most once (`[x]` after `[x.y.z.w]` the spec's own exception); `inf`/`nan` refuse (BEAM carries no non-finite values, the yaml stance) and integers overflow-check per spelling down to the exact minimum; encode is the document form, each table's scalars first then its `[a.b]` and `[[a.b]]` sections, `decode(encode(v)) == v` at the value level; `toml_demo` and `toml_edge` (ninety refusals each printing its reason) byte-identical through the five compiled lists; the edge battery flushed seven package bugs — the basic string's fill answering the write length where the next index belongs, hex escape digits read with the wrong weights (`\u4e16` decoded as U+0136 and the surrogate checks sat inert), the float buffer counting the underscores (`1_000.000_1` as 9952.0001), the exponent value eating the underscores as digits (`1e1_0` an exponent of 570), `doc_inline?` answering true for all-table arrays (the same value emitted inline and as sections), section lines rendering the full dotted path, and the date-time class missing the interface — and the compiled goldens flushed three backend bugs, each pre-existing on the tree and each invisible until a package leaned on the shape it breaks: the TypeScript Void tail-call driver had no exit (every Void tail recursion spun forever on TS — json's `fill_spaces` included — the whole ts_golden suite burning CPU), the BEAM runtime dispatch bound its builtin arm through a clobberable map (chains two interfaces deep refused by erlc on an unbound variable — json_demo's single-level chains never hit it), and the wasm `deep_eq` had no tuple arm (any class field of `Array[(A, B)]` compared unequal to its own twin — the toml root table, json's `JsonObject`, latent until a golden compared a decoded tree) (`plan/step-84-stdlib-toml.md) |
 | 85 | WASI 0.3: Emo programs as standard command components | landed — `emo build --target wasm --wasi` wraps the WasmGC module in a WASI 0.3 command component (`wasi:cli/run@0.3.0`) wasmtime 46+ (`-S cli`) executes: stdout/stderr ride the native stream cycles through `wasi:cli/stdout`+`stderr`, the exit code through `wasi:cli/exit`, the import table remapped from the eighteen `emo.*` doors to twenty-seven standard ones — `wasi:filesystem` (descriptor as a `(sub resource)` export, open-at, the directory-entry stream, the one-string mutations), `wasi:filesystem/preopens` (the table the path resolution anchors on), `wasi:random/random`, `wasi:cli/environment`; the provider module grew the canonical realloc the host-written lists allocate through, sharing the bump cursor cell with the guest; the store operand order (value before address) fixed at five sites; the file chain's last mile fixed at T85.7 (five guest-side bugs each pinned by a probe, then the directory door's `read-dir-entries`, the scan's batch shape, and the harness's guest-root mapping); the guest-side `%g` renders every float (T85.8, seven wat-level bugs found and fixed on the way); `wasi_examples` — 66 demos byte-identical with the Node list, skipping without wasmtime — and wasmtime-smoke's execution rung (62/62) pin the doors; found, not fixed: the more-async-builtins gate pressure (`plan/step-85-wasi03.md`) |

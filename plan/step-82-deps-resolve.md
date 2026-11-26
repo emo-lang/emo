@@ -1,6 +1,6 @@
 # Step 82 — `emo deps resolve`: resolve honestly, refresh cheaply
 
-**Milestone:** M43 — The lock refresh · **Prereq:** none (the plumbing
+**Milestone:** M34 — The lock refresh · **Prereq:** none (the plumbing
 exists; this step repoints it) · **Related:** `src/emo_cli/emo_cli.ml`
 (the resolve command's `~target:"c"` hardcode), `src/emo_project/emo_project.ml`
 (`resolve_deps` already carries `~target`; `registry` already honors

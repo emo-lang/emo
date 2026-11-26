@@ -1,6 +1,6 @@
 # Step 76 — `emo wasm run`: the CLI rung
 
-**Milestone:** M38 · **Prereq:** step 75 (the package and its execution
+**Milestone:** M29 · **Prereq:** step 75 (the package and its execution
 surface) · **Status:** done
 
 The ladder's second rung: the CLI executes a `.wasm` artifact. The

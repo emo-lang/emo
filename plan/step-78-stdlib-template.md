@@ -1,6 +1,6 @@
 # Step 78 — The standard library: `template`
 
-**Milestone:** M39 — Text templates · **Prereq:** step 31 (json — the
+**Milestone:** M30 — Text templates · **Prereq:** step 31 (json — the
 value tree the context rides and the error split) and step 47 (csv —
 the byte-scanner discipline and the all-five-golden shape) ·
 **Related:** `stdlib/registry/{json,dom,httpd}` (the sibling surfaces
@@ -117,7 +117,7 @@ scanner agrees; only the action grammar is strict about delimiters.
       line.
 - [x] **T78.4** — The tracking: `plan/step-78-stdlib-template.md` (this
       file), `plan/README.md`'s milestone bullet and status row,
-      `docs/TASKS.md`'s M39 section + zh mirror, CHECK.md's settle
+      `docs/TASKS.md`'s M30 section + zh mirror, CHECK.md's settle
       record.
 
 ## Found and fixed here

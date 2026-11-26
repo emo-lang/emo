@@ -16,7 +16,7 @@ carrying no locks, because the scheduler serializes every call.
 The step's other half is a language gap the design record did not name:
 the `sqlite3`/`postgres` bindings cross `String` as a NUL-terminated
 `char *`, so they truncate binary data at the first zero byte. RocksDB's
-keys and values are arbitrary bytes — M29's null bitmap and fixed-width
+keys and values are arbitrary bytes — M28's null bitmap and fixed-width
 row fields are full of NULs — so D10 lands here: `Bytes` crosses the C
 ABI as a borrowed view, argument-only, with reads filling a caller-owned
 out-parameter.
@@ -60,7 +60,7 @@ out-parameter.
   real get and frees it; `get_into` repeats the lookup and copies into the
   caller's buffer. The block cache makes the second lookup cheap, and the
   shim never pins a RocksDB-owned buffer between calls — no hidden
-  lifetime, no ownership transfer. M34 measures; if the duplicate lookup
+  lifetime, no ownership transfer. M28 measures; if the duplicate lookup
   ever matters, the pinned-slot alternative is stated here as the next
   shape.
 - **A snapshot bundles its read options.** `rocksdb_snapshot_t` and the
@@ -185,12 +185,12 @@ out-parameter.
 
 ## Open, deliberately
 
-- **`WriteOptions.sync`** — the plain write path leaves it off; M32's
+- **`WriteOptions.sync`** — the plain write path leaves it off; M28's
   COMMIT is the consumer that turns it on.
 - **`Bytes` foreign returns** — the out-parameter rule covers every
   arc-one read; a return position waits for an API that needs one.
 - **A pinned result slot for reads** — the two-pass read repeats the
-  lookup; the block cache makes it cheap, and M34 measures before any
+  lookup; the block cache makes it cheap, and M28 measures before any
   cache-shaped shim state is introduced.
 - **Multiple databases in one process** — the shim keeps one last-error
   buffer and the package is written for one database; the design record

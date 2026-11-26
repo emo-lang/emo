@@ -1,11 +1,11 @@
 # Step 67 — The SQL front-end's DML and DDL
 
-**Milestone:** M30 · **Prereq:** step 30 (`sql`'s SELECT surface and its
+**Milestone:** M28 · **Prereq:** step 30 (`sql`'s SELECT surface and its
 expression grammar) · **Status:** landed 2026-11-12
 
 ## Why this step exists
 
-The record layer can store tables and rows; the executor (M31) needs a
+The record layer can store tables and rows; the executor (M28) needs a
 front-end that can say what to create, insert, update, and delete. This
 step grows the `sql` package's statement set beside `SELECT`: `CREATE
 TABLE` with the v0 column types, multi-row `INSERT`, `UPDATE`, and
@@ -16,7 +16,7 @@ five hosted targets; the existing SELECT grammar does not move.
 The step is structural only: the parser checks the statement's shape
 (duplicate names, row widths, a positive VARCHAR length), never the
 catalog or the value types. Table existence, column resolution, and type
-matching are M31's.
+matching are M28's.
 
 ## Decisions settled here (the trail)
 
@@ -87,7 +87,7 @@ matching are M31's.
       `docs/stdlib/sql.md` + zh, and the `docs/stdlib.md` row if its
       wording moved.
 - [x] **T67.12** — The close-out: the two `sql` locks re-resolved,
-      `plan/README.md`, the M30 row, `CHECK.md`, `dune build`/`@fmt`,
+      `plan/README.md`, the M28 row, `CHECK.md`, `dune build`/`@fmt`,
       and the step's evidence.
 
 ## Evidence
@@ -126,7 +126,7 @@ matching are M31's.
   with the output unchanged. Recorded here so the next parser draft
   starts from recursion.
 - **The old `sql_edge` pinned INSERT as malformed.** `INSERT INTO t
-  VALUES (1)` was a refusal case; M30 makes it valid, so the case is
+  VALUES (1)` was a refusal case; M28 makes it valid, so the case is
   replaced with malformed DDL/DML inputs and the golden regenerated.
 - **The package check writes a `package.lock` into the stdlib tree.**
   No stdlib registry package carries one; the file was moved out after
@@ -135,12 +135,12 @@ matching are M31's.
 ## Open, deliberately
 
 - **INSERT … SELECT** — the executor's projection and the plan node are
-  M31's.
+  M28's.
 - **ON CONFLICT / RETURNING** — conflict semantics and a returning
   projection wait for the executor and the wire.
 - **Table-level PRIMARY KEY/UNIQUE and CREATE INDEX** — the index
   machinery exists in the record layer; the SQL surface waits for the
-  planner's index selection (M31).
+  planner's index selection (M28).
 - **DEFAULT/CHECK/REFERENCES** — constraints with runtime semantics are
   not v0; the parser refuses them by name.
 - **Type aliases and length-less VARCHAR** — the canonical v0 spelling

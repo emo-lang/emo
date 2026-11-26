@@ -1,6 +1,6 @@
 # Step 77 — WASI preview1: the rung other toolchains' modules run on
 
-**Milestone:** M38 · **Prereq:** step 75 (the package and its host
+**Milestone:** M29 · **Prereq:** step 75 (the package and its host
 interface), 73 (the CLI rung) · **Status:** done
 
 The ladder's third rung: modules from other toolchains run. The

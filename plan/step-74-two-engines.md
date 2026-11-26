@@ -1,6 +1,6 @@
 # Step 74 — The two-engine proof
 
-**Milestone:** M37 · **Prereq:** steps 72–73 (the column format and the
+**Milestone:** M28 · **Prereq:** steps 72–73 (the column format and the
 column executor) · **Status:** in progress (2026-11-13)
 
 ## Why this step exists

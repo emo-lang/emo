@@ -1,6 +1,6 @@
 # Step 86 — The standard library's manual pages: `emo man`
 
-**Milestone:** M47 — The library's manual · **Prereq:** step 24 (the
+**Milestone:** M38 — The library's manual · **Prereq:** step 24 (the
 toolchain: the standard library rides the binary as generated data) ·
 **Related:** `docs/stdlib/`, `docs/stdlib.md`, `docs/toolchain.md`,
 `devtools/gen-stdlib-data.sh` · **Status:** done — every page renders
@@ -83,5 +83,5 @@ stdlib` renders the overview.
 - [x] **T86.4** — The docs and tracking: `docs/toolchain.md` and
       `docs/stdlib.md` + zh mirrors, this step,
       `plan/README.md`'s milestone bullet and status row,
-      `docs/TASKS.md`'s M47 section + zh mirror, CHECK.md's settle
+      `docs/TASKS.md`'s M38 section + zh mirror, CHECK.md's settle
       record.

@@ -1,6 +1,6 @@
 # Step 81 — The standard library: `time`
 
-**Milestone:** M42 — The clock and the heartbeat · **Prereq:** step 12
+**Milestone:** M33 — The clock and the heartbeat · **Prereq:** step 12
 (the processes the timing family parks) · **Related:** `stdlib/registry/os`
 (the door-family precedent and the target-split discipline),
 `docs/stdlib/time.md` · **Status:** done on the interpreter, ocaml, c,
@@ -118,7 +118,7 @@ ENOSYS until that arc).
       table, and the stale "no clock" stances updated (slog's and
       httpd's) to name what owns the clock now.
 - [x] **T81.5** — The tracking: this plan, `plan/README.md`'s row,
-      `docs/TASKS.md`'s M42 section + mirror, CHECK.md's settle record.
+      `docs/TASKS.md`'s M33 section + mirror, CHECK.md's settle record.
 
 ## Found and fixed here
 

@@ -1,6 +1,6 @@
 # Step 71 — Conformance and documentation
 
-**Milestone:** M34 · **Prereq:** steps 65–70 (the whole row-store arc) ·
+**Milestone:** M28 · **Prereq:** steps 65–70 (the whole row-store arc) ·
 **Status:** landed 2026-11-13
 
 ## Why this step exists
@@ -45,8 +45,8 @@ numbers from claims, and documentation that matches what was built.
   checks its counts, never a time. Work the script did not measure
   (the wire's per-query latency, for example) stays out of the table.
 - **The documentation pass corrects stale claims.** The design record's
-  open items said joins/aggregates/ORDER BY "land with M34's
-  conformance breadth"; M34 is the corpus and the record, so those
+  open items said joins/aggregates/ORDER BY "land with M28's
+  conformance breadth"; M28 is the corpus and the record, so those
   items are restated as open (the corpus pins the refusals) and the
   arc-two sketch is reviewed against the actual row-store plan nodes,
   catalog, and storage layout.

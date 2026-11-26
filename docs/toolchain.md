@@ -167,4 +167,4 @@ the repository.
   — the legs that carry a built release through Apple notarization
   and onto the download site.
 - [`plan/step-79-repl-linenoise.md`](../plan/step-79-repl-linenoise.md)
-  — the step that brought the repl its line editor (M39).
+  — the step that brought the repl its line editor (M30).

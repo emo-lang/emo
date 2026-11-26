@@ -1,6 +1,6 @@
 # Step 93 — emosh's background jobs
 
-**Milestone:** M53 · **Prereq:** step 92 (the shell's everyday
+**Milestone:** M44 · **Prereq:** step 92 (the shell's everyday
 surface), the os package at 0.1.0 · **Status:** landed 2026-11-22
 (code, fixtures, docs; the os demo byte-identical on the interpreter
 and both targets, ten fixtures byte-identical on both, the pty-driven
