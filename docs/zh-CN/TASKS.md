@@ -71,10 +71,7 @@
 | M50 — GC 自举 | 89 | 解释器运行承载的机器对象模型,与 Emo 写的收集器:十六个裸名门——定长 `struct` 块、带计数的 `array` 块、有根的 `ref`,以及行走所需(`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`)——只由解释器运行准入(以 target `interpreter` 检查;所有 build target 按名拒绝,E4032),词靠奇偶自描述(偶数为移位标量,奇数为引用,`0` 为 null),每块的槽 0 是收集器的头词;`gc` 包用纯 Emo 实现 mark-sweep——打标访问器、工作栈排空、标记位切环——应答收回的词数;弱注册的根表让宿主收集器当活性 oracle,根立起变异者纪律(要被收集尊重的句柄放进 `ref`);金测:`examples/gc_demo` 的九行只在解释器运行上(有根的链与被穿透标记的 array 活过四千个无根节点的清除;环在根松手的瞬间死去——引用计数永远收不回的形状)、`gc_heap_tests`,以及在每个拒绝 target 上逐门点名的 `gc_refusal` 负向金测(`CHECK.md`、`docs/gc-heap.md`)。 |
 | M51 — GC 阶梯 | 90 | 堆长出自己的分配器与翅膀:step 90 落地 arena——`heap_new` 造它,裸 `heap_load`/`heap_store` 通道搬词,`heap_carve`/`heap_release` 绑定与解绑区间——`gc` 包的自由表(两张 Map 上的首适配、切分、邻合并)成为唯一分配器,`struct_new`/`array_new`/`heap_free` 随门退休;句柄携带 offset+代数,陈旧句柄无需墓碑即响亮死去;头词打包 magic/kind/代数/标记/尺寸;demo 的第二代落进 sweep 自己的词里,arena 从不增长(`CHECK.md`)。 |
 | M52 — GC 堆的 riscv64 宿主 | 91 | 金属加入堆的宿主环:镜像在自己的 `.bss` 里给收集器授予一个区域(一 MiB arena、绑定表、根表、slide 暂存),二十四扇门落成随程序编译的运行时助手,`Ref` 以 kind 12、金属的 Map 以 kind 13 加入 tagged 值模型(运行时引用计数之下的 identity kind,归零的释放从根表摘链),hash 孪生以来本宿主背负的 raise 缺口就此关上(`Raise` 降为 `emo_raise`,异常值按 `c` 宿主的方式渲染),模块级 `var` 也就位(静态内存里的格、序言初始化),`gc` 包自己的几何骑进镜像;demo 的 24 行金测在解释器、`c` 宿主与金属上逐字节一致——三 boot 稳定,经 EmoOS 内核与直跑皆然——调试轮的六面墙记录在 `CHECK.md`(序言的双重入池、Map 只落一半的 +8 平移、slide 的裸数组对、前向表的分裂键形状、只拷 `next` 的 rehash、不圆整的 arena 游标),金测腿骑 `@emo_os` 的 `gc_metal` 组(`CHECK.md`、`docs/gc-heap.md`、`plan/step-91-riscv64-gc-host.md`)。 |
-| M53 — shell 的日用表面 | 92 | `emosh` 长出日用 shell 离不开的表面,全部骑在已有的 `os`+`bufio` 面上:脚本文件与 `-c` 打开调用方式(`emosh script.esh args`、`emosh -c 'line' name args`,打不开的脚本 127,坏选项 2),位置参数落地(`$1`…`$9`、`${N}`),`${var:-default}` 加入花括号形态,叫不出名字的形态保持字面——整个形态,不只是美元符——且 `${` 扫描改为从形态自身起找(`a}b${SETV}c` 原是潜伏的负数 substring);stderr 重定向落地(`2>`、`2>>`、`2>&1`,数字词规则保住 `hi2>` 还是参数,dup 的顺序即语义);glob 落地(只 glob 用户裸写的 `*` 与 `?`——引号如今作为标记被记住,顺带修掉被引 `~` 够到 `$HOME` 的 v0 bug),按路径段行走、段首无 `.` 时隐藏名保持隐藏、答案排序、无匹配拒绝命令;单命令的词只展开一次不再两次;四套新 fixture 加入,harness 在双 target 上钉死调用方式(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-92-emosh-everyday.md`)。 |
-| M54 — shell 的后台任务 | 93 | `os` 在 0.1.0 上原位长出 waitpid 的轮询半(`waitpid_nohang`——已退子进程 `(R.ok, (pid, raw))`、有子但未退 `(R.ok, (0, 0))`、ECHILD errno reason 在解释器与 c 运行时逐字节一致、wasm 进程半 raise 点名能力),`emosh` 把它花掉:管道后的 `&` 让整条目作为一个作业运行(拉起即分隔符,`a & b` 随即跑 `b`),父进程用 `setpgid` 把每个成员钉进同一新进程组,终端的 Ctrl-C 永远够不到后台作业,而前台命令保持经典死法;作业表带最小空位号规则,`$!` 是其代表 pid,`$$` 是 shell 自己的;通知行 `[1] done sleep 5` 在每个交互提示符前轮询;内建 `jobs`(`[1] 4821 running sleep 5`)、`fg %n`(诚实的等——无终端交接,Ctrl-C 够不到它带回来的)、`bg %n`(无物会停——`already in background`,bash 自己的答词)、`wait [%n]`(未知 127)、`kill [-N] [%n|pid]...`(`%n` 以负 pid 打整组);`os_demo` 三种走法走轮询,`bg` fixture 骑 `sleep`/`kill`/`awk`,后台子进程输出永不交织(`CHECK.md`、`docs/stdlib/os.md`、`docs/emosh-guide.md`、`plan/step-93-emosh-jobs.md`)。 |
-| M55 — shell 的控制流 | 94 | `emosh` 在自己的语法里说 Emo 的话——大括号块,没有 `then`/`fi`/`do`/`done`——并长出运行它的三层机制:解析器新增复合命令(`if`/`else` 链解析期压平为嵌套、`while`、数值 `for`(头三个表达式以 token 切片留给运行时求值器)、`def name() { }`(紧贴括号与分写两形并存)与声明(`const`/`var name = word`),块未闭合时回答 incomplete——驱动读下一行、`> ` 提示、两行拼接处骑一个 `;` 作换行分隔符——同时 `{`/`}` 作为独立词保留,终结命令与列表;执行器走查它们(`run_compound`,for 头求值器比较级最低、裸变量、`$#`、整数字面量、除零拒绝、步进是 `name = expr` 赋值),声明绑定先于环境被 `$name` 读到(常量拒绝重声明与 unset,for 变量无论循环怎么离开都恢复原绑定),`def` 入函数表、裸名字调用、调用参数变 `$1..` 且返回后恢复,`break`/`continue`/`return` 骑会话信号由循环与调用走查消费、顶层拒绝(`break: only in a loop`);复合命令可带 `&`(fork 子进程走查,整行即作业文本),ctrl fixture 逐形双腿逐字节(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-94-emosh-control-flow.md`)。 |
-| M56 — shell 的行编辑器 | 95 | `emosh` 的交互会话读入走它自己的行编辑器——raw 模式、历史、补全——以 Emo 写在 os 终端层之上:os 在 0.1.0 原位长出 `tty_raw`/`tty_restore`(`cfmakeraw` 是可移植的门,保存的状态是只归造出它的那个运行时解包的不透明字数组,ENOTTY 拒绝在管道上逐字节一致,wasm 点名能力抛出);编辑器逐一走查 UTF-8 续字节,多字节字符整插、整擦、整步,↑/↓ 走最近 1000 条、落在 repl 自己的状态目录链下的 `emosh-history`,Tab 把光标下的词补到全部候选的公共前缀(行首词按命令补——内建、会话函数、然后 PATH;后继词按工作目录文件补),Ctrl-C 废弃当前行而非杀进程,终端在一切运行之前退回熟模式——子进程保持经典终端,在跑的命令照旧死于 Ctrl-C;`EMOSH_ASSUME_TTY` 只跳过 raw 配对,按键与渲染照跑在管道上——金测按字节驱动编辑器(`CHECK.md`、`docs/stdlib/os.md`、`docs/emosh-guide.md`、`plan/step-95-emosh-line-editor.md`)。
+| M53 — shell 的日用表面 | 92–95 | `emosh` 在已有的 `os`+`bufio` 面上长成日常驱动的 shell:脚本文件与 `-c` 调用及位置参数、花括号 `${…}` 形态、stderr 重定向与裸写 glob;基于 `os.waitpid_nohang` 的 `&` 后台作业——每个作业一个进程组、作业表、`jobs`/`fg`/`bg`/`wait`/`kill` 与 `$!`/`$$`;Emo 自己的控制流——大括号复合命令、`const`/`var`、带函数表的 `def`、break/continue/return 信号;以及写在 `os` 终端层之上的 Emo 行编辑器——raw 模式、1000 行历史、Tab 补全。全部 fixture 在 ocaml 与 c 两个 target 上逐字节一致(`CHECK.md`、`docs/emosh-guide.md`、`plan/step-92-emosh-everyday.md`、`plan/step-93-emosh-jobs.md`、`plan/step-94-emosh-control-flow.md`、`plan/step-95-emosh-line-editor.md`)。 |
 
 ## 设计闸门
 
@@ -104,12 +101,6 @@
 | `c` 目标上的 TLS(链接判定、原型、Windows) | step 51 | 已定(2026-10-17)——既有三个 `net` TLS 内建落在 C 运行时、链系统 OpenSSL/LibreSSL:`c` emitter 的 IR 走查闸住 `EMO_HAS_TLS` + `-lssl -lcrypto`,原型全部手写(不依赖任何 OpenSSL 头文件),下限是 API 子集(OpenSSL ≥ 1.1.1 / LibreSSL ≥ 3.5.0),Windows 保持拒绝(`CHECK.md`、`plan/step-51-tls-c-target.md`) |
 
 ---
-
-## M56 — shell 的行编辑器
-
-### Step 95 — Emo 写在 os 终端层之上的编辑器
-
-os 包在 0.1.0 原位长出 `tty_raw(fd)`/`tty_restore(fd, saved)`——`cfmakeraw` 是可移植的策略(旗标位本身在 macOS 与 Linux 之间不同,字因此永不过界),保存的状态是不透明 `Array[Int64]`、只归同一运行时解包,失败是带 errno 文本的数据驱动值(`os: tty_raw: Inappropriate ioctl for device` 双目标逐字节,wasm 点名能力抛出)。`emosh` 消费它:`edit.emo` 逐字节解码按键,走查 UTF-8 续字节让多字节字符整插、整擦、整步,渲染经裸 `os.write` 走 stderr 描述符,应答三种结局——接受、输入结束、废弃。会话驱动在每次读入前后配对 raw/恢复:子进程保持经典熟终端,Ctrl-C 废弃半输入的行并重新提问,在跑的命令照旧死于 Ctrl-C。历史骑最近 1000 条,走 repl 自己的状态目录链(`EMO_STATE_DIR` → `XDG_STATE_HOME/emo` → `$HOME/.local/state/emo`),会话开始时装载、结束时一次写盘。补全把光标下的词补到全部候选的公共前缀,第二次 Tab 列出它们:行首词骑命令词汇表——内建名单、会话函数、然后 PATH 服务的每条命令——后继词骑工作目录。`EMOSH_ASSUME_TTY` 只跳过 raw 配对,编辑器的按键与渲染照跑在管道上,金测按它的字节驱动;十一套 fixture 保持逐字节(无钩子时编辑器在管道上从不接手),pty 手验双腿跑完全套按键。
 
 ## M1 — MVP 解释器
 
@@ -2580,8 +2571,6 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       本节 + zh 镜像,`plan/step-92-emosh-everyday.md`,CHECK.md 的
       记录。
 
-## M54 — shell 的后台任务
-
 ### Step 93 — `os.waitpid_nohang`,与 emosh 的 `&`、作业表、五个内建
 
 **状态:** complete。(`plan/step-93-emosh-jobs.md` 是本步的
@@ -2622,8 +2611,6 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       本节 + zh 镜像,`plan/step-93-emosh-jobs.md`,CHECK.md 的
       记录。
 
-## M55 — shell 的控制流
-
 ### Step 94 — emosh 的 Emo 同款控制流:大括号复合命令、声明与走查器
 
 **状态:** complete。(`plan/step-94-emosh-control-flow.md` 是本步的
@@ -2656,3 +2643,7 @@ size 与 filetype)、四个路径突变——目录经 DIRECTORY oflag 打开,�
       guide EN+zh 长出控制流节与诚实的边界新形(复合不进管道、无
       case/until、无词表 for、无局部、声明值一词),本节 + zh 镜像,
       `plan/step-94-emosh-control-flow.md`,CHECK.md 的记录。
+
+### Step 95 — Emo 写在 os 终端层之上的编辑器
+
+os 包在 0.1.0 原位长出 `tty_raw(fd)`/`tty_restore(fd, saved)`——`cfmakeraw` 是可移植的策略(旗标位本身在 macOS 与 Linux 之间不同,字因此永不过界),保存的状态是不透明 `Array[Int64]`、只归同一运行时解包,失败是带 errno 文本的数据驱动值(`os: tty_raw: Inappropriate ioctl for device` 双目标逐字节,wasm 点名能力抛出)。`emosh` 消费它:`edit.emo` 逐字节解码按键,走查 UTF-8 续字节让多字节字符整插、整擦、整步,渲染经裸 `os.write` 走 stderr 描述符,应答三种结局——接受、输入结束、废弃。会话驱动在每次读入前后配对 raw/恢复:子进程保持经典熟终端,Ctrl-C 废弃半输入的行并重新提问,在跑的命令照旧死于 Ctrl-C。历史骑最近 1000 条,走 repl 自己的状态目录链(`EMO_STATE_DIR` → `XDG_STATE_HOME/emo` → `$HOME/.local/state/emo`),会话开始时装载、结束时一次写盘。补全把光标下的词补到全部候选的公共前缀,第二次 Tab 列出它们:行首词骑命令词汇表——内建名单、会话函数、然后 PATH 服务的每条命令——后继词骑工作目录。`EMOSH_ASSUME_TTY` 只跳过 raw 配对,编辑器的按键与渲染照跑在管道上,金测按它的字节驱动;十一套 fixture 保持逐字节(无钩子时编辑器在管道上从不接手),pty 手验双腿跑完全套按键。
