@@ -21,7 +21,9 @@ Item 6 closed on 2026-11-26. Item 10 was found while closing item 9.
 Item 7's boolean operators, wrong answers and c warning closed on
 2026-11-26; its (a), (b), (e) and (f) stay open inside the item.
 Items 8 and 10 closed on 2026-11-26, and item 4's (a) closed with them —
-the EmoOS smoke is green on both legs. **Open: 7 (a, b, e, f).**
+the EmoOS smoke is green on both legs. Item 7's (a) closed 2026-11-26 —
+the beam's every runtime refusal now rides the envelope (stderr,
+`runtime error: …`, exit 70, no crash report). **Open: 7 (b, e, f).**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 

@@ -2567,6 +2567,89 @@ let op_refusal_source : string =
          interpreter's";
         "%%   own exit for it. The write is the port's own, so nothing is left";
         "%%   in a buffer when the halt comes.";
+        "'emo_no_method'/2 =";
+        "    fun (_v, _name) ->";
+        "\tcall 'erlang':'error'";
+        Printf.sprintf
+          "\t  ({'emo_runtime_error',\n\
+           \t\t    call 'erlang':'iolist_to_binary'\n\
+           \t\t      ([%s, apply 'emo_type_name'/1 (_v), %s, _name, %s])})"
+          (lit "`") (lit "` has no method `") (lit "`");
+        "";
+        "%% The leftover refusal tags render here, at the root's own";
+        "%%   catch-all: each family's own words, the interpreter's";
+        "%%   shape, one envelope for everything the runtime raises.";
+        "'emo_refusal_text'/1 =";
+        "    fun (_t) ->";
+        "\tcase _t of";
+        "\t  <{'emo_runtime_error', _b}> when 'true' -> _b";
+        Printf.sprintf
+          "\t  <{'emo_no_match', _x}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_x), %s])"
+          (lit "no `case` branch matched this ")
+          (lit " value");
+        Printf.sprintf
+          "\t  <{'emo_bad_type', _a, _b}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_a), %s, apply 'emo_type_name'/1 (_b)])"
+          (lit "a runtime kind mismatch: ")
+          (lit " and ");
+        Printf.sprintf
+          "\t  <{'emo_no_method', _v, _n}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_v), %s, call 'erlang':'atom_to_binary'(_n, \
+           'utf8'), %s])"
+          (lit "`") (lit "` has no method `") (lit "`");
+        Printf.sprintf
+          "\t  <{'emo_empty_list', _op}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([call \
+           'erlang':'atom_to_binary'(_op, 'utf8'), %s])"
+          (lit " on an empty List");
+        Printf.sprintf "\t  <{'emo_bad_substring', _s, _l}> when 'true' -> %s"
+          (lit "the byte range is outside the Bytes");
+        "\t  <{'emo_builder_index', _i, _n}> when 'true' ->";
+        "\t      call 'erlang':'iolist_to_binary'([\"index \", call \
+         'erlang':'integer_to_binary'(_i), \" is out of bounds (the length is \
+         \", call 'erlang':'integer_to_binary'(_n), \")\"])";
+        Printf.sprintf "\t  <{'emo_printf_count', _n}> when 'true' -> %s"
+          (lit "printf: the format wants a different argument count");
+        Printf.sprintf "\t  <{'emo_printf_wrong', _c, _k}> when 'true' -> %s"
+          (lit "printf: the format met a value of the wrong kind");
+        Printf.sprintf
+          "\t  <{'emo_printf_bad_conversion', _x}> when 'true' -> %s"
+          (lit "printf: an unknown conversion");
+        Printf.sprintf "\t  <{'emo_no_to_str', _x}> when 'true' -> %s"
+          (lit "a value the beam cannot render");
+        Printf.sprintf "\t  <{'emo_bad_byte', _x}> when 'true' -> %s"
+          (lit "a Byte out of range");
+        Printf.sprintf "\t  <{'emo_nan_bits', _x}> when 'true' -> %s"
+          (lit "from_bits met a NaN payload");
+        Printf.sprintf "\t  <{'emo_cell_gone', _k}> when 'true' -> %s"
+          (lit "the Box's cell is gone");
+        Printf.sprintf "\t  <{'emo_map_pairs', _x}> when 'true' -> %s"
+          (lit "the Map's pairs met a value that is not a Map");
+        Printf.sprintf "\t  <{'emo_no_inst', _c}> when 'true' -> %s"
+          (lit "the runtime met a class it does not know");
+        Printf.sprintf
+          "\t  <{'emo_no_array', _x}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_x)])"
+          (lit "cannot index this ");
+        Printf.sprintf
+          "\t  <{'emo_no_atomic', _x}> when 'true' ->\n\
+           \t      call 'erlang':'iolist_to_binary'([%s, apply \
+           'emo_type_name'/1 (_x)])"
+          (lit "the Atomic door met a value that is not an Atomic: ");
+        Printf.sprintf "\t  <{'emo_bad_utf8', _b}> when 'true' -> _b";
+        Printf.sprintf "\t  <{'emo_bad_int64', _b}> when 'true' -> _b";
+        Printf.sprintf "\t  <{'emo_empty_sep', _b}> when 'true' -> _b";
+        Printf.sprintf "\t  <{'emo_no_key', _b}> when 'true' -> _b";
+        "\t  <_other> when 'true' ->";
+        "\t      call 'erlang':'iolist_to_binary'";
+        "\t\t(call 'io_lib':'format'(\"internal: ~p\", [_other]))";
+        "\tend";
+        "";
         "'emo_runtime_fail'/1 =";
         "    fun (_msg) ->";
         Printf.sprintf
@@ -3427,7 +3510,7 @@ let rt_source =
 		     (apply 'emo_atomic_bytes_call'/4
 			  (_pid, _ref, 'load', 'ok'))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_atomic', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_atomic_store'/2 =
@@ -3447,7 +3530,7 @@ let rt_source =
 			  apply 'emo_atomic_bytes_bin'/1 (_v))
 		     _a
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_atomic', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<115>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_atomic_encode'/2 =
@@ -3495,7 +3578,7 @@ let rt_source =
 			  (_pid, _ref, 'exchange',
 			   apply 'emo_atomic_bytes_bin'/1 (_v)))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_atomic', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<101>(8,1,'integer',['unsigned'|['big']]),#<120>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_atomic_compare_exchange'/3 =
@@ -3528,7 +3611,7 @@ let rt_source =
 			    (_old, apply 'emo_atomic_bytes_bin'/1 (_expected))
 		    in {_swapped, apply 'emo_atomic_bytes_wrap'/1 (_old)}
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_atomic', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<99>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<109>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<120>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 %% The fetch family: a compare-exchange loop over the encoded value —
@@ -3647,7 +3730,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      call 'erlang':'byte_size'(apply 'emo_cell_get'/1 (_k))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_get'/2 =
@@ -3656,7 +3739,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      call 'binary':'at'(apply 'emo_cell_get'/1 (_k), _i)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_set'/3 =
@@ -3669,7 +3752,7 @@ let rt_source =
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 1), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 1)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 _v
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u16_get'/2 =
@@ -3678,7 +3761,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 2), 'little')
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<49>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u32_get'/2 =
@@ -3687,7 +3770,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 4), 'little')
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<51>(8,1,'integer',['unsigned'|['big']]),#<50>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u64_get'/2 =
@@ -3696,7 +3779,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_mask'/1 (call 'binary':'decode_unsigned'(call 'binary':'part'(apply 'emo_cell_get'/1 (_k), _i, 8), 'little'))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<52>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u16_set'/3 =
@@ -3710,7 +3793,7 @@ let rt_source =
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 2), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 2)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 apply 'emo_mask'/1 (_v)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<49>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u32_set'/3 =
@@ -3726,7 +3809,7 @@ let rt_source =
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 4), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 4)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 apply 'emo_mask'/1 (_v)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<51>(8,1,'integer',['unsigned'|['big']]),#<50>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_bytes_u64_set'/3 =
@@ -3746,7 +3829,7 @@ let rt_source =
 		#<call 'binary':'part'(_b, call 'erlang':'+'(_i, 8), call 'erlang':'-'(call 'erlang':'byte_size'(_b), call 'erlang':'+'(_i, 8)))>('all',8,'binary',['unsigned'|['big']])}#)
 		 apply 'emo_mask'/1 (_v)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<117>(8,1,'integer',['unsigned'|['big']]),#<54>(8,1,'integer',['unsigned'|['big']]),#<52>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_str_to_bytes'/1 =
@@ -3761,7 +3844,7 @@ let rt_source =
 	  <{'emo_bytes', _k}> when 'true' ->
 	      apply 'emo_cell_get'/1 (_k)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_bytes', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<116>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 %% String.substring(start, length): in-bounds only, the same range
@@ -4093,7 +4176,7 @@ let rt_source =
 		       do apply 'emo_list_bump'/2 (_k, 1)
 			  _l
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_push_back'/2 =
@@ -4108,7 +4191,7 @@ let rt_source =
 		    do apply 'emo_list_bump'/2 (_k, 1)
 		       _l
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<98>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<107>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_pop_front'/1 =
@@ -4131,7 +4214,7 @@ let rt_source =
 				_v
 	      end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<102>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_pop_back'/1 =
@@ -4154,7 +4237,7 @@ let rt_source =
 				_v
 	      end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<98>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<99>(8,1,'integer',['unsigned'|['big']]),#<107>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_len'/1 =
@@ -4163,7 +4246,7 @@ let rt_source =
 	  <{'emo_list', _k}> when 'true' ->
 	      apply 'emo_list_row'/2 (_k, 'n')
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_list', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_list_to_str'/1 =
@@ -4202,7 +4285,7 @@ let rt_source =
 		      (apply 'emo_cells_table'/0 (), {{_k, 'n'}, call 'erlang':'+'(_n, 1)})
 		    _b
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_builder', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<112>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_builder_row'/2 =
@@ -4228,7 +4311,7 @@ let rt_source =
 	      apply 'emo_builder_walk'/3
 		(_k, 0, apply 'emo_builder_row'/2 (_k, 'n'))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_builder', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<116>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<121>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_builder_len'/1 =
@@ -4237,7 +4320,7 @@ let rt_source =
 	  <{'emo_builder', _k}> when 'true' ->
 	      apply 'emo_builder_row'/2 (_k, 'n')
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_builder', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_builder_get'/2 =
@@ -4266,7 +4349,7 @@ let rt_source =
 		       call 'erlang':'error'({'emo_builder_index', _i, _n})
 		 end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_builder', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_map_key'/1 =
@@ -4349,7 +4432,7 @@ let rt_source =
 				_m
 		 end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<115>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_map_get'/2 =
@@ -4369,7 +4452,7 @@ let rt_source =
 			    77, 97, 112])})
 	      end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<103>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_map_has'/2 =
@@ -4382,7 +4465,7 @@ let rt_source =
 		'error' when 'true' -> 'false'
 	      end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 %% One walk over the order rows with two cursors: the removed key's
@@ -4436,7 +4519,7 @@ let rt_source =
 				_m
 		 end
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<114>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<109>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<118>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_map_order'/3 =
@@ -4456,7 +4539,7 @@ let rt_source =
 	      apply 'emo_array_lit'/1
 		(apply 'emo_map_order'/3 (_k, 0, apply 'emo_map_count'/1 (_k)))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<107>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<121>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_map_values_walk'/3 =
@@ -4484,7 +4567,7 @@ let rt_source =
 		(apply 'emo_map_values_walk'/3
 		   (_k, 0, apply 'emo_map_count'/1 (_k)))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<118>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_map_length'/1 =
@@ -4493,7 +4576,7 @@ let rt_source =
 	  <{'emo_map', _k}> when 'true' ->
 	      apply 'emo_map_count'/1 (_k)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_map_equal'/2 =
@@ -4550,7 +4633,7 @@ let rt_source =
 		      (_k, 0, apply 'emo_map_count'/1 (_k)),
 		    _k, 1))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_map', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<116>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<95>(8,1,'integer',['unsigned'|['big']]),#<115>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_map_str_walk'/3 =
@@ -5605,7 +5688,7 @@ let rt_source =
 	      call 'ets':'lookup_element'
 		(apply 'emo_cells_table'/0 (), {_k, 'n'}, 2)
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_array', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<108>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_array_elem'/2 =
@@ -5650,7 +5733,7 @@ let rt_source =
 			   {{_k2, 'n'}, call 'erlang':'+'(_len, 1)})
 		 {'emo_array', _k2}
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_array', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<97>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<112>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<100>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_array_copy_walk'/4 =
@@ -5701,7 +5784,7 @@ let rt_source =
 		   (fun (_u, _v) -> apply 'emo_sort_le'/2 (_u, _v),
 		     apply 'emo_array_elems'/1 (_a)))
 	  <_other> when 'true' ->
-	      call 'erlang':'error'({'emo_no_array', _other})
+	      apply 'emo_no_method'/2 (_other, #{#<115>(8,1,'integer',['unsigned'|['big']]),#<111>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']])}#)
 	end
 
 'emo_array_elems'/1 =
@@ -6306,8 +6389,13 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
     (body_wrapper ~on_exit:"apply 'emo_root_exit'/0 ()"
        ~on_error:
          "\n\
+          \t  <{'emo_raise', _er}> when 'true' ->\n\
+          \t      call 'erlang':'throw'({'emo_raise', _er})\n\
           \t  <{'emo_runtime_error', _msg}> when 'true' ->\n\
-          \t      apply 'emo_runtime_fail'/1 (_msg)"
+          \t      apply 'emo_runtime_fail'/1 (_msg)\n\
+          \t  <_T5> when 'true' ->\n\
+          \t      apply 'emo_runtime_fail'/1\n\
+          \t\t(apply 'emo_refusal_text'/1 (_T5))"
        body);
   put env "\nend\n";
   Buffer.contents buf
