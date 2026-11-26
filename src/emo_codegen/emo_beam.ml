@@ -1269,7 +1269,7 @@ and spawn_registered env (call_text : string) : unit =
   let self = fresh_var env "_spawnself" in
   put env (Printf.sprintf "let <%s> = apply 'emo_pid_next'/0 ()\n" n);
   put env (Printf.sprintf "in let <%s> =\n" pid);
-  put env "call 'erlang':'spawn'(fun () -> ";
+  put env "apply 'emo_spawn_and_reg'/1 (fun () -> ";
   let saved = env.local_map in
   env.local_map <- [];
   put env (Printf.sprintf "let <%s> = call 'erlang':'self'()\nin " self);
@@ -1669,12 +1669,38 @@ and stmt env (s : Emo_ir.stmt) : unit =
          keys. (A guard runs before the lets, so a guard dereferencing
          a sent Bytes's methods stays in the cannot-cross class's
          shadow — guards read patterns, not buffers, in practice.) *)
-      put env "receive\n";
+      (* the gate is one top-level function so the poll can re-enter
+         it: its parameters carry every binding live at the receive
+         (the loop continuations' threading), because the hoisted body
+         leaves this function's scope *)
+      let rec live_uniq acc = function
+        | [] -> List.rev acc
+        | name :: tl ->
+            if List.mem name acc || temp_key name || List.mem name tl then
+              live_uniq acc tl
+            else live_uniq (name :: acc) tl
+      in
+      let live = live_uniq [] (List.map fst env.local_map) in
+      (* saved before the parameters are minted: fresh_var pushes its
+         name onto the map, and the restore below must answer the
+         enclosing function's own bindings, not the gate's *)
       let saved = env.local_map in
+      let param_of = List.map (fun name -> (name, fresh_var env name)) live in
+      let n3 = env.fresh + 1 in
+      env.fresh <- n3;
+      let recv_gate = Printf.sprintf "'__recv_gate_%d'" n3 in
+      let before_gate = Buffer.length env.buf in
+      put env
+        (Printf.sprintf "%s/%d =\n    fun (_dlref%s) ->\n" recv_gate
+           (1 + List.length param_of)
+           (String.concat "" (List.map (fun (_, v) -> ", " ^ v) param_of)));
+      put env "receive\n";
+      env.local_map <- param_of;
       List.iter
         (fun b ->
-          (* each branch from the receive's own scope, as the `if`'s arms *)
-          env.local_map <- saved;
+          (* each branch from the gate's own parameters, as the `if`'s
+             arms *)
+          env.local_map <- param_of;
           put env "  <";
           emit_pattern env b.Emo_ir.pattern;
           put env "> ";
@@ -1684,6 +1710,7 @@ and stmt env (s : Emo_ir.stmt) : unit =
               guard_expr env g;
               put env " ->\n"
           | None -> put env "when 'true' ->\n");
+          put env "do apply 'emo_blocked_unmark'/1 (call 'erlang':'self'()) ";
           List.iter
             (fun name ->
               match List.assoc_opt name env.local_map with
@@ -1698,7 +1725,59 @@ and stmt env (s : Emo_ir.stmt) : unit =
           put env "\n")
         branches;
       env.local_map <- saved;
-      put env "after 'infinity' ->\n    primop 'recv_wait'()"
+      (* the mark persists through the wait: it goes down only at a
+         matching delivery (the send's unmark), a consumed branch (the
+         door's unmark), or the process's exit (emo_unreg). The poll's
+         false arm therefore re-enters the gate without unmarking —
+         the re-entry rescans the mailbox first, so a message that
+         landed in the wait is consumed, never declared dead. The
+         recursion rides the gate's own parameters. *)
+      put env
+        "after 1 ->\n\
+        \    case apply 'emo_blocked_mark'/0 () of\n\
+         \t  <'true'> when 'true' -> {'emo_deadlock', _dlref, call \
+         'ets':'info'('emo_blocked', 'size')}\n\
+         \t  <'false'> when 'true' -> ";
+      put env
+        (Printf.sprintf "apply %s/%d (_dlref%s)" recv_gate
+           (1 + List.length param_of)
+           (String.concat "" (List.map (fun (_, v) -> ", " ^ v) param_of)));
+      put env "\n\t     end";
+      (* the gate's slice joins the loop functions at the top level; the
+         statement's own position binds the deadlock ref, tail-calls the
+         gate, and raises the E3012 in plain statement context — the
+         operator doors' proven shape, never inside the receive's
+         after-arm *)
+      let gate_slice =
+        Buffer.sub env.buf before_gate (Buffer.length env.buf - before_gate)
+      in
+      Buffer.truncate env.buf before_gate;
+      Buffer.add_string env.loops_buf gate_slice;
+      Buffer.add_string env.loops_buf "\n\n";
+      put env
+        (Printf.sprintf
+           "let <_dlref> = call 'erlang':'make_ref'()\n\
+            in let <_recv_r> = apply %s/%d (_dlref%s)\n\
+            in case _recv_r of\n\
+            \t  <{'emo_deadlock', _r2, _n}> when call 'erlang':'=:='(_r2, \
+            _dlref) ->\n\
+            \t      apply 'emo_runtime_fail'/1\n\
+            \t\t(call 'erlang':'iolist_to_binary'\n\
+            \t\t\t([\"all \",\n\
+            \t\t\t  call 'erlang':'integer_to_binary'(_n),\n\
+            \t\t\t  \" waiting processes are blocked; no message will ever \
+            arrive\"]))\n\
+            \t  <_other> when 'true' -> 'ok'\n\
+            end"
+           recv_gate
+           (1 + List.length param_of)
+           (String.concat ""
+              (List.map
+                 (fun name ->
+                   match List.assoc_opt name env.local_map with
+                   | Some v -> ", " ^ v
+                   | None -> failwith ("beam: unbound recv var " ^ name))
+                 live)))
   | Emo_ir.Raise x -> (
       (* an ordinary Emo exception: a throw the entry reports. The
          raised value is the exception object; Exception.new's object
@@ -3212,9 +3291,7 @@ let rt_source =
 	      let <_bin> = apply 'emo_cell_get'/1 (_k)
 	      in let <_pid> =
 		      call 'erlang':'spawn'(fun () ->
-			  do
-			      apply 'emo_spawn_reg'/1 (call 'erlang':'self'())
-			      apply 'emo_atomic_holder'/1 (_bin))
+			  apply 'emo_atomic_holder'/1 (_bin))
 	      in {'emo_atomic_bytes', _pid}
 	  <_other> when 'true' ->
 	      call 'erlang':'error'({'emo_no_atomic', _other})
@@ -3231,9 +3308,11 @@ let rt_source =
 %% the calling process, and a load or exchange wraps the holder's
 %% answer into this process's own Bytes value — so the cell's
 %% operations carry byte content across process boundaries, the one
-%% shape on this target that does. The holder rides the root's child
-%% table ('emo_spawn_reg'), so the cell lives exactly as long as the
-%% program does.
+%% shape on this target that does. The holder parks in its own
+%% hand-written receive, outside the registry and the deadlock poll's
+%% count alike — a row in the table would keep the all-blocked sizes
+%% apart forever, and it runs no Emo code to deserve one. The
+%% program's end halts the VM, which is what reaps it.
 
 'emo_atomic_holder'/1 =
     fun (_bin) ->
@@ -5815,7 +5894,57 @@ let rt_source =
 
 'emo_unreg'/1 =
     fun (_pid) ->
-	do call 'ets':'delete'('emo_procs', _pid) _pid
+	do call 'ets':'delete'('emo_procs', _pid)
+	   apply 'emo_blocked_unmark'/1 (_pid)
+
+%% The root's own exit: its row leaves the registry first, so the
+%%   kill sweep spares the process running it.
+'emo_root_exit'/0 =
+    fun () ->
+	do apply 'emo_unreg'/1 (call 'erlang':'self'())
+	   apply 'emo_kill_spawned'/0 ()
+
+%% ---- The deadlock gate (the scheduler's E3012) ----
+%%
+%%   A receive whose scan matches nothing parks 1 ms and marks the
+%%   process in the emo_blocked set (emo_blocked_mark answers the
+%%   all-blocked flag: the set's size against emo_procs's — every
+%%   live process parked with nothing left to wake any of them). The
+%%   poll returns the flag to the statement site, which raises
+%%   through the runtime-error door in plain statement context —
+%%   `runtime error: all N waiting processes are blocked; no message
+%%   will ever arrive`, exit 70, the scheduler's E3012. A send clears
+%%   the receiver's mark at delivery (a send makes the receiver
+%%   runnable, the interpreter's own rule), so a message already in
+%%   flight never lets the sizes meet. The spawn registers the child
+%%   in the parent, before the parent can park.
+
+'emo_spawn_and_reg'/1 =
+    fun (_entry_fun) ->
+	let <_pid> = call 'erlang':'spawn'(_entry_fun)
+	in do call 'ets':'insert'('emo_procs', {_pid}) _pid
+
+'emo_blocked_table'/0 =
+    fun () ->
+	case call 'ets':'whereis'('emo_blocked') of
+	  <'undefined'> when 'true' ->
+	      call 'ets':'new'('emo_blocked', ['named_table', 'public', 'set'])
+	  <_t> when 'true' -> _t
+	end
+
+'emo_blocked_mark'/0 =
+    fun () ->
+	let <_t> = apply 'emo_blocked_table'/0 ()
+	in do call 'ets':'insert'(_t, {call 'erlang':'self'()})
+	   call 'erlang':'=:='
+	     (call 'ets':'info'('emo_procs', 'size'),
+	      call 'ets':'info'('emo_blocked', 'size'))
+
+'emo_blocked_unmark'/1 =
+    fun (_pid) ->
+	do call 'ets':'delete'
+	       (apply 'emo_blocked_table'/0 (), _pid)
+	   _pid
 
 %% ---- The pid ----
 %%
@@ -5869,7 +5998,9 @@ let rt_source =
     fun (_to, _m) ->
 	case _to of
 	  <{'emo_pid', _n, _p}> when 'true' ->
-	      call 'erlang':'!'(_p, _m)
+	      do call 'erlang':'!'(_p, _m)
+		 do call 'ets':'delete'
+		      (apply 'emo_blocked_table'/0 (), _p) _m
 	  <_other> when 'true' ->
 	      call 'erlang':'!'(_other, _m)
 	end
@@ -6139,9 +6270,11 @@ let emit ~(module_name : string) (program : Emo_ir.program) : string =
   put env "    fun () ->\n";
   put env "        do apply 'emo_root_table'/0 ()\n";
   put env "        do apply 'emo_cells_table'/0 ()\n";
+  put env "        do apply 'emo_blocked_table'/0 ()\n";
   put env "        do apply 'emo_pid_reg'/1 (1)\n";
+  put env "        do apply 'emo_spawn_reg'/1 (call 'erlang':'self'())\n";
   put env
-    (body_wrapper ~on_exit:"apply 'emo_kill_spawned'/0 ()"
+    (body_wrapper ~on_exit:"apply 'emo_root_exit'/0 ()"
        ~on_error:
          "\n\
           \t  <{'emo_runtime_error', _msg}> when 'true' ->\n\

@@ -14,10 +14,9 @@ Item 4's (b) closed the same day and item 9 with them; its (c) was refuted
 strip against a corpus chain with a different starting state); its (a) is
 closed for the crypto engines and open again for the desktop corpus, whose
 gate faults on a `Bytes` crossing a spawn/exec boundary. Item 5 closed the
-same day (the beam's own deadlock end stays open and keeps the number).
+same day, and its beam deadlock end (E3012) closed with it on 2026-11-26.
 Item 10 was found while closing item 9.
-**Open: 4 (a, the desktop edge), 5 (the beam's deadlock end), 6, 7, 8,
-10.**
+**Open: 4 (a, the desktop edge), 6, 7, 8, 10.**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -184,7 +183,7 @@ that repaints the strip first), a corpus addition rather than a fix.
 hover parked on the metal, the walk's strip one digest off the corpus's, the
 byte the carve and the canvas disagree on unfound."
 
-## 5. The rest of the Pid family, off the beam — closed 2026-11-25 (the beam's own deadlock end stays open)
+## 5. The rest of the Pid family, off the beam — closed 2026-11-25 (the beam's deadlock end closed 2026-11-26)
 
 Found 2026-11-25, while checking item 1's fix against every hosted target
 with one probe. None of it is the beam's rendering, and none of it is pinned.
@@ -243,30 +242,54 @@ through the runtime's `emo_closure_callN`, 4 args at most). The
 spawning-a-first-class-block refusal and its doubled word retire with the
 lowering.
 
-**The beam's one open end — an all-blocked program waits forever — stayed
-open, and its fix was attempted and rolled back.** The design (recorded for
-the next round): the receive sits in a hoisted gate function the statement
-tail-calls; a scan with no matching message parks 1 ms, marks the process
-in the `emo_blocked` set, and checks — when the set's size reaches
-`emo_procs`'s, raise `{'emo_runtime_error', Bin}` through the runtime-error
-door (`runtime error: all N waiting processes are blocked; no message will
-ever arrive`, exit 70, the beam's own envelope); a matching message runs
-the branch body, whose door unmarks. The spawn registers the child in the
-parent (via `emo_spawn_and_reg`, before the parent can park), the tables
-are created at `main` (a simultaneous first park double-created
-`emo_blocked` and badarg'd), and the atomic holder stops registering as an
-Emo process (it parks forever and would inflate the live count). The
-rolled-back build's remaining wall: the gate's raise — `erlang:raise/2`
-answers `undef` (the doors use `erlang:error/1`; switching did not help) —
-raised from inside the polled gate's after-arm, the parked process *hangs
-the VM* instead of crashing, and the mechanism needs its own round with a
-real Erlang debugging session. The pieces live in
-`protected/tmp/20261125-*emo_beam-gate-error1.ml`.
+**The beam's deadlock end closed 2026-11-26, on the second attempt.** The
+rolled-back first build raised from inside the polled gate's after-arm and
+hung the VM (`erlang:raise/2` answers `undef`; the doors use
+`erlang:error/1`, and switching did not help — the pieces live in
+`protected/tmp/20261125-*emo_beam-gate-error1.ml`). The landed gate never
+raises from the after-arm. The receive lowers to one hoisted gate function
+(`__recv_gate_N`, its parameters carrying every binding live at the
+receive, the loop continuations' threading); a scan with no matching
+message parks 1 ms, marks the process in the `emo_blocked` set, and — when
+the set's size reaches `emo_procs`'s — answers `{'emo_deadlock', Ref, N}`,
+with N read at the poll (the frozen total: equality means every registered
+process is parked or in the poll's own window, so nothing can run, send,
+or exit and the count cannot move). The statement site matches the tuple
+against its own `make_ref` and calls `emo_runtime_fail` **directly** —
+print + `halt(70)` at the first detector, whichever process it is. The
+envelope route (raise, let `main`'s arm print) loses twice: a child
+detector dies unregistered before the root can poll, shrinking the
+sentence's count, and the raise itself was the first build's hang. The
+mark persists through the wait and comes down only at a matching delivery
+(`emo_send` unmarks the receiver — a send makes the receiver runnable, the
+interpreter's own rule), a consumed branch (the door's unmark), or the
+process's exit (`emo_unreg`); the false arm re-enters the gate without
+unmarking, and the re-entry rescans the mailbox first. The spawn registers
+the child in the parent (`emo_spawn_and_reg`, before the parent can park),
+the tables are created at `main` (a simultaneous first park double-created
+`emo_blocked` and badarg'd), the root registers itself and unregisters on
+its way out (`emo_root_exit`, so the kill sweep spares the process running
+it), and the atomic holder keeps its old no-registration (it parks forever
+in a hand-written receive; a row would keep the sizes apart forever) while
+its spawn drops the dead `self()` that drew erlc's "no effect" warning on
+every beam build.
 
-**Open end.** The beam's all-blocked deadlock (E3012) is the number's one
-open piece: the interpreter raises `error[E3012]: all 1 waiting processes
-are blocked; no message will ever arrive` (exit 70) and the beam waits
-forever.
+Core Erlang grammar facts the landing pinned: bare parentheses are not a
+form (every `(case … end)` in the working corpus is an `apply`/`call`
+argument list), an `apply` to a module-level function needs its arity
+label (`apply 'f'/2 (…)` — the bare name is letrec-local), and a `receive`
+carries no `end` while a `case` does. `fresh_var` pushes its name onto the
+local map as a side effect, so the gate's enclosing-map snapshot must be
+taken before the gate's parameters are minted.
+
+Verified: a lone parked process says `runtime error: all 1 waiting
+processes are blocked; no message will ever arrive`, exit 70 (the
+interpreter's E3012 sentence in the beam's own envelope); three parked
+processes say 3; the ping-pong probe (`<pid 1>`, `<pid 2>`, `false`,
+`true`, `ping`) is byte-identical with the interpreter five runs over; the
+`processes` and `atomic_cell` examples are byte-identical with their
+expected files; a program with one child spinning forever never hears the
+sentence.
 
 ## 6. An entry binding that a const's initializer reads lowers to a type name
 
