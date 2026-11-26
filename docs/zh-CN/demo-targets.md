@@ -56,7 +56,7 @@ riscv64:    ok (QEMU emulator version 11.1.2)
 | `typescript` | `emo build --target typescript main.emo -o demo-ts` | 单文件 `demo-ts.ts` | `node demo-ts.ts` |
 | `browser` | `emo build --target browser main.emo -o app` | 单文件 `app.js` | 页面里 `<script src="app.js">` |
 | `wasm` | `emo build --target wasm main.emo -o demo-wasm` | `demo-wasm.wasm` + `.wat` | 提供 `emo` imports 的 JS 宿主(`emo run --target wasm` 用随编译器走的宿主在 Node 下运行) |
-| `beam` | `emo build --target beam main.emo -o demo` | `demo.core` + `demo.beam` | `erl -noshell -pa . -eval 'demo:main(), ...'` |
+| `beam` | `emo build --target beam main.emo -o demo` | `demo.core` + `demo.beam` | `erl -noshell -pa . -eval 'demo:main(), ...'` 或 `emo run --target beam` |
 | `riscv64` | `emo build --target riscv64 main.emo -o demo-riscv` | freestanding ELF | `qemu-system-riscv64 ... -kernel` 或 `emo run --target riscv64` |
 
 ## 解释器
@@ -69,7 +69,7 @@ ok test.greet.test_greet
 1 test, 1 passed
 ```
 
-`emo run` 直接对模块树求值，不产生产物。文件之后的词就是程序自己的 `os.argv`——`emo run main.emo x y` 回答 `["main.emo"; "x"; "y"]`,argv[0] 是文件名,与编译产物 argv[0] 是它被调用的路径同理(开头的 `--` 是选项分隔符,会被吃掉);`--target` 的产物拿不到参数。`emo build` 的 `--target` 不是运行方式；`emo run --target` 今天只支持 `riscv64`。
+`emo run` 直接对模块树求值，不产生产物。文件之后的词就是程序自己的 `os.argv`——`emo run main.emo x y` 回答 `["main.emo"; "x"; "y"]`,argv[0] 是文件名,与编译产物 argv[0] 是它被调用的路径同理(开头的 `--` 是选项分隔符,会被吃掉);`--target` 的产物拿不到参数。`emo build` 的 `--target` 不是运行方式；`emo run --target` 支持 `riscv64`、`wasm` 和 `beam`。
 
 有一个标志属于解释器自己的运行:`emo run --curfew SECONDS` 给这次求值一个墙钟截止。程序经标准库的 `time` 包读时钟,但失控的程序不必配合——所以结束它的截止住在这里、住在工具链里:求值器每 65,536 步检查一次截止,过了截止,运行以退出码 124(与 `timeout(1)` 同一个数)结束,stderr 带着裁定。`--target` 的产物不使用 curfew,而 `--curfew` 与 `--target` 同时给出会被拒绝。这个标志为 playground([`projects/emo-playground`](../../projects/emo-playground))而存在——它的服务器给每次提交一个;其余场景不被要求使用它。
 
@@ -267,6 +267,14 @@ Hello, world!
 ```
 
 `-pa .` 把当前目录加入 code path（所以 `demo.beam` 要在那里），`-noshell` 不进入交互 shell，`erlang:halt(0)` 显式结束 VM——没有它 `erl` 会一直挂着。BEAM 金测用的就是这条命令。
+
+也可以一条命令构建并运行：
+
+```console
+$ emo run --target beam main.emo
+```
+
+它把模块写到 `.emo-build/emo_run.beam`（模块 atom 是 `emo_run`），然后执行上面的 `erl` 命令。
 
 - 产物就是标准 `.beam`，可以直接放进 release，或被其他 Erlang/Elixir 模块调用 `demo:main()`。CLI 不生成 escript 或 release。
 - Emo 的进程模型映射到 BEAM 原生进程（`do` → `spawn`、`<-` → `!`、`receive` → selective receive），所以这个 target 上的并发是真并发。`foreign def` 和 net/http 包目前会被拒绝；纯 Emo 的标准库包（包括 `slog`）都能跑。
