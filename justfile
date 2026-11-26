@@ -8,27 +8,30 @@
 default:
     @just --list
 
-# Build the emo CLI in the release profile — the single binary every
-# other recipe installs or packages.
+# Build the two executables in the release profile — `emo`, the CLI
+# every other recipe installs or packages, and `emo-lsp`, the language
+# server the editor integrations drive.
 #
-# build: compile the release binary
+# build: compile the release binaries
 build:
-    dune build --profile release src/emo_cli/emo.exe
+    dune build --profile release src/emo_cli/emo.exe bin/emo_lsp_bin.exe
 
-# Install the release binary into PREFIX (default ~/.local/bin) as a
-# symlink to this tree's build output — the dev install: every `dune
-# build` here refreshes the installed `emo` immediately, no reinstall.
-# The link rides the tree — moving or removing this checkout (or
-# `dune clean`) breaks `emo` until the next build here. The binary
-# itself is still the standalone c-target build, where `emo build`
-# afterwards needs only the system cc. Verify with `emo doctor`.
+# Install both release binaries into PREFIX (default ~/.local/bin) as
+# symlinks to this tree's build output — the dev install: every `dune
+# build` here refreshes the installed `emo` and `emo-lsp` immediately,
+# no reinstall. The links ride the tree — moving or removing this
+# checkout (or `dune clean`) breaks the pair until the next build here.
+# The `emo` binary itself is still the standalone c-target build, where
+# `emo build` afterwards needs only the system cc. Verify with
+# `emo doctor`.
 #
-# install: install the release binary as a symlink (PREFIX, default ~/.local/bin)
+# install: install the release binaries as symlinks (PREFIX, default ~/.local/bin)
 install PREFIX="$HOME/.local/bin":
-    dune build --profile release src/emo_cli/emo.exe
+    dune build --profile release src/emo_cli/emo.exe bin/emo_lsp_bin.exe
     mkdir -p {{PREFIX}}
     ln -sfn "{{justfile_directory()}}/_build/default/src/emo_cli/emo.exe" "{{PREFIX}}/emo"
-    @echo "linked {{PREFIX}}/emo -> _build/default/src/emo_cli/emo.exe — verify with: emo doctor"
+    ln -sfn "{{justfile_directory()}}/_build/default/bin/emo_lsp_bin.exe" "{{PREFIX}}/emo-lsp"
+    @echo "linked {{PREFIX}}/emo -> _build/default/src/emo_cli/emo.exe and {{PREFIX}}/emo-lsp -> _build/default/bin/emo_lsp_bin.exe — verify with: emo doctor"
 
 # Build and install through the opam switch instead — the source
 # install, which also brings the ocaml compilation target.
@@ -41,9 +44,9 @@ install-dev:
 # Remove the dev install (the install-dev route is uninstalled
 # through opam).
 #
-# uninstall: remove the installed emo link
+# uninstall: remove the installed emo and emo-lsp links
 uninstall PREFIX="$HOME/.local/bin":
-    rm -f {{PREFIX}}/emo
+    rm -f {{PREFIX}}/emo {{PREFIX}}/emo-lsp
 
 # Assemble the distributable release archive for this platform into
 # dist/ — one platform, for quick checks; the release itself builds

@@ -14,6 +14,9 @@ dune build bin/emo_lsp_bin.exe        # produces _build/default/bin/emo_lsp_bin.
 dune install                          # installs `emo-lsp` alongside `emo`
 ```
 
+`just install` reaches the same pair as symlinks into this checkout, alongside
+the compiler — see [toolchain.md](toolchain.md).
+
 `emo-lsp` speaks LSP over stdio and is protocol-compatible with any LSP
 client; the VS Code extension is one of them.
 

@@ -13,6 +13,9 @@ dune build bin/emo_lsp_bin.exe        # 产出 _build/default/bin/emo_lsp_bin.ex
 dune install                          # 将 `emo-lsp` 与 `emo` 一同安装
 ```
 
+`just install` 以指向本代码树的符号链接达到同样的效果,与编译器并排安装——
+见 [toolchain.md](toolchain.md)。
+
 `emo-lsp` 通过 stdio 使用 LSP，与任何 LSP 客户端兼容；VS Code 扩展只是其中
 之一。
 
