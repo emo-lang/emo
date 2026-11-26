@@ -731,6 +731,66 @@ let stmt_tests =
     tc "the data map must stay on the `:raise`'s line" (fun () ->
         let diagnostic = program_err ":raise \"bug\",\n{}" in
         Alcotest.(check string) "code" "E2023" (code_of diagnostic));
+    tc "the when sugar rewrites to the two-arm case" (fun () ->
+        let sugared =
+          List.hd
+            (parse_program
+               {|:when f() {
+  data then {
+    return data
+  }
+}|})
+        in
+        let written =
+          List.hd
+            (parse_program
+               {|case f() {
+  (R.ok, data) then {
+    return data
+  }
+  (R.error, _when_why) then {
+    return (R.error, _when_why)
+  }
+}|})
+        in
+        Alcotest.(check string)
+          "tree" (render pp_item written) (render pp_item sugared));
+    tc "the when sugar's error binding sidesteps a used name" (fun () ->
+        let sugared =
+          List.hd
+            (parse_program
+               {|:when f() {
+  data then {
+    return (R.error, _when_why)
+  }
+}|})
+        in
+        let written =
+          List.hd
+            (parse_program
+               {|case f() {
+  (R.ok, data) then {
+    return (R.error, _when_why)
+  }
+  (R.error, _when_why_1) then {
+    return (R.error, _when_why_1)
+  }
+}|})
+        in
+        Alcotest.(check string)
+          "tree" (render pp_item written) (render pp_item sugared));
+    tc "bare `:when` is rejected" (fun () ->
+        let diagnostic = program_err {|:when f() { }|} in
+        Alcotest.(check string) "code" "E2037" (code_of diagnostic));
+    tc "the when sugar takes one arm" (fun () ->
+        let diagnostic =
+          program_err
+            {|:when f() {
+  a then { return a }
+  b then { return b }
+}|}
+        in
+        Alcotest.(check string) "code" "E2037" (code_of diagnostic));
   ]
 
 let string_tests =

@@ -260,10 +260,10 @@ side (`@`) resolves the macro name in scope. The rules live in
 
 ## The sugar namespace
 
-The colon-plus-name forms (`:chain`, `:foreach`, `:raise`, and later sugar)
-are not reserved words at all: the colon pairs with an ordinary identifier —
-or with a keyword a sugar borrows, as `:raise` borrows `raise` — looked up
-in the compiler's sugar table. An unknown `:name` is a compile error, but the
+The colon-plus-name forms (`:chain`, `:foreach`, `:raise`, `:when`, and later
+sugar) are not reserved words at all: the colon pairs with an ordinary
+identifier — or with a keyword a sugar borrows, as `:raise` borrows `raise`
+and `:when` borrows `when` — looked up in the compiler's sugar table. An unknown `:name` is a compile error, but the
 words sugar forms use — `chain`, `from` — remain legal identifiers everywhere
 else. (`:chain`'s success body is written with `then`, the same reserved word
 that introduces every `case` and `receive` branch body.) See
