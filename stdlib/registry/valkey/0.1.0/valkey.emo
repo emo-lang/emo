@@ -656,9 +656,8 @@ def reply_shape(kind ReplyKind) String {
 }
 
 def string_reply(op String, result (R, Reply)) (R, String) {
-  case result {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, reply)  then {
+  :when result {
+    reply then {
       if reply.kind() == ReplyKind.rstring {
         return (R.ok, reply.as_string())
       }
@@ -668,9 +667,8 @@ def string_reply(op String, result (R, Reply)) (R, String) {
 }
 
 def int_reply(op String, result (R, Reply)) (R, Int64) {
-  case result {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, reply)  then {
+  :when result {
+    reply then {
       if reply.kind() == ReplyKind.rint {
         return (R.ok, reply.as_int())
       }
@@ -683,9 +681,8 @@ def int_reply(op String, result (R, Reply)) (R, Int64) {
 // is 1 or 0 — any other integer is a shape the door's contract does
 // not name.
 def bool_reply(op String, result (R, Reply)) (R, Bool) {
-  case result {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, reply)  then {
+  :when result {
+    reply then {
       if reply.kind() == ReplyKind.rint {
         const n = reply.as_int()
         if n == 1 {
@@ -702,9 +699,8 @@ def bool_reply(op String, result (R, Reply)) (R, Bool) {
 }
 
 def array_reply(op String, result (R, Reply)) (R, Array[Reply]) {
-  case result {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, reply)  then {
+  :when result {
+    reply then {
       if reply.kind() == ReplyKind.rarray {
         return (R.ok, reply.as_array())
       }
@@ -714,9 +710,8 @@ def array_reply(op String, result (R, Reply)) (R, Array[Reply]) {
 }
 
 def string_array_reply(op String, result (R, Reply)) (R, Array[String]) {
-  case result {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, reply)  then {
+  :when result {
+    reply then {
       if reply.kind() == ReplyKind.rarray {
         return strings_from(op, reply.as_array(), 0, [])
       }
@@ -739,9 +734,8 @@ def strings_from(op String, items Array[Reply], i Int64, acc Array[String]) (R, 
 // The HGETALL shape: fields and values alternating, so an odd length
 // is a shape the contract does not name.
 def pair_array_reply(op String, result (R, Reply)) (R, Array[(String, String)]) {
-  case result {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, reply)  then {
+  :when result {
+    reply then {
       if reply.kind() == ReplyKind.rarray {
         return pairs_from(op, reply.as_array(), 0, [])
       }
