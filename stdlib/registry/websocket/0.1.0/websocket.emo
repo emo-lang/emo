@@ -53,9 +53,8 @@ class Websocket {
   // One text message out. The client masks what she sends, the
   // server sends bare.
   def send_text(data String) (R, Websocket) {
-    case send_frame(self.conn, !self.server_side, op_text, data.to_bytes()) {
-      (R.error, why) then { return (R.error, why) }
-      (R.ok, _)      then { return (R.ok, self) }
+    :when send_frame(self.conn, !self.server_side, op_text, data.to_bytes()) {
+      _ then { return (R.ok, self) }
     }
   }
 
@@ -64,9 +63,8 @@ class Websocket {
   // pings answered, pongs skipped, a close answered — the answer to
   // this door is then the error value naming the end.
   def recv_message() (R, String) {
-    case next_data_frame(self) {
-      (R.error, why) then { return (R.error, why) }
-      (R.ok, first)  then {
+    :when next_data_frame(self) {
+      first then {
         if first.fin {
           return (R.ok, first.payload.to_string())
         }
@@ -87,12 +85,10 @@ class Websocket {
     const body = Bytes.new(2)
     body.set(0, 3)
     body.set(1, 232)
-    case send_frame(self.conn, !self.server_side, op_close, body) {
-      (R.error, why) then { return (R.error, why) }
-      (R.ok, _)      then {
-        case self.conn.close() {
-          (R.error, why) then { return (R.error, why) }
-          (R.ok, _)      then { return (R.ok, self) }
+    :when send_frame(self.conn, !self.server_side, op_close, body) {
+      _ then {
+        :when self.conn.close() {
+          _ then { return (R.ok, self) }
         }
       }
     }
@@ -125,12 +121,10 @@ def connect_either(host String, port Int64, path String, timeout Float64, verify
   if !path.starts_with("/") {
     raise Exception.new(message: "websocket: the path must start with `/`")
   }
-  case checked_timeout(timeout) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _)      then {
-      case net.connect(host, port, timeout) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, conn)   then { return dial(conn, host, port, path, timeout, verify) }
+  :when checked_timeout(timeout) {
+    _ then {
+      :when net.connect(host, port, timeout) {
+        conn then { return dial(conn, host, port, path, timeout, verify) }
       }
     }
   }
@@ -149,9 +143,8 @@ def dial(conn TcpConn, host String, port Int64, path String, timeout Float64, ve
     (R.error, why) then { return (R.error, "websocket: the handshake key needs entropy (" + why + ")") }
     (R.ok, key_bytes) then {
       const key = base64.encode(key_bytes.to_string())
-      case conn.write(handshake_request(path, host, port, key)) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, _)      then { return read_answer(conn, key, verify) }
+      :when conn.write(handshake_request(path, host, port, key)) {
+        _ then { return read_answer(conn, key, verify) }
       }
     }
   }
@@ -166,9 +159,8 @@ def handshake_request(path String, host String, port Int64, key String) String {
 // the peer speaks this protocol. The insecure dial walks the same
 // headers and skips only that check.
 def read_answer(conn TcpConn, key String, verify Bool) (R, Websocket) {
-  case conn.read_line() {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, line)   then {
+  :when conn.read_line() {
+    line then {
       if line == "" {
         return (R.error, "websocket: the peer hung up during the handshake")
       }
@@ -198,9 +190,8 @@ def read_accept_header(conn TcpConn, key String, seen Int64, accept String, veri
   if seen > 200 {
     return (R.error, "websocket: the handshake answer carries too many header lines")
   }
-  case conn.read_line() {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, line)   then {
+  :when conn.read_line() {
+    line then {
       if line == "" {
         if verify {
           if accept == "" {
@@ -240,16 +231,14 @@ def accept_for(key String) String {
 // the upgrade, name version 13, and carry the key the accept answer
 // is computed from; anything else is refused before any frame moves.
 def accept(conn TcpConn) (R, Websocket) {
-  case read_request_line(conn) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _)      then { return read_upgrade_headers(conn, 0, "", false, false) }
+  :when read_request_line(conn) {
+    _ then { return read_upgrade_headers(conn, 0, "", false, false) }
   }
 }
 
 def read_request_line(conn TcpConn) (R, Int64) {
-  case conn.read_line() {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, line)   then {
+  :when conn.read_line() {
+    line then {
       if line == "" {
         return (R.error, "websocket: the peer hung up before the handshake request")
       }
@@ -265,9 +254,8 @@ def read_upgrade_headers(conn TcpConn, seen Int64, key String, upgrade_ok Bool, 
   if seen > 200 {
     return (R.error, "websocket: the handshake request carries too many header lines")
   }
-  case conn.read_line() {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, line)   then {
+  :when conn.read_line() {
+    line then {
       if line == "" {
         if key == "" {
           return (R.error, "websocket: the handshake request carries no key")
@@ -278,9 +266,8 @@ def read_upgrade_headers(conn TcpConn, seen Int64, key String, upgrade_ok Bool, 
         if !version_ok {
           return (R.error, "websocket: the handshake request carries no version header")
         }
-        case conn.write(accept_answer(key)) {
-          (R.error, why) then { return (R.error, why) }
-          (R.ok, _)      then { return (R.ok, Websocket.new(conn: conn, server_side: true)) }
+        :when conn.write(accept_answer(key)) {
+          _ then { return (R.ok, Websocket.new(conn: conn, server_side: true)) }
         }
       }
       const lower = line.lower()
@@ -376,9 +363,8 @@ def frame_head(opcode Int64, n Int64, masked Bool) String {
 // refuses bare ones — the mask key sits between the length and the
 // payload, and the payload it names is unmasked on its way out.
 def recv_frame(ws Websocket) (R, Frame) {
-  case ws.conn.read_exactly(2) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, head)   then {
+  :when ws.conn.read_exactly(2) {
+    head then {
       const b = head.to_bytes()
       const first = b.get(0)
       const second = b.get(1)
@@ -391,9 +377,8 @@ def recv_frame(ws Websocket) (R, Frame) {
       if !peer_masked && ws.server_side {
         return (R.error, "websocket: the peer sent a bare frame — clients must mask")
       }
-      case read_length(ws.conn, second & 127) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, n)      then {
+      :when read_length(ws.conn, second & 127) {
+        n then {
           if peer_masked {
             return read_masked_payload(ws.conn, fin, opcode, n)
           }
@@ -409,17 +394,15 @@ def read_length(conn TcpConn, first Int64) (R, Int64) {
     return (R.ok, first)
   }
   if first == 126 {
-    case conn.read_exactly(2) {
-      (R.error, why) then { return (R.error, why) }
-      (R.ok, text)   then {
+    :when conn.read_exactly(2) {
+      text then {
         const b = text.to_bytes()
         return (R.ok, (b.get(0) << 8) + b.get(1))
       }
     }
   }
-  case conn.read_exactly(8) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, text)   then {
+  :when conn.read_exactly(8) {
+    text then {
       const b = text.to_bytes()
       var n = 0
       var i = 0
@@ -436,13 +419,11 @@ def read_length(conn TcpConn, first Int64) (R, Int64) {
 }
 
 def read_masked_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame) {
-  case conn.read_exactly(4) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, key_text) then {
+  :when conn.read_exactly(4) {
+    key_text then {
       const mask = key_text.to_bytes()
-      case conn.read_exactly(n) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, text)   then {
+      :when conn.read_exactly(n) {
+        text then {
           const raw = text.to_bytes()
           const out = Bytes.new(n)
           var i = 0
@@ -458,9 +439,8 @@ def read_masked_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame
 }
 
 def read_bare_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame) {
-  case conn.read_exactly(n) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, text)   then {
+  :when conn.read_exactly(n) {
+    text then {
       return (R.ok, Frame.new(opcode: opcode, fin: fin, payload: text.to_bytes()))
     }
   }
@@ -471,9 +451,8 @@ def read_bare_payload(conn TcpConn, fin Bool, opcode Int64, n Int64) (R, Frame) 
 // an unsolicited pong is skipped, and a close is answered, the socket
 // closed, and the end named in the reason.
 def next_data_frame(ws Websocket) (R, Frame) {
-  case recv_frame(ws) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, frame)  then {
+  :when recv_frame(ws) {
+    frame then {
       const opcode = frame.opcode
       if opcode == op_ping {
         return answer_ping(ws, frame)
@@ -493,9 +472,8 @@ def next_data_frame(ws Websocket) (R, Frame) {
 }
 
 def answer_ping(ws Websocket, frame Frame) (R, Frame) {
-  case send_frame(ws.conn, !ws.server_side, op_pong, frame.payload) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, _)      then { return next_data_frame(ws) }
+  :when send_frame(ws.conn, !ws.server_side, op_pong, frame.payload) {
+    _ then { return next_data_frame(ws) }
   }
 }
 
@@ -521,9 +499,8 @@ def assemble(ws Websocket, first Frame, count Int64) (R, String) {
   if count > 4096 {
     return (R.error, "websocket: a message fragmented into too many pieces")
   }
-  case next_data_frame(ws) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, frame)  then {
+  :when next_data_frame(ws) {
+    frame then {
       if frame.opcode != op_continuation {
         return (R.error, "websocket: a fragment was interrupted by a new message")
       }
