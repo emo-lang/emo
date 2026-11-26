@@ -8809,6 +8809,85 @@ emo_i64_to_string:
     addi sp, sp, 80
     ret
 
+# emo_kv_string: a0 = a dynamic word; a0 = its display for the Map's
+# entries — the kinds through emo_to_string, a String quoted and
+# escaped (the backslash and the double quote) the way the
+# interpreter's %S shows it.
+    .globl emo_kv_string
+emo_kv_string:
+    addi sp, sp, -32
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    andi t0, a0, 31
+    li t1, 4
+    beq t0, t1, .Lkv_quote
+    call emo_to_string
+    j .Lkv_out
+.Lkv_quote:
+    andi s0, a0, -32
+    ld s1, 8(s0)            # the length
+    addi t1, s0, 16         # the bytes
+    li t2, 0                # the index
+    li s2, 0                # the escapes
+.Lkv_count:
+    bge t2, s1, .Lkv_alloc
+    add t3, t1, t2
+    lbu t3, 0(t3)
+    li t4, 34
+    beq t3, t4, .Lkv_hit
+    li t4, 92
+    beq t3, t4, .Lkv_hit
+    j .Lkv_step
+.Lkv_hit:
+    addi s2, s2, 1
+.Lkv_step:
+    addi t2, t2, 1
+    j .Lkv_count
+.Lkv_alloc:
+    addi a0, s1, 2
+    add a0, a0, s2
+    call emo_alloc_string
+    mv t4, a0
+    andi t4, t4, -32
+    addi t5, t4, 16         # the write cursor
+    li t6, 34
+    sb t6, 0(t5)
+    addi t5, t5, 1
+    li t2, 0
+.Lkv_write:
+    bge t2, s1, .Lkv_tail
+    add t3, s0, 16
+    add t3, t3, t2
+    lbu t3, 0(t3)
+    li a2, 34
+    beq t3, a2, .Lkv_esc
+    li a2, 92
+    beq t3, a2, .Lkv_esc
+    j .Lkv_put
+.Lkv_esc:
+    li a2, 92
+    sb a2, 0(t5)
+    addi t5, t5, 1
+.Lkv_put:
+    sb t3, 0(t5)
+    addi t5, t5, 1
+    addi t2, t2, 1
+    j .Lkv_write
+.Lkv_tail:
+    li t6, 34
+    sb t6, 0(t5)
+    mv a0, t4
+    ori a0, a0, 4           # the String word
+.Lkv_out:
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    addi sp, sp, 32
+    ret
+
 # emo_to_string: a0 = any dynamic value; a0 = a String. The dispatch a
 # String part or a println argument rides.
     .globl emo_to_string
@@ -8833,6 +8912,8 @@ emo_to_string:
     beq t0, t1, .Lts_array
     li t1, 22
     beq t0, t1, .Lts_builder
+    li t1, 26
+    beq t0, t1, .Lts_map
     la a0, msg_kind
     la a1, msg_kind_end
     call emo_fail
@@ -8979,6 +9060,81 @@ emo_to_string:
     ld s0, 8(sp)
     ld s1, 24(sp)
     addi sp, sp, 48
+    j .Lts_done
+.Lts_map:
+    # {"k": v, …} — the interpreter's own display: the keys through
+    # emo_map_keys (insertion order), each entry composed "key: value"
+    # with the Strings quoted and escaped, the value at the entry's
+    # +8 (the stride is 24), the whole joined with ", " between the
+    # braces
+    addi sp, sp, -64
+    sd ra, 0(sp)
+    sd s0, 8(sp)
+    sd s1, 16(sp)
+    sd s2, 24(sp)
+    sd s3, 32(sp)
+    sd s4, 40(sp)
+    sd s5, 48(sp)
+    mv s0, a0               # the map word
+    call emo_map_keys
+    andi s1, a0, -32        # the keys array block
+    ld s2, 8(s1)            # the count
+    addi a0, s2, 1
+    call emo_alloc          # the composed entries' slots
+    mv s3, a0               # the slots' block head
+    addi s4, a0, 16         # the slots' cursor
+    li s5, 0                # the index
+.Lts_map_walk:
+    bge s5, s2, .Lts_map_join
+    slli t0, s5, 3
+    add t1, s1, 16
+    add t1, t1, t0
+    ld a0, 0(t1)            # the key
+    call emo_kv_string
+    sd a0, 56(sp)           # the spill rides above the saved s5 — the
+    la a0, msg_colon_sp     #   entry frame's ra slot is not scratch
+    li a1, 2
+    call emo_string_lit
+    mv a1, a0
+    ld a0, 56(sp)
+    call emo_string_concat
+    sd a0, 56(sp)
+    andi t2, s0, -32
+    ld t2, 32(t2)           # the entries' raw pointer — the mask rides
+    slli t3, s5, 3          #   the word first, the field is not tagged
+    slli t4, s5, 4
+    add t3, t3, t4
+    add t3, t2, t3
+    ld a0, 8(t3)            # the value, at the entry's +8
+    call emo_kv_string
+    mv a1, a0
+    ld a0, 56(sp)
+    call emo_string_concat
+    sd a0, 0(s4)
+    addi s4, s4, 8
+    addi s5, s5, 1
+    j .Lts_map_walk
+.Lts_map_join:
+    la a0, msg_lbrace
+    li a1, 1
+    call emo_string_lit
+    mv s4, a0               # the opening "{"
+    la a0, msg_rbrace
+    li a1, 1
+    call emo_string_lit
+    mv a3, a0               # the closing "}"
+    addi a1, s3, 16         # the composed entries
+    mv a2, s2               # the count
+    mv a0, s4               # the opening
+    call emo_join_string
+    ld ra, 0(sp)
+    ld s0, 8(sp)
+    ld s1, 16(sp)
+    ld s2, 24(sp)
+    ld s3, 32(sp)
+    ld s4, 40(sp)
+    ld s5, 48(sp)
+    addi sp, sp, 64
     j .Lts_done
 .Lts_imm:
     srli t1, a0, 1
@@ -9652,6 +9808,12 @@ msg_builder_range_end:
 msg_builder_mix:
     .ascii "a builder fed raw numbers cannot take a tagged value"
 msg_builder_mix_end:
+msg_lbrace:
+    .ascii "{"
+msg_rbrace:
+    .ascii "}"
+msg_colon_sp:
+    .ascii ": "
 msg_lbrack:
     .ascii "["
 msg_rbrack:
@@ -13550,11 +13712,11 @@ emo_map_keys:
     andi t0, t6, 1
     beqz t0, .Lmk_key_tag   # a pointer key rides as it is
     srli t0, t6, 1
-    andi t0, t0, 0xF
-    beqz t0, .Lmk_key_tag   # the Int64 cell rides as it is
-    li t2, 1
-    beq t0, t2, .Lmk_key_tag
-    li t2, 2
+    andi t0, t0, 7          # the odd words are the immediates — the
+    beqz t0, .Lmk_key_tag   #   kind sits in bits 1-3: the Bool (0), the
+    li t2, 1                #   Char (1) and the Byte (3) ride as the
+    beq t0, t2, .Lmk_key_tag #  tagged words they are (the old test read
+    li t2, 3                #   five bits and boxed every `true` into 17)
     beq t0, t2, .Lmk_key_tag
     mv a0, t6
     call emo_box_i64        # the raw Int64's key boxes here: the answer

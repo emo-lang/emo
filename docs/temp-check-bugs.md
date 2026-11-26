@@ -18,7 +18,8 @@ same day, and its beam deadlock end (E3012) closed with it on 2026-11-26.
 Item 6 closed on 2026-11-26. Item 10 was found while closing item 9.
 Item 7's boolean operators, wrong answers and c warning closed on
 2026-11-26; its (a), (b), (e) and (f) stay open inside the item.
-**Open: 4 (a, the desktop edge), 7 (a, b, e, f), 8, 10.**
+Items 8 and 10 closed on 2026-11-26. **Open: 4 (a, the desktop edge),
+7 (a, b, e, f).**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -458,7 +459,7 @@ the take (`pattern_void_sfx`), so a binding the body never reads costs
 no warning; `examples/processes` builds with zero warnings and stays
 byte-identical with its `expected.txt`.
 
-## 8. The TLS hint names a flag form the build rejects
+## 8. The TLS hint names a flag form the build rejects — closed 2026-11-26
 
 **Symptom.** When the c target cannot link OpenSSL, `emo build` says to pass
 `--cclib -L<dir> --cclib -lssl --cclib -lcrypto`. Given exactly that, the
@@ -467,10 +468,13 @@ through `=` — `--cclib=-L/opt/homebrew/opt/openssl@4/lib` builds
 `examples/http_roundtrip` — and the help spells it `--cclib=LIB`, "link
 against C library (-lLIB)".
 
-**Where.** The fix message in `src/emo_cli/emo_cli.ml` (the TLS link
-failure) and the comment above it in `src/emo_codegen/c/emo_c_runtime.c`
-("rides --cclib -L<dir>"). The suite never meets it: it passes the flags
-through `build_file`'s `cclibs`, not the command line.
+**Fix.** The hint (and the runtime comment above it) spell the `=` form
+now: `--cclib=-L<dir> --cclib=-lssl --cclib=-lcrypto`. Verified by hand:
+building `examples/http_roundtrip` without the OpenSSL path answers the
+fixed hint (exit 69), and following it literally — the three flags, the
+`=` forms, copied verbatim — links the program (`built main`; the ld's
+"duplicate libraries" note is the runtime's own `-lssl`/`-lcrypto`
+meeting the passed ones, harmless).
 
 ## 9. riscv64: a Map never answers — closed 2026-11-25
 
@@ -507,18 +511,39 @@ round is what closed it.
 `println(m.set("a", 10))` answer `cannot convert this value to a string yet` —
 `emo_to_string` has no Map arm there. Recorded as item 10.
 
-## 10. riscv64: a Map has no rendering
+## 10. riscv64: a Map has no rendering — closed 2026-11-26
 
 **Symptom.** `println(m)` and `println(m.set("a", 10))` — a Map through any
 door that answers the Map itself — refuse at the run: `emo runtime: cannot
 convert this value to a string yet`. Every other target renders a Map as
 `{"a": 10, "b": 2}` and the interpreter's own order.
 
-**Where.** `emo_to_string`'s kind dispatch in `src/emo_codegen/emo_riscv.ml`
-has arms for the numerics, the String, the Tuple, the Array, the Bytes, the
-builder, the Atomic, the Pid and the instance; kind 13 (Map) falls to the
-refusal. The fix is one arm over the entries array `emo_map_keys` already
-walks, in insertion order, with the key's and the value's own `to_string`.
+**Fix.** `emo_to_string`'s dispatch gained the Map word (tag 26, kind 13):
+`.Lts_map` walks the keys through `emo_map_keys` (insertion order), composes
+each entry `key: value` through a new `emo_kv_string` — the kinds through
+`emo_to_string`, a String quoted and escaped (the backslash and the double
+quote, the interpreter's `%S`) — with the value read at the entry's `+8`
+(the stride is 24), and hands the slots to `emo_join_string` over `{` and
+`}`. The walk keeps its state in s-regs only and spills above the saved
+`s5` — the entry frame's `ra` slot is not scratch. Two findings rode in.
+`emo_map_keys`'s key classification read five bits of the odd word and
+boxed every immediate that was not a raw Int64 — every `true` key came
+back the integer 17 (the word itself) and Char and Byte keys fared the
+same; the classification now reads the kind in bits 1-3 and rides the
+Bool, the Char and the Byte as the tagged words they are. And the
+debugging detour that cost the round its first hour: the `emo` on PATH is
+a symlink into the parallel `emo-syntax-sugar` checkout's build — every
+`emo run` in a shell without `eval $(opam env …)` re-pinning the binary
+exercises *that* tree's compiler, and its metal emitter hangs on a map
+literal — three chase-the-ghost rebuild rounds before the runs were
+re-pointed at this tree's `_build/default/src/emo_cli/emo.exe`.
 
-Found 2026-11-25 while closing item 9 (the doors answer now; the rendering
-never did).
+**Verified.** Seven prints on the metal byte-identical with the
+interpreter (modulo the qemu console's CRLF): the literal, `set`'s
+answers, mixed keys (`{1: "one", 2.5: "two and a half", true: "yes"}` —
+the Int64 bare, the Float64 bare, the Bool spelled), the nested Map, the
+escaped quote inside a String value and a String value beside a Bool
+value; the `has`/`keys` doors over Bool and String keys answer
+`true/true/[true, false, s]` and the getter sums `3`, byte-identical
+with the interpreter; and a map built as a plain `var` statement,
+through a `def`'s return, and as a top-level `const` all print.

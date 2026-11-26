@@ -4144,7 +4144,7 @@ int64_t emo_net_set_timeout(int64_t fd, double seconds) {
      package's -lssl/-lcrypto symlinks, while macOS has shipped no
      system TLS library for years (no headers since Xcode 10, and the
      /usr/lib dylibs are gone from current releases), so its OpenSSL
-     comes from Homebrew or similar and rides --cclib -L<dir>. The
+     comes from Homebrew or similar and rides --cclib=-L<dir>. The
      pre-flight probe (emo_cli) catches a machine without either and
      names the fix instead of surfacing raw linker output.
 
