@@ -1254,8 +1254,11 @@ and builtin env name args =
 
 and binary_lit_newline = "#<10>(8,1,'integer',['unsigned'|['big']])"
 
-(* A Char value is its UTF-8 bytes as a binary — one code point. *)
-and char_lit (cp : int) : string = binary_lit (Emo_support.Utf8.encode cp)
+(* A Char value is {'emo_char', its UTF-8 bytes as a binary} — one code
+   point behind a tag, so the sentences can name the kind the way the
+   interpreter does (the bytes alone read as a String everywhere). *)
+and char_lit (cp : int) : string =
+  "{'emo_char', " ^ binary_lit (Emo_support.Utf8.encode cp) ^ "}"
 
 (* an expression's code as a string, without disturbing the buffer *)
 and expr_block env (x : Emo_ir.expr) : string =
@@ -2478,6 +2481,7 @@ let op_refusal_source : string =
       ("<'true'> when 'true'", "Bool");
       ("<'false'> when 'true'", "Bool");
       ("<'ok'> when 'true'", "Void");
+      ("<{'emo_char', _x}> when 'true'", "Char");
       ("<{'emo_byte', _x}> when 'true'", "Byte");
       ("<{'emo_bytes', _k}> when 'true'", "Bytes");
       ("<{'emo_list', _k}> when 'true'", "List");
@@ -2721,6 +2725,7 @@ let rt_source =
 'emo_to_str'/1 =
     fun (_v) ->
 	case _v of
+	  <{'emo_char', _b}> when 'true' -> _b
 	  <_i> when call 'erlang':'is_integer'(_i) ->
 	      call 'erlang':'integer_to_binary'(_i)
 	  <_f> when call 'erlang':'is_float'(_f) ->
@@ -3919,14 +3924,16 @@ let rt_source =
 	case _cps of
 	  <[]> when 'true' -> []
 	  <[_cp | _rest]> when 'true' ->
-	      [ call 'unicode':'characters_to_binary'([_cp])
+	      [ {'emo_char',
+		 call 'unicode':'characters_to_binary'([_cp])}
 	      | apply 'emo_char_bins'/1 (_rest) ]
 	end
 
 %% The code point a one-Char binary names.
 'emo_char_to_int'/1 =
     fun (_b) ->
-	case call 'unicode':'characters_to_list'(_b) of
+	case call 'unicode':'characters_to_list'
+		   (call 'erlang':'element'(2, _b)) of
 	  <[_cp]> when 'true' -> _cp
 	  <_bad> when 'true' ->
 	      call 'erlang':'error'
@@ -5078,6 +5085,7 @@ let rt_source =
 		<'true'> when 'true' -> #{#<67>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']])}#
 		<'false'> when 'true' -> #{#<83>(8,1,'integer',['unsigned'|['big']]),#<116>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<105>(8,1,'integer',['unsigned'|['big']]),#<110>(8,1,'integer',['unsigned'|['big']]),#<103>(8,1,'integer',['unsigned'|['big']])}#
 	      end
+	  <_x> when call 'erlang':'=:='(call 'erlang':'element'(1, _x), 'emo_char') -> #{#<67>(8,1,'integer',['unsigned'|['big']]),#<104>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']])}#
 	  <_x> when call 'erlang':'is_list'(_x) -> #{#<65>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<114>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<121>(8,1,'integer',['unsigned'|['big']])}#
 	  <_other> when 'true' -> #{#<118>(8,1,'integer',['unsigned'|['big']]),#<97>(8,1,'integer',['unsigned'|['big']]),#<108>(8,1,'integer',['unsigned'|['big']]),#<117>(8,1,'integer',['unsigned'|['big']]),#<101>(8,1,'integer',['unsigned'|['big']])}#
 	end
@@ -5221,6 +5229,10 @@ let rt_source =
 'emo_emit_char'/6 =
     fun (_f, _w, _p, _rest, _args, _acc) ->
 	case _args of
+	  <[_v | _a2]> when call 'erlang':'=:='(call 'erlang':'element'(1, _v), 'emo_char') ->
+	      let <_b> = call 'erlang':'element'(2, _v)
+	      in let <_out> = apply 'emo_pad'/4 (call 'erlang':'setelement'(5, _f, 'false'), _w, #{}#, _b)
+	      in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])
 	  <[_v | _a2]> when call 'erlang':'is_binary'(_v) ->
 	      let <_out> = apply 'emo_pad'/4 (call 'erlang':'setelement'(5, _f, 'false'), _w, #{}#, _v)
 	      in apply 'emo_printf_walk'/3 (_rest, _a2, [_out | _acc])

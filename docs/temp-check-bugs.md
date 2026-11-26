@@ -23,10 +23,11 @@ Item 7's boolean operators, wrong answers and c warning closed on
 Items 8 and 10 closed on 2026-11-26, and item 4's (a) closed with them —
 the EmoOS smoke is green on both legs. Item 7's (a) closed 2026-11-26 —
 the beam's every runtime refusal now rides the envelope (stderr,
-`runtime error: …`, exit 70, no crash report). 7(b)'s death scope closed
+`runtime error: …`, exit 70, no crash report); 7(b)'s death scope closed
 the same day (the beam already answered, c and ocaml scoped their
 children, the metal's split rides the proven death machinery — wasm's
-constraint stands). **Open: 7 (e, f).**
+constraint stands); 7(e) closed too — the sentence already named the
+Char and printf's `%c` learned the tagged shape. **Open: 7 (f).**
 
 ## 1. beam: a Pid does not render — closed 2026-11-25
 
@@ -492,12 +493,24 @@ remainders byte-identical with the interpreter on c and wasm (`0.0`,
 `1.5`, `2.25`), the shifts `0/0` on wasm, and `-f` as `-7.5` on the
 interpreter, c, typescript, wasm and the beam.
 
-**(e) A Char reads as a String in the beam sentence — open.** `ch + i`
-says "got Char and Int64" on six targets and "got String and Int64" on
-the beam, where a Char is its UTF-8 bytes and the target has no Char
-shape of its own — the sentence cannot name what the value model does
-not distinguish. Naming it means tagging the beam's Chars, which every
-String operation would unwrap; its own round.
+**(e) A Char reads as a String in the beam sentence — closed 2026-11-26
+(the sentence was already right; the one live gap was printf's %c).**
+The record's claim is stale: the beam's Chars are tagged today
+(`{'emo_char', its UTF-8 bytes}` — the literal's own shape, the `chars`
+method's, and the patterns'), and `emo_type_name` names the tag, so
+`ch + 1` through a mailbox answers ``operator `+` expects two numbers
+or two strings, got Char and Int64`` — the interpreter's sentence,
+exit 70 — and the whole Char surface answers with it: the render (`a`),
+the equality (`true`), the mailbox crossing, `chars()` indexing
+(`true`, `3`). The one live gap the probing found: printf's `%c` met
+the tagged shape and refused (`printf: the format met a value of the
+wrong kind`) where the interpreter prints the character —
+`emo_emit_char` gained the tagged arm (the tag's bytes are the
+rendering, the width padding unchanged) and `emo_printf_kind` answers
+`Char` for it, so `printf("%c!\n", [ch])` prints `a!` on both.
+Verified by hand: the probe table above plus the printf leg;
+`examples/processes`, `atomic_cell` and `language_tour` byte-identical
+with their `expected.txt` on the beam.
 
 **(f) The build refusals are unchanged — open.** c refuses the bitwise
 operators and `~` on a dynamic value ("does not support the bitwise
