@@ -1159,45 +1159,75 @@ on both transports.
   home; the c target's frame-scoped pool is the fallback road, taken
   only if the message path will not close. Done when the probe's 10k
   messages leave the arena flat and `run.sh` is green.
-- [ ] **T18.2** — The display driver's supervisor and a flush timeout:
+- [x] **T18.2** — The display driver's supervisor and a flush timeout:
   `comp_supervisor`'s lineage grown onto `gpu_service` itself (the
   death hook, the restart into the same cache block), and the
   compositor's flush wait bounded, so a dead driver's lost reply
   cannot park it forever. Done when the golden grows a "kill the
   driver → it restarts → the screen recovers" beat and no wedge
   remains.
-  - **The first attempt's findings (2026-11-27, the work stashed —
-    `git stash list`, "T18.2 protocol surgery WIP"):** the restart
-    mechanics work (the stop op 9 on the mailbox, the supervisor's
-    restart into a fresh slot, the reborn announce, the wake to the
-    compositor — the boot chain ran to `gpu restart ok` and the
-    desktop era), but the restart shifts every later client's slot by
-    one, and the shift exposed a **pre-existing kernel-panic
-    landmine**: the gpu's receive dispatches its mailbox by the
-    words' low-bit tags, and the gate's posts ride `op << 32 | caller`
-    — when the caller's slot word ends in the 3-tuple's tag (6), i.e.
-    the client's pid ≡ 3 (mod 16), the dispatch walks the raw post as
-    a tuple box and the kernel takes a load page fault at
-    `op<<32|caller` (the trace: cause 0xd at the gpu's dispatch, tval
+  - **Landed (2026-11-27, second round — uncommitted):** the two
+    halves landed together, the protocol kept in tuple form.
+    *The dispatch fix (the landmine's).* The value-word encoding read
+    from `emo_riscv.ml`: a tagged word is the 32-byte-aligned cell
+    home plus the tag in the low five bits (tag 0 the Int64 box — the
+    word is the pointer itself, `emo_box_i64`; +8 the header, +16 the
+    tuple's fields), the homes are the kernel's koff alias
+    (`0xFFFFFFC0` high half) and the user RAM at and above
+    `0x80000000` (bit 31 set), and the pattern tests walked any
+    tag-matching word straight into `andi -32; ld 8`. The unified
+    discriminator is a guard in `emit_pattern_test`'s three
+    dereferencing arms (Tuple, L_int, L_string): after the tag test
+    and before the walk, the word must prove its home — negative
+    words read `-64` through `srai 32`, positive words carry bit 31 —
+    everything else (the gate's `op<<32|caller` posts, the trap's
+    death notices, every pid-tainted raw word) misses the arm and
+    falls to the catch-all binding the services decode with `op_of`.
+    Legitimate Emo traffic passes bit for bit; the ABI keeps every
+    post's bit 31 clear, so the positive path needs no high-half
+    check. The guard-alone tree rode the golden with the pins
+    untouched (`frames 1925 1681` — the ledger counts block
+    allocations, not instructions).
+    *The restart mechanics.* The first round's single-word protocol is
+    superseded, not needed: the guard made the tuple dispatch safe,
+    so the mailbox keeps `(op << 32, sender, word)` tuples. What
+    landed: the stop op 9 in the gpu's tuple arm (the instance's own
+    return is the death, the fs stop's shape); `comp_gpu_num`
+    (`koff+0x87002ff8`, the page-side truth the boot seeds and every
+    restart keeps fresh); `comp_supervisor`'s gpu branch (the trap's
+    comp block delivers every death notice already, the display
+    bracket's arena, the reborn pid on the gate's cell and the page,
+    the announce to the root, the wake tuple `op 7` to the
+    compositor); the compositor's renewals (`comp_await_flush`
+    returns Int64 now, the wake tuple shape-tested — the walk's own
+    guard makes the test safe on any word — the flush re-sent to the
+    reborn driver in `comp_compose`, `comp_cursor_place`, the mode
+    fetch and the serve loop, `gpu_cur` read back from the page after
+    every word). The boot drives the proof once: the stop, the reborn
+    announce, `gpu restart ok`, and the desktop's first frame lands
+    on the reborn driver.
+    *The pins.* The restart shifts every later spawn's slot by one —
+    the user-proof passes 20→21, 22→23, 23→24, heap 21→22, the fault
+    beat 28→29, `frames` 1925 1681→1958 1713; the wire gains the
+    reborn driver's ready line and `gpu restart ok` between the
+    flush smoke and the first mount. The desk beats kept their
+    values (`desk a 7`, `desk key 7 1` — the first round's `desk key
+    8 1` was its own protocol's key-delivery breakage papered over,
+    not a shift; the desk clients' slots do not move). The guard-era
+    ride is green both legs, the traces carry one page fault each —
+    the proof chain's own deliberate `addr 0x80000000` beat.
+  - **The first attempt's findings (2026-11-27, kept for the
+    record):** the restart exposed a pre-existing kernel-panic
+    landmine — the gpu's receive dispatched its mailbox by the words'
+    low-bit tags, and the gate's posts ride `op << 32 | caller`; when
+    the caller's slot word ended in the 3-tuple's tag (6), i.e. the
+    client's pid ≡ 3 (mod 16), the dispatch walked the raw post as a
+    tuple box and the kernel took a load page fault (cause 0xd, tval
     `13<<32|0x26` — the editor's post at its shifted pid 19). The
-    landmine is independent of the restart: any presenting client at
-    such a pid panics the machine on the stock tree. The protocol
-    redesign (single-word words, the rect on a compositor outbox cell,
-    the box/tag discrimination in a `gpu_serve_word` def) stalled on
-    the runtime's value-word encoding — typed Int64 sends ship raw or
-    boxed by pid_num's taint, the receivers' typed stores convert
-    through a box walk, and the shim's posts ride raw — and broke the
-    desk pass's key delivery (the int-literal pattern's skip
-    semantics). The fix needs the value-word tag specification read
-    from `src/emo_codegen/emo_riscv.ml` and `runtime.S` first, then
-    one designed discriminator: either the shim's post encoding (with
-    `gate_reply`'s target derivation and the dead-owner reclaim's
-    owner compares following), or a receive-side conversion that walks
-    only real boxes. The stability soak (T18.3) is likewise blocked:
-    the stock tree's own exposure means the supervisor must land
-    together with the dispatch fix. T18.2's restart mechanics are
-    designed and stashed (`git stash list`); their prerequisite is the
-    receive-dispatch fix below.
+    first round's protocol redesign (single-word words, the rect on a
+    compositor outbox cell, the `gpu_serve_word` def) stalled on the
+    value-word encoding and broke the desk pass's key delivery; both
+    are moot under the guard.
   - **T18.4 — the desktop at boot, the terminal in emosh (designed
     2026-11-27, not started).** The ride's ask: the desktop opens
     itself at boot and the terminal stays emosh. The design, from the

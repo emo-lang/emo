@@ -3750,6 +3750,34 @@ and emit_tail env (e : Emo_ir.expr) : bool =
       true
   | _ -> false
 
+(* The walk's guard (T18.2's round): a pattern arm that dereferences
+   the scrutinee first proves the word is a real cell. A tagged word is
+   the 32-byte-aligned home plus the tag, and the homes are the
+   kernel's koff alias (the high half reads -64 through an arithmetic
+   shift) or the user RAM at and above 0x80000000 (bit 31 set). The
+   gate's raw posts (`op<<32|caller`), the trap's death notices and
+   every pid-tainted raw word carry their payload in the word itself,
+   so the low-five-bit tag test alone false-matches whenever the
+   payload's own bits land on the tag — the pid 19 editor's win_new
+   post read 13<<32|38, passed the tuple test, and walked 0xd00000028
+   into a kernel load fault. The guard turns that collision into a
+   plain arm miss: the catch-all binding arm the services decode with
+   op_of catches the word instead. The ABI keeps every raw post's bit
+   31 clear (the caller field is a pid times two), so the RAM shape
+   needs no high-half check on the positive path. *)
+and emit_cell_guard env (reg : string) (l_next : string) : unit =
+  let l_ram = fresh_label env "cellram" in
+  let l_ok = fresh_label env "cellok" in
+  put env "    bgez %s, %s\n" reg l_ram;
+  put env "    srai t2, %s, 32\n" reg;
+  put env "    li t3, -64\n";
+  put env "    bne t2, t3, %s\n" l_next;
+  put env "    j %s\n" l_ok;
+  put env "%s:\n" l_ram;
+  put env "    slli t2, %s, 32\n" reg;
+  put env "    bgez t2, %s\n" l_next;
+  put env "%s:\n" l_ok
+
 (* One branch's pattern as a fall-through test over the scrutinee word
    in [slot_off]; control reaches [l_next] when it does not match.
    Tuple subtests hold their element in temp slot 0 while recursing. *)
@@ -3765,6 +3793,7 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
       put env "    ld t0, %d(sp)\n" slot_off;
       put env "    andi t1, t0, 31\n";
       put env "    bnez t1, %s\n" l_next;
+      emit_cell_guard env "t0" l_next;
       put env "    andi t0, t0, -32\n";
       put env "    ld t0, 8(t0)\n";
       put env "    li t1, %Ld\n" n;
@@ -3784,6 +3813,7 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
       call_runtime env "emo_string_lit";
       put env "    sd a0, %d(sp)\n" (temp_offset env 1);
       put env "    ld a0, %d(sp)\n" slot_off;
+      emit_cell_guard env "a0" l_next;
       put env "    ld a1, %d(sp)\n" (temp_offset env 1);
       call_runtime env "emo_string_eq";
       put env "    andi t0, a0, 16\n";
@@ -3796,6 +3826,7 @@ and emit_pattern_test env (slot_off : int) (p : Emo_ast.pattern)
       put env "    andi t1, t0, 31\n";
       put env "    li t2, %d\n" tag_tuple;
       put env "    bne t1, t2, %s\n" l_next;
+      emit_cell_guard env "t0" l_next;
       put env "    andi t0, t0, -32\n";
       put env "    ld t1, 8(t0)\n";
       put env "    li t2, %d\n" (List.length ps);
