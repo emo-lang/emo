@@ -343,6 +343,23 @@ lock-refresh REGISTRY="":
         status=1
       fi
     done
+    # The editors' server registries are generated copies git does not
+    # track, so the loop above cannot reach their locks: they are
+    # re-pinned here by hand. They resolve against the bundled library
+    # — the one the editors' test rules read them through — so the
+    # staged REGISTRY does not apply to them.
+    for pom in $(find "$ROOT/editors" -name package.emo -path '*/registry/*' \
+        -not -path '*/_build/*' -not -path '*/.emo-build/*'); do
+      dir=$(dirname "$pom")
+      rel="editors/${dir#"$ROOT"/editors/}"
+      if (cd "$dir" && env -u EMO_REGISTRY "$EMO" deps resolve >/dev/null 2>&1); then
+        echo "ok   $rel"
+      else
+        echo "FAIL $rel" >&2
+        (cd "$dir" && env -u EMO_REGISTRY "$EMO" deps resolve >/dev/null) | head -4 >&2 || true
+        status=1
+      fi
+    done
     exit $status
 
 push:
