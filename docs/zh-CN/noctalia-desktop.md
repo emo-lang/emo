@@ -6,6 +6,14 @@ noctalia 桌面已经站在什么之上,以及桌面要长出名字所许诺的�
 [`projects/emo-desktop/docs/TASKS.md`](../../projects/emo-desktop/docs/TASKS.md)
 里它所延伸的里程碑),文末的顺序是建议,不是日程。
 
+**更新(2026-11-27)。** 本阶梯追踪的上游已经换代:Quickshell 的
+v4 壳已归档存照,noctalia.dev 现在是带原生运行时的 v5 壳,旁边还有
+合成器(Umbriel)、文件管理器(Luciole)与登录屏(Greeter)。本阶梯
+的三级已全部落地——视觉语言(M30、M31)、动效层(M32,两个动效
+停靠)、修饰键(M33 的修饰格,M36 的 Alt 层)——blur 仍是
+stretch goal,audio 在自己的轨上(D20)。v5 的功能清单与剩余差距
+记录在 [`noctalia-v5.md`](noctalia-v5.md)。
+
 产品宿主是金属——EmoOS 跑在 riscv64 上,效果底下没有 Linux(D13)。sway/Wayland 轨是快速开发回路(hosted 秒级、grim 截图、注入按键,对上金属 591 秒的开机),不是产品地基;皮肤层落在 Emo 侧(fb 包)和内核合成器里,不取 harness 任何东西。harness 笔记里点名的 layer-shell 缺口是 harness 自己的账,永远不是金属的。
 
 ## 已经站着的

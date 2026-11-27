@@ -11,6 +11,16 @@ or the milestone it extends in
 [`projects/emo-desktop/docs/TASKS.md`](../projects/emo-desktop/docs/TASKS.md)),
 and the order at the end is the recommendation, not a schedule.
 
+**Update (2026-11-27).** The upstream this ladder tracks has moved
+on: the Quickshell-based shell (v4) is archived for reference, and
+noctalia.dev now ships a v5 shell with a native runtime beside a
+compositor (Umbriel), a file manager (Luciole) and a greeter. This
+ladder's three items have landed — the visual language (M30, M31),
+the motion layer (M32, two motions parked), the modifiers (M33's
+cells, M36's Alt layer) — with blur still the stretch goal and audio
+on its own track (D20). The v5 inventory and the remaining gap are
+recorded in [`noctalia-v5.md`](noctalia-v5.md).
+
 The product host is the metal — EmoOS on riscv64, no Linux under the
 effect (D13). The sway/Wayland track is the fast development loop
 (hosted seconds, grim screenshots, injected keys against the metal's
