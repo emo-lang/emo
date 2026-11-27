@@ -1195,7 +1195,54 @@ on both transports.
     owner compares following), or a receive-side conversion that walks
     only real boxes. The stability soak (T18.3) is likewise blocked:
     the stock tree's own exposure means the supervisor must land
-    together with the dispatch fix.
+    together with the dispatch fix. T18.2's restart mechanics are
+    designed and stashed (`git stash list`); their prerequisite is the
+    receive-dispatch fix below.
+  - **T18.4 — the desktop at boot, the terminal in emosh (designed
+    2026-11-27, not started).** The ride's ask: the desktop opens
+    itself at boot and the terminal stays emosh. The design, from the
+    input lanes' own split: the desktop's pass is spawned by the
+    root's shell stage *before* the emosh exec (the exec destroys the
+    root's image, so the spawn must precede it), the pass runs held —
+    its compositions and dressing wait on a release cell — and emosh
+    grows the `desktop` door that releases it: a new gate verb
+    `desk_release` (Tier C, the additions rule) routed to the input
+    service, which posts a release event (a new type beside 0x454D and
+    0x4558) into the merged stream; the desktop pass's loop reads the
+    release event and dresses. The input service's serve grows the
+    two-lane routing its own structure wants anyway: the ask's verb
+    names the lane (verb 2 the console's bytes — the shell's terminal;
+    verb 12 the merged stream's device events — the desktop's focused
+    surface), the lanes never cross, and the race that taught the
+    design (the root's exec loader's staging buffer is the shared
+    scratch page the desktop's session writes) is closed by the held
+    mode: the session writes nothing until the release. The pieces:
+    the held gate and the release-event judge in hello/main.emo's
+    desktop pass; the verb and its route in gate.emo and trap.S; the
+    release event's post in the input service; the `desktop` builtin
+    in emosh (the stub's verb rides the syscall package — the locks
+    re-pin); the feeder's `desktop` beat in start.sh. The exit table's
+    eight-entry bound (the finding above) gates a *useful* emosh
+    terminal — the table's expansion lands first or beside. The
+    receive-dispatch landmine (the finding above) is orthogonal but
+    the same session should read the value-word tag specification
+    before either lands.
+  - **Found on the way from the first ride (2026-11-27, the stock
+    tree):** the exit table is eight entries (`exit_pids` at
+    `0x87002120` through `exit_codes` at `0x87002160`), and the proof
+    chain's boot leaves more unwaited children than that — after the
+    desktop era every fork answers EAGAIN (`emosh: os: fork: Resource
+    temporarily unavailable` at the shell's first external command).
+    The table's size, and the reaping of the boot's own unwaited
+    children, is the process service's task; emosh's side is the
+    ecosystem tracker's (its M1's fork surface). Second finding: with
+    the default `EMO_SHELL=1` the boot foreground is emosh, and emosh
+    has no `desktop` door — the command is the Emo REPL's own, and no
+    `desktop.elf` rides the volume — so the default ride cannot open
+    the desktop at all; `EMO_SHELL=0` keeps the REPL whose `desktop`
+    word opens it. Either emosh grows the door or the default ride
+    mode is the decision's to name; the ride's own beats assume the
+    REPL.
 - [ ] **T18.3** — The ten-minute soak: QEMU beats drive the loop —
   drag, open and close, the launcher, the editor, the clipboard —
   under both transports. Done when both run green: no `heap gone`, no

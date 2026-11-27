@@ -249,6 +249,14 @@ set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 EOF
 
+# The empty libm.a (T18.2's round): the C target's link line carries
+# -lm unconditionally (emo_cli's hosted convention — the runtime's math
+# lives in the host's libm), and a link through this sysroot died on
+# the missing archive. Nothing the freestanding port serves needs the
+# host's math — the empty archive answers the flag and gc-sections
+# drops whatever the app never calls.
+"$emos_ar" rcs "$sysroot/lib/libm.a"
+
 prog=${EMO_PROG:-hello.c}
 EMO_CROSS_CC="$emos_cc" "$sysroot/bin/riscv64-emoos-gcc" "$prog" \
   -o ../../muslhello.elf
