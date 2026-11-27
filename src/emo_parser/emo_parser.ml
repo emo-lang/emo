@@ -1074,11 +1074,7 @@ and parse_when st colon_tok =
   in
   let ok_pattern =
     pattern_node
-      (Ast.Tuple_pattern
-         [
-           pattern_node (Ast.Enum_member ("R", "ok"));
-           pattern;
-         ])
+      (Ast.Tuple_pattern [ pattern_node (Ast.Enum_member ("R", "ok")); pattern ])
   in
   let error_pattern =
     pattern_node
@@ -1096,8 +1092,7 @@ and parse_when st colon_tok =
               (expr
                  (Ast.Tuple
                     [
-                      expr
-                        (Ast.Member (expr (Ast.Type_ident "R"), "error"));
+                      expr (Ast.Member (expr (Ast.Type_ident "R"), "error"));
                       expr (Ast.Ident why_name);
                     ]))));
     ]

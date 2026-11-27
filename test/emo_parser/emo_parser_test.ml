@@ -734,8 +734,7 @@ let stmt_tests =
     tc "the when sugar rewrites to the two-arm case" (fun () ->
         let sugared =
           List.hd
-            (parse_program
-               {|:when f() {
+            (parse_program {|:when f() {
   data then {
     return data
   }
