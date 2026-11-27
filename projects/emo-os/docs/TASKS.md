@@ -1143,3 +1143,30 @@ has none, and its death wedges every client.
   wire, the screen its last frame). The ride's move is now
   fire-and-forget (`start.sh`); the golden, which has no mouse, keeps
   the line's pin.
+
+## Step 18 — the ground: the leak, the driver's supervisor, the soak (the desktop's P0, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-27, from the unkernel roadmap's working list
+([`docs/unkernel-plan-list.md`](../../../docs/unkernel-plan-list.md)):
+the desktop's planned milestones (the tracker's M37–M42 rows) stand on
+a machine that survives a session. Three tasks, hosted-first, graded
+on both transports.
+
+- [ ] **T18.1** — The value-kind message leak (T8.7): the probe first —
+  hosted, a process loops boxed values across the gate, the arena read
+  each pass — then the message copy path's accounting (the gate's
+  `copy_to`, the mailbox copy) so the receiver's boxed copies come
+  home; the c target's frame-scoped pool is the fallback road, taken
+  only if the message path will not close. Done when the probe's 10k
+  messages leave the arena flat and `run.sh` is green.
+- [ ] **T18.2** — The display driver's supervisor and a flush timeout:
+  `comp_supervisor`'s lineage grown onto `gpu_service` itself (the
+  death hook, the restart into the same cache block), and the
+  compositor's flush wait bounded, so a dead driver's lost reply
+  cannot park it forever. Done when the golden grows a "kill the
+  driver → it restarts → the screen recovers" beat and no wedge
+  remains.
+- [ ] **T18.3** — The ten-minute soak: QEMU beats drive the loop —
+  drag, open and close, the launcher, the editor, the clipboard —
+  under both transports. Done when both run green: no `heap gone`, no
+  wedge, a flat frame ledger.
