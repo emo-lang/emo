@@ -1166,6 +1166,36 @@ on both transports.
   cannot park it forever. Done when the golden grows a "kill the
   driver → it restarts → the screen recovers" beat and no wedge
   remains.
+  - **The first attempt's findings (2026-11-27, the work stashed —
+    `git stash list`, "T18.2 protocol surgery WIP"):** the restart
+    mechanics work (the stop op 9 on the mailbox, the supervisor's
+    restart into a fresh slot, the reborn announce, the wake to the
+    compositor — the boot chain ran to `gpu restart ok` and the
+    desktop era), but the restart shifts every later client's slot by
+    one, and the shift exposed a **pre-existing kernel-panic
+    landmine**: the gpu's receive dispatches its mailbox by the
+    words' low-bit tags, and the gate's posts ride `op << 32 | caller`
+    — when the caller's slot word ends in the 3-tuple's tag (6), i.e.
+    the client's pid ≡ 3 (mod 16), the dispatch walks the raw post as
+    a tuple box and the kernel takes a load page fault at
+    `op<<32|caller` (the trace: cause 0xd at the gpu's dispatch, tval
+    `13<<32|0x26` — the editor's post at its shifted pid 19). The
+    landmine is independent of the restart: any presenting client at
+    such a pid panics the machine on the stock tree. The protocol
+    redesign (single-word words, the rect on a compositor outbox cell,
+    the box/tag discrimination in a `gpu_serve_word` def) stalled on
+    the runtime's value-word encoding — typed Int64 sends ship raw or
+    boxed by pid_num's taint, the receivers' typed stores convert
+    through a box walk, and the shim's posts ride raw — and broke the
+    desk pass's key delivery (the int-literal pattern's skip
+    semantics). The fix needs the value-word tag specification read
+    from `src/emo_codegen/emo_riscv.ml` and `runtime.S` first, then
+    one designed discriminator: either the shim's post encoding (with
+    `gate_reply`'s target derivation and the dead-owner reclaim's
+    owner compares following), or a receive-side conversion that walks
+    only real boxes. The stability soak (T18.3) is likewise blocked:
+    the stock tree's own exposure means the supervisor must land
+    together with the dispatch fix.
 - [ ] **T18.3** — The ten-minute soak: QEMU beats drive the loop —
   drag, open and close, the launcher, the editor, the clipboard —
   under both transports. Done when both run green: no `heap gone`, no
