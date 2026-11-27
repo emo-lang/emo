@@ -1037,6 +1037,19 @@ println(size({ 1: "x", 2: "y" }))|}
           check {|Exception.with_data(data: { "k": 1 }, message: "x")|}
         in
         Alcotest.(check bool) "E4009" true (has_code diagnostics "E4009"));
+    tc "the raise sugar checks like the written raise" (fun () ->
+        let diagnostics = check {|:raise "boom"|} in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        let diagnostics = check {|:raise "boom", { "kind": "io" }|} in
+        if List.length diagnostics > 0 then
+          Alcotest.fail ("codes: " ^ codes_dump diagnostics);
+        Alcotest.(check int) "count" 0 (List.length diagnostics));
+    tc "the raise sugar is strict about the argument types" (fun () ->
+        let diagnostics = check ":raise 123" in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004");
+        let diagnostics = check {|:raise "x", 42|} in
+        Alcotest.(check bool) "E4004" true (has_code diagnostics "E4004"));
     tc "a provably unhashable key is an error" (fun () ->
         let diagnostics = check {|const bad = { [1]: "x" }|} in
         Alcotest.(check bool) "E4020" true (has_code diagnostics "E4020"));

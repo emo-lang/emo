@@ -1,6 +1,6 @@
 # Step 92 — emosh's everyday surface
 
-**Milestone:** M53 · **Prereq:** step 63 (the shell, its fixtures,
+**Milestone:** M44 · **Prereq:** step 63 (the shell, its fixtures,
 its docs) · **Status:** landed 2026-11-22 (code, fixtures, docs; both
 targets built and the nine fixtures byte-identical by hand-run)
 

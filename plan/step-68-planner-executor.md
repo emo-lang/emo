@@ -1,6 +1,6 @@
 # Step 68 — The planner and executor
 
-**Milestone:** M31 · **Prereq:** steps 66 (the record layer) and 67 (the
+**Milestone:** M28 · **Prereq:** steps 66 (the record layer) and 67 (the
 SQL AST's DML/DDL) · **Status:** landed 2026-11-12
 
 ## Why this step exists
@@ -41,7 +41,7 @@ rows out on the `c` target.
 - **DELETE**: an optional WHERE; the record layer removes the row and
   its index entries in one batch.
 - **Errors** are a `SqlError { code, message }` value: the PG-shaped
-  codes and messages the wire will map in M33 (`42P01` missing relation,
+  codes and messages the wire will map in M28 (`42P01` missing relation,
   `42703` missing column, `42883` operator mismatch, `42804` assignment/
   WHERE type mismatch, `23505` duplicate key, `23502` not-null, `22003`
   range, `22012` division by zero, `42601` syntax, `0A000` unsupported,
@@ -115,7 +115,7 @@ rows out on the `c` target.
   checker's `(R, T)` rule (`r_error_pair_conforms`) only lets a literal
   `(R.error, reason)` pair conform, and a caller's `(R.error, e)`
   pattern reads `e` as a String. The engine's failures are now Strings
-  shaped `code: message` (the wire will split them in M33), and the
+  shaped `code: message` (the wire will split them in M28), and the
   `SqlError` class is gone.
 - **`is()` narrowing follows a bound local, not a field or index
   expression.** `stmt.from_t[0].is(sql.TblNamed)` then `const ref =
@@ -130,7 +130,7 @@ rows out on the `c` target.
 - **The demo's CREATE wrote `DOUBLE` without `PRECISION`**; the SQL
   parser correctly refused, which made every later statement answer
   `42P01` and the first engine run a useful smoke of the error path.
-- **The record layer's `Table.update`/`delete` were missing**; M31 adds
+- **The record layer's `Table.update`/`delete` were missing**; M28 adds
   them (old-row read, index-entry removal, the new row/entries in one
   batch, update's unique check excluding the row's own rowid, a missing
   delete as a no-op).

@@ -1838,19 +1838,14 @@ def parse_rows(toks Array[Tok], i Int64, acc Array[Array[Expr]]) (R, (Array[Arra
 }
 
 def parse_row(toks Array[Tok], i Int64) (R, (Array[Expr], Int64)) {
-  case want_kind(toks, i, Tk.t_lparen, "`(` starting a VALUES row") {
+  :chain {
+    (R.ok, j) from want_kind(toks, i, Tk.t_lparen, "`(` starting a VALUES row")
+    (R.ok, er) from parse_expr_list(toks, j, 0, [])
+    (R.ok, e) from want_kind(toks, er[1], Tk.t_rparen, "`)` after the VALUES row")
+  } then {
+    return (R.ok, (er[0], e))
+  } else {
     (R.error, why) then { return (R.error, why) }
-    (R.ok, j) then {
-      case parse_expr_list(toks, j, 0, []) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, er) then {
-          case want_kind(toks, er[1], Tk.t_rparen, "`)` after the VALUES row") {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, e) then { return (R.ok, (er[0], e)) }
-          }
-        }
-      }
-    }
   }
 }
 
@@ -1877,25 +1872,18 @@ def row_width_error(rows Array[Array[Expr]], columns Array[String]) String {
 
 // UPDATE name SET column = expression, ... [WHERE expression]
 def parse_update(toks Array[Tok], i Int64) (R, (Stmt, Int64)) {
-  case parse_target_name(toks, i + 1, "expected a table name after UPDATE") {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, nr) then {
-      case want_kw(toks, nr[1], "set", "SET after the update target") {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, j) then {
-          case parse_assignments(toks, j, []) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, ar) then {
-              const dup = duplicate_assignment(ar[0])
-              if dup != "" {
-                return (R.error, err(peek(toks, j).pos, "duplicate assignment to column \"" + dup + "\""))
-              }
-              return parse_update_where(toks, nr[0], ar[0], ar[1])
-            }
-          }
-        }
-      }
+  :chain {
+    (R.ok, nr) from parse_target_name(toks, i + 1, "expected a table name after UPDATE")
+    (R.ok, j) from want_kw(toks, nr[1], "set", "SET after the update target")
+    (R.ok, ar) from parse_assignments(toks, j, [])
+  } then {
+    const dup = duplicate_assignment(ar[0])
+    if dup != "" {
+      return (R.error, err(peek(toks, j).pos, "duplicate assignment to column \"" + dup + "\""))
     }
+    return parse_update_where(toks, nr[0], ar[0], ar[1])
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 
@@ -1922,25 +1910,18 @@ def update_tail(toks Array[Tok], parts Array[String], assignments Array[Assignme
 }
 
 def parse_assignments(toks Array[Tok], i Int64, acc Array[Assignment]) (R, (Array[Assignment], Int64)) {
-  case parse_ident_name(toks, i, "expected a column name in SET") {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, cr) then {
-      case want_kind(toks, cr[1], Tk.t_eq, "`=` after the column name") {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, j) then {
-          case parse_expr(toks, j, 0) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, er) then {
-              const assignment = Assignment.new(cr[0], er[0])
-              if at_kind(toks, er[1], Tk.t_comma) {
-                return parse_assignments(toks, er[1] + 1, acc.append(assignment))
-              }
-              return (R.ok, (acc.append(assignment), er[1]))
-            }
-          }
-        }
-      }
+  :chain {
+    (R.ok, cr) from parse_ident_name(toks, i, "expected a column name in SET")
+    (R.ok, j) from want_kind(toks, cr[1], Tk.t_eq, "`=` after the column name")
+    (R.ok, er) from parse_expr(toks, j, 0)
+  } then {
+    const assignment = Assignment.new(cr[0], er[0])
+    if at_kind(toks, er[1], Tk.t_comma) {
+      return parse_assignments(toks, er[1] + 1, acc.append(assignment))
     }
+    return (R.ok, (acc.append(assignment), er[1]))
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 
@@ -2118,32 +2099,26 @@ def parse_table_primary(toks Array[Tok], i Int64, depth Int64) (R, (TableRef, In
   const t = peek(toks, i)
   if t.kind == Tk.t_lparen {
     if at_kw(toks, i + 1, "select") {
-      case parse_select(toks, i + 1, depth + 1) {
+      :chain {
+        (R.ok, sr) from parse_select(toks, i + 1, depth + 1)
+        (R.ok, j) from want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery")
+        (R.ok, ar) from parse_opt_alias(toks, j)
+      } then {
+        return (R.ok, (TblSubquery.new(query: sr[0], alias_e: ar[0]), ar[1]))
+      } else {
         (R.error, why) then { return (R.error, why) }
-        (R.ok, sr)     then {
-          case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, j)      then {
-              case parse_opt_alias(toks, j) {
-                (R.error, why) then { return (R.error, why) }
-                (R.ok, ar)     then { return (R.ok, (TblSubquery.new(query: sr[0], alias_e: ar[0]), ar[1])) }
-              }
-            }
-          }
-        }
       }
     }
     return (R.error, err(t.pos, "expected a subquery after `(`"))
   }
   if t.kind == Tk.t_ident || t.kind == Tk.t_qident {
-    case scan_name_path(toks, i) {
+    :chain {
+      (R.ok, pr) from scan_name_path(toks, i)
+      (R.ok, ar) from parse_opt_alias(toks, pr[1])
+    } then {
+      return (R.ok, (TblNamed.new(parts: pr[0], alias_e: ar[0]), ar[1]))
+    } else {
       (R.error, why) then { return (R.error, why) }
-      (R.ok, pr)     then {
-        case parse_opt_alias(toks, pr[1]) {
-          (R.error, why) then { return (R.error, why) }
-          (R.ok, ar)     then { return (R.ok, (TblNamed.new(parts: pr[0], alias_e: ar[0]), ar[1])) }
-        }
-      }
     }
   }
   return (R.error, err(t.pos, "expected a table name"))
@@ -2152,25 +2127,23 @@ def parse_table_primary(toks Array[Tok], i Int64, depth Int64) (R, (TableRef, In
 // The join chain, left-associative: each round wraps the accumulated
 // left side in a new TblJoin.
 def parse_join_tail(toks Array[Tok], i Int64, left TableRef, depth Int64) (R, (TableRef, Int64)) {
-  case match_join(toks, i) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, m)      then {
-      if !m[0] {
-        return (R.ok, (left, i))
-      }
-      case parse_table_primary(toks, m[3], depth) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, rr)     then {
-          case parse_join_condition(toks, rr[1], m[1], m[2], depth) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, jr)     then {
-              const joined = TblJoin.new(left: left, right: rr[0], jtype: m[2], natural: m[1], on_e: jr[0], using: jr[1])
-              return parse_join_tail(toks, jr[2], joined, depth)
-            }
-          }
-        }
-      }
+  :chain {
+    (R.ok, m) from match_join(toks, i)
+  } then {
+    if !m[0] {
+      return (R.ok, (left, i))
     }
+    :chain {
+      (R.ok, rr) from parse_table_primary(toks, m[3], depth)
+      (R.ok, jr) from parse_join_condition(toks, rr[1], m[1], m[2], depth)
+    } then {
+      const joined = TblJoin.new(left: left, right: rr[0], jtype: m[2], natural: m[1], on_e: jr[0], using: jr[1])
+      return parse_join_tail(toks, jr[2], joined, depth)
+    } else {
+      (R.error, why) then { return (R.error, why) }
+    }
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 
@@ -2755,24 +2728,17 @@ def parse_expr_list(toks Array[Tok], i Int64, depth Int64, acc Array[Expr]) (R, 
 }
 
 def parse_case(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
-  case parse_case_operand(toks, i + 1, depth) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, or_)    then {
-      case parse_when_clauses(toks, or_[1], depth + 1, []) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, wr)     then {
-          case parse_case_else(toks, wr[1], depth + 1) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, er)     then {
-              if !at_kw(toks, er[1], "end") {
-                return (R.error, err(peek(toks, er[1]).pos, "expected END or ELSE in the CASE expression"))
-              }
-              return (R.ok, (CaseExpr.new(operand_e: or_[0], whens: wr[0], else_e: er[0]), er[1] + 1))
-            }
-          }
-        }
-      }
+  :chain {
+    (R.ok, or_) from parse_case_operand(toks, i + 1, depth)
+    (R.ok, wr) from parse_when_clauses(toks, or_[1], depth + 1, [])
+    (R.ok, er) from parse_case_else(toks, wr[1], depth + 1)
+  } then {
+    if !at_kw(toks, er[1], "end") {
+      return (R.error, err(peek(toks, er[1]).pos, "expected END or ELSE in the CASE expression"))
     }
+    return (R.ok, (CaseExpr.new(operand_e: or_[0], whens: wr[0], else_e: er[0]), er[1] + 1))
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 
@@ -2819,27 +2785,23 @@ def parse_when_clauses(toks Array[Tok], i Int64, depth Int64, acc Array[(Expr, E
 }
 
 def parse_cast(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
-  case want_kind(toks, i + 1, Tk.t_lparen, "`(` after CAST") {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, j)      then {
-      case parse_expr(toks, j, depth) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, r)      then {
-          if !at_kw(toks, r[1], "as") {
-            return (R.error, err(peek(toks, r[1]).pos, "expected AS in the CAST expression"))
-          }
-          case parse_type_name(toks, r[1] + 1) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, tr)     then {
-              case want_kind(toks, tr[1], Tk.t_rparen, "`)` after the CAST type") {
-                (R.error, why) then { return (R.error, why) }
-                (R.ok, k)      then { return (R.ok, (Cast.new(value: r[0], type_name: tr[0]), k)) }
-              }
-            }
-          }
-        }
-      }
+  :chain {
+    (R.ok, j) from want_kind(toks, i + 1, Tk.t_lparen, "`(` after CAST")
+    (R.ok, r) from parse_expr(toks, j, depth)
+  } then {
+    if !at_kw(toks, r[1], "as") {
+      return (R.error, err(peek(toks, r[1]).pos, "expected AS in the CAST expression"))
     }
+    :chain {
+      (R.ok, tr) from parse_type_name(toks, r[1] + 1)
+      (R.ok, k) from want_kind(toks, tr[1], Tk.t_rparen, "`)` after the CAST type")
+    } then {
+      return (R.ok, (Cast.new(value: r[0], type_name: tr[0]), k))
+    } else {
+      (R.error, why) then { return (R.error, why) }
+    }
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 
@@ -2887,22 +2849,22 @@ def all_digits_b(data Bytes, i Int64) Bool {
 }
 
 def parse_exists(toks Array[Tok], i Int64, depth Int64) (R, (Expr, Int64)) {
-  case want_kind(toks, i + 1, Tk.t_lparen, "`(` after EXISTS") {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, j)      then {
-      if !at_kw(toks, j, "select") {
-        return (R.error, err(peek(toks, j).pos, "expected a subquery after EXISTS"))
-      }
-      case parse_select(toks, j, depth + 1) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, sr)     then {
-          case want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery") {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, k)      then { return (R.ok, (Exists.new(query: sr[0]), k)) }
-          }
-        }
-      }
+  :chain {
+    (R.ok, j) from want_kind(toks, i + 1, Tk.t_lparen, "`(` after EXISTS")
+  } then {
+    if !at_kw(toks, j, "select") {
+      return (R.error, err(peek(toks, j).pos, "expected a subquery after EXISTS"))
     }
+    :chain {
+      (R.ok, sr) from parse_select(toks, j, depth + 1)
+      (R.ok, k) from want_kind(toks, sr[1], Tk.t_rparen, "`)` after the subquery")
+    } then {
+      return (R.ok, (Exists.new(query: sr[0]), k))
+    } else {
+      (R.error, why) then { return (R.error, why) }
+    }
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 

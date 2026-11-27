@@ -8,27 +8,30 @@
 default:
     @just --list
 
-# Build the emo CLI in the release profile — the single binary every
-# other recipe installs or packages.
+# Build the two executables in the release profile — `emo`, the CLI
+# every other recipe installs or packages, and `emo-lsp`, the language
+# server the editor integrations drive.
 #
-# build: compile the release binary
+# build: compile the release binaries
 build:
-    dune build --profile release src/emo_cli/emo.exe
+    dune build --profile release src/emo_cli/emo.exe bin/emo_lsp_bin.exe
 
-# Install the release binary into PREFIX (default ~/.local/bin) as a
-# symlink to this tree's build output — the dev install: every `dune
-# build` here refreshes the installed `emo` immediately, no reinstall.
-# The link rides the tree — moving or removing this checkout (or
-# `dune clean`) breaks `emo` until the next build here. The binary
-# itself is still the standalone c-target build, where `emo build`
-# afterwards needs only the system cc. Verify with `emo doctor`.
+# Install both release binaries into PREFIX (default ~/.local/bin) as
+# symlinks to this tree's build output — the dev install: every `dune
+# build` here refreshes the installed `emo` and `emo-lsp` immediately,
+# no reinstall. The links ride the tree — moving or removing this
+# checkout (or `dune clean`) breaks the pair until the next build here.
+# The `emo` binary itself is still the standalone c-target build, where
+# `emo build` afterwards needs only the system cc. Verify with
+# `emo doctor`.
 #
-# install: install the release binary as a symlink (PREFIX, default ~/.local/bin)
+# install: install the release binaries as symlinks (PREFIX, default ~/.local/bin)
 install PREFIX="$HOME/.local/bin":
-    dune build --profile release src/emo_cli/emo.exe
+    dune build --profile release src/emo_cli/emo.exe bin/emo_lsp_bin.exe
     mkdir -p {{PREFIX}}
     ln -sfn "{{justfile_directory()}}/_build/default/src/emo_cli/emo.exe" "{{PREFIX}}/emo"
-    @echo "linked {{PREFIX}}/emo -> _build/default/src/emo_cli/emo.exe — verify with: emo doctor"
+    ln -sfn "{{justfile_directory()}}/_build/default/bin/emo_lsp_bin.exe" "{{PREFIX}}/emo-lsp"
+    @echo "linked {{PREFIX}}/emo -> _build/default/src/emo_cli/emo.exe and {{PREFIX}}/emo-lsp -> _build/default/bin/emo_lsp_bin.exe — verify with: emo doctor"
 
 # Build and install through the opam switch instead — the source
 # install, which also brings the ocaml compilation target.
@@ -41,9 +44,9 @@ install-dev:
 # Remove the dev install (the install-dev route is uninstalled
 # through opam).
 #
-# uninstall: remove the installed emo link
+# uninstall: remove the installed emo and emo-lsp links
 uninstall PREFIX="$HOME/.local/bin":
-    rm -f {{PREFIX}}/emo
+    rm -f {{PREFIX}}/emo {{PREFIX}}/emo-lsp
 
 # Assemble the distributable release archive for this platform into
 # dist/ — one platform, for quick checks; the release itself builds
@@ -211,6 +214,98 @@ test-full:
     dune build --stop-on-first-error @wasm_spec @wasm_runs
     dune build --stop-on-first-error @emo_os
 
+# Every example's golden test, one program at a time: an example under
+# examples/ that holds both main.emo and expected.txt runs on the
+# interpreter, and its stdout must match the golden file byte for byte.
+# A non-zero exit is a failure by itself, and its stderr is printed in
+# place. FILTER keeps only examples whose name contains it; the
+# per-example stdout and stderr stay in .emo-build/example-golden/ for
+# inspection.
+#
+# The registry is this tree's own packages, staged the way the family
+# gates stage them, so resolution never reaches the network; an example
+# carrying fixtures/tls-ca.pem runs with SSL_CERT_FILE pointing at it,
+# as its header says.
+#
+# Examples whose golden no interpreter run prints are reported as
+# skipped, not failed: the compiled-only ones bind C libraries or
+# foreign definitions, and the freestanding ones need the riscv64 image
+# or the runtime's own arena notices. Those belong to the compiled
+# gates (@bootstrap, @ts_golden, @emo_os).
+#
+# example: golden-test the examples byte for byte (FILTER, default all)
+example FILTER="" CURFEW="300":
+    #!/bin/sh
+    set -u
+    filter="{{FILTER}}"
+    curfew="{{CURFEW}}"
+    ROOT="{{justfile_directory()}}"
+    EMO="$ROOT/_build/default/src/emo_cli/emo.exe"
+    OUT="$ROOT/.emo-build/example-golden"
+    REG="$ROOT/.emo-build/example-registry"
+    dune build src/emo_cli/emo.exe
+    "$ROOT/scripts/stage-registry.sh" "$REG"
+    export EMO_REGISTRY="$REG"
+    mkdir -p "$OUT"
+    compiled_only="fastmath_demo fastmath_elefunt numerics postgres_demo quad_demo sqlite3_demo term_demo"
+    freestanding="arena_gone survivors native_image parity_metal peek_poke"
+    pass=0
+    fail=0
+    skip=0
+    failed=""
+    for dir in "$ROOT"/examples/*/; do
+      name=$(basename "$dir")
+      case "$name" in
+      *"$filter"*) ;;
+      *) continue ;;
+      esac
+      if [ ! -f "$dir/main.emo" ] || [ ! -f "$dir/expected.txt" ]; then
+        echo "skip  $name (no main.emo or expected.txt)"
+        skip=$((skip + 1))
+        continue
+      fi
+      case " $compiled_only " in
+      *" $name "*)
+        echo "skip  $name (compiled-only)"
+        skip=$((skip + 1))
+        continue
+        ;;
+      esac
+      case " $freestanding " in
+      *" $name "*)
+        echo "skip  $name (freestanding golden)"
+        skip=$((skip + 1))
+        continue
+        ;;
+      esac
+      if [ -f "$dir/fixtures/tls-ca.pem" ]; then
+        (cd "$dir" && SSL_CERT_FILE=fixtures/tls-ca.pem "$EMO" run main.emo --no-color --curfew="$curfew" < /dev/null > "$OUT/$name.out" 2> "$OUT/$name.err")
+      else
+        (cd "$dir" && "$EMO" run main.emo --no-color --curfew="$curfew" < /dev/null > "$OUT/$name.out" 2> "$OUT/$name.err")
+      fi
+      status=$?
+      if [ "$status" -ne 0 ]; then
+        echo "FAIL  $name (exit $status)"
+        head -5 "$OUT/$name.err" | sed 's/^/      /'
+        fail=$((fail + 1))
+        failed="$failed $name"
+      elif cmp -s "$OUT/$name.out" "$dir/expected.txt"; then
+        echo "ok    $name"
+        pass=$((pass + 1))
+      else
+        echo "FAIL  $name (bytes)"
+        cmp "$OUT/$name.out" "$dir/expected.txt" 2>&1 | head -1 | sed 's/^/      /'
+        fail=$((fail + 1))
+        failed="$failed $name"
+      fi
+    done
+    echo
+    echo "$pass passed, $fail failed, $skip skipped"
+    if [ "$fail" -gt 0 ]; then
+      echo "failed:$failed"
+      exit 1
+    fi
+
 # Re-pin every stale package.lock in the tree — the one command to run
 # after a package's sources change. Each tracked lock's directory
 # resolves in place through `emo deps resolve`; the family packages the
@@ -245,6 +340,23 @@ lock-refresh REGISTRY="":
       else
         echo "FAIL $lock" >&2
         (cd "$dir" && "$EMO" deps resolve >/dev/null) | head -4 >&2 || true
+        status=1
+      fi
+    done
+    # The editors' server registries are generated copies git does not
+    # track, so the loop above cannot reach their locks: they are
+    # re-pinned here by hand. They resolve against the bundled library
+    # — the one the editors' test rules read them through — so the
+    # staged REGISTRY does not apply to them.
+    for pom in $(find "$ROOT/editors" -name package.emo -path '*/registry/*' \
+        -not -path '*/_build/*' -not -path '*/.emo-build/*'); do
+      dir=$(dirname "$pom")
+      rel="editors/${dir#"$ROOT"/editors/}"
+      if (cd "$dir" && env -u EMO_REGISTRY "$EMO" deps resolve >/dev/null 2>&1); then
+        echo "ok   $rel"
+      else
+        echo "FAIL $rel" >&2
+        (cd "$dir" && env -u EMO_REGISTRY "$EMO" deps resolve >/dev/null) | head -4 >&2 || true
         status=1
       fi
     done

@@ -1,11 +1,11 @@
 # Step 69 — Transactions and the session plane
 
-**Milestone:** M32 · **Prereq:** steps 66–68 (the record layer, the
+**Milestone:** M28 · **Prereq:** steps 66–68 (the record layer, the
 engine) · **Status:** landed 2026-11-12
 
 ## Why this step exists
 
-M31 executes one statement at a time, each in its own WriteBatch. A
+M28 executes one statement at a time, each in its own WriteBatch. A
 database needs transactions: BEGIN/COMMIT/ROLLBACK, a write buffer that
 commits atomically, reads at a snapshot so a session does not see
 uncommitted work, and a lock manager that makes two sessions' writes
@@ -131,7 +131,7 @@ sessions as Emo processes and the locks as an Emo process.
   first `scan_prefix` created `cf.iter()` and then replaced it with
   `cf.iter_at(snap)` without closing the first; the DB's live-handle
   count reached 13 and `Db.close` refused. The helper now chooses one
-  iterator and the engine's M31 golden still passes unchanged.
+  iterator and the engine's M28 golden still passes unchanged.
 - **The c compiler warns `-Winfinite-recursion` on the manager and
   session loops** — the intentional actor loops; the build succeeds and
   the warnings are inherent to a process that never returns.

@@ -1,6 +1,6 @@
 # Step 84 — The standard library: `toml`
 
-**Milestone:** M45 — The configuration format · **Prereq:** step 78
+**Milestone:** M36 — The configuration format · **Prereq:** step 78
 (the `template` package, the most recent pure-Emo format package) ·
 **Related:** `stdlib/registry/json`, `stdlib/registry/yaml` (the value
 tree this package mirrors), `stdlib/registry/float` (the exact-decimal
@@ -119,7 +119,7 @@ compatibility toggles — the package implements one spec.
 - [x] **T84.4** — The docs: `docs/stdlib/toml.md` + zh-CN mirror, the
       `docs/stdlib.md` row + section + mirror.
 - [x] **T84.5** — The tracking: this plan, `plan/README.md`'s
-      milestone bullet and status row, `docs/TASKS.md`'s M45 section +
+      milestone bullet and status row, `docs/TASKS.md`'s M36 section +
       mirror, `CHECK.md`'s settle record.
 
 ## Found and fixed here

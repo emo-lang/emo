@@ -1,6 +1,6 @@
 # Step 89 — The GC bootstrap: the interpreter's object model and the collector in Emo
 
-**Milestone:** M50 — The GC bootstrap · **Prereq:** none (the doors
+**Milestone:** M41 — The GC bootstrap · **Prereq:** none (the doors
 ride the interpreter run's own checking; the `gc` package is pure Emo)
 · **Related:** `docs/gc-heap.md`, `docs/stdlib/gc.md`,
 `examples/gc_demo/`, `CHECK.md` · **Status:** done — the doors admit
@@ -11,7 +11,7 @@ can never reach.
 ## Why this step exists
 
 The runtime-independence principle (T25.1) says a target's runtime is
-written in the language; the wasm runtime (M38) is the precedent. The
+written in the language; the wasm runtime (M29) is the precedent. The
 garbage collector had no precedent: the reclamation decision (T23.5)
 gave the hosted runtimes reference counting over identity objects and
 an arena for value families, and explicitly no tracing GC — which
@@ -68,8 +68,8 @@ lets go.
 - **Refcounting stands.** T23.5's model is untouched: this track is a
   library with its own managed heap, not a change to any runtime's
   value model. The relationship is recorded in CHECK.md.
-- **M50/step-89 numbering on the develop base.** The wasm track
-  (feat/wasm) carries M48–M49 / steps 87–88 on its own branch; this
+- **M41/step-89 numbering on the develop base.** The wasm track
+  (feat/wasm) carries M39–M40 / steps 87–88 on its own branch; this
   track takes the next numbers so the merge reconciles nothing.
 
 ## What landed
@@ -93,7 +93,7 @@ lets go.
 - Tests: `gc_heap_tests` (checker), `gc_refusal_tests`
   (emo_cli), the interpreter-only leg in `test/emo_project`.
 - Docs: `docs/gc-heap.md` + zh-CN, `docs/stdlib/gc.md` + zh-CN,
-  `docs/stdlib.md` + zh-CN's `gc` row, TASKS + zh's M50 row and
+  `docs/stdlib.md` + zh-CN's `gc` row, TASKS + zh's M41 row and
   section, CHECK.md's record.
 
 ## Found and fixed

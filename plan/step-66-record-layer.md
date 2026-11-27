@@ -1,6 +1,6 @@
 # Step 66 — The record layer
 
-**Milestone:** M29 · **Prereq:** step 65 (the `emo/rocksdb` binding, the
+**Milestone:** M28 · **Prereq:** step 65 (the `emo/rocksdb` binding, the
 `Bytes` view) · **Status:** landed 2026-11-12
 
 ## Why this step exists
@@ -10,11 +10,11 @@ it: a catalog that knows tables, columns, types, and indexes; a row
 encoding that round-trips the v0 type subset without losing a byte; a
 rowid that allocates inside the same atomic write as the row; and
 secondary indexes that let a query find a row without scanning the
-table. This step is that model, and it is the last layer M31's planner
+table. This step is that model, and it is the last layer M28's planner
 needs before it can turn SQL text into rows.
 
 The step deliberately ships **no SQL**: no parser, no plan nodes, no
-wire. Those are M30–M33. The demo here calls the record API directly.
+wire. Those are all part of M28. The demo here calls the record API directly.
 
 ## Decisions settled here (the trail)
 
@@ -40,12 +40,12 @@ wire. Those are M30–M33. The demo here calls the record API directly.
   value's normal encoding. The key is exact-prefix capable, so an
   equality scan is a seek plus a prefix walk. It is not
   order-preserving for ranges — that waits for the planner and a
-  comparison encoding (M31).
+  comparison encoding (M28).
 - **Rowid allocation rides the row's batch.** The table definition
   carries `next_rowid`; an insert writes the row, every index entry,
   and the updated table definition in one `WriteBatch`. A failed write
   leaves the counter untouched. The unique-index check is a read before
-  that batch; M29 is single-session, and M32's lock manager makes it
+  that batch; M28 is single-session, and M28's lock manager makes it
   safe across sessions.
 - **The open list is enumerated, not assumed.** `rocksdb.list_families`
   reads the existing CFs before open; the record layer opens with the
@@ -57,10 +57,10 @@ wire. Those are M30–M33. The demo here calls the record API directly.
   keys are `(R, reason)` with a `record: ` prefix; a wrong value count,
   a mismatched type, a null in a NOT NULL column, an unknown column
   name, or a malformed row raises. The SQL layer maps these onto
-  PG-shaped error strings in M31.
+  PG-shaped error strings in M28.
 - **Scans answer arrays in v0.** `Table.scan` and `Table.scan_index`
   materialize rows; a streaming iterator waits for the planner, where
-  a plan node needs one. The demo's tables are tiny, and M34 measures
+  a plan node needs one. The demo's tables are tiny, and M28 measures
   before a cursor-shaped API is added.
 
 ## The format (v0, version 1)
@@ -128,7 +128,7 @@ the key still starts with it; the rowid is the key's last eight bytes.
       sections in `docs/TASKS.md` + zh, sized for spare sittings.
 - [x] **T66.2** — The design notes: `docs/emo-db.md` + zh (D7's REAL
       note, the architecture's storage item naming the shared data CF,
-      the M29 row, and the open items for range scans/streaming).
+      the M28 row, and the open items for range scans/streaming).
 - [x] **T66.3** — The binding's `list_families(path)`: the shim's list
       handle over `rocksdb_list_column_families`, the FFI declarations,
       the facade's `(R, Array[String])`, and the missing-path empty
@@ -178,7 +178,7 @@ the key still starts with it; the rowid is the key's last eight bytes.
 - [x] **T66.15** — The project README + zh: the record layer's formats,
       the demo, and the gate.
 - [x] **T66.16** — The close-out: TASKS EN+zh, the plan README, the
-      M29 row, `CHECK.md`'s entry, and `dune build`/`@fmt` green.
+      M28 row, `CHECK.md`'s entry, and `dune build`/`@fmt` green.
 
 ## Evidence
 
@@ -223,17 +223,17 @@ the key still starts with it; the rowid is the key's last eight bytes.
 
 - **Range scans** — the index key is exact-prefix capable, not
   order-preserving; a comparison encoding (and the planner's range
-  nodes) is M31's.
+  nodes) is M28's.
 - **Streaming scans** — v0 materializes; a cursor-shaped API waits for
   the plan node that consumes one.
 - **REAL's 4-byte storage** — binary64 in v0; the narrowing waits for
   Float32 or a rounding routine, and the decision is recorded in D7's
   note.
-- **UPDATE/DELETE** — M31's executor owns them; the record layer's
+- **UPDATE/DELETE** — M28's executor owns them; the record layer's
   `insert` is the only writer here, so index maintenance on removal is
   not yet exercised.
 - **Multi-session safety** — the unique check and the rowid counter are
-  single-session in M29; the lock manager and the transaction plane are
-  M32's.
-- **Streaming a value larger than memory** — M29's values are whole
+  single-session in M28; the lock manager and the transaction plane are
+  M28's.
+- **Streaming a value larger than memory** — M28's values are whole
   `Bytes`; the bound waits for a binary file story (arc two).

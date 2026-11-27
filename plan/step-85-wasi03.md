@@ -1,6 +1,6 @@
 # Step 85 — WASI 0.3: Emo programs as standard command components
 
-**Milestone:** M46 · **Prereq:** step 56 (the wasm target and its
+**Milestone:** M37 · **Prereq:** step 56 (the wasm target and its
 canonical host), 77 (WASI preview1) · **Status:** complete
 
 The wasm target's artifact is a WasmGC module with eighteen `emo.*`
@@ -122,7 +122,7 @@ assumptions and pinned the encodings:
   Node/c targets, the known refusals pinned by name.
 - `devtools/wasmtime-smoke.sh` grown with the component execution rung.
 - Docs: the `--wasi` section in `docs/demo-targets.md` (EN + zh), the
-  ledger updates (plan row, TASKS milestone M46 + step section,
+  ledger updates (plan row, TASKS milestone M37 + step section,
   CHECK.md decision + trail).
 
 ### Out
@@ -174,7 +174,7 @@ assumptions and pinned the encodings:
       byte-identical with the Node list — skipping without
       wasmtime; `devtools/wasmtime-smoke.sh`'s execution rung
       (39/39 byte-identical); `docs/demo-targets.md` EN+zh; the
-      ledger rows (TASKS M46 + step section, this plan, CHECK).
+      ledger rows (TASKS M37 + step section, this plan, CHECK).
 - [x] **T85.7** — The file chain's last mile: five guest-side bugs,
       each pinned by a probe (the handle value thrown through the
       abort door, the preopen table's words dumped cell by cell) and

@@ -53,31 +53,31 @@ class YamlNull {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "yaml: expected true or false, got null")
+    :raise "yaml: expected true or false, got null"
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "yaml: expected an integer, got null")
+    :raise "yaml: expected an integer, got null"
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "yaml: expected a number, got null")
+    :raise "yaml: expected a number, got null"
   }
 
   def as_string() String {
-    raise Exception.new(message: "yaml: expected a string, got null")
+    :raise "yaml: expected a string, got null"
   }
 
   def items() Array[Yaml] {
-    raise Exception.new(message: "yaml: expected an array, got null")
+    :raise "yaml: expected an array, got null"
   }
 
   def entries() Array[(String, Yaml)] {
-    raise Exception.new(message: "yaml: expected an object, got null")
+    :raise "yaml: expected an object, got null"
   }
 
   def get(key String) Yaml {
-    raise Exception.new(message: "yaml: expected an object, got null")
+    :raise "yaml: expected an object, got null"
   }
 }
 
@@ -106,27 +106,27 @@ class YamlBool {
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "yaml: expected an integer, got true or false")
+    :raise "yaml: expected an integer, got true or false"
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "yaml: expected a number, got true or false")
+    :raise "yaml: expected a number, got true or false"
   }
 
   def as_string() String {
-    raise Exception.new(message: "yaml: expected a string, got true or false")
+    :raise "yaml: expected a string, got true or false"
   }
 
   def items() Array[Yaml] {
-    raise Exception.new(message: "yaml: expected an array, got true or false")
+    :raise "yaml: expected an array, got true or false"
   }
 
   def entries() Array[(String, Yaml)] {
-    raise Exception.new(message: "yaml: expected an object, got true or false")
+    :raise "yaml: expected an object, got true or false"
   }
 
   def get(key String) Yaml {
-    raise Exception.new(message: "yaml: expected an object, got true or false")
+    :raise "yaml: expected an object, got true or false"
   }
 }
 
@@ -148,7 +148,7 @@ class YamlInt {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "yaml: expected true or false, got an integer")
+    :raise "yaml: expected true or false, got an integer"
   }
 
   def as_int() Int64 {
@@ -156,23 +156,23 @@ class YamlInt {
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "yaml: expected a number, got an integer")
+    :raise "yaml: expected a number, got an integer"
   }
 
   def as_string() String {
-    raise Exception.new(message: "yaml: expected a string, got an integer")
+    :raise "yaml: expected a string, got an integer"
   }
 
   def items() Array[Yaml] {
-    raise Exception.new(message: "yaml: expected an array, got an integer")
+    :raise "yaml: expected an array, got an integer"
   }
 
   def entries() Array[(String, Yaml)] {
-    raise Exception.new(message: "yaml: expected an object, got an integer")
+    :raise "yaml: expected an object, got an integer"
   }
 
   def get(key String) Yaml {
-    raise Exception.new(message: "yaml: expected an object, got an integer")
+    :raise "yaml: expected an object, got an integer"
   }
 }
 
@@ -194,11 +194,11 @@ class YamlFloat {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "yaml: expected true or false, got a number")
+    :raise "yaml: expected true or false, got a number"
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "yaml: expected an integer, got a number")
+    :raise "yaml: expected an integer, got a number"
   }
 
   def as_float() Float64 {
@@ -206,19 +206,19 @@ class YamlFloat {
   }
 
   def as_string() String {
-    raise Exception.new(message: "yaml: expected a string, got a number")
+    :raise "yaml: expected a string, got a number"
   }
 
   def items() Array[Yaml] {
-    raise Exception.new(message: "yaml: expected an array, got a number")
+    :raise "yaml: expected an array, got a number"
   }
 
   def entries() Array[(String, Yaml)] {
-    raise Exception.new(message: "yaml: expected an object, got a number")
+    :raise "yaml: expected an object, got a number"
   }
 
   def get(key String) Yaml {
-    raise Exception.new(message: "yaml: expected an object, got a number")
+    :raise "yaml: expected an object, got a number"
   }
 }
 
@@ -240,15 +240,15 @@ class YamlString {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "yaml: expected true or false, got a string")
+    :raise "yaml: expected true or false, got a string"
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "yaml: expected an integer, got a string")
+    :raise "yaml: expected an integer, got a string"
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "yaml: expected a number, got a string")
+    :raise "yaml: expected a number, got a string"
   }
 
   def as_string() String {
@@ -256,15 +256,15 @@ class YamlString {
   }
 
   def items() Array[Yaml] {
-    raise Exception.new(message: "yaml: expected an array, got a string")
+    :raise "yaml: expected an array, got a string"
   }
 
   def entries() Array[(String, Yaml)] {
-    raise Exception.new(message: "yaml: expected an object, got a string")
+    :raise "yaml: expected an object, got a string"
   }
 
   def get(key String) Yaml {
-    raise Exception.new(message: "yaml: expected an object, got a string")
+    :raise "yaml: expected an object, got a string"
   }
 }
 
@@ -289,19 +289,19 @@ class YamlArray {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "yaml: expected true or false, got an array")
+    :raise "yaml: expected true or false, got an array"
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "yaml: expected an integer, got an array")
+    :raise "yaml: expected an integer, got an array"
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "yaml: expected a number, got an array")
+    :raise "yaml: expected a number, got an array"
   }
 
   def as_string() String {
-    raise Exception.new(message: "yaml: expected a string, got an array")
+    :raise "yaml: expected a string, got an array"
   }
 
   def items() Array[Yaml] {
@@ -309,11 +309,11 @@ class YamlArray {
   }
 
   def entries() Array[(String, Yaml)] {
-    raise Exception.new(message: "yaml: expected an object, got an array")
+    :raise "yaml: expected an object, got an array"
   }
 
   def get(key String) Yaml {
-    raise Exception.new(message: "yaml: expected an object, got an array")
+    :raise "yaml: expected an object, got an array"
   }
 }
 
@@ -338,23 +338,23 @@ class YamlObject {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "yaml: expected true or false, got an object")
+    :raise "yaml: expected true or false, got an object"
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "yaml: expected an integer, got an object")
+    :raise "yaml: expected an integer, got an object"
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "yaml: expected a number, got an object")
+    :raise "yaml: expected a number, got an object"
   }
 
   def as_string() String {
-    raise Exception.new(message: "yaml: expected a string, got an object")
+    :raise "yaml: expected a string, got an object"
   }
 
   def items() Array[Yaml] {
-    raise Exception.new(message: "yaml: expected an array, got an object")
+    :raise "yaml: expected an array, got an object"
   }
 
   def entries() Array[(String, Yaml)] {
@@ -400,7 +400,7 @@ def object(entries Array[(String, Yaml)]) Yaml {
 
 def lookup(entries Array[(String, Yaml)], key String, i Int64) Yaml {
   if i < 0 {
-    raise Exception.new(message: "yaml: no key `" + key + "` in object")
+    :raise "yaml: no key `" + key + "` in object"
   }
   const pair = entries[i]
   if pair[0] == key {
@@ -417,20 +417,17 @@ def lookup(entries Array[(String, Yaml)], key String, i Int64) Yaml {
 // offset.
 def decode(text String) (R, Yaml) {
   const data = text.to_bytes()
-  case doc_start(data, 0, 0) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, p0)      then {
-      case parse_node(data, p0, 0) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, r)       then {
-          const after = doc_end(data, r[1])
-          if after >= 0 {
-            return (R.error, err(after, "multi-document YAML is not supported yet"))
-          }
-          return (R.ok, r[0])
-        }
-      }
+  :chain {
+    (R.ok, p0) from doc_start(data, 0, 0)
+    (R.ok, r) from parse_node(data, p0, 0)
+  } then {
+    const after = doc_end(data, r[1])
+    if after >= 0 {
+      return (R.error, err(after, "multi-document YAML is not supported yet"))
     }
+    return (R.ok, r[0])
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 
@@ -547,14 +544,8 @@ def count_indent(data Bytes, s Int64, i Int64, n Int64) (R, Int64) {
 
 // The length of a `---` or `...` marker at t (0 when there is none).
 def marker_len(data Bytes, t Int64, e Int64, which Int64) Int64 {
-  if t + 3 <= e {
-    if data.get(t) == which {
-      if data.get(t + 1) == which {
-        if data.get(t + 2) == which {
-          return 3
-        }
-      }
-    }
+  if t + 3 <= e && data.get(t) == which && data.get(t + 1) == which && data.get(t + 2) == which {
+    return 3
   }
   return 0
 }
@@ -582,9 +573,8 @@ def parse_node(data Bytes, pos Int64, depth Int64) (R, (Yaml, Int64)) {
   if depth > 512 {
     return (R.error, err(pos, "nesting deeper than 512"))
   }
-  case line_indent_at(data, pos) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, indent)  then {
+  :when line_indent_at(data, pos) {
+    indent then {
       if is_dash(data, pos) {
         return parse_sequence(data, pos, indent, depth, [])
       }
@@ -657,9 +647,8 @@ def parse_node_line(data Bytes, pos Int64, e Int64, indent Int64, depth Int64) (
   }
   const more = next_content_line(data, e)
   if more >= 0 {
-    case line_indent_at(data, more) {
-      (R.error, why) then { return (R.error, why) }
-      (R.ok, mi)      then {
+    :when line_indent_at(data, more) {
+      mi then {
         if mi > indent {
           return (R.error, err(more, "multi-line plain scalars are not supported yet"))
         }
@@ -668,9 +657,8 @@ def parse_node_line(data Bytes, pos Int64, e Int64, indent Int64, depth Int64) (
   }
   const t = strip_comment(data, pos, e)
   const end = trim_end(data, t)
-  case resolve_plain(slice_text(data, pos, end)) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, v)      then {
+  :when resolve_plain(slice_text(data, pos, end)) {
+    v then {
       return (R.ok, (v, next_line(data, e)))
     }
   }
@@ -698,16 +686,13 @@ def next_content_line(data Bytes, e Int64) Int64 {
 // pos sits on the first key; colon is the key's `:`; indent is the
 // mapping's column.
 def parse_mapping(data Bytes, pos Int64, colon Int64, indent Int64, depth Int64, entries Array[(String, Yaml)]) (R, (Yaml, Int64)) {
-  case key_scalar(data, pos, colon) {
+  :chain {
+    (R.ok, key) from key_scalar(data, pos, colon)
+    (R.ok, vr) from mapping_value(data, colon + 1, indent, depth)
+  } then {
+    return parse_mapping_loop(data, vr[1], indent, depth, entries.append((key, vr[0])))
+  } else {
     (R.error, why) then { return (R.error, why) }
-    (R.ok, key)     then {
-      case mapping_value(data, colon + 1, indent, depth) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, vr)      then {
-          return parse_mapping_loop(data, vr[1], indent, depth, entries.append((key, vr[0])))
-        }
-      }
-    }
   }
 }
 
@@ -803,9 +788,8 @@ def mapping_value_nested(data Bytes, e Int64, indent Int64, depth Int64) (R, (Ya
   if marker_len(data, p, le, 46) > 0 {
     return (R.ok, (YamlNull.new(), p))
   }
-  case line_indent_at(data, p) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, ni)      then {
+  :when line_indent_at(data, p) {
+    ni then {
       if ni > indent {
         return parse_node(data, p, depth + 1)
       }
@@ -2012,7 +1996,7 @@ def emit(v Yaml, indent Int64) String {
   if v.is(YamlString) {
     return emit_text(v.as_string())
   }
-  raise Exception.new(message: "yaml: unknown value kind")
+  :raise "yaml: unknown value kind"
 }
 
 // What comes after `key:`: inline for scalars and empty containers, a
@@ -2092,7 +2076,7 @@ def emit_key(k Yaml) String {
   if k.is(YamlNull) {
     return "null"
   }
-  raise Exception.new(message: "yaml: mapping keys must be scalars")
+  :raise "yaml: mapping keys must be scalars"
 }
 
 // A string prints plain when no reader could misread it; anything

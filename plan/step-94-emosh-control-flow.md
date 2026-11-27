@@ -1,6 +1,6 @@
 # Step 94 — emosh's control flow
 
-**Milestone:** M55 · **Prereq:** steps 92–93 (the everyday surface,
+**Milestone:** M44 · **Prereq:** steps 92–93 (the everyday surface,
 the background jobs) · **Status:** landed 2026-11-22 (code, fixtures,
 docs; eleven fixtures byte-identical on both targets, the multi-line
 block driven through a pty by hand on both)

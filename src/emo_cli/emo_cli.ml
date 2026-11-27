@@ -1269,7 +1269,7 @@ let run =
           ~doc:
             "Compile first and run the artifact (riscv64: the ELF boots under \
              qemu-system-riscv64; wasm: the module runs under Node with the \
-             bundled host).")
+             bundled host; beam: the module runs under erl).")
   in
   let curfew =
     Arg.(
@@ -1416,12 +1416,45 @@ let run =
                   (Filename.quote (Sys.getcwd ()))
                   (Filename.quote host) (Filename.quote module_)))
         end
+    | Some "beam" ->
+        let build_dir = Filename.concat (Sys.getcwd ()) ".emo-build" in
+        if
+          (not (Sys.file_exists build_dir))
+          && Emo_tool.run_status
+               (Printf.sprintf "mkdir -p %s" (Filename.quote build_dir))
+             <> 0
+        then begin
+          prerr_endline (Printf.sprintf "emo run: cannot create %s" build_dir);
+          exit 70
+        end;
+        let out = Filename.concat build_dir "emo_run" in
+        let code =
+          build_file ~entry:file ~output:out ~specialize:false ~cclibs:[]
+            ~native:Emo_project.no_native_inputs ~target:"beam"
+            ~profile:"kernel" ~wasi:false
+        in
+        if code <> 0 then exit code
+        else if not (tool_exists "erl") then begin
+          prerr_endline
+            "emo run: the beam target needs erl on PATH (the BEAM runtime)";
+          exit 69
+        end
+        else
+          (* The module is named after the output stem, `emo_run` — the
+             same name the artifact carries in `.emo-build`, so `-pa`
+             finds it. Like the qemu wait, how long the program runs is
+             the program's business. *)
+          exit
+            (Sys.command
+               (Printf.sprintf
+                  "erl -noshell -pa %s -eval 'emo_run:main(), erlang:halt(0).'"
+                  (Filename.quote build_dir)))
     | Some other ->
         prerr_endline
           (Printf.sprintf
              "emo run: unknown target `%s` for run — --target supports only \
-              riscv64 and wasm (other targets: `emo build`, then run the \
-              artifact)"
+              riscv64, wasm, and beam (other targets: `emo build`, then run \
+              the artifact)"
              other);
         exit 65
     | None -> (

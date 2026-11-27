@@ -3,12 +3,12 @@
 emo-db is Emo's own client-server SQL database: one PostgreSQL-dialect
 surface over two engines — a row store for OLTP first, a column store
 for OLAP later. The design record is [`docs/emo-db.md`](../../docs/emo-db.md);
-this directory is the project. Arc one is closed: M28 (the RocksDB
-half), M29 (the record layer), M30 (the SQL front-end's DML/DDL), M31
-(the planner and executor), M32 (transactions and the session plane),
-M33 (the PostgreSQL wire), and M34 (conformance and documentation) are
-landed. Arc two — the column engine — is under way: M35 (the column
-format) is landed.
+this directory is the project. Arc one is closed: steps 65–71 — the
+RocksDB half, the record layer, the SQL front-end's DML/DDL, the
+planner and executor, transactions and the session plane, the
+PostgreSQL wire, and conformance and documentation — are landed. Arc
+two — the column engine — is landed too: steps 72–74, the column
+format, the column executor, and the two-engine proof.
 
 ## Layout
 
@@ -98,7 +98,7 @@ is never freed from under a live handle.
 
 The scheduler is cooperative: every call into the shim serializes, so the
 shim carries no locks. Transactions and the lock manager are the
-database's own (M32).
+database's own (step 69).
 
 ## The record layer
 
@@ -185,8 +185,8 @@ whole surface; the standard library's `postgres` client connects over
 libpq's simple path for zero-parameter statements (`PQexec`), which is
 the same server without the extended protocol. Each connection has its
 own Engine over the shared Store and a `RemoteLocks` client over the
-server's one lock-manager process, so the table locks of M32 arbitrate
-across connections.
+server's one lock-manager process, so the table locks of step 69
+arbitrate across connections.
 
 The v0 wire is the simple path only: the extended protocol (Parse/
 Bind/Execute), SSL, scram-sha-256, and cancel requests are not spoken.
@@ -195,7 +195,7 @@ because tools parse it; the product's own version stays in the package.
 
 ## The column store
 
-Arc two's first landing is the format (M35). `CREATE TABLE ... STORE =
+Arc two's first landing is the format (step 72). `CREATE TABLE ... STORE =
 COLUMN` names a column table; the catalog's table definition carries a
 `store` field (version 2; a version-1 record reads as row storage, so
 an old database opens unchanged). A column table's rows live as
@@ -206,7 +206,7 @@ partial block inside the transaction's batch, so the pending overlay
 and the statement snapshot apply unchanged; the reopen verifies every
 column family like the index families. Column tables carry no indexes
 — `PRIMARY KEY` and secondary indexes answer `0A000`, and the block
-scan is the access path. The executor (M36) routes a column table's
+scan is the access path. The executor (step 73) routes a column table's
 SELECT to the blocks: plain projections and WHERE ride the shared
 typed expressions over block-materialized values, and the global
 aggregates — `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` — accumulate over the
@@ -260,21 +260,22 @@ may point at a different compiler binary; the default is
 
 ## Status
 
-M28 landed 2026-11-12: the binding, the KV golden, and the C ABI's byte
-view. M29 landed the same day: the record layer, the record golden, and
-the catalog's reopen path. M30 landed the SQL front-end's DDL/DML, M31
-the embedded planner/executor and its golden, M32 the transaction and
-session plane with its two-session golden, and M33 the PostgreSQL wire
-with psql and the `postgres` client as goldens. M34 landed 2026-11-13:
-the 126-case corpus, the measured table, and the shipped-surface
-documentation close arc one. M35 landed the same day: the column
-format — the parser's `STORE = COLUMN` tail, the catalog's version-2
-`store` field, the 1024-row blocks, the column families, and the
-reopen's verification. M36 followed hours later: the column executor —
-the block scan with the shared filter and project, and the global
-aggregates COUNT/SUM/AVG/MIN/MAX — replaced the bridge; UPDATE and
-DELETE on a column table answer `0A000` (insert-only). M37 closed the
-arc the same day: `htap_demo` and `htap_client` prove both engines in
+Step 65 landed 2026-11-12: the binding, the KV golden, and the C ABI's
+byte view. Step 66 landed the same day: the record layer, the record
+golden, and the catalog's reopen path. Step 67 landed the SQL
+front-end's DDL/DML, step 68 the embedded planner/executor and its
+golden, step 69 the transaction and session plane with its two-session
+golden, and step 70 the PostgreSQL wire with psql and the `postgres`
+client as goldens. Step 71 landed 2026-11-13: the 126-case corpus, the
+measured table, and the shipped-surface documentation close arc one.
+Step 72 landed the same day: the column format — the parser's
+`STORE = COLUMN` tail, the catalog's version-2 `store` field, the
+1024-row blocks, the column families, and the reopen's verification.
+Step 73 followed hours later: the column executor — the block scan
+with the shared filter and project, and the global aggregates
+COUNT/SUM/AVG/MIN/MAX — replaced the bridge; UPDATE and DELETE on a
+column table answer `0A000` (insert-only). Step 74 closed the arc the
+same day: `htap_demo` and `htap_client` prove both engines in
 one database and one transaction over the wire, the corpus's
 `column.test` states the column surface as 15 more cases, and the
 bench's column rows record the first measured comparison (the block

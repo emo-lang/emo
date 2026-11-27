@@ -53,31 +53,31 @@ class JsonNull {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "json: expected true or false, got null")
+    :raise "json: expected true or false, got null"
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "json: expected an integer, got null")
+    :raise "json: expected an integer, got null"
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "json: expected a number, got null")
+    :raise "json: expected a number, got null"
   }
 
   def as_string() String {
-    raise Exception.new(message: "json: expected a string, got null")
+    :raise "json: expected a string, got null"
   }
 
   def items() Array[Json] {
-    raise Exception.new(message: "json: expected an array, got null")
+    :raise "json: expected an array, got null"
   }
 
   def entries() Array[(String, Json)] {
-    raise Exception.new(message: "json: expected an object, got null")
+    :raise "json: expected an object, got null"
   }
 
   def get(key String) Json {
-    raise Exception.new(message: "json: expected an object, got null")
+    :raise "json: expected an object, got null"
   }
 }
 
@@ -115,22 +115,22 @@ class JsonBool {
     return self.value
   }
   def as_int() Int64 {
-    raise Exception.new(message: "json: expected an integer, got true or false")
+    :raise "json: expected an integer, got true or false"
   }
   def as_float() Float64 {
-    raise Exception.new(message: "json: expected a number, got true or false")
+    :raise "json: expected a number, got true or false"
   }
   def as_string() String {
-    raise Exception.new(message: "json: expected a string, got true or false")
+    :raise "json: expected a string, got true or false"
   }
   def items() Array[Json] {
-    raise Exception.new(message: "json: expected an array, got true or false")
+    :raise "json: expected an array, got true or false"
   }
   def entries() Array[(String, Json)] {
-    raise Exception.new(message: "json: expected an object, got true or false")
+    :raise "json: expected an object, got true or false"
   }
   def get(key String) Json {
-    raise Exception.new(message: "json: expected an object, got true or false")
+    :raise "json: expected an object, got true or false"
   }
 }
 
@@ -158,25 +158,25 @@ class JsonInt {
 
 
   def as_bool() Bool {
-    raise Exception.new(message: "json: expected true or false, got an integer")
+    :raise "json: expected true or false, got an integer"
   }
   def as_int() Int64 {
     return self.value
   }
   def as_float() Float64 {
-    raise Exception.new(message: "json: expected a number, got an integer")
+    :raise "json: expected a number, got an integer"
   }
   def as_string() String {
-    raise Exception.new(message: "json: expected a string, got an integer")
+    :raise "json: expected a string, got an integer"
   }
   def items() Array[Json] {
-    raise Exception.new(message: "json: expected an array, got an integer")
+    :raise "json: expected an array, got an integer"
   }
   def entries() Array[(String, Json)] {
-    raise Exception.new(message: "json: expected an object, got an integer")
+    :raise "json: expected an object, got an integer"
   }
   def get(key String) Json {
-    raise Exception.new(message: "json: expected an object, got an integer")
+    :raise "json: expected an object, got an integer"
   }
 }
 
@@ -204,25 +204,25 @@ class JsonFloat {
 
 
   def as_bool() Bool {
-    raise Exception.new(message: "json: expected true or false, got a number")
+    :raise "json: expected true or false, got a number"
   }
   def as_int() Int64 {
-    raise Exception.new(message: "json: expected an integer, got a number")
+    :raise "json: expected an integer, got a number"
   }
   def as_float() Float64 {
     return self.value
   }
   def as_string() String {
-    raise Exception.new(message: "json: expected a string, got a number")
+    :raise "json: expected a string, got a number"
   }
   def items() Array[Json] {
-    raise Exception.new(message: "json: expected an array, got a number")
+    :raise "json: expected an array, got a number"
   }
   def entries() Array[(String, Json)] {
-    raise Exception.new(message: "json: expected an object, got a number")
+    :raise "json: expected an object, got a number"
   }
   def get(key String) Json {
-    raise Exception.new(message: "json: expected an object, got a number")
+    :raise "json: expected an object, got a number"
   }
 }
 
@@ -254,25 +254,25 @@ class JsonString {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "json: expected true or false, got a string")
+    :raise "json: expected true or false, got a string"
   }
   def as_int() Int64 {
-    raise Exception.new(message: "json: expected an integer, got a string")
+    :raise "json: expected an integer, got a string"
   }
   def as_float() Float64 {
-    raise Exception.new(message: "json: expected a number, got a string")
+    :raise "json: expected a number, got a string"
   }
   def as_string() String {
     return self.value
   }
   def items() Array[Json] {
-    raise Exception.new(message: "json: expected an array, got a string")
+    :raise "json: expected an array, got a string"
   }
   def entries() Array[(String, Json)] {
-    raise Exception.new(message: "json: expected an object, got a string")
+    :raise "json: expected an object, got a string"
   }
   def get(key String) Json {
-    raise Exception.new(message: "json: expected an object, got a string")
+    :raise "json: expected an object, got a string"
   }
 }
 
@@ -304,19 +304,19 @@ class JsonArray {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "json: expected true or false, got an array")
+    :raise "json: expected true or false, got an array"
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "json: expected an integer, got an array")
+    :raise "json: expected an integer, got an array"
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "json: expected a number, got an array")
+    :raise "json: expected a number, got an array"
   }
 
   def as_string() String {
-    raise Exception.new(message: "json: expected a string, got an array")
+    :raise "json: expected a string, got an array"
   }
 
   def items() Array[Json] {
@@ -324,11 +324,11 @@ class JsonArray {
   }
 
   def entries() Array[(String, Json)] {
-    raise Exception.new(message: "json: expected an object, got an array")
+    :raise "json: expected an object, got an array"
   }
 
   def get(key String) Json {
-    raise Exception.new(message: "json: expected an object, got an array")
+    :raise "json: expected an object, got an array"
   }
 }
 
@@ -360,23 +360,23 @@ class JsonObject {
   }
 
   def as_bool() Bool {
-    raise Exception.new(message: "json: expected true or false, got an object")
+    :raise "json: expected true or false, got an object"
   }
 
   def as_int() Int64 {
-    raise Exception.new(message: "json: expected an integer, got an object")
+    :raise "json: expected an integer, got an object"
   }
 
   def as_float() Float64 {
-    raise Exception.new(message: "json: expected a number, got an object")
+    :raise "json: expected a number, got an object"
   }
 
   def as_string() String {
-    raise Exception.new(message: "json: expected a string, got an object")
+    :raise "json: expected a string, got an object"
   }
 
   def items() Array[Json] {
-    raise Exception.new(message: "json: expected an array, got an object")
+    :raise "json: expected an array, got an object"
   }
 
   def entries() Array[(String, Json)] {
@@ -614,7 +614,7 @@ def parse_more_entries(data Bytes, pos Int64, depth Int64, acc Array[(String, Js
 
 def lookup(entries Array[(String, Json)], key String, i Int64) Json {
   if i < 0 {
-    raise Exception.new(message: "json: no key `" + key + "` in object")
+    :raise "json: no key `" + key + "` in object"
   }
   const pair = entries[i]
   if pair[0] == key {
@@ -743,26 +743,15 @@ def utf8_len(cp Int64) Int64 {
 }
 
 def read_hex4(data Bytes, i Int64) (R, Int64) {
-  case hex_val(data, i) {
+  :chain {
+    (R.ok, h0) from hex_val(data, i)
+    (R.ok, h1) from hex_val(data, i + 1)
+    (R.ok, h2) from hex_val(data, i + 2)
+    (R.ok, h3) from hex_val(data, i + 3)
+  } then {
+    return (R.ok, (h0 << 12) | (h1 << 8) | (h2 << 4) | h3)
+  } else {
     (R.error, why) then { return (R.error, why) }
-    (R.ok, h0)     then {
-      case hex_val(data, i + 1) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, h1)     then {
-          case hex_val(data, i + 2) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, h2)     then {
-              case hex_val(data, i + 3) {
-                (R.error, why) then { return (R.error, why) }
-                (R.ok, h3)     then {
-                  return (R.ok, (h0 << 12) | (h1 << 8) | (h2 << 4) | h3)
-                }
-              }
-            }
-          }
-        }
-      }
-    }
   }
 }
 
@@ -801,22 +790,24 @@ def fill_string(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
 def fill_escape(data Bytes, i Int64, out Bytes, w Int64) (R, (Int64, Int64)) {
   const xb = data.get(i)
   if xb == 117 {
-    case read_hex4(data, i + 1) {
-      (R.error, why) then { return (R.error, why) }
-      (R.ok, cp1)    then {
-        if cp1 >= 55296 && cp1 <= 56319 {
-          case read_hex4(data, i + 7) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, cp2)    then {
-              const high = (cp1 - 55296) << 10
-              const xnw = put_utf8(out, w, 65536 + high + (cp2 - 56320))
-              return fill_string(data, i + 11, out, xnw)
-            }
-          }
+    :chain {
+      (R.ok, cp1) from read_hex4(data, i + 1)
+    } then {
+      if cp1 >= 55296 && cp1 <= 56319 {
+        :chain {
+          (R.ok, cp2) from read_hex4(data, i + 7)
+        } then {
+          const high = (cp1 - 55296) << 10
+          const xnw = put_utf8(out, w, 65536 + high + (cp2 - 56320))
+          return fill_string(data, i + 11, out, xnw)
+        } else {
+          (R.error, why) then { return (R.error, why) }
         }
-        const xnw = put_utf8(out, w, cp1)
-        return fill_string(data, i + 5, out, xnw)
       }
+      const xnw = put_utf8(out, w, cp1)
+      return fill_string(data, i + 5, out, xnw)
+    } else {
+      (R.error, why) then { return (R.error, why) }
     }
   }
   const xdec = simple_escape(xb)
@@ -983,35 +974,29 @@ def parse_number(data Bytes, pos Int64) (R, (Json, Int64)) {
   const sr = scan_sign(data, pos)
   const neg = sr[0]
   const int_start = sr[1]
-  case scan_int(data, int_start) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, ie)     then {
-      const int_len = ie - int_start
-      case scan_frac(data, ie) {
+  :chain {
+    (R.ok, ie) from scan_int(data, int_start)
+    (R.ok, fr) from scan_frac(data, ie)
+    (R.ok, ex) from scan_exp(data, fr[1])
+  } then {
+    const int_len = ie - int_start
+    const frac_len = fr[0]
+    const exp_val = ex[0]
+    if frac_len == 0 && exp_val == 0 {
+      :chain {
+        (R.ok, acc) from acc_digits(data, int_start, ie, 0, neg)
+      } then {
+        return (R.ok, (JsonInt.new(value: acc), ex[1]))
+      } else {
         (R.error, why) then { return (R.error, why) }
-        (R.ok, fr)     then {
-          case scan_exp(data, fr[1]) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, ex)     then {
-              const frac_len = fr[0]
-              const exp_val = ex[0]
-              if frac_len == 0 && exp_val == 0 {
-                case acc_digits(data, int_start, ie, 0, neg) {
-                  (R.error, why) then { return (R.error, why) }
-                  (R.ok, acc)    then {
-                    return (R.ok, (JsonInt.new(value: acc), ex[1]))
-                  }
-                }
-              }
-              case float.parse_decimal(data, int_start, int_len, frac_len, exp_val, neg) {
-                (R.error, _) then { return (R.error, err(pos, "number out of range")) }
-                (R.ok, x)    then { return (R.ok, (JsonFloat.new(value: x), ex[1])) }
-              }
-            }
-          }
-        }
       }
     }
+    case float.parse_decimal(data, int_start, int_len, frac_len, exp_val, neg) {
+      (R.error, _) then { return (R.error, err(pos, "number out of range")) }
+      (R.ok, x)    then { return (R.ok, (JsonFloat.new(value: x), ex[1])) }
+    }
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 // ---- encode ----

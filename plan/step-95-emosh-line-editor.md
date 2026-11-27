@@ -1,6 +1,6 @@
 # Step 95 — emosh's line editor
 
-**Milestone:** M56 · **Prereq:** steps 92–94 (the everyday surface, the
+**Milestone:** M44 · **Prereq:** steps 92–94 (the everyday surface, the
 background jobs, the control flow) · **Status:** landed 2026-11-23
 (code, fixtures, docs; the eleven fixtures byte-identical on both
 targets, the editor's key suite pty-driven by hand on both, the

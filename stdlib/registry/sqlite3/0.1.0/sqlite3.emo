@@ -28,12 +28,12 @@
 def open(path String) Database {
   const handle = internal.ffi.open(path)
   if handle == 0 {
-    raise Exception.new(message: "sqlite3: open ${path}: out of memory")
+    :raise "sqlite3: open ${path}: out of memory"
   }
   if internal.ffi.errcode(handle) != 0 {
     const message = internal.ffi.errmsg(handle)
     internal.ffi.close(handle)
-    raise Exception.new(message: "sqlite3: open ${path}: ${message}")
+    :raise "sqlite3: open ${path}: ${message}"
   }
   return Database.new(handle)
 }
@@ -48,8 +48,7 @@ class Database {
   // rows — DDL and one-off writes. Raises on any error.
   def exec(sql String) {
     if internal.ffi.exec(self.handle, sql) != 0 {
-      raise Exception.new(
-        message: "sqlite3: exec: ${internal.ffi.errmsg(self.handle)}")
+      :raise "sqlite3: exec: ${internal.ffi.errmsg(self.handle)}"
     }
   }
 
@@ -58,8 +57,7 @@ class Database {
   def prepare(sql String) Statement {
     const handle = internal.ffi.prepare(self.handle, sql)
     if handle == 0 {
-      raise Exception.new(
-        message: "sqlite3: prepare: ${internal.ffi.errmsg(self.handle)}")
+      :raise "sqlite3: prepare: ${internal.ffi.errmsg(self.handle)}"
     }
     return Statement.new(handle, self.handle)
   }
@@ -78,8 +76,7 @@ class Database {
   // busy.
   def close() {
     if internal.ffi.close(self.handle) != 0 {
-      raise Exception.new(
-        message: "sqlite3: close: ${internal.ffi.errmsg(self.handle)}")
+      :raise "sqlite3: close: ${internal.ffi.errmsg(self.handle)}"
     }
   }
 }
@@ -96,32 +93,28 @@ class Statement {
   def bind_int(i Int64, v Int64) {
     const rc = internal.ffi.bind_int64(self.handle, i, v)
     if rc != 0 {
-      raise Exception.new(
-        message: "sqlite3: bind_int: ${internal.ffi.errmsg(self.db)}")
+      :raise "sqlite3: bind_int: ${internal.ffi.errmsg(self.db)}"
     }
   }
 
   def bind_float(i Int64, v Float64) {
     const rc = internal.ffi.bind_double(self.handle, i, v)
     if rc != 0 {
-      raise Exception.new(
-        message: "sqlite3: bind_float: ${internal.ffi.errmsg(self.db)}")
+      :raise "sqlite3: bind_float: ${internal.ffi.errmsg(self.db)}"
     }
   }
 
   def bind_text(i Int64, v String) {
     const rc = internal.ffi.bind_text(self.handle, i, v)
     if rc != 0 {
-      raise Exception.new(
-        message: "sqlite3: bind_text: ${internal.ffi.errmsg(self.db)}")
+      :raise "sqlite3: bind_text: ${internal.ffi.errmsg(self.db)}"
     }
   }
 
   def bind_null(i Int64) {
     const rc = internal.ffi.bind_null(self.handle, i)
     if rc != 0 {
-      raise Exception.new(
-        message: "sqlite3: bind_null: ${internal.ffi.errmsg(self.db)}")
+      :raise "sqlite3: bind_null: ${internal.ffi.errmsg(self.db)}"
     }
   }
 
@@ -135,8 +128,7 @@ class Statement {
     if rc == 101 {
       return false
     }
-    raise Exception.new(
-      message: "sqlite3: step: ${internal.ffi.errmsg(self.db)} (code ${rc})")
+    :raise "sqlite3: step: ${internal.ffi.errmsg(self.db)} (code ${rc})"
   }
 
   // Back to the first row, keeping the bindings. sqlite3_reset returns
@@ -153,8 +145,7 @@ class Statement {
   def finalize() {
     const rc = internal.ffi.finalize(self.handle)
     if rc != 0 {
-      raise Exception.new(
-        message: "sqlite3: finalize: ${internal.ffi.errmsg(self.db)}")
+      :raise "sqlite3: finalize: ${internal.ffi.errmsg(self.db)}"
     }
   }
 

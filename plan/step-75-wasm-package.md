@@ -1,6 +1,6 @@
 # Step 75 — The wasm package: the execution surface and the host interface
 
-**Milestone:** M38 · **Prereq:** steps 20–22 (the runtime), 56 · **Status:** done
+**Milestone:** M29 · **Prereq:** steps 20–22 (the runtime), 56 · **Status:** done
 
 The Emo-written wasm runtime (`runtime/wasm/`, steps 20–22) decodes,
 validates, and executes WebAssembly modules — the full core spec, the

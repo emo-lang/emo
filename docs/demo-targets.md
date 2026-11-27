@@ -57,7 +57,7 @@ riscv64:    ok (QEMU emulator version 11.1.2)
 | `typescript` | `emo build --target typescript main.emo -o demo-ts` | one `demo-ts.ts` | `node demo-ts.ts` |
 | `browser` | `emo build --target browser main.emo -o app` | one `app.js` | `<script src="app.js">` in a page |
 | `wasm` | `emo build --target wasm main.emo -o demo-wasm` | `demo-wasm.wasm` + `.wat` | a JS host providing the `emo` imports (`emo run --target wasm` runs one under Node with the bundled host) |
-| `beam` | `emo build --target beam main.emo -o demo` | `demo.core` + `demo.beam` | `erl -noshell -pa . -eval 'demo:main(), ...'` |
+| `beam` | `emo build --target beam main.emo -o demo` | `demo.core` + `demo.beam` | `erl -noshell -pa . -eval 'demo:main(), ...'` or `emo run --target beam` |
 | `riscv64` | `emo build --target riscv64 main.emo -o demo-riscv` | freestanding ELF | `qemu-system-riscv64 ... -kernel` or `emo run --target riscv64` |
 
 ## Interpreter
@@ -70,7 +70,7 @@ ok test.greet.test_greet
 1 test, 1 passed
 ```
 
-`emo run` evaluates the module tree directly and produces no artifact. The words after the file are the program's own `os.argv` — `emo run main.emo x y` answers `["main.emo"; "x"; "y"]`, argv[0] the file's name the way a compiled binary's is the path it was invoked by (a leading `--` is the option marker, dropped); a `--target` artifact gets none. `emo build` does not accept `--target` as a way to run; `emo run --target` supports only `riscv64` today.
+`emo run` evaluates the module tree directly and produces no artifact. The words after the file are the program's own `os.argv` — `emo run main.emo x y` answers `["main.emo"; "x"; "y"]`, argv[0] the file's name the way a compiled binary's is the path it was invoked by (a leading `--` is the option marker, dropped); a `--target` artifact gets none. `emo build` does not accept `--target` as a way to run; `emo run --target` supports `riscv64`, `wasm`, and `beam`.
 
 One flag belongs to the interpreter's own run: `emo run --curfew SECONDS` hands the evaluation a wall-clock deadline. A program reads the clock through the standard library's `time` package, but a runaway program need not cooperate — so the deadline that ends it lives here, in the toolchain: the evaluator checks the deadline every 65,536 steps, and past it the run ends with exit 124 (the number `timeout(1)` answers) and the verdict on stderr. A `--target` artifact does not consult the curfew, and `--curfew` together with `--target` is refused. The flag exists for the playground ([`projects/emo-playground`](../projects/emo-playground)), whose server gives every submission one; nothing else is asked to use it.
 
@@ -270,6 +270,14 @@ Hello, world!
 ```
 
 `-pa .` adds the current directory to the code path (so `demo.beam` must be there), `-noshell` skips the interactive shell, and `erlang:halt(0)` ends the VM explicitly — without it `erl` keeps running. This is the command the BEAM golden tests use.
+
+Or build and run in one command:
+
+```console
+$ emo run --target beam main.emo
+```
+
+It writes the module to `.emo-build/emo_run.beam` (the module atom is `emo_run`) and runs the `erl` command above.
 
 - The artifact is an ordinary `.beam`, ready for a release or for another Erlang/Elixir module to call `demo:main()`. The CLI does not generate an escript or a release.
 - Emo processes map onto native BEAM processes (`do` to `spawn`, `<-` to `!`, `receive` to selective receive), so concurrency is real on this target. `foreign def` and the net/http packages are refused for now; the pure standard-library packages — `slog` among them — run.

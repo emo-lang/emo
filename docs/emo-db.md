@@ -112,19 +112,19 @@ extended protocol and fails honestly against v0. The standard library's
 a zero-parameter statement; a parameterized statement still speaks the
 extended protocol and fails honestly against v0.
 
-**D9 — The ladder.** Arc one is milestones M28–M34, one milestone per
-step, steps 65 through 71. The exit criteria live in `docs/TASKS.md`;
-the ladder's shape:
+**D9 — The ladder.** Arc one is steps 65 through 71 and arc two steps
+72 through 74, all one milestone now — M28 (EmoDB), one step per
+landing. The exit criteria live in `docs/TASKS.md`; the ladder's shape:
 
-| Milestone | Steps | Lands |
-| --- | --- | --- |
-| M28 — The RocksDB half | 65 | The project scaffold and the C shim, with the `Bytes` borrowed view (D10): open/close, get/put/delete, WriteBatch, iterators, snapshots, column families. |
-| M29 — The record layer | 66 | The catalog column family, the row encoding, rowid allocation, and secondary indexes as one column family per index — rows in one shared `data` family keyed by table oid + rowid. |
-| M30 — The SQL front-end's DML and DDL | 67 | `sql` grows CREATE TABLE / INSERT / UPDATE / DELETE beside SELECT — pure Emo, byte-identical on every target. |
-| M31 — The planner and executor | 68 | The first full SQL-to-rows path: plan nodes (scan/filter/project, insert/update/delete), expression evaluation over the record layer, an embedded test face. The v0 SELECT is single-table (projection, WHERE, an equality index scan); joins, aggregates, ORDER BY/LIMIT, and subqueries wait for M34. |
-| M32 — Transactions and the session plane | 69 | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, one WriteBatch per transaction with the COMMIT's fsync, the Emo lock manager. Table-level locks in v0. |
-| M33 — The wire | 70 | PG protocol v3, simple path: startup (SSL/GSSENC refused, trust authentication), ParameterStatus/BackendKeyData/ReadyForQuery, Query with multi-statement strings, RowDescription with the v0 OIDs, text-format DataRow, CommandComplete, EmptyQueryResponse, and ErrorResponse; one session actor per connection over the shared Store and the table locks; psql end-to-end and the `postgres` client through its zero-parameter simple path. |
-| M34 — Conformance and documentation | 71 | The SQL corpus — 126 text-comparable cases in the SQLLogicTest spirit over one fresh database, tags, rows, and `code: message` errors pinned — the measured-performance table (`projects/emo-db/bench`), the shipped-surface documentation, and the arc-two review. |
+| Step | Lands |
+| --- | --- |
+| 65 — The RocksDB half | The project scaffold and the C shim, with the `Bytes` borrowed view (D10): open/close, get/put/delete, WriteBatch, iterators, snapshots, column families. |
+| 66 — The record layer | The catalog column family, the row encoding, rowid allocation, and secondary indexes as one column family per index — rows in one shared `data` family keyed by table oid + rowid. |
+| 67 — The SQL front-end's DML and DDL | `sql` grows CREATE TABLE / INSERT / UPDATE / DELETE beside SELECT — pure Emo, byte-identical on every target. |
+| 68 — The planner and executor | The first full SQL-to-rows path: plan nodes (scan/filter/project, insert/update/delete), expression evaluation over the record layer, an embedded test face. The v0 SELECT is single-table (projection, WHERE, an equality index scan); joins, aggregates, ORDER BY/LIMIT, and subqueries wait for step 71. |
+| 69 — Transactions and the session plane | BEGIN/COMMIT/ROLLBACK, read committed on per-statement snapshots, one WriteBatch per transaction with the COMMIT's fsync, the Emo lock manager. Table-level locks in v0. |
+| 70 — The wire | PG protocol v3, simple path: startup (SSL/GSSENC refused, trust authentication), ParameterStatus/BackendKeyData/ReadyForQuery, Query with multi-statement strings, RowDescription with the v0 OIDs, text-format DataRow, CommandComplete, EmptyQueryResponse, and ErrorResponse; one session actor per connection over the shared Store and the table locks; psql end-to-end and the `postgres` client through its zero-parameter simple path. |
+| 71 — Conformance and documentation | The SQL corpus — 126 text-comparable cases in the SQLLogicTest spirit over one fresh database, tags, rows, and `code: message` errors pinned — the measured-performance table (`projects/emo-db/bench`), the shipped-surface documentation, and the arc-two review. |
 
 **D10 — The byte view: `Bytes` crosses the C ABI as a borrowed view.**
 RocksDB's keys and values are arbitrary bytes — an embedded NUL is
@@ -137,8 +137,8 @@ buffer cannot cross a generic ABI — a read takes a caller-provided
 out-parameter (length first, then copy in), so the Emo side always
 owns the bytes. The interpreter keeps E3009; every other target keeps
 its marshaling tier. This is the one language change v0 needs, and it
-lands with M28's binding because the row encoding (M29) cannot be
-built on NUL-terminated strings.
+lands with step 65's binding because the row encoding (step 66) cannot
+be built on NUL-terminated strings.
 
 ## The architecture
 
@@ -172,7 +172,7 @@ view; a read fills a caller-owned buffer.
 One property worth stating because the whole binding leans on it: the
 scheduler's cooperative model means every call into RocksDB
 serializes — the shim grows no locks of its own, and the lock manager
-arbitrates transactional conflict, not memory safety. M28 verifies
+arbitrates transactional conflict, not memory safety. Step 65 verifies
 this premise; if a hosted runtime ever grows true parallelism, the
 premise is re-checked there.
 
@@ -261,13 +261,13 @@ sessions, tables larger than memory.
 ## Arc two — the column engine (cut settled 2026-11-13)
 
 Arc one's planner is the plug point, and the cut is settled: three
-milestones, one step each, the arc's own discipline. The facts the
+steps, one landing each, the arc's own discipline. The facts the
 review rested on — the plan interface, the catalog, the
 column-family-per-index precedent, the engine-agnostic wire and
 session plane, the type system's shared blockers — are what the cut
 starts from.
 
-**M35 — The column format (step 72, landed 2026-11-13).** `CREATE
+**Step 72 — The column format (landed 2026-11-13).** `CREATE
 TABLE ... STORE = COLUMN` joins the parser (the tail after the column list; `STORE =
 ROW` is the default and renders only when written) and the catalog
 (the table definition moves to version 2 with a `store` field; a
@@ -283,7 +283,7 @@ overlay; the reopen verifies every column family like the index
 families. Column tables carry no indexes: `PRIMARY KEY` and secondary
 indexes answer `0A000`, and the block scan is the access path.
 
-**M36 — The column executor (step 73, landed 2026-11-13).** The engine
+**Step 73 — The column executor (landed 2026-11-13).** The engine
 routes by the table's storage: a column table's SELECT is all plain
 items (the block scan with the shared filter and project) or all
 aggregate calls (COUNT, SUM, AVG, MIN, MAX — global; GROUP BY stays
@@ -295,7 +295,7 @@ counts without decoding. UPDATE and DELETE answer `0A000` — the v0
 column engine is insert-only; the wire, the session plane, the locks,
 and the transactions are the same code.
 
-**M37 — The two-engine proof (step 74, landed 2026-11-13).** One
+**Step 74 — The two-engine proof (landed 2026-11-13).** One
 database, both storages, one session: `htap_demo` seeds a row table
 and a column table (1100 rows, across the block boundary) through the
 engine and serves the wire; psql and the `postgres` client both run a

@@ -1,6 +1,6 @@
 # Step 70 — The wire
 
-**Milestone:** M33 · **Prereq:** steps 66–69 (the record layer, the SQL
+**Milestone:** M28 · **Prereq:** steps 66–69 (the record layer, the SQL
 front-end, the engine, the session plane) · **Status:** landed
 2026-11-12
 
@@ -41,7 +41,7 @@ a line of client-specific code.
   CancelRequest closes the connection (there is no cancel machinery).
 - **A failed statement stops the string, and the transaction is
   already clean.** PostgreSQL marks a transaction failed (`E`) and
-  waits for ROLLBACK; M32's engine aborts the transaction on any
+  waits for ROLLBACK; M28's engine aborts the transaction on any
   statement error and releases its locks, so ReadyForQuery reports `I`
   and the session is usable immediately. The difference is deliberate
   and documented: the wire reports the state the engine actually has,

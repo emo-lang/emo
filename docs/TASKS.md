@@ -54,42 +54,23 @@ holds its full goal, scope, and acceptance details. This file is the tracker.
 | M25 — The postgres client | 62 | The standard library's second native-binding package and its first wire-protocol database client: `foreign def`s against a package-carried C shim over libpq, resolved through the manifest's `pkg_config` field; `$1`-style `Param` parameters (text/i64/f64/bool/none), `Rows` with typed checked accessors and a by-name lookup, the `net` error split (a down server and a broken constraint answer `(R.error, reason)` with the server's message and SQLSTATE, contract violations raising); `postgres_demo` rides a temp table against a live server, three runs byte-identical, joining `c_goldens` behind the `postgres_available` probe; docs EN+zh, with the found-and-fixed `sqlite3` table row (`CHECK.md`). |
 | M26 — The Emo shell | 63 | `emosh`, the general-purpose command interpreter written in Emo over the `os` surface: the environment, the signals, and the plumbing calls (`dup2`/`execvp`/`isatty`/`argv`) land in `os` beside the fork discipline; the shell itself lexes words into literal and expandable parts, expands `$var`/`$?`/the tilde, forks pipelines per stage and wires them through `dup2`, opens `<`/`>`/`>>` onto the child, walks `;`/`&&`/`||` with the carried status, answers the eight builtins, and lives by the ignored-interrupt discipline — the shell ignores, the fork child resets before its exec — reading lines in the terminal's own cooked mode; fixture scripts run byte-identically on the ocaml and c targets with their exit statuses pinned (`CHECK.md`). |
 | M27 — The `websocket` and `playwright` packages | 64 | Browser automation from Emo: the RFC 6455 halves as a stdlib package over `net` (client dial with handshake verification, server accept, one text message per exchange, masking by role, pings answered, closes answered, fragmented receives joined), then the `playwright` client speaking the driver's channel protocol to the official `playwright run-server` over those frames — the pre-launched-browser shape, the initialize handshake on the root channel, and the core door set (goto/click/fill/press/title/content/text_content/screenshot/close) with the `net` error split; both demos carry their own counterparty (an echo server; a miniature driver answering the real wire shapes with a fragmented message, a ping, and the eight-byte length form) so the goldens need no browser and no Node, byte-identical on the interpreter and the `c` target (`CHECK.md`). |
-| M28 — The RocksDB half | 65 | emo-db's first landing: the `projects/emo-db/` scaffold with the project-local `emo/rocksdb` binding — a package-carried C shim over the official RocksDB C API (open/close, get/put/delete, WriteBatch atomic writes, iterators, snapshots, column families) resolved through `foreign def`s and the manifest's `pkg_config` field (the `postgres` precedent); the C ABI grows the `Bytes` borrowed view (D10) so keys and values carry arbitrary binary data, with reads filling a caller-owned out-parameter; the scheduler's cooperative model serializes every call, so the shim grows no locks of its own; every other target refuses at resolution and the interpreter at run time (E3009/E5007 verified live); a KV demo — text and embedded-NUL values, a batch commit, reads, a prefix scan, snapshot isolation visible, close/reopen — run three times byte-identical on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
-| M29 — The record layer | 66 | The database's own data model over the KV half: the catalog column family (tables, columns, types, indexes, and oid counters by oid, written and read through the shim), the row encoding over the v0 type subset (null bitmap, 4-byte INTEGER, 8-byte BIGINT/REAL/DOUBLE, boolean, length-prefixed TEXT/VARCHAR/BYTEA), rowid allocation inside the insert's WriteBatch, and secondary indexes as one column family per index named `idx_<oid>` and keyed by the indexed values plus the rowid — the shared `data` family keyed by table oid + rowid, the catalog's reopen through `rocksdb.list_families` with the index-CF verification, and equality-prefix index scans; a record demo creates a table in the catalog, inserts rows covering every type (NULLs, an embedded NUL in BYTEA, UTF-8 TEXT), reads by rowid, scans the table, finds rows through unique and non-unique indexes, and reopens the store, pinned byte-for-byte on `c` (`CHECK.md`). |
-| M30 — The SQL front-end's DML and DDL | 67 | The `sql` package (pure Emo, byte-identical on every target) grows its statement set beside SELECT: CREATE TABLE with the v0 column types and column-level NOT NULL/PRIMARY KEY, multi-row INSERT ... VALUES with an optional column list, UPDATE ... SET ... [WHERE], and DELETE FROM ... [WHERE] — AST classes, the parser, and the canonical `to_string()` rendering for each, the existing SELECT grammar untouched, and the parser's shape checks (duplicate columns/assignments, row widths, a positive VARCHAR length, the unsupported tails by name); statement and expression goldens byte-identical on the interpreter and all five hosted targets (`CHECK.md`). |
-| M31 — The planner and executor | 68 | The first full SQL-to-rows path through the engine: the `emo/engine` package over `emo/sql` and `emo/record` — plan nodes (scan, filter, project, insert, update, delete), typed expression evaluation with SQL's three-valued NULL logic, single-table SELECT (projection, WHERE; an equality on an indexed column becomes an index scan), CREATE TABLE (the v0 types, a primary-key index), INSERT, UPDATE and DELETE (the record layer's new update/delete rewrite the row and its index entries in one batch), and the PG-shaped `code: message` errors (`42P01`, `42703`, `42883`, `42804`, `23505`, `23502`, `22001`, `22012`, `0A000`, `42601`) — an embedded test face (no wire yet) pinning SQL text in and rows out byte-for-byte on `c`, with the plan tree printed, through `projects/emo-db/check.sh` (`CHECK.md`). |
-| M32 — Transactions and the session plane | 69 | The transaction model of D6: BEGIN/COMMIT/ROLLBACK over the record layer's `Txn` — one WriteBatch per transaction committed atomically, a per-statement snapshot (read committed), a pending overlay for read-your-writes, the rowid counters published on commit, and the catalog's next-rowid change in the same write; the engine's session state, `LockClient`, and table-level write locks held to commit/rollback; an Emo lock-manager process with a FIFO of waiters, a wait-for graph, and a deadlock that aborts the requester with `40P01`; a two-session golden showing the read-committed pair, the write-write block, and the deadlock, pinned byte-for-byte on `c` through `projects/emo-db/check.sh` (`CHECK.md`). |
-| M33 — The wire | 70 | PostgreSQL wire protocol v3, the simple query path in `emo/wire`: startup (SSLRequest/GSSENCRequest answered `N`, trust AuthenticationOk, protocol 3.0 only), the ParameterStatus set psql and libpq read, BackendKeyData, ReadyForQuery, Query with multi-statement strings split by the new `sql.split` at the lexer's own semicolons, RowDescription with the v0 type OIDs (`Result` grows `types`), text-format DataRow (booleans `t`/`f`, BYTEA `\x` hex, NULL -1), CommandComplete, EmptyQueryResponse, and ErrorResponse with PG's fields; an error stops the rest and reports the engine's clean state (`I`); one session actor per connection over the shared Store, the lock manager moved to `engine.locks` and attached per session, `Engine.end_session` releasing without closing the store; `wire_demo` (ephemeral port through a ready file, finite connection count) and `wire_client` (libpq's zero-parameter `PQexec` path through the standard `postgres` package) pin psql's script and its error stop plus the client's rows/error, byte-identical across three `projects/emo-db/check.sh` runs behind `psql`/`libpq` probes (49 checks); the BEAM `__inst_recv` temp fix (`CHECK.md`). |
-| M34 — Conformance and documentation | 71 | The corpus and the record: an SQL statement corpus in the SQLLogicTest spirit — six files, 126 cases (`statement ok` with a pinned tag, `statement error` with a pinned `code: message` line, `query` with pinned rows in the runner's canonical rendering) over one fresh database per run, three runs byte-identical through `projects/emo-db/check.sh` (59 checks); the bench modes and `bench/run.sh` (warmup plus three timed runs) with the measured table, which found and fixed the read-only statement's WAL fsync and (with the corpus) the DDL-in-transaction block leak; `docs/emo-db.md` grown to the shipped surface (`What shipped`, `Measured`), the corrected stale claims, and the arc-two review of the row store's actual plug points (`CHECK.md`). |
-| M35 — The column format | 72 | The column format and the catalog choice: `CREATE TABLE ... STORE = COLUMN` in the parser (the canonical rendering spells only the written column tail), the catalog's version-2 table definition with a `store` field (a version-1 record reads as row storage), the record layer's column half — one column family per column (`col_<oid>`), 1024-row blocks (row count, null bitmap, the row encoding's widths), the trailing partial block re-read and rewritten inside the transaction, the block scan in rowid order, the reopen's column-family verification, and the row path's named guards; no indexes on column tables (`PRIMARY KEY` and secondary indexes refuse in both layers); the engine's DDL mapping and the named `0A000` bridge for DML/SELECT; the `column_demo` golden (create, 1030 rows across the block boundary, reopen, refusals) three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
-| M36 — The column executor | 73 | The batch executor behind the same surface: the record layer's `scan_column_batches` and `column_block_counts`, the engine's storage routing (SELECT to the column executor, INSERT to the column blocks, UPDATE/DELETE answering the insert-only `0A000`), the column plan nodes, and the global aggregates COUNT/SUM/AVG/MIN/MAX — COUNT answers 0 and the others NULL over zero rows, SUM widens by the argument, AVG is DOUBLE PRECISION, MIN/MAX keep the argument's type, `DISTINCT` aggregates refuse, a mixed select list answers `42803` naming the column, `count(*)` with no WHERE takes the block-count fast path, and the plan text shows `column scan`/`aggregate` — pinned by the engine demo's executor cases, three runs byte-identical through `projects/emo-db/check.sh` (66 checks) (`CHECK.md`). |
-| M37 — The two-engine proof | 74 | Both engines in one database, one session, one transaction over the wire: `htap_demo` seeds a row table and a column table (1100 rows across the block boundary) through the engine and serves the wire; psql and the `postgres` client each drive a script that reads both engines, carries the row table's UPDATE and the column table's INSERT inside one BEGIN/COMMIT, and reads the post-commit aggregates (`1100|605550|1.0|row-999` seeded, `1|11.0` updated, `1101|606651` after), pinned byte-for-byte behind the probes; the corpus's `column.test` lifts it to 141 cases (the DDL, the projections, the five aggregates, the zero-row rule `0|NULL`, and the mixing/type/DISTINCT/star/insert-only/primary-key refusals); the bench's column modes record the first measured comparison — the block scan 304 ms / 32895 rows per second against the row store's 675 ms / 14815, the aggregate 142 ms / 70423 — through `projects/emo-db/check.sh` green 3x (76 checks) (`CHECK.md`). |
-| M38 — The wasm capability | 75–77 | The Emo-written wasm runtime (steps 20–22) becomes a consumable capability: the package moves into the bundled registry as the `wasm` stdlib package with the execution surface on its root — `load`/`instantiate`/`call`/`get_global`/memory access over the R error split, the `(kind, bits)` value model with its constructors, and a host-import table of Emo closures — resolved like any bundled package; then `emo wasm run` executes a `.wasm` artifact from the CLI over the interpreter, the compiler never linking the runtime; then the `emo` host module (and the WASI surface it entails) runs modules from other toolchains; the conformance aliases (`wasm_spec`/`wasm_runs`) ride with the package (`CHECK.md`). |
-| M39 — Text templates | 78 | The `template` package renders text with holes from a `json` context — Go `text/template`'s mechanism, Emo's own surface, pure Emo over the shared runtimes, byte-identical on all five targets: one-shot `render` and the parse-once-render-many `Set` (new/with/render), `{{ }}` holes over bare dotted paths and bracket paths with seven ASCII-safe filter pipelines, `if`/`else if`/`else`/`end` on "not the zero value" truthiness, `for` over arrays and objects with `else`, `template` includes (bindings never cross the edge, the depth cap names the chain), `{{- `-` -}}` trim markers and `{{! }}` comments; parse and render both strict, every failure a `(R.error, reason)` with the byte position; the goldens flushed two backend bugs — the IR's module-level def mangle skipped `sanitize_ident` (a `?` suffix leaking into TS/OCaml identifiers), and the BEAM emitter's threaded-chain case registered a branch's pattern bindings before the per-branch save, a sibling arm's bindings leaking into a later continuation's live set, dying as erlc `unbound variable` (`CHECK.md`). |
-| M40 — The repl's line editor | 79 | The interactive session gains a real editor: the vendored upstream linenoise (BSD-2, pinned at `a473823d`, two marked patches — the temp history entry pops on Ctrl-C and end-of-input as ENTER pops it, and the blocking read's verdict errno survives the stop's terminal-probing cleanup) compiles into the CLI through dune's `foreign_stubs` — the first C the OCaml CLI links — behind a binding module whose stubs map the library's errno verdicts onto OCaml variants; the input seam carries the prompt text and distinguishes a completed line from Ctrl-C's abandonment and the input's end; the editor takes the seat only when stdin and stdout are both terminals, pipes and redirects keeping the plain path byte for byte; the history rides per line, saved at the session's end to the state file (`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`), with the unreadable and unwritable cases warning on stderr and the missing file silent; Ctrl-C abandons the pending input instead of killing the process; the continuation prompt indents by two spaces per open bracket; the tests drive the real C editor over a pipe through upstream's `LINENOISE_ASSUME_TTY` hook — typed lines, up-arrow recall, the interrupt that leaks no empty history entry, and a two-session persistence round-trip (`CHECK.md`). |
-| M41 — The standard library: `uuid` | 80 | The `uuid` package: the RFC 9562 identifier as one immutable 16-byte `Uuid` value rendering itself through the `to_string` protocol, answering `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?` and sorting through the RFC 6.11 big-endian `compare`; `v4` drawing 122 random bits over `rand.bytes`, `v7(now_ms)` taking the Unix time in milliseconds from the caller's own clock over 74 random bits (a negative or 48-bit-overflowing timestamp raising), and `v3`/`v5` the deterministic name-based doors over `crypto.legacy` with the four IANA namespace IDs of Table 3; `parse` taking exactly the canonical 36-character form, case-insensitive on the digits, every rejection naming the first offending byte, and `from_bytes` refusing a length other than 16; scoped to Go's standard `uuid` spine, v1/v2/v6 and a v8 constructor out, named; `uuid_demo` riding the RFC's vectors with the random doors printed structure-only, byte-identical on all five target lists (`CHECK.md`). |
-| M42 — The clock and the heartbeat | 81 | The `time` package: the wall clock and the monotonic clock over three runtime doors (`time_now_ms`, `time_mono_ns`, `time_sleep_ms`), everything else pure Emo over them — a `Time` of UTC epoch milliseconds whose calendar fields compute in pure Emo (Hinnant's civil arithmetic), `mono()` the explicit monotonic instrument, durations plain Int64 milliseconds with the conversion family (`time.seconds(n)` …) playing the constants' role, the strict nine-token layout formatting (UTC always, `format_iso`/`format_http` the presets, a malformed token raising naming the byte), and the seconds-speaking timing family — `sleep` the exact-ish park (messages queue, never wake it), `after` the scheduled one-shot in its own process, `tick` the calling process's never-returning heartbeat whose block's own `halt()` is the stop; on wasm the clock half rides two host imports and the timing half raises at the call naming the capability (the os process-half precedent); the goldens flushed a compiler-structure gap and four emitter bugs — the IR's Void-body exit positions lowered a bare trailing call as an Effect, invisible to every backend's tail machinery (now lowered as the Return it is, with the C emitter's Void return path emitting its expression without re-pooling the answer's own claim, and the interpreter's frame threading tailness through the statement walk), the c backend's Void-return discard pooling the claim twice (emosh segfaulted on a doubly-released builder cell), the c backend's closure capture never walking a `Send` statement's operands (a block whose only capture is the pid it sends to now captures it), the TS emitter's `receive` statement carrying no trailing `;` (a following `(`-opening statement parsed as a call), and the BEAM wildcard (two `_` in one pattern now lower as distinct fresh variables) (`CHECK.md`). |
-| M43 — The lock refresh | 82 | `emo deps resolve` resolves a project against its own declared targets (or an explicit `--target`), honoring `EMO_REGISTRY` as every other command does; the family staging lists converge into `scripts/stage-registry.sh` consumed byte-identically by the eight gates; `just lock-refresh` walks every tracked lock's directory and re-pins the tree with one command (118 locks, zero diffs); five cases in `test/emo_cli`'s `resolve_targets` group; CHECK.md's c-target-only note retired (`CHECK.md`). |
-| M44 — Strictness first, finished | 83 | The four open checker gaps close as check-time refusals: a block binding may not shadow an outer binding (E4029), arms on one enum member agree on their tuple payload types (E4030, `:chain` inheriting through its rewrite), and `Bytes.new` takes the constructor rule behind the Bytes rules' Unknown tolerance — beside the runtime lifetime bug they were recorded with (the chained-builtin form `b.to_bytes().length()` now answers the receiver's real value on the interpreter and every compiled target, pinned in `examples/builtin_names`); the negative goldens live in `test/emo_cli`'s `strictness_refusal` group, the corpus sweeps clean, and the rules land in `docs/intro/type-system.md` and `docs/intro/syntax.md` (`CHECK.md`). |
-| M45 — The configuration format | 84 | The `toml` package: TOML 1.1.0 decoded into a `Toml` value tree mirroring the json and yaml design — seven kinds, no null (TOML has none), the four date-time forms one `TomlDateTime` class whose `datetime_kind()` names the form and whose `to_text()` renders the canonical text back — pure Emo over the shared runtimes, the float package's exact-decimal constructor under every number; decode covers the full 1.1 surface (the `\e` and `\xHH` escapes, seconds omittable, lowercase `t`/`z`, the space delimiter try-and-see, multi-line inline tables and trailing commas) and the strict redefinition rules, assembling while it parses over origin-tagged nodes (dotted keys close their tables to headers, inline tables close at the brace, `[[x]]` appends only to arrays and a deeper header descends into the latest element, implicit supertables declare at most once); `inf`/`nan` and out-of-range integers refuse like every malformed input as `(R.error, reason)` with the byte offset; encode is the document form, scalars first, `decode(encode(v)) == v`; the edge battery flushed seven package bugs — the string fill answering the write length where the next index belongs, hex escape digits with the wrong weights, the float buffer counting the underscores, the exponent value eating the underscores, `doc_inline?` answering true for all-table arrays, section lines rendering the full dotted path, and the date-time class missing the interface — and the compiled goldens flushed three backend bugs, each pre-existing on the tree and each invisible until a package leaned on the shape it breaks: the TypeScript Void tail-call driver had no exit (every Void tail recursion spun forever on TS — json's `fill_spaces` included — the whole ts_golden suite burning CPU), the BEAM runtime dispatch bound its builtin arm through a clobberable map (chains two interfaces deep refused by erlc on an unbound variable — json_demo's single-level chains never hit it), and the wasm `deep_eq` had no tuple arm (any class field of `Array[(A, B)]` compared unequal to its own twin — the toml root table, json's `JsonObject`, latent until a golden compared a decoded tree) (`CHECK.md`). |
-| M46 — The wasm target speaks WASI 0.3 | 85 | `emo build --target wasm --wasi` wraps the WasmGC module in a WASI 0.3 command component (`wasi:cli/run@0.3.0`) wasmtime 46+ (`-S cli`) executes: stdout/stderr ride the native stream cycles through `wasi:cli/stdout`+`stderr`, the exit code through `wasi:cli/exit`, the import table remapped from the twenty `emo.*` doors to thirty standard ones — `wasi:filesystem` (descriptor as a `(sub resource)` export, open-at, the directory-entry stream, the one-string mutations), `wasi:filesystem/preopens` (the table the path resolution anchors on), `wasi:random/random`, `wasi:cli/environment`, and the clocks (T85.9: `wasi:clocks` system/monotonic `now` — the time package's clock half reads the `instant` record and the flat mark); the provider module grew the canonical realloc the host-written lists allocate through, sharing the bump cursor cell with the guest; the store operand order (value before address) fixed at five sites; the file chain's last mile fixed at T85.7 (the provider realloc's cursor store with its operands swapped, two bare loops exiting through the enclosing block's label, the write cycle reading the error-code cell on the ok case, `os_write`'s fd dispatch reading an always-false conjunction, the directory door's missing `read-dir-entries` import, and the bubble pass swapping descending); the guest-side `%g` float formatter (fixed and exponent forms) fixed at T85.8; `wasi_examples` — 67 goldens byte-identical with the Node list — and wasmtime-smoke's execution rung pin the doors (`CHECK.md`). |
-| M47 — The library's manual | 86 | `emo man` reads the standard library's reference pages from inside the binary: `emo man` lists the packages, `emo man <package>` renders one as a man page — NAME from the overview's table, SYNOPSIS from the embedded manifest's pin and `require`, DESCRIPTION with the doc's own sections and examples, SEE ALSO — and `emo man stdlib` renders the overview. The docs stay the source of truth: `docs/stdlib.md` and `docs/stdlib/*.md` are generated into the CLI's page data at build time (the stdlib-source route), so an installed binary answers with nothing beside it; the renderer reads the docs' Markdown subset — body reflowed to `COLUMNS`, code never reflowed, wide tables wrapped cell by cell — `MANPAGER`/`PAGER` is used only when it can run, an unknown name refuses on 65, and `test/emo_cli`'s `man` group pins the list, a page, and the refusal (`plan/step-86-emo-man.md`). |
-| M48 — The WASI host's file half | 87 | `emo wasm run`'s preview1 host reads and writes files inside a granted directory: the preopen table is the grant (`wasm.set_wasi_preopens`, the CLI's `--dir HOST[::GUEST]`), empty by default — no grant, no file system — `fd_prestat_get`/`fd_prestat_dir_name` walk the discovery, `path_open` resolves lexically inside a preopen's root (a climb past it ENOTCAPABLE), and every open rides one os door — read, write (create + truncate, the stdio "w" shape), append — with `fd_read`/`fd_write`/`fd_seek`/`fd_close`/`fd_fdstat_get` grown to file fds. The foundation is the os package's own POSIX semantics, not a second file story, and the ring flushed three pre-existing drifts: the errno table's ENOSYS and ESPIPE were off by one against wasip1.h (51/69 → 52/70), fd_seek's import shape pinned its i64 offset as an i32 (a real module's import refused), and `fd_readdir` now names the fixture's link-refusal probe (`CHECK.md`). |
-| M49 — The file half's rung two | 88 | Directories list, paths stat, and the mutations land: the DIRECTORY oflag opens directories (a stat before the open answers ENOTDIR for a file), the fd table grew the host path and the grant root so every resolution stays confined, `fd_readdir` lists statelessly (the caller's cookie the position, entries whole-only, d_type UNKNOWN with `path_filestat_get` the type channel), `fd_filestat_get`/`path_filestat_get` stat through the new path-shaped `os_stat` door (millisecond times scaled to nanoseconds; stdio answering character device; an unlinked-open's stat answering the miss), and the four path mutations ride the os doors that already exist, the errno text channel grown to EEXIST/ENOTEMPTY/EXDEV/EPERM; the lookupflags' symlink-follow bit is required, and the fixture's link-refusal probe now names `fd_pread` (`CHECK.md`). |
-| M50 — The GC bootstrap | 89 | The machine object model the interpreter run hosts, and the collector in Emo over it: sixteen bare-name doors — the fixed `struct` block, the counted `array` block, the rooted `ref`, and the walk's doors (`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`) — admitted only by the interpreter run (checked as target `interpreter`; every build target refuses by name, E4032), words self-describing by parity (even a shifted scalar, odd a reference, `0` null), slot 0 of every block the collector's header; the `gc` package implements mark-sweep in pure Emo — tagged accessors, the worklist drain, cycles cut by the mark bit — answering the words reclaimed; the weak root registry makes the host collector the liveness oracle and roots the mutator discipline (a handle a collection must respect lives in a `ref`); the goldens: `examples/gc_demo`'s nine lines on the interpreter alone (a rooted chain and a traced array survive the kill of four thousand unrooted nodes; the cycle dies the moment its root drops — the shape reference counting can never reclaim), `gc_heap_tests`, and the `gc_refusal` negative goldens on every refusing target (`CHECK.md`, `docs/gc-heap.md`). |
-| M51 — The GC ladder | 90 | The heap grows its own allocator and its wings: step 90 lands the arena — `heap_new` makes it, the raw `heap_load`/`heap_store` lane moves words, `heap_carve`/`heap_release` bind and unbind ranges — and the `gc` package's free list (first fit over two maps, split and neighbor-merge) becomes the only allocator, `struct_new`/`array_new`/`heap_free` retiring with the doors' blessing; handles carry offset + generation so a stale handle dies loudly without tombstones; the header word packs magic/kind/generation/mark/size; the demo's second generation lands inside the sweep's own words, the arena never growing (`CHECK.md`). |
-| M52 — The GC heap's riscv64 host | 91 | The metal joins the heap's hosts: the image grants the collector a region in its `.bss` (the mebibyte arena, the binding table, the root table, the slide's stage), the twenty-four doors land as runtime helpers compiled beside the program, `Ref` joins the tagged value model as kind 12 and the metal's `Map` as kind 13 (identity kinds under the runtime's reference counting, a zero release unlinking the root table), the raise gap this host carried since the hash twin closes (`Raise` lowers to `emo_raise`, the exception value rendering the `c` host's way), and module-level `var`s lower (cells in static memory, the prologue initializing) so the `gc` package's own geometry rides the image; the demo's 24 gold lines answer byte-for-byte on the interpreter, the `c` host and the metal — three boots stable, through the EmoOS kernel and direct — with the debug round's six walls named in `CHECK.md` (the prologue's double pool, the Map's half-taken +8 shift, the slide's raw pairs, the forwarding map's split key shapes, the rehash that copied only `next`, the unrounded arena cursor) and the gold leg riding `@emo_os`'s `gc_metal` group (`CHECK.md`, `docs/gc-heap.md`, `plan/step-91-riscv64-gc-host.md`). |
-| M53 — The shell's everyday surface | 92 | `emosh` grows the surface a daily shell cannot live without, all on the `os`+`bufio` face it already rides: a script file and `-c` open the invocation (`emosh script.esh args`, `emosh -c 'line' name args`, the script-unopenable 127, the broken option 2), the positional parameters land (`$1`…`$9`, `${N}`), `${var:-default}` joins the braced forms with the unnamed form staying literal — the whole form, not just the dollar — and the `${` scan now searches from the form instead of the word's start (`a}b${SETV}c` was a latent negative substring); the stderr redirections land (`2>`, `2>>`, `2>&1`, the digit-word rule keeping `hi2>` an argument, the dup's order the meaning); the glob lands (`*` and `?` the user typed bare only — quoting is remembered as a flag now, which also stops a quoted `~` from reaching `$HOME`, a found-and-fixed v0 bug), walking path segments, hiding dot names from a segment without the leading `.`, sorting the answers, refusing the command when nothing matches; the single command's words expand once instead of twice; four fixtures join and the harness pins the invocation modes on both targets (`CHECK.md`, `docs/emosh-guide.md`, `plan/step-92-emosh-everyday.md`). |
-| M54 — The shell's background jobs | 93 | `os` grows the polling half of waitpid in place at 0.1.0 (`waitpid_nohang` — the exited child `(R.ok, (pid, raw))`, children-but-none `(R.ok, (0, 0))`, the ECHILD errno reason byte-identical across the interpreter and the c runtime, the wasm process-half raise naming the capability) and `emosh` spends it: `&` after a pipeline runs the whole item as one job (the spawn the separator, `a & b` runs `b`), every member pinned by the parent's `setpgid` into one new process group so the terminal's Ctrl-C can never reach a background job while a foreground command keeps the classic death, the job table with the smallest-free-number rule and `$!` its representative pid and `$$` the shell's own, the notification `[1] done sleep 5` polled before every interactive prompt, and the builtins `jobs` (`[1] 4821 running sleep 5`), `fg %n` (the honest wait — no terminal handoff, the Ctrl-C cannot reach what it brings back), `bg %n` (nothing ever stops — `already in background`, bash's own answer), `wait [%n]` (127 the unknown), `kill [-N] [%n|pid]...` (`%n` the whole group by the negative pid); `os_demo` walks the poll three ways and the `bg` fixture rides `sleep`/`kill`/`awk` so no child output ever interleaves (`CHECK.md`, `docs/stdlib/os.md`, `docs/emosh-guide.md`, `plan/step-93-emosh-jobs.md`). |
-| M55 — The shell's control flow | 94 | `emosh` speaks Emo in its own grammar — brace blocks, no `then`/`fi`/`do`/`done` — and grows the three-layer machinery to run it: the parser gained compounds (`if`/`else` chains flattened into nesting, `while`, the numeric `for` with its three header-expression slices kept as tokens for the runtime evaluator, `def name() { }` with the attached-parentheses form beside the spaced one) and declarations (`const`/`var name = word`), answering incomplete — the driver reads the next line, `>` prompting, a `;` riding between the joined lines as the newline-as-separator — while `{`/`}` are reserved standalone words ending commands and lists; the executor walks them (`run_compound`, the header evaluator with comparisons-lowest precedence over bare variables, `$#` and integer literals, division by zero refusing, the step an assignment `name = expr`), the declarations bind a variable table consulted before the environment (a `const` refusing redeclaration and `unset`, a `for` variable restoring its prior binding whatever way the loop leaves), `def` joins a function table called by bare name with the call's arguments becoming `$1..` and restored on return, `break`/`continue`/`return` ride a session signal the loop and call walkers consume and the top level refuses (`break: only in a loop`); a compound takes `&` (the fork child walking it, the whole line the job's text) and the ctrl fixture walks every shape byte-identically on both targets (`CHECK.md`, `docs/emosh-guide.md`, `plan/step-94-emosh-control-flow.md`). |
-| M56 — The shell's line editor | 95 | `emosh`'s interactive session reads through its own line editor — raw mode, history, completion — written in Emo over the os terminal tier: os grew `tty_raw`/`tty_restore` in place at 0.1.0 (`cfmakeraw` the portable door, the saved state an opaque word array answering to the runtime that made it, the ENOTTY refusal byte-identical on a pipe, wasm raising on the capability); the editor walks the UTF-8 continuation bytes so multi-byte characters insert, erase, and step whole, ↑/↓ walk the last 1000 lines riding `emosh-history` under the repl's state-dir chain, Tab completes the word under the cursor to every candidate's common prefix (the first word as a command — builtins, session functions, then the PATH; later words as files of the working directory), Ctrl-C abandons the line instead of killing, and the terminal returns to cooked before anything runs — children keep the classic terminal, a running command dies to Ctrl-C as always; `EMOSH_ASSUME_TTY` skips the raw pair only, the keys and rendering running over a pipe — the goldens drive the editor by its bytes (`CHECK.md`, `docs/stdlib/os.md`, `docs/emosh-guide.md`, `plan/step-95-emosh-line-editor.md`). |
-
-
-## M56 — The shell's line editor
-
-### Step 95 — The editor in Emo over the os terminal tier
-
-The os package grew `tty_raw(fd)`/`tty_restore(fd, saved)` in place at 0.1.0 — `cfmakeraw` the portable policy (the flag bits themselves differ between macOS and Linux, so the words never cross the boundary), the saved state an opaque `Array[Int64]` the same runtime alone unpacks, the failures data-driven values with the errno text (`os: tty_raw: Inappropriate ioctl for device` byte-identical on both targets, wasm raising naming the capability). `emosh` spent it: `edit.emo` decodes keys one byte at a time, walks the UTF-8 continuation bytes so a multi-byte character is one insert, one erase, one cursor step, renders through raw `os.write` on the stderr descriptor, and answers three outcomes — accepted, end of input, abandoned. The session driver puts the terminal raw around every read and restores it before anything runs: children keep the classic cooked terminal, Ctrl-C abandons the half-typed line and asks again fresh, a running command dies to Ctrl-C as always. History rides the last 1000 lines through the repl's own state-dir chain (`EMO_STATE_DIR` → `XDG_STATE_HOME/emo` → `$HOME/.local/state/emo`), loaded at the session's start and written once at its end. Completion takes the word under the cursor to every candidate's common prefix, a second Tab listing them: the first word rides the command vocabulary — the builtins' roster, the session's functions, then every command the PATH serves — a later word rides the working directory. `EMOSH_ASSUME_TTY` skips the raw pair only, so the editor's keys and rendering run over a pipe and the goldens drive it by its bytes; the eleven fixtures stay byte-identical (the editor never engages on a pipe without the hook), and the pty hand-checks ran the whole key suite on both targets.
+| M28 — EmoDB | 65–74 | The database arc, from the KV half to the wire: the `projects/emo-db/` scaffold and the project-local `emo/rocksdb` binding over the official C API (batch writes, iterators, snapshots, column families) with the C ABI's borrowed `Bytes` view; the record layer's catalog, row encoding over the v0 type subset, rowid allocation, and one column family per secondary index; the `sql` package's CREATE TABLE, multi-row INSERT, UPDATE, and DELETE beside SELECT; the `emo/engine` planner and executor — plan nodes, typed expressions with SQL's three-valued NULL logic, the PG-shaped error codes; BEGIN/COMMIT/ROLLBACK with a per-statement snapshot, a read-your-writes overlay, and an Emo lock-manager process whose deadlock aborts with `40P01`; PostgreSQL wire protocol v3 in `emo/wire` (startup, the simple query path, text-format DataRow) over one session actor per connection; the SQLLogicTest-style corpus and the bench's measured record; the `STORE = COLUMN` format (1024-row blocks, one column family per column) and its batch executor with global aggregates; and the two-engine proof — row and column tables in one database, one session, one transaction over the wire — every golden byte-identical on `c` through `projects/emo-db/check.sh` (`CHECK.md`, `docs/emo-db.md`). |
+| M29 — The wasm capability | 75–77 | The Emo-written wasm runtime (steps 20–22) becomes a consumable capability: the package moves into the bundled registry as the `wasm` stdlib package with the execution surface on its root — `load`/`instantiate`/`call`/`get_global`/memory access over the R error split, the `(kind, bits)` value model with its constructors, and a host-import table of Emo closures — resolved like any bundled package; then `emo wasm run` executes a `.wasm` artifact from the CLI over the interpreter, the compiler never linking the runtime; then the `emo` host module (and the WASI surface it entails) runs modules from other toolchains; the conformance aliases (`wasm_spec`/`wasm_runs`) ride with the package (`CHECK.md`). |
+| M30 — Text templates | 78 | The `template` package renders text with holes from a `json` context — Go `text/template`'s mechanism, Emo's own surface, pure Emo over the shared runtimes, byte-identical on all five targets: one-shot `render` and the parse-once-render-many `Set` (new/with/render), `{{ }}` holes over bare dotted paths and bracket paths with seven ASCII-safe filter pipelines, `if`/`else if`/`else`/`end` on "not the zero value" truthiness, `for` over arrays and objects with `else`, `template` includes (bindings never cross the edge, the depth cap names the chain), `{{- `-` -}}` trim markers and `{{! }}` comments; parse and render both strict, every failure a `(R.error, reason)` with the byte position; the goldens flushed two backend bugs — the IR's module-level def mangle skipped `sanitize_ident` (a `?` suffix leaking into TS/OCaml identifiers), and the BEAM emitter's threaded-chain case registered a branch's pattern bindings before the per-branch save, a sibling arm's bindings leaking into a later continuation's live set, dying as erlc `unbound variable` (`CHECK.md`). |
+| M31 — The repl's line editor | 79 | The interactive session gains a real editor: the vendored upstream linenoise (BSD-2, pinned at `a473823d`, two marked patches — the temp history entry pops on Ctrl-C and end-of-input as ENTER pops it, and the blocking read's verdict errno survives the stop's terminal-probing cleanup) compiles into the CLI through dune's `foreign_stubs` — the first C the OCaml CLI links — behind a binding module whose stubs map the library's errno verdicts onto OCaml variants; the input seam carries the prompt text and distinguishes a completed line from Ctrl-C's abandonment and the input's end; the editor takes the seat only when stdin and stdout are both terminals, pipes and redirects keeping the plain path byte for byte; the history rides per line, saved at the session's end to the state file (`EMO_STATE_DIR` → `XDG_STATE_HOME` → `$HOME/.local/state/emo`), with the unreadable and unwritable cases warning on stderr and the missing file silent; Ctrl-C abandons the pending input instead of killing the process; the continuation prompt indents by two spaces per open bracket; the tests drive the real C editor over a pipe through upstream's `LINENOISE_ASSUME_TTY` hook — typed lines, up-arrow recall, the interrupt that leaks no empty history entry, and a two-session persistence round-trip (`CHECK.md`). |
+| M32 — The standard library: `uuid` | 80 | The `uuid` package: the RFC 9562 identifier as one immutable 16-byte `Uuid` value rendering itself through the `to_string` protocol, answering `to_bytes`/`version`/`variant`/`is_nil?`/`is_max?` and sorting through the RFC 6.11 big-endian `compare`; `v4` drawing 122 random bits over `rand.bytes`, `v7(now_ms)` taking the Unix time in milliseconds from the caller's own clock over 74 random bits (a negative or 48-bit-overflowing timestamp raising), and `v3`/`v5` the deterministic name-based doors over `crypto.legacy` with the four IANA namespace IDs of Table 3; `parse` taking exactly the canonical 36-character form, case-insensitive on the digits, every rejection naming the first offending byte, and `from_bytes` refusing a length other than 16; scoped to Go's standard `uuid` spine, v1/v2/v6 and a v8 constructor out, named; `uuid_demo` riding the RFC's vectors with the random doors printed structure-only, byte-identical on all five target lists (`CHECK.md`). |
+| M33 — The clock and the heartbeat | 81 | The `time` package: the wall clock and the monotonic clock over three runtime doors (`time_now_ms`, `time_mono_ns`, `time_sleep_ms`), everything else pure Emo over them — a `Time` of UTC epoch milliseconds whose calendar fields compute in pure Emo (Hinnant's civil arithmetic), `mono()` the explicit monotonic instrument, durations plain Int64 milliseconds with the conversion family (`time.seconds(n)` …) playing the constants' role, the strict nine-token layout formatting (UTC always, `format_iso`/`format_http` the presets, a malformed token raising naming the byte), and the seconds-speaking timing family — `sleep` the exact-ish park (messages queue, never wake it), `after` the scheduled one-shot in its own process, `tick` the calling process's never-returning heartbeat whose block's own `halt()` is the stop; on wasm the clock half rides two host imports and the timing half raises at the call naming the capability (the os process-half precedent); the goldens flushed a compiler-structure gap and four emitter bugs — the IR's Void-body exit positions lowered a bare trailing call as an Effect, invisible to every backend's tail machinery (now lowered as the Return it is, with the C emitter's Void return path emitting its expression without re-pooling the answer's own claim, and the interpreter's frame threading tailness through the statement walk), the c backend's Void-return discard pooling the claim twice (emosh segfaulted on a doubly-released builder cell), the c backend's closure capture never walking a `Send` statement's operands (a block whose only capture is the pid it sends to now captures it), the TS emitter's `receive` statement carrying no trailing `;` (a following `(`-opening statement parsed as a call), and the BEAM wildcard (two `_` in one pattern now lower as distinct fresh variables) (`CHECK.md`). |
+| M34 — The lock refresh | 82 | `emo deps resolve` resolves a project against its own declared targets (or an explicit `--target`), honoring `EMO_REGISTRY` as every other command does; the family staging lists converge into `scripts/stage-registry.sh` consumed byte-identically by the eight gates; `just lock-refresh` walks every tracked lock's directory and re-pins the tree with one command (118 locks, zero diffs); five cases in `test/emo_cli`'s `resolve_targets` group; CHECK.md's c-target-only note retired (`CHECK.md`). |
+| M35 — Strictness first, finished | 83 | The four open checker gaps close as check-time refusals: a block binding may not shadow an outer binding (E4029), arms on one enum member agree on their tuple payload types (E4030, `:chain` inheriting through its rewrite), and `Bytes.new` takes the constructor rule behind the Bytes rules' Unknown tolerance — beside the runtime lifetime bug they were recorded with (the chained-builtin form `b.to_bytes().length()` now answers the receiver's real value on the interpreter and every compiled target, pinned in `examples/builtin_names`); the negative goldens live in `test/emo_cli`'s `strictness_refusal` group, the corpus sweeps clean, and the rules land in `docs/intro/type-system.md` and `docs/intro/syntax.md` (`CHECK.md`). |
+| M36 — The configuration format | 84 | The `toml` package: TOML 1.1.0 decoded into a `Toml` value tree mirroring the json and yaml design — seven kinds, no null (TOML has none), the four date-time forms one `TomlDateTime` class whose `datetime_kind()` names the form and whose `to_text()` renders the canonical text back — pure Emo over the shared runtimes, the float package's exact-decimal constructor under every number; decode covers the full 1.1 surface (the `\e` and `\xHH` escapes, seconds omittable, lowercase `t`/`z`, the space delimiter try-and-see, multi-line inline tables and trailing commas) and the strict redefinition rules, assembling while it parses over origin-tagged nodes (dotted keys close their tables to headers, inline tables close at the brace, `[[x]]` appends only to arrays and a deeper header descends into the latest element, implicit supertables declare at most once); `inf`/`nan` and out-of-range integers refuse like every malformed input as `(R.error, reason)` with the byte offset; encode is the document form, scalars first, `decode(encode(v)) == v`; the edge battery flushed seven package bugs — the string fill answering the write length where the next index belongs, hex escape digits with the wrong weights, the float buffer counting the underscores, the exponent value eating the underscores, `doc_inline?` answering true for all-table arrays, section lines rendering the full dotted path, and the date-time class missing the interface — and the compiled goldens flushed three backend bugs, each pre-existing on the tree and each invisible until a package leaned on the shape it breaks: the TypeScript Void tail-call driver had no exit (every Void tail recursion spun forever on TS — json's `fill_spaces` included — the whole ts_golden suite burning CPU), the BEAM runtime dispatch bound its builtin arm through a clobberable map (chains two interfaces deep refused by erlc on an unbound variable — json_demo's single-level chains never hit it), and the wasm `deep_eq` had no tuple arm (any class field of `Array[(A, B)]` compared unequal to its own twin — the toml root table, json's `JsonObject`, latent until a golden compared a decoded tree) (`CHECK.md`). |
+| M37 — The wasm target speaks WASI 0.3 | 85 | `emo build --target wasm --wasi` wraps the WasmGC module in a WASI 0.3 command component (`wasi:cli/run@0.3.0`) wasmtime 46+ (`-S cli`) executes: stdout/stderr ride the native stream cycles through `wasi:cli/stdout`+`stderr`, the exit code through `wasi:cli/exit`, the import table remapped from the twenty `emo.*` doors to thirty standard ones — `wasi:filesystem` (descriptor as a `(sub resource)` export, open-at, the directory-entry stream, the one-string mutations), `wasi:filesystem/preopens` (the table the path resolution anchors on), `wasi:random/random`, `wasi:cli/environment`, and the clocks (T85.9: `wasi:clocks` system/monotonic `now` — the time package's clock half reads the `instant` record and the flat mark); the provider module grew the canonical realloc the host-written lists allocate through, sharing the bump cursor cell with the guest; the store operand order (value before address) fixed at five sites; the file chain's last mile fixed at T85.7 (the provider realloc's cursor store with its operands swapped, two bare loops exiting through the enclosing block's label, the write cycle reading the error-code cell on the ok case, `os_write`'s fd dispatch reading an always-false conjunction, the directory door's missing `read-dir-entries` import, and the bubble pass swapping descending); the guest-side `%g` float formatter (fixed and exponent forms) fixed at T85.8; `wasi_examples` — 67 goldens byte-identical with the Node list — and wasmtime-smoke's execution rung pin the doors (`CHECK.md`). |
+| M38 — The library's manual | 86 | `emo man` reads the standard library's reference pages from inside the binary: `emo man` lists the packages, `emo man <package>` renders one as a man page — NAME from the overview's table, SYNOPSIS from the embedded manifest's pin and `require`, DESCRIPTION with the doc's own sections and examples, SEE ALSO — and `emo man stdlib` renders the overview. The docs stay the source of truth: `docs/stdlib.md` and `docs/stdlib/*.md` are generated into the CLI's page data at build time (the stdlib-source route), so an installed binary answers with nothing beside it; the renderer reads the docs' Markdown subset — body reflowed to `COLUMNS`, code never reflowed, wide tables wrapped cell by cell — `MANPAGER`/`PAGER` is used only when it can run, an unknown name refuses on 65, and `test/emo_cli`'s `man` group pins the list, a page, and the refusal (`plan/step-86-emo-man.md`). |
+| M39 — The WASI host's file half | 87 | `emo wasm run`'s preview1 host reads and writes files inside a granted directory: the preopen table is the grant (`wasm.set_wasi_preopens`, the CLI's `--dir HOST[::GUEST]`), empty by default — no grant, no file system — `fd_prestat_get`/`fd_prestat_dir_name` walk the discovery, `path_open` resolves lexically inside a preopen's root (a climb past it ENOTCAPABLE), and every open rides one os door — read, write (create + truncate, the stdio "w" shape), append — with `fd_read`/`fd_write`/`fd_seek`/`fd_close`/`fd_fdstat_get` grown to file fds. The foundation is the os package's own POSIX semantics, not a second file story, and the ring flushed three pre-existing drifts: the errno table's ENOSYS and ESPIPE were off by one against wasip1.h (51/69 → 52/70), fd_seek's import shape pinned its i64 offset as an i32 (a real module's import refused), and `fd_readdir` now names the fixture's link-refusal probe (`CHECK.md`). |
+| M40 — The file half's rung two | 88 | Directories list, paths stat, and the mutations land: the DIRECTORY oflag opens directories (a stat before the open answers ENOTDIR for a file), the fd table grew the host path and the grant root so every resolution stays confined, `fd_readdir` lists statelessly (the caller's cookie the position, entries whole-only, d_type UNKNOWN with `path_filestat_get` the type channel), `fd_filestat_get`/`path_filestat_get` stat through the new path-shaped `os_stat` door (millisecond times scaled to nanoseconds; stdio answering character device; an unlinked-open's stat answering the miss), and the four path mutations ride the os doors that already exist, the errno text channel grown to EEXIST/ENOTEMPTY/EXDEV/EPERM; the lookupflags' symlink-follow bit is required, and the fixture's link-refusal probe now names `fd_pread` (`CHECK.md`). |
+| M41 — The GC bootstrap | 89 | The machine object model the interpreter run hosts, and the collector in Emo over it: sixteen bare-name doors — the fixed `struct` block, the counted `array` block, the rooted `ref`, and the walk's doors (`ref_roots`/`heap_blocks`/`heap_free`/`heap_words`) — admitted only by the interpreter run (checked as target `interpreter`; every build target refuses by name, E4032), words self-describing by parity (even a shifted scalar, odd a reference, `0` null), slot 0 of every block the collector's header; the `gc` package implements mark-sweep in pure Emo — tagged accessors, the worklist drain, cycles cut by the mark bit — answering the words reclaimed; the weak root registry makes the host collector the liveness oracle and roots the mutator discipline (a handle a collection must respect lives in a `ref`); the goldens: `examples/gc_demo`'s nine lines on the interpreter alone (a rooted chain and a traced array survive the kill of four thousand unrooted nodes; the cycle dies the moment its root drops — the shape reference counting can never reclaim), `gc_heap_tests`, and the `gc_refusal` negative goldens on every refusing target (`CHECK.md`, `docs/gc-heap.md`). |
+| M42 — The GC ladder | 90 | The heap grows its own allocator and its wings: step 90 lands the arena — `heap_new` makes it, the raw `heap_load`/`heap_store` lane moves words, `heap_carve`/`heap_release` bind and unbind ranges — and the `gc` package's free list (first fit over two maps, split and neighbor-merge) becomes the only allocator, `struct_new`/`array_new`/`heap_free` retiring with the doors' blessing; handles carry offset + generation so a stale handle dies loudly without tombstones; the header word packs magic/kind/generation/mark/size; the demo's second generation lands inside the sweep's own words, the arena never growing (`CHECK.md`). |
+| M43 — The GC heap's riscv64 host | 91 | The metal joins the heap's hosts: the image grants the collector a region in its `.bss` (the mebibyte arena, the binding table, the root table, the slide's stage), the twenty-four doors land as runtime helpers compiled beside the program, `Ref` joins the tagged value model as kind 12 and the metal's `Map` as kind 13 (identity kinds under the runtime's reference counting, a zero release unlinking the root table), the raise gap this host carried since the hash twin closes (`Raise` lowers to `emo_raise`, the exception value rendering the `c` host's way), and module-level `var`s lower (cells in static memory, the prologue initializing) so the `gc` package's own geometry rides the image; the demo's 24 gold lines answer byte-for-byte on the interpreter, the `c` host and the metal — three boots stable, through the EmoOS kernel and direct — with the debug round's six walls named in `CHECK.md` (the prologue's double pool, the Map's half-taken +8 shift, the slide's raw pairs, the forwarding map's split key shapes, the rehash that copied only `next`, the unrounded arena cursor) and the gold leg riding `@emo_os`'s `gc_metal` group (`CHECK.md`, `docs/gc-heap.md`, `plan/step-91-riscv64-gc-host.md`). |
+| M44 — The shell's daily surface | 92–95 | `emosh` grows into a daily driver on the `os`+`bufio` face it already rides: the script-file and `-c` invocation with the positional parameters, the braced `${…}` forms, the stderr redirections, and the bare glob; `&` background jobs over `os.waitpid_nohang` — one process group per job, the job table, `jobs`/`fg`/`bg`/`wait`/`kill`, `$!` and `$$`; Emo's own control flow — brace compounds, `const`/`var`, `def` with its function table, and the break/continue/return signal; and an in-Emo line editor over the `os` terminal tier — raw mode, the 1000-line history, and Tab completion. Every fixture runs byte-identically on the ocaml and c targets (`CHECK.md`, `docs/emosh-guide.md`, `plan/step-92-emosh-everyday.md`, `plan/step-93-emosh-jobs.md`, `plan/step-94-emosh-control-flow.md`, `plan/step-95-emosh-line-editor.md`). |
 
 ## Design gates
 
@@ -3937,7 +3918,7 @@ in the lockfile suite and in `c_goldens`; docs EN+zh.
       wait (found-not-fixed, recorded in CHECK.md). The driver
       version is recorded in CHECK.md.
 
-## M28 — The RocksDB half
+## M28 — EmoDB
 
 ### Step 65 — emo-db's RocksDB half
 
@@ -4048,8 +4029,6 @@ the repo builds.
       `examples/sqlite3_demo/package.lock`), `plan/step-65-emo-db-
       rocksdb.md`, and `dune build` / `dune build @fmt` green.
 
-## M29 — The record layer
-
 ### Step 66 — The record layer
 
 **Prereq:** Step 65 (the `emo/rocksdb` binding and the `Bytes` view).
@@ -4066,7 +4045,7 @@ repo builds.
       (the encoding contract), the plan README row, and this section
       EN+zh.
 - [x] **T66.2** — The design notes: `docs/emo-db.md` + zh — D7's REAL
-      note, the architecture's shared `data` CF, the M29 row, and the
+      note, the architecture's shared `data` CF, the M28 row, and the
       open items (range scans, streaming scans).
 - [x] **T66.3** — `rocksdb.list_families(path)`: the shim's list handle
       over `rocksdb_list_column_families` (`list_new`/`count`/`name`/
@@ -4114,10 +4093,8 @@ repo builds.
       `emo deps resolve`.
 - [x] **T66.15** — The project README + zh: the record layer's formats,
       the demo, and the gate.
-- [x] **T66.16** — The close-out: TASKS EN+zh, the plan README, the M29
+- [x] **T66.16** — The close-out: TASKS EN+zh, the plan README, the M28
       row, `CHECK.md`'s entry, and `dune build`/`@fmt` green.
-
-## M30 — The SQL front-end's DML and DDL
 
 ### Step 67 — The SQL front-end's DML and DDL
 
@@ -4152,10 +4129,8 @@ repo builds.
 - [x] **T67.11** — The package header, `docs/stdlib/sql.md` + zh, and
       the index row if its wording moved.
 - [x] **T67.12** — The close-out: the two `sql` locks re-resolved,
-      `plan/README.md`, the M30 row, `CHECK.md`, `dune build`/`@fmt`,
+      `plan/README.md`, the M28 row, `CHECK.md`, `dune build`/`@fmt`,
       and the evidence.
-
-## M31 — The planner and executor
 
 ### Step 68 — The planner and executor
 
@@ -4193,8 +4168,6 @@ pins stay green; docs EN+zh; the repo builds.
 - [x] **T68.14** — The close-out: TASKS, plan README, CHECK.md, build/
       fmt.
 
-## M32 — Transactions and the session plane
-
 ### Step 69 — Transactions and the session plane
 
 **Prereq:** Step 66 (the record layer), Step 67 (the SQL AST), Step 68
@@ -4224,8 +4197,6 @@ builds.
 - [x] **T69.10** — The docs EN+zh and the design record's notes.
 - [x] **T69.11** — The close-out: TASKS, the plan README, CHECK.md,
       build/fmt.
-
-## M33 — The wire
 
 ### Step 70 — The wire
 
@@ -4276,8 +4247,6 @@ docs EN+zh; the repo builds.
 - [x] **T70.11** — The close-out: TASKS, the plan README, CHECK.md,
       build/fmt.
 
-## M34 — Conformance and documentation
-
 ### Step 71 — Conformance and documentation
 
 **Prereq:** Steps 65–70 (the whole row-store arc). **Done when:** the
@@ -4290,7 +4259,7 @@ numbers the bench script actually measured, with the machine, date, and
 method; `docs/emo-db.md` grows a shipped-surface section, the corpus
 and benchmark pointers, corrected stale claims, and an arc-two review
 against what arc one built (EN+zh); the project READMEs carry the new
-gate and the M34 status; the repo builds.
+gate and the M28 status; the repo builds.
 
 - [x] **T71.1** — The spec: this section EN+zh and
       `plan/step-71-conformance.md`.
@@ -4309,11 +4278,9 @@ gate and the M34 status; the repo builds.
       corpus and benchmark sections, the measured table, the corrected
       open items, and the arc-two review.
 - [x] **T71.8** — The project READMEs EN+zh: the corpus, the bench, the
-      gate's new checks, and the M34 status.
+      gate's new checks, and the M28 status.
 - [x] **T71.9** — The close-out: TASKS, the plan README, CHECK.md,
       build/fmt.
-
-## M35 — The column format
 
 ### Step 72 — The column format
 
@@ -4343,8 +4310,6 @@ golden stays green; docs EN+zh; the repo builds.
 - [x] **T72.6** — The gate: the fifth demo.
 - [x] **T72.7** — The docs EN+zh and the close-out.
 
-## M36 — The column executor
-
 ### Step 73 — The column executor
 
 **Prereq:** Step 72 (the column format). **Done when:** a SELECT on a
@@ -4373,8 +4338,6 @@ and everything stays byte-identical three times through
 - [x] **T73.5** — The gate green three times.
 - [x] **T73.6** — The docs EN+zh and the close-out.
 
-## M37 — The two-engine proof
-
 ### Step 74 — The two-engine proof
 
 **Prereq:** Steps 72–73 (the column format and the column executor).
@@ -4398,7 +4361,7 @@ with the measured numbers recorded; docs EN+zh; the repo builds.
 - [x] **T74.4** — The corpus's `column.test`.
 - [x] **T74.5** — The bench's column modes and the recorded numbers.
 - [x] **T74.6** — The docs EN+zh and the close-out.
-## M38 — The wasm capability
+## M29 — The wasm capability
 
 ### Step 75 — The wasm package: the execution surface and the host interface
 
@@ -4551,7 +4514,7 @@ green; docs EN+zh.
       no clock, no filesystem, fds 1/2 only; the `emo` host module's
       deferral argued); TASKS/plan/CHECK updated.
 
-## M39 — Text templates
+## M30 — Text templates
 
 The `template` package renders text with holes from a `json` context —
 Go `text/template`'s mechanism with Emo's own surface, pure Emo over
@@ -4614,7 +4577,7 @@ other way from the plan draft: a `}}` outside an action is text, not
 an error — code-generation templates close nested braces in their
 static text, and Go's own scanner agrees.
 
-## M40 — The repl's line editor
+## M31 — The repl's line editor
 
 ### Step 79 — The repl's line editor (linenoise)
 
@@ -4657,7 +4620,7 @@ runtest` green; docs EN+zh.
 - [x] **T79.4** — The docs: the repl section in `docs/toolchain.md`
       EN+zh; TASKS/plan/CHECK updated.
 
-## M41 — The standard library: `uuid`
+## M32 — The standard library: `uuid`
 
 ### Step 80 — The `uuid` package (RFC 9562)
 
@@ -4710,7 +4673,7 @@ tasks, all landed:
       `docs/stdlib.md` row and section EN+zh; the README reference
       lists EN+zh; TASKS/plan/CHECK updated.
 
-## M42 — The clock and the heartbeat
+## M33 — The clock and the heartbeat
 
 ### Step 81 — The standard library: `time`
 
@@ -4755,7 +4718,7 @@ and beam lists; docs EN+zh.
       reference's boundary list).
 - [x] **T81.5** — The tracking: `plan/step-81-stdlib-time.md`,
       `plan/README.md`'s milestone bullet and status row,
-      `docs/TASKS.md`'s M42 section + zh mirror, CHECK.md's settle
+      `docs/TASKS.md`'s M33 section + zh mirror, CHECK.md's settle
       record.
 
 ### Found and fixed here
@@ -4799,7 +4762,7 @@ and beam lists; docs EN+zh.
   variables. A wildcard now lowers as a distinct fresh variable.
 
 
-## M43 — The lock refresh
+## M34 — The lock refresh
 
 ### Step 82 — `emo deps resolve`: resolve honestly, refresh cheaply
 
@@ -4846,7 +4809,7 @@ command; CHECK.md's c-target-only note is retired. (Plan:
       mirror, in `docs/intro/package-management.md` — `toolchain.md`
       carries no deps section); CHECK.md's retired note points here.
 
-## M44 — Strictness first, finished
+## M35 — Strictness first, finished
 
 ### Step 83 — The strictness closeout
 
@@ -4881,7 +4844,7 @@ clean, and the checker rules land in the intro docs (EN + zh-CN).
       `test/emo_cli`, the checker sections of `docs/intro/type-system.md`
       and `docs/intro/syntax.md` (+ zh-CN mirrors) stating the rules.
 
-## M45 — The configuration format
+## M36 — The configuration format
 
 ### Step 84 — The standard library: `toml`
 
@@ -4920,7 +4883,7 @@ beam, c, and ts lists; docs EN+zh.
       `docs/stdlib.md` row + section + mirror.
 - [x] **T84.5** — The tracking: `plan/step-84-stdlib-toml.md`,
       `plan/README.md`'s milestone bullet and status row,
-      `docs/TASKS.md`'s M45 section + zh mirror, CHECK.md's settle
+      `docs/TASKS.md`'s M36 section + zh mirror, CHECK.md's settle
       record.
 
 ### Found and fixed here
@@ -4976,7 +4939,7 @@ the shape it breaks:
   and the tuple arm spills both element arrays into fresh locals and
   runs it; tuples compare element-wise like arrays do.
 
-## M46 — The wasm target speaks WASI 0.3
+## M37 — The wasm target speaks WASI 0.3
 
 ### Step 85 — The WASI 0.3 producer door
 
@@ -5073,7 +5036,7 @@ the shape it breaks:
       refusal ("no clock primitive") was the pressure: the `time`
       package landed two days after the step closed.
 
-## M47 — The library's manual
+## M38 — The library's manual
 
 ### Step 86 — The standard library's manual pages: `emo man`
 
@@ -5101,7 +5064,7 @@ an unknown name refuses on 65; docs EN+zh.
       + zh-CN mirrors, `plan/README.md`'s milestone bullet and status
       row, this section + zh mirror, CHECK.md's settle record.
 
-## M48 — The WASI host's file half
+## M39 — The WASI host's file half
 
 ### Step 87 — WASI's file half: preopens and path_open
 
@@ -5139,7 +5102,7 @@ wasip1.h; the fixture pins every verdict byte for byte; docs EN+zh.
       `plan/README.md`'s row, `plan/step-87-wasi-files.md`,
       `docs/stdlib/wasm.md` + zh mirror, CHECK.md's settle record.
 
-## M49 — The file half's rung two
+## M40 — The file half's rung two
 
 ### Step 88 — Listing, stats, and the mutations
 
@@ -5170,7 +5133,7 @@ mutation chain byte for byte; docs EN+zh.
       `plan/README.md`'s row, `plan/step-88-wasi-files2.md`,
       `docs/stdlib/wasm.md` + zh mirror, CHECK.md's settle record.
 
-## M50 — The GC bootstrap
+## M41 — The GC bootstrap
 
 ### Step 89 — The interpreter's object model: struct, array, ref, and the collector in Emo
 
@@ -5209,7 +5172,7 @@ record, `docs/gc-heap.md` the design note.)
       `docs/stdlib.md` + zh's `gc` row, this section + zh mirror,
       `plan/step-89-gc-bootstrap.md`, CHECK.md's decision record.
 
-## M51 — The GC ladder
+## M42 — The GC ladder
 
 ### Step 90 — The GC heap's ladder: the allocator, the payloads, the compaction, the hosts
 
@@ -5273,7 +5236,7 @@ collector, and the real-memory hosts.
       the first read (CHECK.md names the boundary). riscv64's
       tagged-word heap stays the next host, unmapped.
 
-## M52 — The GC heap's riscv64 host
+## M43 — The GC heap's riscv64 host
 
 ### Step 91 — The metal's own heap: the region, the doors, the kinds, and the demo's gold on three hosts
 
@@ -5323,7 +5286,7 @@ record, `docs/gc-heap.md` the design note.)
       index rows, this section + zh mirror,
       `plan/step-91-riscv64-gc-host.md`, CHECK.md's record.
 
-## M53 — The shell's everyday surface
+## M44 — The shell's daily surface
 
 ### Step 92 — emosh opens with scripts and `-c`, aims stderr, globs the bare patterns, and answers the everyday `${…}`
 
@@ -5371,8 +5334,6 @@ record.)
       the glob's section, the braced forms and the honest limits'
       new shape, this section + zh mirror,
       `plan/step-92-emosh-everyday.md`, CHECK.md's record.
-
-## M54 — The shell's background jobs
 
 ### Step 93 — `os.waitpid_nohang`, and emosh's `&`, the job table, and the five builtins
 
@@ -5426,9 +5387,7 @@ record.)
       jobs, stdin stays the shell's), this section + zh mirror,
       `plan/step-93-emosh-jobs.md`, CHECK.md's record.
 
-## M55 — The shell's control flow
-
-### Step 94 — Emo 同款 control flow in emosh: brace compounds, declarations, and the walkers
+### Step 94 — Emo's own control flow in emosh: brace compounds, declarations, and the walkers
 
 **Status:** complete. (`plan/step-94-emosh-control-flow.md` is the
 step's record.)
@@ -5472,3 +5431,7 @@ step's record.)
       (no compound-in-pipeline, no case/until, no word-list for, no
       locals, declaration values one word), this section + zh mirror,
       `plan/step-94-emosh-control-flow.md`, CHECK.md's record.
+
+### Step 95 — The editor in Emo over the os terminal tier
+
+The os package grew `tty_raw(fd)`/`tty_restore(fd, saved)` in place at 0.1.0 — `cfmakeraw` the portable policy (the flag bits themselves differ between macOS and Linux, so the words never cross the boundary), the saved state an opaque `Array[Int64]` the same runtime alone unpacks, the failures data-driven values with the errno text (`os: tty_raw: Inappropriate ioctl for device` byte-identical on both targets, wasm raising naming the capability). `emosh` spent it: `edit.emo` decodes keys one byte at a time, walks the UTF-8 continuation bytes so a multi-byte character is one insert, one erase, one cursor step, renders through raw `os.write` on the stderr descriptor, and answers three outcomes — accepted, end of input, abandoned. The session driver puts the terminal raw around every read and restores it before anything runs: children keep the classic cooked terminal, Ctrl-C abandons the half-typed line and asks again fresh, a running command dies to Ctrl-C as always. History rides the last 1000 lines through the repl's own state-dir chain (`EMO_STATE_DIR` → `XDG_STATE_HOME/emo` → `$HOME/.local/state/emo`), loaded at the session's start and written once at its end. Completion takes the word under the cursor to every candidate's common prefix, a second Tab listing them: the first word rides the command vocabulary — the builtins' roster, the session's functions, then every command the PATH serves — a later word rides the working directory. `EMOSH_ASSUME_TTY` skips the raw pair only, so the editor's keys and rendering run over a pipe and the goldens drive it by its bytes; the eleven fixtures stay byte-identical (the editor never engages on a pipe without the hook), and the pty hand-checks ran the whole key suite on both targets.

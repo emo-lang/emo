@@ -61,7 +61,7 @@ class XmlElement {
   }
 
   def as_text() String {
-    raise Exception.new(message: "xml: expected text, got element `" + self.name + "`")
+    :raise "xml: expected text, got element `" + self.name + "`"
   }
 
   // The element's name (a prefix stays part of the name).
@@ -119,27 +119,27 @@ class XmlText {
   }
 
   def name() String {
-    raise Exception.new(message: "xml: expected an element, got text")
+    :raise "xml: expected an element, got text"
   }
 
   def attrs() Array[(String, String)] {
-    raise Exception.new(message: "xml: expected an element, got text")
+    :raise "xml: expected an element, got text"
   }
 
   def attr(name String) String {
-    raise Exception.new(message: "xml: expected an element, got text")
+    :raise "xml: expected an element, got text"
   }
 
   def children() Array[Xml] {
-    raise Exception.new(message: "xml: expected an element, got text")
+    :raise "xml: expected an element, got text"
   }
 
   def get(name String) Xml {
-    raise Exception.new(message: "xml: expected an element, got text")
+    :raise "xml: expected an element, got text"
   }
 
   def text() String {
-    raise Exception.new(message: "xml: expected an element, got text")
+    :raise "xml: expected an element, got text"
   }
 }
 
@@ -155,7 +155,7 @@ def text(s String) Xml {
 
 def attr_lookup(attrs Array[(String, String)], name String, i Int64) String {
   if i < 0 {
-    raise Exception.new(message: "xml: no attribute `" + name + "`")
+    :raise "xml: no attribute `" + name + "`"
   }
   const pair = attrs[i]
   if pair[0] == name {
@@ -166,7 +166,7 @@ def attr_lookup(attrs Array[(String, String)], name String, i Int64) String {
 
 def element_lookup(children Array[Xml], name String, i Int64) Xml {
   if i >= children.length() {
-    raise Exception.new(message: "xml: no element `" + name + "`")
+    :raise "xml: no element `" + name + "`"
   }
   const child = children[i]
   if child.is(XmlElement) {
@@ -206,24 +206,17 @@ def encode(v Xml) String {
 // element fails the decode.
 def decode(text String) (R, Xml) {
   const data = text.to_bytes()
-  case skip_prolog(data, 0) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, p0)     then {
-      case parse_node(data, p0, 0) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, r)      then {
-          case skip_prolog(data, r[1]) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, after)  then {
-              if after < data.length() {
-                return (R.error, err(after, "content after the root element"))
-              }
-              return (R.ok, r[0])
-            }
-          }
-        }
-      }
+  :chain {
+    (R.ok, p0) from skip_prolog(data, 0)
+    (R.ok, r) from parse_node(data, p0, 0)
+    (R.ok, after) from skip_prolog(data, r[1])
+  } then {
+    if after < data.length() {
+      return (R.error, err(after, "content after the root element"))
     }
+    return (R.ok, r[0])
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 
@@ -670,23 +663,19 @@ def dup_attr(attrs Array[(String, String)], name String, i Int64) Bool {
 // The attribute value: raw bytes until the closing quote, entities
 // decoded. A raw `<` inside fails the decode.
 def attr_value(data Bytes, i Int64, q Int64) (R, (String, Int64)) {
-  case attr_value_end(data, i, q) {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, e)      then {
-      case attr_len(data, i, e, 0) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, len)    then {
-          const out = Bytes.new(len)
-          case attr_fill(data, i, e, out, 0) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, r)      then {
-              // r[0] sits on the closing quote; resume past it.
-              return (R.ok, (out.to_string(), r[0] + 1))
-            }
-          }
-        }
+  :chain {
+    (R.ok, e) from attr_value_end(data, i, q)
+    (R.ok, len) from attr_len(data, i, e, 0)
+  } then {
+    const out = Bytes.new(len)
+    :when attr_fill(data, i, e, out, 0) {
+      r then {
+        // r[0] sits on the closing quote; resume past it.
+        return (R.ok, (out.to_string(), r[0] + 1))
       }
     }
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 

@@ -83,18 +83,19 @@ Query / RowDescription / DataRow / CommandComplete / ReadyForQuery、
 上与会话:零参数语句走 `PQexec`;带参数的语句仍说扩展协议,对 v0
 诚实失败。
 
-**D9 —— 天梯。** 弧一是里程碑 M28–M34,一里程碑一步,步骤 65 到
-71。退出标准在 `docs/zh-CN/TASKS.md`;天梯形状:
+**D9 —— 天梯。** 弧一是步骤 65 到 71,弧二是步骤 72 到 74,如今同属
+一个里程碑——M28(EmoDB),一次落地一步。退出标准在
+`docs/zh-CN/TASKS.md`;天梯形状:
 
-| 里程碑 | 步骤 | 落地 |
-| --- | --- | --- |
-| M28 —— RocksDB 半边 | 65 | 项目脚手架与 C shim,连同 `Bytes` 借用视图(D10):open/close、get/put/delete、WriteBatch、iterator、快照、column family。 |
-| M29 —— 记录层 | 66 | 目录 column family、行编码、rowid 分配、每索引一个 column family 的二级索引——行住在共享的 `data` family 里,键是表 oid + rowid。 |
-| M30 —— SQL 门面长 DML 与 DDL | 67 | `sql` 包在 SELECT 旁长出 CREATE TABLE / INSERT / UPDATE / DELETE——纯 Emo,每个 target 逐字节一致。 |
-| M31 —— 计划器与执行器 | 68 | 第一条完整的 SQL 到行全链路:计划节点(scan/filter/project、insert/update/delete)、骑记录层的表达式求值、嵌入式测试面。v0 的 SELECT 是单表(投影、WHERE、等值索引扫描);连接、聚合、ORDER BY/LIMIT 与子查询等 M34。 |
-| M32 —— 事务与会话面 | 69 | BEGIN/COMMIT/ROLLBACK、骑每语句快照的读已提交、每事务一个 WriteBatch 且 COMMIT 做 fsync、Emo 锁管理器。v0 是表级锁。 |
-| M33 —— 线协议 | 70 | PG 协议 v3 简单路径:启动(拒 SSL/GSSENC、trust 认证)、ParameterStatus/BackendKeyData/ReadyForQuery、带多语句字符串的 Query、带 v0 OID 的 RowDescription、文本格式 DataRow、CommandComplete、EmptyQueryResponse 与 ErrorResponse;每连接一个骑共享 Store 与表锁的会话 actor;psql 端到端,`postgres` 客户端走它零参数的简单路径。 |
-| M34 —— 符合性与文档 | 71 | SQL 语料——SQLLogicTest 精神的 126 个文本可比用例,骑一台全新数据库,钉死标签、行与 `code: message`——实测性能表(`projects/emo-db/bench`)、已交付表面文档,以及弧二复核。 |
+| 步骤 | 落地 |
+| --- | --- |
+| 65 —— RocksDB 半边 | 项目脚手架与 C shim,连同 `Bytes` 借用视图(D10):open/close、get/put/delete、WriteBatch、iterator、快照、column family。 |
+| 66 —— 记录层 | 目录 column family、行编码、rowid 分配、每索引一个 column family 的二级索引——行住在共享的 `data` family 里,键是表 oid + rowid。 |
+| 67 —— SQL 门面长 DML 与 DDL | `sql` 包在 SELECT 旁长出 CREATE TABLE / INSERT / UPDATE / DELETE——纯 Emo,每个 target 逐字节一致。 |
+| 68 —— 计划器与执行器 | 第一条完整的 SQL 到行全链路:计划节点(scan/filter/project、insert/update/delete)、骑记录层的表达式求值、嵌入式测试面。v0 的 SELECT 是单表(投影、WHERE、等值索引扫描);连接、聚合、ORDER BY/LIMIT 与子查询等步骤 71。 |
+| 69 —— 事务与会话面 | BEGIN/COMMIT/ROLLBACK、骑每语句快照的读已提交、每事务一个 WriteBatch 且 COMMIT 做 fsync、Emo 锁管理器。v0 是表级锁。 |
+| 70 —— 线协议 | PG 协议 v3 简单路径:启动(拒 SSL/GSSENC、trust 认证)、ParameterStatus/BackendKeyData/ReadyForQuery、带多语句字符串的 Query、带 v0 OID 的 RowDescription、文本格式 DataRow、CommandComplete、EmptyQueryResponse 与 ErrorResponse;每连接一个骑共享 Store 与表锁的会话 actor;psql 端到端,`postgres` 客户端走它零参数的简单路径。 |
+| 71 —— 符合性与文档 | SQL 语料——SQLLogicTest 精神的 126 个文本可比用例,骑一台全新数据库,钉死标签、行与 `code: message`——实测性能表(`projects/emo-db/bench`)、已交付表面文档,以及弧二复核。 |
 
 **D10 —— 字节视图:`Bytes` 以借用视图过 C ABI。** RocksDB 的键与
 值是任意字节——内嵌的 NUL 是普通数据——而 sqlite3/postgres 绑定的
@@ -103,8 +104,8 @@ NUL 结尾 String 跨界会把它截断。`c` target 的 foreign ABI 为此长�
 绝不保留);`Bytes` **返回**仍然拒绝,因为 C 缓冲区的所有权无法穿过
 通用 ABI——读操作走调用方提供的 out 参数(先问长度,再拷入),字节
 的所有权始终在 Emo 侧。解释器保持 E3009,其余 target 保持各自的封
-送层。这是 v0 唯一需要的语言改动,随 M28 的绑定一起落地,因为行编
-码(M29)不可能建在 NUL 结尾的字符串上。
+送层。这是 v0 唯一需要的语言改动,随步骤 65 的绑定一起落地,因为行
+编码(步骤 66)不可能建在 NUL 结尾的字符串上。
 
 ## 架构
 
@@ -131,7 +132,7 @@ get/put/delete、WriteBatch、iterator、快照、column family。键与值
 
 有一个性质值得写明,因为整个绑定都骑在它上面:调度器的协作模型意味
 着每次进 RocksDB 的调用天然串行——shim 自己不长锁,锁管理器仲裁的
-是事务冲突,不是内存安全。M28 验证了这个前提;若某个 hosted
+是事务冲突,不是内存安全。步骤 65 验证了这个前提;若某个 hosted
 runtime 将来长出真并行,就在那里重查。
 
 ## 已交付
@@ -204,12 +205,12 @@ autocommit 的行是每次一条 fsync 过的写——持久化点就是点。�
 
 ## 弧二 —— 列引擎(切法定案 2026-11-13)
 
-弧一的 planner 是插点,切法已定:三个里程碑,一步一个,沿用本弧的
-纪律。复核所依的事实——计划接口、目录、每索引 column family 的先
+弧一的 planner 是插点,切法已定:三个步骤,一次落地一个,沿用本弧
+的纪律。复核所依的事实——计划接口、目录、每索引 column family 的先
 例、与引擎无关的线协议与会话面、类型系统的共享阻塞——正是切法的
 起点。
 
-**M35 —— 列存格式(step 72,2026-11-13 落地)。** `CREATE TABLE ...
+**步骤 72 —— 列存格式(2026-11-13 落地)。** `CREATE TABLE ...
 STORE = COLUMN` 进解析器(列清单之后的尾巴;`STORE = ROW` 是默认值,只有写出来才渲
 染)与目录(表定义升到版本 2,带 `store` 字段;版本 1 记录读作行存,
 旧库原样打开)。记录层的列存半边:每列一个 column family
@@ -220,7 +221,7 @@ BOOLEAN、带长度的 TEXT/VARCHAR/BYTEA)——尾部半块在事务的批量�
 重开像索引 family 一样校验每个列 family。列存表不建索引:
 `PRIMARY KEY` 与二级索引答 `0A000`,块扫描就是访问路径。
 
-**M36 —— 列执行器(step 73,2026-11-13 落地)。** 引擎按表的存储路
+**步骤 73 —— 列执行器(2026-11-13 落地)。** 引擎按表的存储路
 由:列存表的 SELECT 要么全普通项(块扫描 + 共享 filter 与
 project),要么全聚合调用(COUNT、SUM、AVG、MIN、MAX——全局;
 GROUP BY 对两台引擎都保持拒绝,等共享广度一起落;混用答
@@ -229,7 +230,7 @@ GROUP BY 对两台引擎都保持拒绝,等共享广度一起落;混用答
 UPDATE 与 DELETE 答 `0A000`——v0 的列引擎只插入;wire、会话面、锁
 与事务是同一份代码。
 
-**M37 —— 双引擎证明(step 74,2026-11-13 落地)。** 一台数据库、两
+**步骤 74 —— 双引擎证明(2026-11-13 落地)。** 一台数据库、两
 种存储、一次会话:`htap_demo` 经引擎播种行表与列存表(1100 行,跨
 过块边界)后服务线协议;psql 与 `postgres` 客户端都跑一个脚本——
 读两台引擎,然后在 BEGIN/COMMIT 里更新行表并向列存表插入(一个

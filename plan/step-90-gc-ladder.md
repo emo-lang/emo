@@ -1,6 +1,6 @@
 # Step 90 — The GC heap's ladder: the allocator, the payloads, the compaction, the hosts
 
-**Milestone:** M51 — The GC ladder · **Prereq:** step 89 (the
+**Milestone:** M42 — The GC ladder · **Prereq:** step 89 (the
 bootstrap) · **Related:** `docs/gc-heap.md`, `docs/stdlib/gc.md`,
 `examples/gc_demo/`, `CHECK.md` · **Status:** done — all four rungs landed, one commit each.
 

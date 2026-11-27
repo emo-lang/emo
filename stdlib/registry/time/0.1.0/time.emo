@@ -199,61 +199,89 @@ def format_ms(ms Int64, layout String) String {
   const len = layout.length()
   while i < len {
     const rest = layout.substring(i, len - i)
-    if rest.starts_with("YYYY") {
-      out = out + year_text(year)
-      i = i + 4
-    } else {
-      if rest.starts_with("Mmm") {
+    case layout_token(rest) {
+      "YYYY" then {
+        out = out + year_text(year)
+        i = i + 4
+      }
+      "Mmm" then {
         out = out + month_names[month - 1]
         i = i + 3
-      } else {
-        if rest.starts_with("Www") {
-          out = out + day_names[weekday]
-          i = i + 3
-        } else {
-          if rest.starts_with("mmm") {
-            out = out + pad3(tod % 1000)
-            i = i + 3
-          } else {
-            if rest.starts_with("MM") {
-              out = out + pad2(month)
-              i = i + 2
-            } else {
-              if rest.starts_with("DD") {
-                out = out + pad2(dom)
-                i = i + 2
-              } else {
-                if rest.starts_with("hh") {
-                  out = out + pad2(tod / 3600000)
-                  i = i + 2
-                } else {
-                  if rest.starts_with("mm") {
-                    out = out + pad2(tod % 3600000 / 60000)
-                    i = i + 2
-                  } else {
-                    if rest.starts_with("ss") {
-                      out = out + pad2(tod % 60000 / 1000)
-                      i = i + 2
-                    } else {
-                      const c = layout.substring(i, 1)
-                      if c == "Y" || c == "M" || c == "D" || c == "h" || c == "m" || c == "s" {
-                        raise Exception.new(
-                          message: "time: unknown layout token at byte ${i}: ${rest}"
-                        )
-                      }
-                      out = out + c
-                      i = i + 1
-                    }
-                  }
-                }
-              }
-            }
-          }
+      }
+      "Www" then {
+        out = out + day_names[weekday]
+        i = i + 3
+      }
+      "mmm" then {
+        out = out + pad3(tod % 1000)
+        i = i + 3
+      }
+      "MM" then {
+        out = out + pad2(month)
+        i = i + 2
+      }
+      "DD" then {
+        out = out + pad2(dom)
+        i = i + 2
+      }
+      "hh" then {
+        out = out + pad2(tod / 3600000)
+        i = i + 2
+      }
+      "mm" then {
+        out = out + pad2(tod % 3600000 / 60000)
+        i = i + 2
+      }
+      "ss" then {
+        out = out + pad2(tod % 60000 / 1000)
+        i = i + 2
+      }
+      _ then {
+        const c = layout.substring(i, 1)
+        if c == "Y" || c == "M" || c == "D" || c == "h" || c == "m" || c == "s" {
+          raise Exception.new(
+            message: "time: unknown layout token at byte ${i}: ${rest}"
+          )
         }
+        out = out + c
+        i = i + 1
       }
     }
   }
   return out
+}
+
+// The token `rest` opens with, in the order the dispatch reads, or ""
+// when none of the nine spellings does.
+def layout_token(rest String) String {
+  if rest.starts_with("YYYY") {
+    return "YYYY"
+  }
+  if rest.starts_with("Mmm") {
+    return "Mmm"
+  }
+  if rest.starts_with("Www") {
+    return "Www"
+  }
+  if rest.starts_with("mmm") {
+    return "mmm"
+  }
+  if rest.starts_with("MM") {
+    return "MM"
+  }
+  if rest.starts_with("DD") {
+    return "DD"
+  }
+  if rest.starts_with("hh") {
+    return "hh"
+  }
+  if rest.starts_with("mm") {
+    return "mm"
+  }
+  if rest.starts_with("ss") {
+    return "ss"
+  }
+  return ""
 }
 
 // ---- the clock ----

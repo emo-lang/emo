@@ -109,25 +109,21 @@ def request_core(proxy String, method String, url String, headers Array[(String,
 // target: the proxy routes on the absolute form.
 def http_exchange(proxy String, budget Int64, method String, host String, port Int64, path String, headers Array[(String, String)], body String) (R, HttpResponse) {
   if proxy != "" {
-    case parse_proxy(proxy) {
+    :chain {
+      (R.ok, (phost, pport)) from parse_proxy(proxy)
+      (R.ok, conn) from net.connect(phost, pport, remaining(budget))
+    } then {
+      return exchange(conn, method, host, port, "http://" + host_header(host, port) + path, headers, body, budget)
+    } else {
       (R.error, why) then { return (R.error, why) }
-      (R.ok, addr) then {
-        case addr {
-          (phost, pport) then {
-            case net.connect(phost, pport, remaining(budget)) {
-              (R.error, why) then { return (R.error, why) }
-              (R.ok, conn) then {
-                return exchange(conn, method, host, port, "http://" + host_header(host, port) + path, headers, body, budget)
-              }
-            }
-          }
-        }
-      }
     }
   }
-  case net.connect(host, port, remaining(budget)) {
+  :chain {
+    (R.ok, conn) from net.connect(host, port, remaining(budget))
+  } then {
+    return exchange(conn, method, host, port, path, headers, body, budget)
+  } else {
     (R.error, why) then { return (R.error, why) }
-    (R.ok, conn) then { return exchange(conn, method, host, port, path, headers, body, budget) }
   }
 }
 
@@ -135,40 +131,50 @@ def http_exchange(proxy String, budget Int64, method String, host String, port I
 // target authority, then wraps that same connection in TLS.
 def https_exchange(proxy String, budget Int64, method String, host String, port Int64, path String, headers Array[(String, String)], body String, tls_options net.TlsClientOptions) (R, HttpResponse) {
   if proxy != "" {
-    case parse_proxy(proxy) {
+    :chain {
+      (R.ok, conn) from proxy_tls_connect(proxy, budget, host, port, tls_options)
+    } then {
+      return exchange(conn, method, host, port, path, headers, body, budget)
+    } else {
       (R.error, why) then { return (R.error, why) }
-      (R.ok, addr) then {
-        case addr {
-          (phost, pport) then {
-            case net.connect(phost, pport, remaining(budget)) {
-              (R.error, why) then { return (R.error, why) }
-              (R.ok, conn) then {
-                case proxy_tunnel(conn, host, port, budget) {
-                  (R.error, why) then {
-                    conn.close()
-                    return (R.error, why)
-                  }
-                  (R.ok, _) then {
-                    conn.set_timeout(remaining(budget))
-                    case net.tls_wrap(conn, host, tls_options) {
-                      (R.error, why) then {
-                        conn.close()
-                        return (R.error, why)
-                      }
-                      (R.ok, tls) then { return exchange(tls, method, host, port, path, headers, body, budget) }
-                    }
-                  }
-                }
-              }
-            }
+    }
+  }
+  :chain {
+    (R.ok, conn) from net.tls_connect_with(host, port, remaining(budget), tls_options)
+  } then {
+    return exchange(conn, method, host, port, path, headers, body, budget)
+  } else {
+    (R.error, why) then { return (R.error, why) }
+  }
+}
+
+// The proxy route's connection: dial the proxy, CONNECT the target
+// authority, then wrap the tunnel in TLS. A failed tunnel or wrap
+// closes the socket before answering — the two steps keep their own
+// exits rather than a chain's shared one.
+def proxy_tls_connect(proxy String, budget Int64, host String, port Int64, tls_options net.TlsClientOptions) (R, TcpConn) {
+  :chain {
+    (R.ok, (phost, pport)) from parse_proxy(proxy)
+    (R.ok, conn) from net.connect(phost, pport, remaining(budget))
+  } then {
+    case proxy_tunnel(conn, host, port, budget) {
+      (R.error, why) then {
+        conn.close()
+        return (R.error, why)
+      }
+      (R.ok, _) then {
+        conn.set_timeout(remaining(budget))
+        case net.tls_wrap(conn, host, tls_options) {
+          (R.error, why) then {
+            conn.close()
+            return (R.error, why)
           }
+          (R.ok, tls) then { return (R.ok, tls) }
         }
       }
     }
-  }
-  case net.tls_connect_with(host, port, remaining(budget), tls_options) {
+  } else {
     (R.error, why) then { return (R.error, why) }
-    (R.ok, conn) then { return exchange(conn, method, host, port, path, headers, body, budget) }
   }
 }
 
@@ -523,34 +529,35 @@ def has_token_at(parts Array[String], token String, i Int64) Bool {
 // and dropped.
 def read_chunked(conn TcpConn, acc String, budget Int64) (R, String) {
   conn.set_timeout(remaining(budget))
-  case conn.read_line() {
-    (R.error, why) then { return (R.error, why) }
-    (R.ok, line) then {
-      case chunk_size(line) {
-        (R.error, why) then { return (R.error, why) }
-        (R.ok, size) then {
-          if size == 0 {
-            return read_trailers(conn, acc, budget)
-          }
-          conn.set_timeout(remaining(budget))
-          case conn.read_exactly(size) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, data) then {
-              conn.set_timeout(remaining(budget))
-              case conn.read_line() {
-                (R.error, why) then { return (R.error, why) }
-                (R.ok, terminator) then {
-                  if terminator != "" {
-                    return (R.error, "http: malformed chunk terminator in a chunked body")
-                  }
-                  return read_chunked(conn, acc + data, budget)
-                }
-              }
-            }
-          }
-        }
-      }
+  :chain {
+    (R.ok, line) from conn.read_line()
+    (R.ok, size) from chunk_size(line)
+  } then {
+    if size == 0 {
+      return read_trailers(conn, acc, budget)
     }
+    case read_chunk_data(conn, size, budget) {
+      (R.error, why) then { return (R.error, why) }
+      (R.ok, data) then { return read_chunked(conn, acc + data, budget) }
+    }
+  } else {
+    (R.error, why) then { return (R.error, why) }
+  }
+}
+
+// A chunk's bytes and the empty line that must follow them; each read
+// draws the budget's remaining time afresh.
+def read_chunk_data(conn TcpConn, size Int64, budget Int64) (R, String) {
+  :chain {
+    (R.ok, data) from conn.set_timeout(remaining(budget)).read_exactly(size)
+    (R.ok, terminator) from conn.set_timeout(remaining(budget)).read_line()
+  } then {
+    if terminator != "" {
+      return (R.error, "http: malformed chunk terminator in a chunked body")
+    }
+    return (R.ok, data)
+  } else {
+    (R.error, why) then { return (R.error, why) }
   }
 }
 

@@ -3,10 +3,10 @@
 emo-db 是 Emo 自己的客户端-服务器 SQL 数据库:一条 PostgreSQL 方言
 门面,底下先接行存的 OLTP、后接列存的 OLAP。设计定案见
 [`docs/zh-CN/emo-db.md`](../../docs/zh-CN/emo-db.md);本目录是项目本体。
-弧一收尾:M28(RocksDB 存储半边)、M29(记录层)、M30(SQL 门面的
-DML/DDL)、M31(计划器与执行器)、M32(事务与会话面)、M33
-(PostgreSQL 线协议)与 M34(符合性与文档)都已落地。弧二——列引
-擎——进行中:M35(列存格式)已落地。
+弧一收尾:步骤 65–71——RocksDB 存储半边、记录层、SQL 门面的
+DML/DDL、计划器与执行器、事务与会话面、PostgreSQL 线协议与符合性
+与文档——都已落地。弧二——列引擎——也已落地:步骤 72–74,列存格
+式、列执行器与双引擎证明。
 
 ## 布局
 
@@ -77,7 +77,7 @@ batch。门面给活的 batch、snapshot、iterator 计数,并在有其一未关
 拒绝 `Db.close`,RocksDB 的内存因此不会在活句柄底下被释放。
 
 调度器是协作式的:每次进 shim 的调用天然串行,shim 不带锁。事务与
-锁管理器是数据库自己的(M32)。
+锁管理器是数据库自己的(步骤 69)。
 
 ## 记录层
 
@@ -144,7 +144,7 @@ CommandComplete。命令只答自己的标签。空字符串答 EmptyQueryRespon
 Query 照常工作。psql 驱动整个表面;标准库 `postgres` 客户端的零参
 数语句走 libpq 的简单路径(`PQexec`),同一个服务器不需要扩展协议。
 每个连接各自一个骑共享 Store 的 Engine,以及一个骑服务器唯一锁管理
-器进程的 `RemoteLocks` 客户端,所以 M32 的表锁跨连接仲裁。
+器进程的 `RemoteLocks` 客户端,所以步骤 69 的表锁跨连接仲裁。
 
 v0 的线协议只有简单路径:扩展协议(Parse/Bind/Execute)、SSL、
 scram-sha-256 与 cancel 请求都不说。`server_version` 报 PostgreSQL
@@ -152,13 +152,13 @@ scram-sha-256 与 cancel 请求都不说。`server_version` 报 PostgreSQL
 
 ## 列存
 
-弧二的第一落是格式(M35)。`CREATE TABLE ... STORE = COLUMN` 点名列
+弧二的第一落是格式(步骤 72)。`CREATE TABLE ... STORE = COLUMN` 点名列
 存表;目录的表定义带 `store` 字段(版本 2;版本 1 记录读作行存,旧
 库原样打开)。列存表的行住在 1024 行块里,每列一个 column family
 (`col_<oid>`):块值是行数、null 位图,然后是行编码自己宽度的值。
 插入在事务的批量里重读并重写尾部半块,所以 pending 覆盖层与每语句
 快照原样生效;重开像索引 family 一样校验每个列 family。列存表不建
-索引——`PRIMARY KEY` 与二级索引答 `0A000`,块扫描就是访问路径。执行器(M36)把列存表的 SELECT 路由到块:普
+索引——`PRIMARY KEY` 与二级索引答 `0A000`,块扫描就是访问路径。执行器(步骤 73)把列存表的 SELECT 路由到块:普
 通投影与 WHERE 骑块物化值上的共享类型化表达式,全局聚合——
 `COUNT`、`SUM`、`AVG`、`MIN`、`MAX`——在块上累加(无 WHERE 的
 `count(*)` 不解码值、直接累加块计数)。选择列表要么全普通项要么全
@@ -203,17 +203,17 @@ keg 回退)。`EMO` 可指向另一个编译器二进制;默认是
 
 ## 状态
 
-M28 于 2026-11-12 落地:绑定、KV 金测、以及 C ABI 的字节视图。M29
-同日落地:记录层、记录层金测、以及目录的重开路径。M30 落地 SQL 门
-面的 DDL/DML,M31 落地嵌入式计划器/执行器及其金测,M32 落地事务与
-会话面及其两会话金测,M33 落地 PostgreSQL 线协议,psql 与
-`postgres` 客户端为金测。M34 于 2026-11-13 落地:126 个用例的语
-料、实测表,以及已交付表面文档收尾弧一。同日 M35 落地:列存格式
-——解析器的 `STORE = COLUMN` 尾巴、目录的版本 2 `store` 字段、
-1024 行块、列 family 与重开校验。M36 随后数小时落地:列执行器
-——块扫描带共享 filter 与 project,以及全局聚合
-COUNT/SUM/AVG/MIN/MAX——替换了桥;列存表的 UPDATE 与 DELETE 答
-`0A000`(只插入)。M37 同日收尾本弧:`htap_demo` 与 `htap_client`
+步骤 65 于 2026-11-12 落地:绑定、KV 金测、以及 C ABI 的字节视图。
+步骤 66 同日落地:记录层、记录层金测、以及目录的重开路径。步骤 67
+落地 SQL 门面的 DDL/DML,步骤 68 落地嵌入式计划器/执行器及其金测,
+步骤 69 落地事务与会话面及其两会话金测,步骤 70 落地 PostgreSQL 线
+协议,psql 与 `postgres` 客户端为金测。步骤 71 于 2026-11-13 落
+地:126 个用例的语料、实测表,以及已交付表面文档收尾弧一。同日步
+骤 72 落地:列存格式——解析器的 `STORE = COLUMN` 尾巴、目录的版
+本 2 `store` 字段、1024 行块、列 family 与重开校验。步骤 73 随后
+数小时落地:列执行器——块扫描带共享 filter 与 project,以及全局聚
+合 COUNT/SUM/AVG/MIN/MAX——替换了桥;列存表的 UPDATE 与 DELETE 答
+`0A000`(只插入)。步骤 74 同日收尾本弧:`htap_demo` 与 `htap_client`
 在 wire 上证明一台数据库、一个事务里的两台引擎,语料的
 `column.test` 以 15 个用例写下列存表面,bench 的列存两行记录首个
 实测对照(10000 行:块扫描 304 ms,行存 675 ms)。

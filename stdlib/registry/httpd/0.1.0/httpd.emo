@@ -98,26 +98,15 @@ def parse_head(raw String) (R, Request) {
     return (R.error, "httpd: bad request: the head block does not end with a blank line")
   }
   const lines = raw.substring(0, raw.length() - 4).split("\r\n")
-  case parse_request_line(lines[0]) {
+  :chain {
+    (R.ok, parts) from parse_request_line(lines[0])
+    (R.ok, headers) from parse_header_lines(lines, 1, [])
+    (R.ok, _) from require_host(headers, parts[2])
+    (R.ok, split) from split_target(parts[1])
+  } then {
+    return (R.ok, Request.new(method: parts[0], target: parts[1], path: split[0], query: split[1], proto: parts[2], headers: headers, body: "", params: Map.new()))
+  } else {
     (R.error, why) then { return (R.error, why) }
-    (R.ok, parts)   then {
-      case parse_header_lines(lines, 1, []) {
-        (R.error, why)  then { return (R.error, why) }
-        (R.ok, headers) then {
-          case require_host(headers, parts[2]) {
-            (R.error, why) then { return (R.error, why) }
-            (R.ok, _)      then {
-              case split_target(parts[1]) {
-                (R.error, why) then { return (R.error, why) }
-                (R.ok, split)  then {
-                  return (R.ok, Request.new(method: parts[0], target: parts[1], path: split[0], query: split[1], proto: parts[2], headers: headers, body: "", params: Map.new()))
-                }
-              }
-            }
-          }
-        }
-      }
-    }
   }
 }
 
@@ -219,18 +208,15 @@ def parse_query(raw String) (R, Map[String, String]) {
     if eq < 0 {
       return (R.error, "httpd: bad request: the query pair `" + pair + "` carries no `=`")
     }
-    case percent_decode(pair.substring(0, eq)) {
-      (R.error, why) then { return (R.error, why) }
-      (R.ok, key)    then {
-        case percent_decode(pair.substring(eq + 1, pair.length() - eq - 1)) {
-          (R.error, why) then { return (R.error, why) }
-          (R.ok, value)  then {
-            if !out.has(key) {
-              out.set(key, value)
-            }
-          }
-        }
+    :chain {
+      (R.ok, key) from percent_decode(pair.substring(0, eq))
+      (R.ok, value) from percent_decode(pair.substring(eq + 1, pair.length() - eq - 1))
+    } then {
+      if !out.has(key) {
+        out.set(key, value)
       }
+    } else {
+      (R.error, why) then { return (R.error, why) }
     }
   }
   return (R.ok, out)

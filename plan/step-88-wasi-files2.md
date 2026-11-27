@@ -1,6 +1,6 @@
 # Step 88 — WASI's file half, rung two: listing, stats, mutations
 
-**Milestone:** M49 · **Prereq:** step 87 (preopens and path_open) ·
+**Milestone:** M40 · **Prereq:** step 87 (preopens and path_open) ·
 **Status:** complete
 
 Step 87's rung opened and read files inside a granted directory; this

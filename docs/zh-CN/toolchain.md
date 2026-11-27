@@ -25,13 +25,14 @@
 
 | Recipe | 作用 |
 | --- | --- |
-| `just build` | 以 release profile 编译二进制——其余 recipe 共用的唯一制品。 |
-| `just install [PREFIX]` | 开发安装:在 `~/.local/bin`(默认)放置一个指向本树构建产物的符号链接——本树每次 `dune build` 后 `emo` 立即随之更新。可重复执行;用 `emo doctor` 验证。 |
+| `just build` | 以 release profile 编译二进制——`emo` 与 `emo-lsp`,其余 recipe 共用的制品。 |
+| `just install [PREFIX]` | 开发安装:在 `~/.local/bin`(默认)放置指向本树构建产物的符号链接——本树每次 `dune build` 后 `emo` 与 `emo-lsp` 立即随之更新。可重复执行;用 `emo doctor` 验证。 |
 | `just install-dev` | 经 opam switch 的源码安装。 |
-| `just uninstall [PREFIX]` | 移除已安装的 `emo` 链接。 |
+| `just uninstall [PREFIX]` | 移除已安装的 `emo` 与 `emo-lsp` 链接。 |
 | `just package` | 把本平台的分发归档装配到 `dist/`——单平台,供快速检查;正式发布通过 `devtools/build-release.sh` 构建全部三个平台。 |
 | `just release TAG` | 在本机完成整个发布：打 tag 并推送到源码托管平台，在本机构建并测试全部三个归档（macOS arm64 原生、两个 Linux 架构走 Docker——镜像用 `just release-image` 一次性构建），公证，再发布到下载站点。 |
 | `just test` | 全量测试套件。 |
+| `just example [FILTER]` | 逐个示例做字节级金测:同时带 `main.emo` 与 `expected.txt` 的示例在解释器上运行,其 stdout 必须与金测文件逐字节一致。`FILTER` 只跑名字包含它的示例;每次运行的 stdout 与 stderr 留在 `.emo-build/example-golden/`。 |
 
 实现中的两个要点:dune 的产物是只读的,所以 install recipe 先拷贝
 到 `emo.incoming`、strip、再 `mv` 到位(`mv` 只需要目录的写权限,
@@ -140,4 +141,4 @@ $ emo docs type-system
   与 [`devtools/publish-release.sh`](../../devtools/publish-release.sh)
   —— 把构建好的发布送过 Apple 公证、再送上下载站点的后续环节。
 - [`plan/step-79-repl-linenoise.md`](../../plan/step-79-repl-linenoise.md)
-  —— 给 repl 带来行编辑器的步骤(M39)。
+  —— 给 repl 带来行编辑器的步骤(M30)。

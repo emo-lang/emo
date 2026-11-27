@@ -1,6 +1,6 @@
 # Step 80 — The standard library: `uuid`
 
-**Milestone:** M41 — The standard library: `uuid` ·
+**Milestone:** M32 — The standard library: `uuid` ·
 **Prereq:** step 35 (base64 — the pure-Emo codec discipline and the
 all-five-golden shape) and step 55 (crypto and rand — the digests the
 name-based versions ride, and the entropy source v4 and v7 draw
