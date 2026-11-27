@@ -100,6 +100,7 @@ The packages:
 | [`postgres`](#the-postgres-package) | PostgreSQL client over libpq: `$1` params, value errors | `c` |
 | [`term`](#the-term-package) | terminal input: lines, raw mode, key events, size | `c` |
 | [`wayland`](#the-wayland-package) | the Wayland client protocol: codec, core and xdg-shell tables, shm | `c` |
+| [`syscall`](#the-syscall-package) | the EmoOS gate's user side: the typed `ecall` surface | `riscv64` |
 | [`wasm`](#the-wasm-package) | a WebAssembly runtime in Emo: decode, validate, execute, host imports | `ocaml`, `c` |
 | [`gc`](#the-gc-package) | the GC heap's collector: tagged accessors over the machine object model, mark-sweep with cycle reclamation | the interpreter run, `c`, `riscv64` |
 
@@ -1431,6 +1432,41 @@ Reference: [docs/stdlib/wayland.md](stdlib/wayland.md) · Demos:
 `examples/wayland_wire`, `examples/wayland_handshake`,
 `examples/wayland_paint` (the smoke leg:
 `devtools/wayland-smoke.sh`).
+
+## The `syscall` package
+
+The EmoOS gate's user side: typed wrappers over the machine's raw
+`ecall`, and the only thing a user program sees of the kernel boundary.
+This is not the hosted `os` — it answers to the EmoOS kernel and admits
+the `riscv64` target alone. The ABI contract (the crossing, the
+validation, the answer convention) is the kernel's
+[`projects/emo-os/docs/syscalls.md`](../projects/emo-os/docs/syscalls.md).
+
+```emo
+syscall.write(buf, len)                 // (R, Int64) — bytes to the console
+syscall.win_new(640, 480)               // (R, Int64) — frame number << 32 | grant id
+syscall.present(grant, 0, 0, 640, 480)  // (R, Int64) — commit a frame
+syscall.input_read()                    // Int64 — one packed input event
+```
+
+A fallible door answers `(R.ok, payload)` or `(R.error, reason)`; the
+gate's reasons are `outside the caller's memory`, `not writable`,
+`bad argument`, `the kernel is out of a resource`, and `no such file`.
+Buffers are raw addresses in the calling program's own memory, checked
+by the gate before it reads or writes. `read` and `input_read` answer
+the raw `Int64` instead, and `exit` never returns.
+
+The doors cover the console and process half (`exit`, `write`, `read`,
+`input_read`, `spawn`, `wait`, `exec`, `execve`), the filesystem
+(`file_write`, `file_read`, `file_list`, `list_dir`, `file_remove`),
+the clock (`time`), and the desktop protocol's compositor surface —
+window buffers, roles, workspaces, notifications, the clipboard, and
+the frame pulse.
+
+Targets: `["riscv64"]`. Reference:
+[`docs/stdlib/syscall.md`](stdlib/syscall.md) · Examples:
+`projects/emo-desktop/fb/apps/files/`, `projects/emo-desktop/fb/winbuf/`.
+
 ## The `wasm` package
 
 A WebAssembly runtime written in Emo — decoder, validator, and
@@ -1457,3 +1493,31 @@ surfaced, not carried).
 
 Targets: `["ocaml", "c"]`. Reference:
 [`docs/stdlib/wasm.md`](stdlib/wasm.md) · Demo: `examples/wasm_demo`.
+
+## The `gc` package
+
+The GC heap's allocator and collector: a first-fit free list and a
+mark-sweep collector written in pure Emo over the object-model doors
+the interpreter run admits ([`docs/gc-heap.md`](gc-heap.md) is the
+design note). The arena belongs to the host; the carving, the free
+geometry with its split and merge, the tracing, and the sweep belong
+to this package. One source serves the three hosts that answer the
+same doors — the interpreter run, the `c` target, and the `riscv64`
+metal — byte-identically; every other build target refuses the family
+at check time (E4032).
+
+```emo
+gc.arena(65536)      // once per run: the arena the allocator carves from
+gc.s_new(4)          // a four-field struct; the handle is slot 0's address
+gc.collect()         // mark from the roots, sweep the rest, answer the words reclaimed
+gc.compact()         // mark, slide, rewrite references, answer the tail
+```
+
+A heap word is self-describing by parity: an even word is a scalar
+(stored shifted left one bit), an odd word is a reference, and `0` is
+null. A handle a collection must respect lives in a root (`ref_new`);
+a bare `var` holding one is invisible to the collector, and the block
+it names dies at the next `collect`.
+
+Targets: the interpreter run, `c`, `riscv64`. Reference:
+[`docs/stdlib/gc.md`](stdlib/gc.md) · Demo: `examples/gc_demo`.

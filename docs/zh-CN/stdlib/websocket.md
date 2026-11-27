@@ -2,7 +2,7 @@
 
 构建在 `net` 之上的纯 Emo WebSocket 双半(RFC 6455):客户端用 `connect` 拨号,服务端用 `accept` 接下一条已接受的连接,双方在同一个 `Websocket` 上会合,交换单位是一条文本消息。帧是传输层的事,留在这层屋顶之下——客户端发出前加掩码、收到带掩码的帧即拒绝,服务端对两条规矩各执一 mirrors;ping 用原载荷应答,不请自来的 pong 跳过,close 帧被应答并终结消息流;对端拆成多帧的消息在 `recv_message` 应答前先拼回整条。
 
-目标:`["ocaml", "c", "typescript"]`(构建在 `net`、`base64`、握手指纹用的 `crypto`、帧掩码用的 `rand` 之上)。参考:[`docs/zh-CN/stdlib/websocket.md`](stdlib/websocket.md) · 示例:`examples/websocket_demo`。
+目标:`["ocaml", "c", "typescript"]`(构建在 `net`、`base64`、握手指纹用的 `crypto`、帧掩码用的 `rand` 之上)。参考:[`docs/zh-CN/stdlib/websocket.md`](websocket.md) · 示例:`examples/websocket_demo`。
 
 ## 引入
 

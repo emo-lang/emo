@@ -12,7 +12,7 @@ peer fragmented across frames is joined before `recv_message` answers.
 
 Targets: `["ocaml", "c", "typescript"]` (it builds on `net`, `base64`,
 `crypto` for the handshake's SHA-1, and `rand` for the frame masks).
-Reference: [`docs/stdlib/websocket.md`](stdlib/websocket.md) · Demo:
+Reference: [`docs/stdlib/websocket.md`](websocket.md) · Demo:
 `examples/websocket_demo`.
 
 ## Using the package

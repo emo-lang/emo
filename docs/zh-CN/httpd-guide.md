@@ -760,7 +760,7 @@ $ curl http://127.0.0.1:8080/notes
 - **错误按它本来的值旅行。** 存储的应答把 `(R.ok, ...)` / `(R.error, ...)` 装在消息里,调用方的 `receive` 把元组直接交给自己的 `case`——从存储到 socket,一条约定。
 - **`json.decode` 是边界;边界之后,访问器 raise。** 坏 body 是预期数据(错误元组,答 400);能解码但形状不是笔记的 body 是 handler 的 `case` 去应答;`kind()` 检过之后还用错类型的访问器是 bug,该 raise。`doc.is(json.JsonObject)` 做收窄,`entries()` 与 `get` 才是诚实的调用。
 - **路由注册闭包住存储的 pid**,每个 handler 问的是同一个持有者;`routes(store)` 为每个存储建一张新表——测试要的正是这个。
-- **`serve_routes_with`** 是带选项的形态——超时与请求体预算来自下面的[调参](#调参-限额与超时)。
+- **`serve_routes_with`** 是带选项的形态——超时与请求体预算来自下面的[调参](#调参限额与超时)。
 
 ### 测试它
 

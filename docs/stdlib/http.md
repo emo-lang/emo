@@ -3,7 +3,7 @@
 The standard library's HTTP client, written in pure Emo on top of the
 `net` package. Direct style throughout: a request reads like any other
 function call, and the scheduler parks the process underneath while the
-socket is busy. Serving HTTP is the [`httpd`](stdlib/httpd.md) package's
+socket is busy. Serving HTTP is the [`httpd`](httpd.md) package's
 half of the wire. The package declares the `ocaml`, `c`, and
 `typescript` targets (`targets = ["ocaml", "c", "typescript"]`);
 dependency resolution refuses it on every other target. `https://` rides

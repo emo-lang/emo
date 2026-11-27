@@ -1,6 +1,6 @@
 # `httpd` 包
 
-标准库的 HTTP 服务器,用纯 Emo 写在 `net` 包之上:每连接一进程,一个请求作为值进来、处理者用一个值应答。通篇直接风格——连接的机制(keep-alive、请求体、限额、超时、优雅关闭)是包自己的,不住进每个程序的 accept 循环。线的另一半(客户端)是 [`http`](stdlib/http.md) 包。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。HTTPS 在三者之上都走 `net` 的 TLS——scheme 由监听者决定。
+标准库的 HTTP 服务器,用纯 Emo 写在 `net` 包之上:每连接一进程,一个请求作为值进来、处理者用一个值应答。通篇直接风格——连接的机制(keep-alive、请求体、限额、超时、优雅关闭)是包自己的,不住进每个程序的 accept 循环。线的另一半(客户端)是 [`http`](http.md) 包。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。HTTPS 在三者之上都走 `net` 的 TLS——scheme 由监听者决定。
 
 ## 引入
 
