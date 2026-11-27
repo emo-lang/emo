@@ -203,5 +203,5 @@ const (R.ok, set) = s3.with("footer", "total: {{ rows | length }} rows\n")
 - `escape_html` 是显式的,不自动——上下文感知的 HTML 自动转义
   (`html/template` 那台机器)是后续弧线,`dom` 包是可能的地基。
 
-参考:[`docs/zh-CN/stdlib/template.md`](stdlib/template.md) · 示例:
+参考:[`docs/zh-CN/stdlib/template.md`](template.md) · 示例:
 `examples/template_demo`、`examples/template_edge`。

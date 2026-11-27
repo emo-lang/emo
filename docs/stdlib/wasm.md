@@ -17,7 +17,7 @@ instantiation — and every failure answers `(R.error, reason)`, never a
 raise.
 
 Targets: `["ocaml", "c"]`. Reference:
-[`docs/stdlib/wasm.md`](stdlib/wasm.md) · Demo: `examples/wasm_demo`.
+[`docs/stdlib/wasm.md`](wasm.md) · Demo: `examples/wasm_demo`.
 
 ## Using the package
 

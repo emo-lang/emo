@@ -23,7 +23,7 @@ page.screenshot()   // (R, Bytes) —— PNG,从驱动的 base64 里解出
 page.close()        // (R, Page)
 ```
 
-目标:`["ocaml", "c", "typescript"]`(构建在 `websocket`、`json`、`base64` 之上)。参考:[`docs/zh-CN/stdlib/playwright.md`](stdlib/playwright.md) · 示例:`examples/playwright_demo`。
+目标:`["ocaml", "c", "typescript"]`(构建在 `websocket`、`json`、`base64` 之上)。参考:[`docs/zh-CN/stdlib/playwright.md`](playwright.md) · 示例:`examples/playwright_demo`。
 
 ## 引入
 

@@ -64,8 +64,9 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本,标准库�
 | [`postgres`](#postgres-包) | 基于 libpq 的 PostgreSQL 客户端:`$1` 参数、错误是值 | `c` |
 | [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
 | [`wayland`](#wayland-包) | Wayland 客户端协议:编解码器、核心与 xdg-shell 接口表、shm | `c` |
-| [`wasm`](wasm-包) | 用 Emo 写的 WebAssembly 运行时:解码、验证、执行、宿主 import | `ocaml`, `c` |
-| [`gc`](gc-包) | GC 堆的收集器:机器对象模型上的打标访问器,带环回收的 mark-sweep | 解释器运行、`c`、`riscv64` |
+| [`syscall`](#syscall-包) | EmoOS 门的用户侧:带类型的 `ecall` 表面 | `riscv64` |
+| [`wasm`](#wasm-包) | 用 Emo 写的 WebAssembly 运行时:解码、验证、执行、宿主 import | `ocaml`, `c` |
+| [`gc`](#gc-包) | GC 堆的收集器:机器对象模型上的打标访问器,带环回收的 mark-sweep | 解释器运行、`c`、`riscv64` |
 
 "全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单,不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
 
@@ -510,7 +511,7 @@ Bytes 进、Bytes 出;文本只在 hex 编解码处保持为文本。错误二�
 
 ## hash 包
 
-机器的摘要孪生:SHA-256 与 SHA-224——一次性或流式——常数时间比较,以及小写 hex 渲染,逐字携带自 [`crypto`](#crypto-包) 包的引擎(完整叙述见 [`docs/zh-CN/stdlib/hash.zh-CN.md`](stdlib/hash.zh-CN.md)):crypto 的错误面把 `riscv64` 目标整个拒掉,而机器的锁只需要摘要。同一组向量钉住两边;等编译器的 raise 缺口合拢,孪生折回。
+机器的摘要孪生:SHA-256 与 SHA-224——一次性或流式——常数时间比较,以及小写 hex 渲染,逐字携带自 [`crypto`](#crypto-包) 包的引擎(完整叙述见 [`docs/zh-CN/stdlib/hash.md`](stdlib/hash.md)):crypto 的错误面把 `riscv64` 目标整个拒掉,而机器的锁只需要摘要。同一组向量钉住两边;等编译器的 raise 缺口合拢,孪生折回。
 
 ```emo
 def constant_time_compare(a Bytes, b Bytes) Bool
@@ -520,7 +521,7 @@ def hex_encode(data Bytes) String
 //              以及流式的 Digest 与 Wide 类
 ```
 
-目标:全部五个与 `riscv64`。参考:[`docs/zh-CN/stdlib/hash.zh-CN.md`](stdlib/hash.zh-CN.md)。
+目标:全部五个与 `riscv64`。参考:[`docs/zh-CN/stdlib/hash.md`](stdlib/hash.md)。
 
 ## rand 包
 
@@ -994,6 +995,24 @@ Targets: `c`。
 参考:[docs/zh-CN/stdlib/wayland.md](stdlib/wayland.md) · 示例:
 `examples/wayland_wire`、`examples/wayland_handshake`、
 `examples/wayland_paint`(smoke 腿:`devtools/wayland-smoke.sh`)。
+
+## syscall 包
+
+EmoOS 门的用户侧:机器裸 `ecall` 之上的带类型包装,也是用户程序看得见的唯一内核边界。这不是托管的 `os`——它应答 EmoOS 内核,并且只准入 `riscv64` 目标。ABI 契约(越界方式、门的校验、应答约定)在内核的 [`projects/emo-os/docs/syscalls.zh-CN.md`](../../projects/emo-os/docs/syscalls.zh-CN.md)。
+
+```emo
+syscall.write(buf, len)                 // (R, Int64)——字节送到控制台
+syscall.win_new(640, 480)               // (R, Int64)——帧号 << 32 | grant id
+syscall.present(grant, 0, 0, 640, 480)  // (R, Int64)——提交一帧
+syscall.input_read()                    // Int64——一个打包的输入事件
+```
+
+可失败的门应答 `(R.ok, payload)` 或 `(R.error, reason)`;门的原因是 `outside the caller's memory`、`not writable`、`bad argument`、`the kernel is out of a resource` 与 `no such file`。缓冲是调用程序自己内存里的裸地址,门在读写之前检查。`read` 与 `input_read` 改答裸 `Int64`,`exit` 从不返回。
+
+门覆盖控制台与进程半边(`exit`、`write`、`read`、`input_read`、`spawn`、`wait`、`exec`、`execve`)、文件系统(`file_write`、`file_read`、`file_list`、`list_dir`、`file_remove`)、时钟(`time`),以及桌面协议的合成器表面——窗口缓冲、角色、工作空间、通知、剪贴板与帧脉冲。
+
+目标:`["riscv64"]`。参考:[`docs/zh-CN/stdlib/syscall.md`](stdlib/syscall.md) · 示例:`projects/emo-desktop/fb/apps/files/`、`projects/emo-desktop/fb/winbuf/`。
+
 ## wasm 包
 
 用 Emo 写的 WebAssembly 运行时——解码器、验证器、解释器,正如 wazero 是用 Go 写的运行时。验收线是官方 spec 套件,而且已经到达:每条二进制 `assert_malformed` 与 `assert_invalid` 都在正确的阶段被拒绝,供应商化运行语料的每条 `assert_return` 都逐位精确。
@@ -1009,3 +1028,19 @@ wasm.read_memory(inst, ptr, len)          // (R, Bytes)
 
 目标:`["ocaml", "c"]`。参考:
 [`docs/zh-CN/stdlib/wasm.md`](stdlib/wasm.md) · 示例:`examples/wasm_demo`。
+
+## gc 包
+
+GC 堆的分配器与收集器:首适配自由表与 mark-sweep 用纯 Emo 写,骑在解释器运行准入的对象模型门上([`docs/gc-heap.md`](gc-heap.md) 是设计笔记)。arena 属于宿主;刻块、带切分与合并的自由几何、追踪、sweep 属于这个包。一份源码服务三个应答相同门的宿主——解释器运行、`c` target、`riscv64` 金属——逐字节一致;其余 build target 在检查期整个家族拒绝(E4032)。
+
+```emo
+gc.arena(65536)      // 每轮一次:分配器从此刻画的 arena
+gc.s_new(4)          // 四字段 struct;句柄就是槽 0 的地址
+gc.collect()         // 从根标记,sweep 其余,应答收回的词数
+gc.compact()         // 标记、滑动、重写引用,应答归还的尾词
+```
+
+堆词靠奇偶自描述:偶数词是标量(左移一位存储),奇数词是引用,`0` 是 null。要被收集尊重的句柄放进根(`ref_new`);裸 `var` 里的句柄对收集器不可见,它指名的块死在下一次 `collect`。
+
+目标:解释器运行、`c`、`riscv64`。参考:
+[`docs/zh-CN/stdlib/gc.md`](stdlib/gc.md) · 示例:`examples/gc_demo`。

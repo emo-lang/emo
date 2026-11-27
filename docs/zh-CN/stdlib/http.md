@@ -1,6 +1,6 @@
 # `http` 包
 
-标准库的 HTTP 客户端,用纯 Emo 写在 `net` 包之上。通篇直接风格:一次请求读起来就是普通函数调用,socket 忙碌时调度器在底层挂起进程。提供 HTTP 服务是 [`httpd`](stdlib/httpd.md) 包的那半边。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。`https://` 在三者之上都走 `net` 的 TLS——`ocaml` 上是 ocaml-ssl,`typescript` 上是 `node:tls`,`c` 上是系统 OpenSSL/LibreSSL(覆盖面细节见 `net` 包文档)。
+标准库的 HTTP 客户端,用纯 Emo 写在 `net` 包之上。通篇直接风格:一次请求读起来就是普通函数调用,socket 忙碌时调度器在底层挂起进程。提供 HTTP 服务是 [`httpd`](httpd.md) 包的那半边。本包声明 `ocaml`、`c` 与 `typescript` 三个目标(`targets = ["ocaml", "c", "typescript"]`);依赖解析在其他一切目标上拒绝它。`https://` 在三者之上都走 `net` 的 TLS——`ocaml` 上是 ocaml-ssl,`typescript` 上是 `node:tls`,`c` 上是系统 OpenSSL/LibreSSL(覆盖面细节见 `net` 包文档)。
 
 ## 引入
 

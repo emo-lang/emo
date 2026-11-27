@@ -5,7 +5,7 @@ The standard library's HTTP server, written in pure Emo on top of the
 and the handler answering with one. Direct style throughout — the
 connection's machinery (keep-alive, bodies, limits, timeouts, graceful
 shutdown) is the package's own, not every program's accept loop. The
-client half of the wire is the [`http`](stdlib/http.md) package. The
+client half of the wire is the [`http`](http.md) package. The
 package declares the `ocaml`, `c`, and `typescript` targets
 (`targets = ["ocaml", "c", "typescript"]`); dependency resolution
 refuses it on every other target. HTTPS rides `net`'s TLS on every one

@@ -148,7 +148,7 @@ case dom.parse(page) {
 
 ## 示例
 
-[`examples/dom_demo`](../../examples/dom_demo/) 让一页 HTML 走过 find、切片、属性、伪类、遍历、过滤、`each` 和编码回环;[`examples/dom_edge`](../../examples/dom_edge/) 走过严格拒绝、字符引用的角落、原始文本、属性形状、片段和选择器编译器的拒绝。两者在解释器和各编译目标上逐字节一致。
+[`examples/dom_demo`](../../../examples/dom_demo/) 让一页 HTML 走过 find、切片、属性、伪类、遍历、过滤、`each` 和编码回环;[`examples/dom_edge`](../../../examples/dom_edge/) 走过严格拒绝、字符引用的角落、原始文本、属性形状、片段和选择器编译器的拒绝。两者在解释器和各编译目标上逐字节一致。
 
 ## 限制
 

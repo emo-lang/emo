@@ -4,7 +4,7 @@
 
 包即边界:内脏住在 `internal/` 之下,别的包能看到的只有这个根。跨过边界的是句柄——模块句柄指认一个已加载的模块,实例句柄指认一次活的实例化——一切失败都以 `(R.error, reason)` 应答,从不 raise。
 
-目标:`["ocaml", "c"]`。参考:[`docs/zh-CN/stdlib/wasm.md`](stdlib/wasm.md) · 示例:`examples/wasm_demo`。
+目标:`["ocaml", "c"]`。参考:[`docs/zh-CN/stdlib/wasm.md`](wasm.md) · 示例:`examples/wasm_demo`。
 
 ## 引入
 
