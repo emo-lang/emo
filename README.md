@@ -96,7 +96,7 @@ Emo interoperates with C through `foreign def`: the `c` backend calls the symbol
 
 ## Documentation
 
-Documentation lives under `docs/`, and this section is its complete map — design documents, guides, and API references. The Chinese translation of this page, documentation index included, is [`docs/zh-CN/README.md`](docs/zh-CN/README.md).
+Documentation lives under `docs/`, and this section is its complete map — design documents, guides, and API references. [`docs/main.md`](docs/main.md) is the narrative version: the three design axes, the documentation layout, and the reading paths. The Chinese translation of this page, documentation index included, is [`docs/zh-CN/README.md`](docs/zh-CN/README.md).
 
 ### The language
 

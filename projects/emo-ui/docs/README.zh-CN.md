@@ -1,6 +1,6 @@
 # EmoUI 各包参考
 
-`projects/emo-ui/` 里每个公开包一页。每份参考写明该包的清单(名字、目标、原生字段)、源码中声明的入口,以及调用方可以依赖的行为;`golden/` 是共享的测量装置而不是公开包,它的关口在顶层 README 里描述。各包参考目前以英文撰写,中文翻译尚未补齐。
+`projects/emo-ui/` 里每个公开包一页。每份参考写明该包的清单(名字、目标、原生字段)、源码中声明的入口，以及调用方可以依赖的行为;`golden/` 是共享的测量装置而不是公开包，它的关口在顶层 README 里描述。各包参考目前以英文撰写，中文翻译尚未补齐。
 
 | 包 | 是什么 |
 |---|---|
@@ -12,6 +12,6 @@
 | [`ui_gtk`](ui_gtk.md) | GTK 4 后端 |
 | [`ui_browser`](ui_browser.md) | DOM 后端 |
 | [`ui_corpus`](ui_corpus.md) | 每个后端都运行的共享应用 |
-| [`ui_calculator`](ui_calculator.md) | 计算器,`apps/` 下的第一个应用 |
+| [`ui_calculator`](ui_calculator.md) | 计算器，`apps/` 下的第一个应用 |
 
-一个应用依赖 `emo/ui` 加一个后端包,并调用 `ui.run(view, update, model, backend)`。这些包实现的设计写在仓库的 `README.md` 里;证据与开放问题见 [`docs/emo-ui.md`](../../../docs/zh-CN/emo-ui.md)。`apps/` 下的各个应用各有自己的 README——第一个是 [`apps/calculator`](../apps/calculator/README.zh-CN.md)。
+一个应用依赖 `emo/ui` 加一个后端包，并调用 `ui.run(view, update, model, backend)`。这些包实现的设计写在仓库的 `README.md` 里;证据与开放问题见 [`docs/emo-ui.md`](../../../docs/zh-CN/emo-ui.md)。`apps/` 下的各个应用各有自己的 README——第一个是 [`apps/calculator`](../apps/calculator/README.zh-CN.md)。

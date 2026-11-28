@@ -33,16 +33,47 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PAGES = [
     {
+        "src": "docs/main.md",
+        "out": "index.html",
+        "lang": "en",
+        "title": "Emo documentation",
+        "description": "The documentation map for Emo: Go's simplicity, C's speed, Ruby's elegance, the language tour, and the EmoUI guide.",
+        "switch_href": "/zh/",
+        "nav": [("/guides/tour/", "Tour"), ("/guides/emo-ui/intro", "EmoUI")],
+        "source_href": "/main.md",
+        "source_label": "source",
+        "verified": "This map is built from <code>docs/main.md</code>; the guides it links are built from this tree.",
+        "links": {
+            "docs/intro/tour.md": "/guides/tour/",
+            "docs/emo-ui/intro.md": "/guides/emo-ui/intro",
+            "docs/zh-CN/README.md": "/zh/",
+        },
+    },
+    {
+        "src": "docs/zh-CN/main.md",
+        "out": "zh/index.html",
+        "lang": "zh-CN",
+        "title": "Emo 文档",
+        "description": "Emo 的文档地图:Go 的简洁、C 的速度、Ruby 的优雅,以及语言导览与 EmoUI 入门。",
+        "switch_href": "/",
+        "nav": [("/zh/guides/tour/", "导览"), ("/zh/guides/emo-ui/intro", "EmoUI")],
+        "source_href": "/zh/main.md",
+        "source_label": "源码",
+        "verified": "本页由 <code>docs/zh-CN/main.md</code> 构建;它链接的指南同样由本仓库构建。",
+        "links": {
+            "docs/zh-CN/intro/tour.md": "/zh/guides/tour/",
+            "docs/zh-CN/emo-ui/intro.md": "/zh/guides/emo-ui/intro",
+            "docs/zh-CN/README.md": "/zh/",
+        },
+    },
+    {
         "src": "docs/intro/tour.md",
         "out": "guides/tour/index.html",
         "lang": "en",
         "title": "A tour of Emo",
         "description": "A ten-minute tour of Emo: every runnable block is compiled to Wasm and checked against its output.",
         "switch_href": "/zh/guides/tour/",
-        "switch_label": "中文",
-        "nav_href": "/guides/emo-ui/intro",
-        "nav_label": "EmoUI",
-        "source": "docs/intro/tour.md",
+        "nav": [("/guides/tour/", "Tour"), ("/guides/emo-ui/intro", "EmoUI")],
         "source_href": "/guides/tour/tour.md",
         "source_label": "source",
         "verified": "Every runnable block is compiled to Wasm and checked by <code>just tour</code>.",
@@ -54,10 +85,7 @@ PAGES = [
         "title": "Emo 语言导览",
         "description": "十分钟的 Emo 语言导览:每个可运行的代码块都编译为 Wasm,并与输出逐字节核对。",
         "switch_href": "/guides/tour/",
-        "switch_label": "English",
-        "nav_href": "/zh/guides/emo-ui/intro",
-        "nav_label": "EmoUI",
-        "source": "docs/zh-CN/intro/tour.md",
+        "nav": [("/zh/guides/tour/", "导览"), ("/zh/guides/emo-ui/intro", "EmoUI")],
         "source_href": "/zh/guides/tour/tour.md",
         "source_label": "源码",
         "verified": "每个可运行的代码块都编译为 Wasm,并由 <code>just tour</code> 核对。",
@@ -69,10 +97,7 @@ PAGES = [
         "title": "Getting started with EmoUI",
         "description": "Build two EmoUI applications from scratch: a Hello, World window and a counter, with complete code.",
         "switch_href": "/zh/guides/emo-ui/intro",
-        "switch_label": "中文",
-        "nav_href": "/guides/tour/",
-        "nav_label": "Tour",
-        "source": "docs/emo-ui/intro.md",
+        "nav": [("/guides/tour/", "Tour"), ("/guides/emo-ui/intro", "EmoUI")],
         "source_href": "/guides/emo-ui/intro.md",
         "source_label": "source",
         "verified": "Both programs build against the in-tree EmoUI packages.",
@@ -84,10 +109,7 @@ PAGES = [
         "title": "EmoUI 入门",
         "description": "从零写两个 EmoUI 应用:Hello, World 窗口与计数器,含完整代码。",
         "switch_href": "/guides/emo-ui/intro",
-        "switch_label": "English",
-        "nav_href": "/zh/guides/tour/",
-        "nav_label": "导览",
-        "source": "docs/zh-CN/emo-ui/intro.md",
+        "nav": [("/zh/guides/tour/", "导览"), ("/zh/guides/emo-ui/intro", "EmoUI")],
         "source_href": "/zh/guides/emo-ui/intro.md",
         "source_label": "源码",
         "verified": "两个程序都针对仓库内的 EmoUI 包构建。",
@@ -108,6 +130,31 @@ STYLE = r"""
   --mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", Arial, sans-serif;
+  --header-bg: rgba(20, 22, 26, 0.92);
+  --code-text: #cfd4dc;
+  --strong: #fff;
+  --out-bg: #121a15;
+  --out-text: #a8c6b6;
+  --on-accent: #0b120e;
+  color-scheme: dark;
+}
+[data-theme="light"] {
+  --bg: #f6f7f9;
+  --panel: #eceef2;
+  --sunk: #f0f2f5;
+  --line: #d7dbe3;
+  --text: #1f242b;
+  --dim: #5e6874;
+  --accent: #2c7a4e;
+  --accent-dim: #a9cdb8;
+  --warn: #9a6418;
+  --header-bg: rgba(246, 247, 249, 0.92);
+  --code-text: #242a31;
+  --strong: #000;
+  --out-bg: #edf6f1;
+  --out-text: #2f5b45;
+  --on-accent: #fff;
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
@@ -127,11 +174,11 @@ header {
   z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   padding: 10px 24px;
   border-bottom: 1px solid var(--line);
-  background: rgba(20, 22, 26, 0.92);
+  background: var(--header-bg);
   backdrop-filter: blur(6px);
 }
 .brand {
@@ -145,6 +192,57 @@ header {
 nav { display: flex; align-items: center; gap: 18px; font-family: var(--mono); font-size: 13px; }
 nav a { color: var(--dim); }
 nav a:hover { color: var(--text); text-decoration: none; }
+.header-tools {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.lang-toggle {
+  margin-left: 0;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1;
+}
+.lang-toggle .lang {
+  display: inline-block;
+  padding: 5px 10px;
+  color: var(--dim);
+  text-decoration: none;
+}
+.lang-toggle a.lang:hover {
+  color: var(--text);
+  background: var(--panel);
+  text-decoration: none;
+}
+.lang-toggle .lang.active {
+  color: var(--on-accent);
+  background: var(--accent);
+  font-weight: 600;
+}
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  color: var(--dim);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--accent); }
+.theme-toggle svg { width: 14px; height: 14px; display: block; }
+.theme-toggle .icon-moon { display: none; }
+[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+[data-theme="light"] .theme-toggle .icon-moon { display: block; }
 .layout {
   display: grid;
   grid-template-columns: 250px minmax(0, 840px);
@@ -172,7 +270,7 @@ aside .toc > ul > li { margin-bottom: 10px; }
 aside .toc > ul > li > a { color: var(--text); }
 aside .toc > ul > li > ul > li > a { color: var(--dim); }
 aside a:hover { color: var(--accent); text-decoration: none; }
-main { min-width: 0; }
+main { min-width: 0; overflow-wrap: break-word; }
 main h1 {
   margin: 0 0 18px;
   font-size: 34px;
@@ -187,11 +285,14 @@ main h2 {
   line-height: 1.3;
 }
 main h3 { margin: 32px 0 12px; font-size: 19px; }
+/* the first heading sits at the top of the page, with no rule above it */
+main > :first-child { margin-top: 0; }
+main > h2:first-child { padding-top: 0; border-top: 0; }
 main p { margin: 0 0 16px; }
 main ul, main ol { margin: 0 0 16px; padding-left: 26px; }
 main li { margin: 4px 0; }
 main li > p { margin: 0; }
-main strong { color: #fff; }
+main strong { color: var(--strong); }
 code {
   font-family: var(--mono);
   font-size: 0.88em;
@@ -216,14 +317,14 @@ pre code {
   border: 0;
   font-size: 13.5px;
   line-height: 1.6;
-  color: #cfd4dc;
+  color: var(--code-text);
   white-space: pre;
 }
 pre.output {
-  background: #121a15;
+  background: var(--out-bg);
   border-color: var(--accent-dim);
 }
-pre.output code { color: #a8c6b6; }
+pre.output code { color: var(--out-text); }
 pre .copy {
   position: absolute;
   top: 9px;
@@ -260,8 +361,15 @@ footer {
 }
 footer code { font-size: 0.92em; }
 footer p { margin: 4px 0; }
+@media (max-width: 700px) {
+  header { flex-wrap: wrap; gap: 8px 12px; padding: 8px 14px; }
+  nav { order: 3; width: 100%; gap: 14px; font-size: 12px; }
+  .lang-toggle { font-size: 11px; }
+}
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; gap: 28px; padding: 24px 20px 70px; }
+  table { display: block; overflow-x: auto; }
+  th, td { overflow-wrap: anywhere; }
   aside {
     position: static;
     max-height: none;
@@ -294,10 +402,34 @@ document.querySelectorAll('pre').forEach(function (pre) {
   });
   pre.appendChild(button);
 });
+
+(function () {
+  var root = document.documentElement;
+  var btn = document.querySelector('.theme-toggle');
+  if (!btn) return;
+  var lightLabel = btn.getAttribute('data-label-light') || 'Switch to light theme';
+  var darkLabel = btn.getAttribute('data-label-dark') || 'Switch to dark theme';
+  function label() {
+    var next = root.getAttribute('data-theme') === 'light' ? darkLabel : lightLabel;
+    btn.setAttribute('aria-label', next);
+    btn.title = next;
+  }
+  btn.addEventListener('click', function () {
+    var light = root.getAttribute('data-theme') === 'light';
+    if (light) {
+      root.removeAttribute('data-theme');
+    } else {
+      root.setAttribute('data-theme', 'light');
+    }
+    try { localStorage.setItem('emo-theme', light ? 'dark' : 'light'); } catch (e) {}
+    label();
+  });
+  label();
+})();
 """
 
 
-def rewrite_links(body, src_rel, repo, branch):
+def rewrite_links(body, src_rel, repo, branch, links):
     """Point relative Markdown/directory links at the GitHub source."""
     base = posixpath.dirname(src_rel)
 
@@ -307,9 +439,12 @@ def rewrite_links(body, src_rel, repo, branch):
             return m.group(0)
         path, sep, frag = href.partition("#")
         target = posixpath.normpath(posixpath.join(base, path)) if path else src_rel
-        fs = os.path.join(ROOT, target)
-        kind = "tree" if os.path.isdir(fs) else "blob"
-        url = "%s/%s/%s/%s" % (repo.rstrip("/"), kind, branch, target)
+        if target in links:
+            url = links[target]
+        else:
+            fs = os.path.join(ROOT, target)
+            kind = "tree" if os.path.isdir(fs) else "blob"
+            url = "%s/%s/%s/%s" % (repo.rstrip("/"), kind, branch, target)
         if sep:
             url += "#" + frag
         return 'href="%s"' % url
@@ -343,10 +478,27 @@ def render(page, repo, branch):
     )
     body = md.convert(text)
     toc = md.toc
-    body = rewrite_links(body, page["src"], repo, branch)
+    body = rewrite_links(body, page["src"], repo, branch, page.get("links", {}))
     body = body.replace(
         '<pre><code class="language-output">',
         '<pre class="output"><code class="language-output">',
+    )
+    if page["lang"] == "en":
+        theme_label_light = "Switch to light theme"
+        theme_label_dark = "Switch to dark theme"
+    else:
+        theme_label_light = "切换到浅色主题"
+        theme_label_dark = "切换到深色主题"
+    target = html.escape(page["switch_href"], quote=True)
+    if page["lang"] == "en":
+        toggle_html = ('<span class="lang active" aria-current="true">EN</span>'
+                       '<a class="lang" href="%s">中文</a>' % target)
+    else:
+        toggle_html = ('<a class="lang" href="%s">EN</a>'
+                       '<span class="lang active" aria-current="true">中文</span>' % target)
+    nav_html = "".join(
+        '<a href="%s">%s</a>' % (html.escape(href, quote=True), html.escape(label))
+        for href, label in page["nav"]
     )
     return TEMPLATE.format(
         lang=page["lang"],
@@ -354,10 +506,11 @@ def render(page, repo, branch):
         description=html.escape(page["description"]),
         logo="/logo.png",
 
-        switch_href=page["switch_href"],
-        switch_label=html.escape(page["switch_label"]),
-        nav_href=page["nav_href"],
-        nav_label=html.escape(page["nav_label"]),
+        theme_script=THEME_SCRIPT,
+        theme_label_light=theme_label_light,
+        theme_label_dark=theme_label_dark,
+        toggle_html=toggle_html,
+        nav_html=nav_html,
         source_href=page["source_href"],
         source_label=html.escape(page["source_label"]),
         toc=toc,
@@ -368,6 +521,17 @@ def render(page, repo, branch):
     )
 
 
+THEME_SCRIPT = """<script>
+(function () {
+  try {
+    if (localStorage.getItem('emo-theme') === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+    }
+  } catch (e) {}
+})();
+</script>"""
+
+
 TEMPLATE = """<!doctype html>
 <html lang="{lang}">
 <head>
@@ -376,16 +540,23 @@ TEMPLATE = """<!doctype html>
 <title>{title}</title>
 <meta name="description" content="{description}">
 <link rel="icon" href="{logo}">
+{theme_script}
 <style>{style}</style>
 </head>
 <body>
 <header>
   <a class="brand" href="/">emo<span>.docs</span></a>
   <nav>
-    <a href="{nav_href}">{nav_label}</a>
-    <a href="{switch_href}">{switch_label}</a>
+    {nav_html}
     <a href="{source_href}">{source_label}</a>
   </nav>
+  <div class="header-tools">
+    <div class="lang-toggle" role="group" aria-label="Language">{toggle_html}</div>
+    <button class="theme-toggle" type="button" aria-label="{theme_label_light}" title="{theme_label_light}" data-label-light="{theme_label_light}" data-label-dark="{theme_label_dark}">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </div>
 </header>
 <div class="layout">
   <aside>{toc}</aside>
@@ -426,7 +597,7 @@ def main():
             raw = f.read()
         copy_dir = os.path.join(out, os.path.dirname(page["out"]))
         os.makedirs(copy_dir, exist_ok=True)
-        copy = os.path.join(copy_dir, os.path.basename(page["source"]))
+        copy = os.path.join(copy_dir, os.path.basename(page["src"]))
         with open(copy, "w", encoding="utf-8") as f:
             f.write(raw)
         print("built %s" % os.path.relpath(copy, ROOT))

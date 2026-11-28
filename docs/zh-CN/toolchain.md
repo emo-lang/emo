@@ -2,56 +2,56 @@
 
 写于 2026-10-07。本文记录已定的事实与随仓库交付的自动化。
 
-## CLI 由 dune 构建,而不是由 c target 构建
+## CLI 由 dune 构建，而不是由 c target 构建
 
-`emo`——命令行工具——是 OCaml 写的,而 `c` target 编译的是 *Emo*
+`emo`——命令行工具——是 OCaml 写的，而 `c` target 编译的是 *Emo*
 源码到 C。编译器因此无法构建自身:整个链路里唯一需要 OCaml 工具链
-的一步就是构建 `emo` 本身,而 self-hosting 明确不是目标
+的一步就是构建 `emo` 本身，而 self-hosting 明确不是目标
 ([`plan/README.md`](../../plan/README.md))。
 
-所以"用 c target 构建 emo CLI"这件事不存在,这句话的含义恰恰
+所以"用 c target 构建 emo CLI"这件事不存在，这句话的含义恰恰
 相反——分工是:
 
-1. **用 dune 构建 `emo`(release profile),仅此一次。** 产物是一个
+1. **用 dune 构建 `emo`(release profile)，仅此一次。** 产物是一个
    自包含的单一二进制:所有后端、以生成数据内嵌的标准库、以及
    C runtime 都在里面。
 2. **此后的一切都不再需要 OCaml。** 装好的二进制默认构建路径就是
-   `c` target:`emo build` 调用系统 `cc`,仅此而已——一台只有装好
-   二进制的机器就能构建 Emo 程序,无需任何 OCaml 工具链。这一点由
+   `c` target:`emo build` 调用系统 `cc`，仅此而已——一台只有装好
+   二进制的机器就能构建 Emo 程序，无需任何 OCaml 工具链。这一点由
    步骤 24 的验收证明(孤二进制在空目录中运行、检查、构建、安装
-   依赖、发布),并由 `emo doctor` 按 target 报告。
+   依赖、发布)，并由 `emo doctor` 按 target 报告。
 
 ## justfile 自动化的正是这条链
 
 | Recipe | 作用 |
 | --- | --- |
-| `just build` | 以 release profile 编译二进制——`emo` 与 `emo-lsp`,其余 recipe 共用的制品。 |
+| `just build` | 以 release profile 编译二进制——`emo` 与 `emo-lsp`，其余 recipe 共用的制品。 |
 | `just install [PREFIX]` | 开发安装:在 `~/.local/bin`(默认)放置指向本树构建产物的符号链接——本树每次 `dune build` 后 `emo` 与 `emo-lsp` 立即随之更新。可重复执行;用 `emo doctor` 验证。 |
 | `just install-dev` | 经 opam switch 的源码安装。 |
 | `just uninstall [PREFIX]` | 移除已安装的 `emo` 与 `emo-lsp` 链接。 |
-| `just package` | 把本平台的分发归档装配到 `dist/`——单平台,供快速检查;正式发布通过 `devtools/build-release.sh` 构建全部三个平台。 |
+| `just package` | 把本平台的分发归档装配到 `dist/`——单平台，供快速检查;正式发布通过 `devtools/build-release.sh` 构建全部三个平台。 |
 | `just release TAG` | 在本机完成整个发布：打 tag 并推送到源码托管平台，在本机构建并测试全部三个归档（macOS arm64 原生、两个 Linux 架构走 Docker——镜像用 `just release-image` 一次性构建），公证，再发布到下载站点。 |
 | `just test` | 全量测试套件。 |
-| `just example [FILTER]` | 逐个示例做字节级金测:同时带 `main.emo` 与 `expected.txt` 的示例在解释器上运行,其 stdout 必须与金测文件逐字节一致。`FILTER` 只跑名字包含它的示例;每次运行的 stdout 与 stderr 留在 `.emo-build/example-golden/`。 |
+| `just example [FILTER]` | 逐个示例做字节级金测:同时带 `main.emo` 与 `expected.txt` 的示例在解释器上运行，其 stdout 必须与金测文件逐字节一致。`FILTER` 只跑名字包含它的示例;每次运行的 stdout 与 stderr 留在 `.emo-build/example-golden/`。 |
 
-实现中的两个要点:dune 的产物是只读的,所以 install recipe 先拷贝
-到 `emo.incoming`、strip、再 `mv` 到位(`mv` 只需要目录的写权限,
+实现中的两个要点:dune 的产物是只读的，所以 install recipe 先拷贝
+到 `emo.incoming`、strip、再 `mv` 到位(`mv` 只需要目录的写权限，
 这正是重装能工作的原因);`just package` 依赖
-`devtools/package-release.sh`,该脚本在进入暂存目录**之前**就把输出
-目录解析为绝对路径——否则相对的 `dist` 参数会从暂存目录内解析,
+`devtools/package-release.sh`，该脚本在进入暂存目录**之前**就把输出
+目录解析为绝对路径——否则相对的 `dist` 参数会从暂存目录内解析，
 必然失败。
 
 ## ocaml target 只需要 OCaml 工具链
 
-自步骤 25(target independence)起,每个 target 的 runtime 都以
+自步骤 25(target independence)起，每个 target 的 runtime 都以
 生成数据的形式随 `emo` 二进制携带——C runtime、TypeScript prelude、
 以及 ocaml target 的 standalone runtime(`emo_ocaml_runtime.ml`)都是
-如此。`emo build --target ocaml` 把 runtime 与 emitted 程序并排写出,
+如此。`emo build --target ocaml` 把 runtime 与 emitted 程序并排写出，
 一起交给 target 自己的 `ocamlopt`;不在二进制旁边、也不在宿主构建树
 里查找任何东西。因此该 target 在任何安装形态下都可用——包括孤立的
-release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtime
-自用的 `unix` 与 `ssl` 包(opam 两者都提供)。缺席时,`emo build` 与
-`emo doctor` 会点名工具链;没有源码安装的条件分支,也没有对随包
+release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`，带 runtime
+自用的 `unix` 与 `ssl` 包(opam 两者都提供)。缺席时，`emo build` 与
+`emo doctor` 会点名工具链;没有源码安装的条件分支，也没有对随包
 库的版本核对——因为根本不随包携带任何库。
 
 ## repl 的行编辑器
@@ -62,31 +62,31 @@ release 二进制——只要 OCaml 工具链在 PATH 上:`ocamlfind`,带 runtim
 会话带来:
 
 - **跨会话的历史召回。** 每一条非空输入按原样进入历史(上限 1000
-  条),会话结束时存进 state 文件:设了 `$EMO_STATE_DIR` 则是
-  `$EMO_STATE_DIR/repl-history`,否则
-  `$XDG_STATE_HOME/emo/repl-history`,再否则
+  条)，会话结束时存进 state 文件:设了 `$EMO_STATE_DIR` 则是
+  `$EMO_STATE_DIR/repl-history`，否则
+  `$XDG_STATE_HOME/emo/repl-history`，再否则
   `$HOME/.local/state/emo/repl-history`。上下方向键在条目间走动;
   文件系统带不动的历史在 stderr 上给一条警告、会话继续——文件缺失
-  是首次会话的正常形态,一言不发。
+  是首次会话的正常形态，一言不发。
 - **多行编辑。** 长行折过终端的多行仍然可编辑;粘贴整块落地(感知
-  bracketed-paste,大块粘贴在显示上折叠)。
-- **续行提示按括号深度缩进。** 会话收集未闭合块时,`... ` 随每个
+  bracketed-paste，大块粘贴在显示上折叠)。
+- **续行提示按括号深度缩进。** 会话收集未闭合块时，`... ` 随每个
   仍未闭合的 `{`/`(`/`[` 长出两个空格——提示符显示出块所处的位置。
   缩进只是视觉引导;编辑器不在其外放置光标。
 - **Ctrl-C 放弃而非退出。** 编辑器消费 Ctrl-C;repl 丢弃当前待输入、
-  重新渲染提示符。空行上的 Ctrl-D 结束会话,与一直以来的 EOF 相同。
+  重新渲染提示符。空行上的 Ctrl-D 结束会话，与一直以来的 EOF 相同。
 
 编辑器只在 stdin 与 stdout 都是终端时入座。管道、重定向、脚本照旧
 走普通读行路径、逐字节不变——`emo repl` 的管道行为、以及驱动会话的
-所有测试,都不触碰终端机制。`repl-history` 文件由库以 0600 写出;
-第二个并发会话的保存会赢得该文件,这是唯一已知的局限。TAB 补全
-刻意缺席——回调本身就在绑定里,但补全什么(关键字、会话内的名字、
+所有测试，都不触碰终端机制。`repl-history` 文件由库以 0600 写出;
+第二个并发会话的保存会赢得该文件，这是唯一已知的局限。TAB 补全
+刻意缺席——回调本身就在绑定里，但补全什么(关键字、会话内的名字、
 已 require 的包)是另一项设计。
 
 ## 标准库的参考页
 
 `emo man` 从二进制内部读取标准库的参考——就是 `docs/stdlib/` 里的
-那些页面,每个包一页,外加 [`docs/stdlib.md`](../stdlib.md) 作为总览:
+那些页面，每个包一页，外加 [`docs/stdlib.md`](../stdlib.md) 作为总览:
 
 ```console
 $ emo man            # 列出随标准库携带的页面
@@ -100,11 +100,11 @@ $ emo man stdlib     # 标准库总览
 列表、表格、行内代码、链接与强调——按终端排版:正文按 man 的缩进、
 折行到 `COLUMNS`(未设置时 80);代码块只缩进、不折行;过宽的表格
 收缩到页面宽度并逐单元格折行。stdout 是终端、且 `MANPAGER`(或
-`PAGER`)指向一个能运行的命令时,页面交给它分页;否则直接打印。
+`PAGER`)指向一个能运行的命令时，页面交给它分页;否则直接打印。
 
 页面不是手工复制的:构建时由 `devtools/gen-man-data.sh` 从
 `docs/stdlib.md` 与 `docs/stdlib/*.md` 生成 `(名字, Markdown)` 数据
-模块,所以改文档再重新构建就是全部更新——与标准库源码走过的路径
+模块，所以改文档再重新构建就是全部更新——与标准库源码走过的路径
 相同(T24.2)。参考页只有英文;`docs/zh-CN/stdlib/` 下的中文译本供在
 仓库里阅读。
 
@@ -119,9 +119,9 @@ $ emo docs syntax     # 输出 syntax 页
 $ emo docs type-system
 ```
 
-与为终端渲染页面的 `emo man` 不同,`emo docs` 把每页按原样输出为
-它本来的 Markdown——读者是程序,程序读 Markdown、走管道,所以没有
-分页器,也没有排版。不指定主题时,列出它携带的页面。页面随二进制
+与为终端渲染页面的 `emo man` 不同，`emo docs` 把每页按原样输出为
+它本来的 Markdown——读者是程序，程序读 Markdown、走管道，所以没有
+分页器，也没有排版。不指定主题时，列出它携带的页面。页面随二进制
 携带的方式与参考页相同:构建时由 `devtools/gen-docs-data.sh` 从
 `docs/intro/*.md` 生成 `(名字, Markdown)` 数据模块。页面只有英文;
 `docs/zh-CN/intro/` 下的中文译本供在仓库里阅读。

@@ -18,7 +18,7 @@ built myapp
   ```
 
   `Float64`、`String` 与 `Bool` 在一切兑现 `foreign def` 的 target 上都能跨界；`c` target 的层还允 `Int64`、`Void` 返回、struct 形状、单方法接口回调与 `Bytes`。`Bytes` 参数以借用的 `{data, len}` 视图跨界——只在调用期间有效，C 侧绝不保留——二进制载荷因此能原样携带内嵌 NUL；`Bytes` 返回被拒绝，读操作改为填写调用方自己的 out 参数（先问长度，再拷入）。其他类型被检查器拒绝。用 `--cclib` 链接额外的 C 库（`emo build main.emo --cclib m`）。外部定义只在编译程序中运行——`emo run` 拒绝它们。无法兑现 `foreign def` 的目标会在检查期拒绝它：`c` 与 `ocaml` 能兑现，而 `wasm`、`typescript`、`beam` 与 freestanding 的 `riscv64` 都会拒绝。
-- **C 经接口回调进 Emo。** `foreign def` 的参数可以名一个单方法接口——它就是回调类型。`c` 目标向 C 侧传递一个生成的 trampoline 和作为不透明 `void *userdata` 的对象；回调的 C 签名是该方法的参数（与任何 foreign 实参同样封送）后跟收尾的 `void *userdata`,调用它即分发到接收者自己的方法：
+- **C 经接口回调进 Emo。** `foreign def` 的参数可以名一个单方法接口——它就是回调类型。`c` 目标向 C 侧传递一个生成的 trampoline 和作为不透明 `void *userdata` 的对象；回调的 C 签名是该方法的参数（与任何 foreign 实参同样封送）后跟收尾的 `void *userdata`，调用它即分发到接收者自己的方法：
 
   ```emo
   interface Handler {
@@ -30,8 +30,8 @@ built myapp
   set_handler(MyHandler.new())   # C 侧稍后调用 cb(tag, data)
   ```
 
-  回调方法的参数留在封送层（`Float64`、`String`、`Bool`、`Int64`）,返回额外允许 `Void`。满足同一接口的两个不同类的对象各自分发到自己的方法——对象就骑在 userdata 里。没有该契约的目标在检查期拒绝该参数,与任何无法兑现的 `foreign def` 一致。
-- **复合数据以 struct 形状跨界。** 类型为 tuple——或载体类——的 `foreign def` 参数按值传递一个 C 结构体:元素类型按序就是布局,嵌套 tuple 在结构体内再嵌一层结构体,类实例贡献它 init 赋值的字段(类的形状就是它的 init 签名)。复合返回以 tuple 回来:
+  回调方法的参数留在封送层（`Float64`、`String`、`Bool`、`Int64`），返回额外允许 `Void`。满足同一接口的两个不同类的对象各自分发到自己的方法——对象就骑在 userdata 里。没有该契约的目标在检查期拒绝该参数，与任何无法兑现的 `foreign def` 一致。
+- **复合数据以 struct 形状跨界。** 类型为 tuple——或载体类——的 `foreign def` 参数按值传递一个 C 结构体:元素类型按序就是布局，嵌套 tuple 在结构体内再嵌一层结构体，类实例贡献它 init 赋值的字段(类的形状就是它的 init 签名)。复合返回以 tuple 回来:
 
   ```emo
   foreign def stretch(r ((Float64, Float64), Float64)) (Float64, Float64) = "stretch"
@@ -39,5 +39,5 @@ built myapp
   stretch(((1.0, 2.0), 3.0))   # 结构体内嵌结构体加标量,按值传递
   ```
 
-  `c` 目标声明与 C 侧相同的 `typedef struct`——落在 `emo_defs.h`,shim 对着真实布局编译——按值的调用约定交给 C 编译器。形状字段留在封送层;类类型返回会拒绝(请写 tuple),没有该机制的目标同样拒绝。
+  `c` 目标声明与 C 侧相同的 `typedef struct`——落在 `emo_defs.h`，shim 对着真实布局编译——按值的调用约定交给 C 编译器。形状字段留在封送层;类类型返回会拒绝(请写 tuple)，没有该机制的目标同样拒绝。
 - **默认构建只需要一个 C 编译器。** `c` 目标调用系统 `cc`；`--target ocaml` 需要 OCaml 工具链——与构建 Emo 本身相同的那个。
