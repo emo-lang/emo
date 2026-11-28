@@ -21,10 +21,12 @@ done
 
 if [ "$link" = 0 ]; then
   exec "$cc" -march=rv64gc -mabi=lp64d -mcmodel=medany -mno-relax \
-    -msmall-data-limit=0 -D_GNU_SOURCE -nostdinc -isystem "$sysroot/include" "$@"
+    -msmall-data-limit=0 -D_GNU_SOURCE -DEMO_GATE_EMOOS \
+    -nostdinc -isystem "$sysroot/include" "$@"
 fi
 
 exec "$cc" -march=rv64gc -mabi=lp64d -mcmodel=medany -mno-relax \
-  -msmall-data-limit=0 -D_GNU_SOURCE -nostdinc -isystem "$sysroot/include" \
+  -msmall-data-limit=0 -D_GNU_SOURCE -DEMO_GATE_EMOOS \
+  -nostdinc -isystem "$sysroot/include" \
   -nostdlib -Wl,--gc-sections -T "$sysroot/lib/emo.ld" \
   "$@" "$sysroot/lib/crt0.o" -L"$sysroot/lib" -lc -lgcc

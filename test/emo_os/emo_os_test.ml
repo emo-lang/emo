@@ -679,6 +679,19 @@ let gc_metal_tests =
             "user.S";
             "dash-test.sh";
             "link.ld";
+            (* what user.S incbins beside the images this leg builds:
+               the shell's programs and the C door's toolchain (the
+               empty placeholders skip their installs) — the smoke
+               leg's own rule, the kernel's build fails at the
+               assembler without them *)
+            "emosh.elf";
+            "dash.elf";
+            "uutils.elf";
+            "tcc.elf";
+            "tcc-libtcc1.a";
+            "tcc-crt0.o";
+            "tcc-libc.a";
+            "tcc-test.c";
           ];
         (* The wallpaper's bytes (emo-desktop M31, A31.1): user.S embeds
            the volume's art the assembler reads beside the sources — the

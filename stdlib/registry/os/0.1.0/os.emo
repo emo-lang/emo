@@ -37,6 +37,15 @@ def getpid() Int64 {
   return emo.os_getpid()
 }
 
+// The desktop era's door (EmoOS T18.4): the release verb the machine's
+// input service judges — the held desktop pass's dress signal, the
+// shell's `desktop` word its caller. The answer is the raw verb's:
+// 0 the release flown, negative the gate's refusal. A hosted image has
+// no gate; the answer there is -1.
+def desk_release() Int64 {
+  return emo.os_desk_release()
+}
+
 def getppid() Int64 {
   return emo.os_getppid()
 }

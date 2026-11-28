@@ -1443,6 +1443,13 @@ let runtime_impl_bindings =
         depth = 0;
         span = Emo_support.Span.zero;
       } );
+    ( "os_desk_release",
+      {
+        vtype = FuncType ([], Int64);
+        is_var = false;
+        depth = 0;
+        span = Emo_support.Span.zero;
+      } );
     ( "os_getppid",
       {
         vtype = FuncType ([], Int64);

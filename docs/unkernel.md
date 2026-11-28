@@ -2,8 +2,9 @@
 
 Written 2026-11-27. An assessment of the unkernel project and a
 proposed roadmap for carrying its desktop UI's design language onto
-EmoOS. This is not decided design: the milestone numbers below are
-reserved for the trackers, not opened, and the measurements are the
+EmoOS. This is not decided design: the roadmap below is opened as
+planned rows in the projects' trackers (2026-11-27) — M37–M42 in the
+desktop tracker, Step 18 in EmoOS's — and the measurements are the
 tree's as of this date.
 
 Chinese translation: [`zh-CN/unkernel.md`](zh-CN/unkernel.md).

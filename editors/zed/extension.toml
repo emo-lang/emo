@@ -1,0 +1,23 @@
+id = "emo"
+name = "Emo"
+version = "0.1.0"
+schema_version = 1
+description = "Emo language support: syntax highlighting and the Emo language server."
+repository = "https://github.com/emo-lang/emo"
+authors = ["Emo contributors"]
+languages = ["languages/emo"]
+capabilities = []
+
+[lib]
+kind = "Rust"
+version = "0.7.0"
+
+# Local development: scripts/prepare-grammar-repo.sh snapshots the grammar
+# into this bare repository. For distribution, point `repository` and `rev`
+# at the published grammar repo (or the Emo monorepo plus a `path` entry).
+[grammars.emo]
+repository = "file:///Users/daqing/mzevo/open-source/emo-lang/emo/editors/zed/.grammar/emo.git"
+rev = "0643f760b36919c35dd00252c0873ea2265fbe1a"
+
+[language_servers.emo-lsp]
+languages = ["Emo"]

@@ -101,13 +101,17 @@ const arena_for = koff + 0x8700d800
 const arena_bound = 256
 
 // The arena's growth (T1.3v): the rows of the grown blocks — the pid
-// and the block's kernel address — on their own page, the count at its
-// head; the grow verb appends, the death reclaim walks the pid's rows
-// home. A page holds 200 rows; T1.4a's execargs sit in its tail.
-const grow_page = koff + 0x8700f000
+// and the block's kernel address — the count at the head; the grow
+// verb appends, the death reclaim walks the pid's rows home. Moved
+// past the signals' last span (T18.4's round): a fork's clone seats
+// the parent's every grown row beside its own, and the shell's era's
+// hundred-and-fifteen rows refused the desktop era's first fork against
+// the old two hundred seats. A thousand and twenty-four now; T1.4a's
+// execargs keep the old page's tail.
+const grow_page = koff + 0x87048000
 const grow_count = grow_page
 const grow_rows = grow_page + 8
-const grow_max = 200
+const grow_max = 1024
 const slot_stack = 864
 const slot_space = 872
 

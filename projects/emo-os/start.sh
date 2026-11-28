@@ -368,7 +368,13 @@ ride() {
       ride_wait 'dash ok'
     else
       if [ "$EMO_SHELL" = 1 ]; then
-        ride_wait 'emosh>'
+        ride_wait 'emosh>' || return 1
+        # The desktop era at boot (T18.4): the shell's own word flies
+        # the release, the held pass dresses, the terminal stays the
+        # shell's. The icons' line the dressing's tell on the wire.
+        ride_type 'desktop
+'
+        ride_wait 'desktop icons' || return 1
       else
         ride_wait 'emo-os>'
       fi
@@ -386,9 +392,9 @@ if ride; then
       echo '  the machine powers off when it ends, Ctrl-A X kills QEMU.' >&2
     else
       if [ "$EMO_SHELL" = 1 ]; then
-        echo 'EmoOS: emosh is up — this terminal is its console now.' >&2
-        echo '  type commands; exit ends the machine (the boot poweroff),' >&2
-        echo '  Ctrl-D or Ctrl-A X also quit.' >&2
+        echo 'EmoOS: emosh is up — this terminal is its console now,' >&2
+        echo '  and the desktop dresses beside it (`desktop` opens it).' >&2
+        echo '  Ctrl-A X ends the machine.' >&2
       else
         echo 'EmoOS: the shell is up — this terminal is the REPL'"'"'s console now.' >&2
         echo '  type `desktop` for the desktop; poweroff ends the machine,' >&2

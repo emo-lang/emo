@@ -4584,6 +4584,13 @@ and apply_runtime_impl span name args =
         error span "E3007"
           (Printf.sprintf "`os_getpid` expects no arguments, got %d"
              (List.length vs))
+    (* the machine's gate has no hosted answer; the refusal the door's
+       discipline carries *)
+    | "os_desk_release", [] -> Int64 (-1L)
+    | "os_desk_release", vs ->
+        error span "E3007"
+          (Printf.sprintf "`os_desk_release` expects no arguments, got %d"
+             (List.length vs))
     | "os_getppid", [] -> Int64 (Int64.of_int (Unix.getppid ()))
     | "os_getppid", vs ->
         error span "E3007"

@@ -1143,3 +1143,165 @@ has none, and its death wedges every client.
   wire, the screen its last frame). The ride's move is now
   fire-and-forget (`start.sh`); the golden, which has no mouse, keeps
   the line's pin.
+
+## Step 18 — the ground: the leak, the driver's supervisor, the soak (the desktop's P0, with [`projects/emo-desktop`](../../emo-desktop))
+
+Opened 2026-11-27, from the unkernel roadmap's working list
+([`docs/unkernel-plan-list.md`](../../../docs/unkernel-plan-list.md)):
+the desktop's planned milestones (the tracker's M37–M42 rows) stand on
+a machine that survives a session. Three tasks, hosted-first, graded
+on both transports.
+
+- [ ] **T18.1** — The value-kind message leak (T8.7): the probe first —
+  hosted, a process loops boxed values across the gate, the arena read
+  each pass — then the message copy path's accounting (the gate's
+  `copy_to`, the mailbox copy) so the receiver's boxed copies come
+  home; the c target's frame-scoped pool is the fallback road, taken
+  only if the message path will not close. Done when the probe's 10k
+  messages leave the arena flat and `run.sh` is green.
+- [x] **T18.2** — The display driver's supervisor and a flush timeout:
+  `comp_supervisor`'s lineage grown onto `gpu_service` itself (the
+  death hook, the restart into the same cache block), and the
+  compositor's flush wait bounded, so a dead driver's lost reply
+  cannot park it forever. Done when the golden grows a "kill the
+  driver → it restarts → the screen recovers" beat and no wedge
+  remains.
+  - **Landed (2026-11-27, second round — uncommitted):** the two
+    halves landed together, the protocol kept in tuple form.
+    *The dispatch fix (the landmine's).* The value-word encoding read
+    from `emo_riscv.ml`: a tagged word is the 32-byte-aligned cell
+    home plus the tag in the low five bits (tag 0 the Int64 box — the
+    word is the pointer itself, `emo_box_i64`; +8 the header, +16 the
+    tuple's fields), the homes are the kernel's koff alias
+    (`0xFFFFFFC0` high half) and the user RAM at and above
+    `0x80000000` (bit 31 set), and the pattern tests walked any
+    tag-matching word straight into `andi -32; ld 8`. The unified
+    discriminator is a guard in `emit_pattern_test`'s three
+    dereferencing arms (Tuple, L_int, L_string): after the tag test
+    and before the walk, the word must prove its home — negative
+    words read `-64` through `srai 32`, positive words carry bit 31 —
+    everything else (the gate's `op<<32|caller` posts, the trap's
+    death notices, every pid-tainted raw word) misses the arm and
+    falls to the catch-all binding the services decode with `op_of`.
+    Legitimate Emo traffic passes bit for bit; the ABI keeps every
+    post's bit 31 clear, so the positive path needs no high-half
+    check. The guard-alone tree rode the golden with the pins
+    untouched (`frames 1925 1681` — the ledger counts block
+    allocations, not instructions).
+    *The restart mechanics.* The first round's single-word protocol is
+    superseded, not needed: the guard made the tuple dispatch safe,
+    so the mailbox keeps `(op << 32, sender, word)` tuples. What
+    landed: the stop op 9 in the gpu's tuple arm (the instance's own
+    return is the death, the fs stop's shape); `comp_gpu_num`
+    (`koff+0x87002ff8`, the page-side truth the boot seeds and every
+    restart keeps fresh); `comp_supervisor`'s gpu branch (the trap's
+    comp block delivers every death notice already, the display
+    bracket's arena, the reborn pid on the gate's cell and the page,
+    the announce to the root, the wake tuple `op 7` to the
+    compositor); the compositor's renewals (`comp_await_flush`
+    returns Int64 now, the wake tuple shape-tested — the walk's own
+    guard makes the test safe on any word — the flush re-sent to the
+    reborn driver in `comp_compose`, `comp_cursor_place`, the mode
+    fetch and the serve loop, `gpu_cur` read back from the page after
+    every word). The boot drives the proof once: the stop, the reborn
+    announce, `gpu restart ok`, and the desktop's first frame lands
+    on the reborn driver.
+    *The pins.* The restart shifts every later spawn's slot by one —
+    the user-proof passes 20→21, 22→23, 23→24, heap 21→22, the fault
+    beat 28→29, `frames` 1925 1681→1958 1713; the wire gains the
+    reborn driver's ready line and `gpu restart ok` between the
+    flush smoke and the first mount. The desk beats kept their
+    values (`desk a 7`, `desk key 7 1` — the first round's `desk key
+    8 1` was its own protocol's key-delivery breakage papered over,
+    not a shift; the desk clients' slots do not move). The guard-era
+    ride is green both legs, the traces carry one page fault each —
+    the proof chain's own deliberate `addr 0x80000000` beat.
+  - **The first attempt's findings (2026-11-27, kept for the
+    record):** the restart exposed a pre-existing kernel-panic
+    landmine — the gpu's receive dispatched its mailbox by the words'
+    low-bit tags, and the gate's posts ride `op << 32 | caller`; when
+    the caller's slot word ended in the 3-tuple's tag (6), i.e. the
+    client's pid ≡ 3 (mod 16), the dispatch walked the raw post as a
+    tuple box and the kernel took a load page fault (cause 0xd, tval
+    `13<<32|0x26` — the editor's post at its shifted pid 19). The
+    first round's protocol redesign (single-word words, the rect on a
+    compositor outbox cell, the `gpu_serve_word` def) stalled on the
+    value-word encoding and broke the desk pass's key delivery; both
+    are moot under the guard.
+  - **T18.4 — the desktop at boot, the terminal in emosh (landed
+    2026-11-27, uncommitted).** The ride's ask, as built: the root's
+    shell stage *spawns* emosh (verb 48 — a child of its own, the
+    old verb 54 replace gone from this stage) and runs the desktop
+    pass itself, held. The door: gate verb 66 `desk_release` (Tier C,
+    the additions rule — every verb through 65 is taken), routed to
+    the input service; the arm sets the one-shot release cell and the
+    **sticky serial cell** in one flight, and the boot's shell stage
+    flies it by its own raw ecall the moment the spawn lands — the
+    release event (type 0x4552 "ER", beside "EM" and "EX") answers the
+    held pass's first merged read and the era dresses, the terminal
+    the shell's for its life. emosh grows the `desktop` builtin over
+    the same verb (`os.desk_release()`, the extern family's newest
+    member — emo_c.ml, emo_wasm.ml's raise list, emo_eval, the ocaml
+    runtime, the checker's table, emo_c_runtime's `#ifdef
+    EMO_GATE_EMOOS` body, the sysroot wrapper's define, and the os
+    package's own def; the locks re-pinned, `just lock-refresh`'s 182
+    ok). The two-lane serve, the shape the tracker called: verb 2's
+    reads park in the hold beside verb 12's — **the old op 2 blocked
+    the whole service inside `input_byte`, and a blocked shell read
+    starved every other lane's word** — the seats split by their own
+    word's op at the loop top, the byte answered the moment the UART
+    ring holds one. The serial lane's ownership is two halves: the
+    sticky cell from the door, and a parked verb-2 read between the
+    shell's bytes — either one skips the merged stream's 0x454D heads
+    (`input_entitled_for`), the lanes never crossing. And the serve
+    loop's starvation guard: a parked byte seat with an empty ring
+    parks the service on the device world **inside a loop that
+    re-judges at every wake** — falling through to the receive would
+    never re-run the judgment (a device line's wake of a receive park
+    re-parks, the A11.2 rule), the seat starving behind the shell's
+    typing. The exit table's expansion landed beside it (32 entries at
+    `0x87002300`, the bound the append's own constant). Verified: the
+    emosh era's ride dresses the era (the wire's `desktop icons 2`,
+    `desktop apps 6`, the compositions' digests the golden's own) with
+    the prompt alive, and the golden's two legs stayed byte for byte
+    (the REPL knows none of the new paths — no verb 66, no op 2 seat
+    before its own echo beat, no cell).
+  - **Found on the way from the fork (2026-11-28):** the first fork of
+    the desktop's era answered EAGAIN with the exit table long fixed —
+    the diagnostic's numbers (`rows 115 room 85`) named the growth
+    list: the fork's clone seats the parent's every grown row beside
+    its own, and the shell's era's rows against the old two hundred
+    seats refused it. The list moved past the signals' last span
+    (`.emo_grow2` at `0x87048000`, the count at the head, a thousand
+    and twenty-four rows), T1.4a's execargs keeping the old page's
+    tail. The fork's own checks passed and the child's execvp answered
+    the volume's honest `command not found` — the terminal's external
+    commands live or die by the volume's contents, not the machine's.
+  - **T18.4 — the design's first cut (kept for the record):** the
+    pass was to be spawned *before* the emosh exec (the exec destroys
+    the root's image, so the spawn must precede it) — the landed shape
+    keeps the ordering but swaps the replace for the spawn: the root
+    *is* the desktop pass, the child is the shell, and the race the
+    design feared (the exec loader's staging buffer against the
+    session's scratch writes) is structurally gone — the spawn
+    completes before the first paint, the stages never overlap.
+  - **Found on the way from the first ride (2026-11-27, the stock
+    tree):** the exit table is eight entries (`exit_pids` at
+    `0x87002120` through `exit_codes` at `0x87002160`), and the proof
+    chain's boot leaves more unwaited children than that — after the
+    desktop era every fork answers EAGAIN (`emosh: os: fork: Resource
+    temporarily unavailable` at the shell's first external command).
+    The table's size, and the reaping of the boot's own unwaited
+    children, is the process service's task; emosh's side is the
+    ecosystem tracker's (its M1's fork surface). Second finding: with
+    the default `EMO_SHELL=1` the boot foreground is emosh, and emosh
+    has no `desktop` door — the command is the Emo REPL's own, and no
+    `desktop.elf` rides the volume — so the default ride cannot open
+    the desktop at all; `EMO_SHELL=0` keeps the REPL whose `desktop`
+    word opens it. Either emosh grows the door or the default ride
+    mode is the decision's to name; the ride's own beats assume the
+    REPL.
+- [ ] **T18.3** — The ten-minute soak: QEMU beats drive the loop —
+  drag, open and close, the launcher, the editor, the clipboard —
+  under both transports. Done when both run green: no `heap gone`, no
+  wedge, a flat frame ledger.

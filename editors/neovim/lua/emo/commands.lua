@@ -22,7 +22,8 @@ local function report(result)
     vim.notify(output ~= '' and output or 'emo: ok', vim.log.levels.INFO)
   else
     vim.notify(
-      output ~= '' and output or string.format('emo: failed with exit code %s', vim.inspect(result.code)),
+      output ~= '' and output
+        or string.format('emo: failed with exit code %s', vim.inspect(result.code)),
       vim.log.levels.ERROR
     )
   end
@@ -36,13 +37,17 @@ local function execute(command, arguments)
   end
   --- @param err? table
   --- @param result? table
-  client:exec_cmd({ command = command, arguments = arguments }, { bufnr = bufnr }, function(err, result)
-    if err then
-      vim.notify('emo: ' .. vim.inspect(err.message or err), vim.log.levels.ERROR)
-      return
+  client:exec_cmd(
+    { command = command, arguments = arguments },
+    { bufnr = bufnr },
+    function(err, result)
+      if err then
+        vim.notify('emo: ' .. vim.inspect(err.message or err), vim.log.levels.ERROR)
+        return
+      end
+      report(result)
     end
-    report(result)
-  end)
+  )
 end
 
 -- `emo check`, `emo build`, and `emo run` each take one file, defaulting
@@ -82,8 +87,20 @@ function M.register()
     { 'EmoCheck', file_command('emo.check'), { nargs = '?', complete = 'file' } },
     { 'EmoBuild', file_command('emo.build'), { nargs = '?', complete = 'file' } },
     { 'EmoRun', file_command('emo.run'), { nargs = '?', complete = 'file' } },
-    { 'EmoDepsResolve', function() execute('emo.deps.resolve', {}) end, {} },
-    { 'EmoDepsList', function() execute('emo.deps.list', {}) end, {} },
+    {
+      'EmoDepsResolve',
+      function()
+        execute('emo.deps.resolve', {})
+      end,
+      {},
+    },
+    {
+      'EmoDepsList',
+      function()
+        execute('emo.deps.list', {})
+      end,
+      {},
+    },
     {
       'EmoDepsUpdate',
       function(opts)

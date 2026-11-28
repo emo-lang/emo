@@ -1546,6 +1546,13 @@ let pf_hash_float conv minus plus space width prec f =
         error "E3007"
           (Printf.sprintf "`os_getpid` expects no arguments, got %d"
              (List.length vs))
+    (* the machine's gate has no hosted answer; the refusal the door's
+       discipline carries *)
+    | "os_desk_release", [] -> Int64 (-1L)
+    | "os_desk_release", vs ->
+        error "E3007"
+          (Printf.sprintf "`os_desk_release` expects no arguments, got %d"
+             (List.length vs))
     | "os_getppid", [] -> Int64 (Int64.of_int (Unix.getppid ()))
     | "os_getppid", vs ->
         error "E3007"

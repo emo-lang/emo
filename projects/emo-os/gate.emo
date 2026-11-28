@@ -291,6 +291,10 @@ const route_desk_workspace = -1029
 // the notification service's, the rest the compositor's.
 const route_notify_raise = -1027
 const route_notify_take = -1028
+// The desktop era's door (T18.4): verb 66, emosh's `desktop` — the
+// release the input service judges, the held pass's dress signal. The
+// additions rule's next number: every verb through 65 is taken.
+const route_desk_release = -1066
 // The wall clock's own answer (emo-desktop M26, EmoOS T12.1): verb
 // 29 is the gate's, no service between — the board's RTC, two loads.
 const route_poweroff = -103
@@ -980,6 +984,12 @@ def dispatch(n Int64, r0 Int64, r1 Int64, r2 Int64, r3 Int64, r4 Int64, r5 Int64
     // input service's merged stream — the serial's bytes first, then
     // the device's. No arguments; the ABI in docs/syscalls.md.
     return route_input_event
+  }
+  if n == 66 {
+    // desk_release (T18.4): the C shell's `desktop` word — the held
+    // desktop pass's release. No arguments, no answer the shell waits
+    // on meaningfully; the input service's judgment does the rest.
+    return route_desk_release
   }
   if n == 13 {
     // win_new(w, h) (T8.5): the window buffer's creation — the run the

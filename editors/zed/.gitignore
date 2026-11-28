@@ -1,0 +1,6 @@
+target/
+.grammar/
+extension.wasm
+grammars/emo/
+grammars/emo.wasm
+grammars/tree-sitter-emo/node_modules/

@@ -584,6 +584,7 @@ emo_value emo_make_exception_data(emo_value message, emo_value data);
 
 /* ---- the os module: synchronous POSIX syscalls (ocaml/c targets) ---- */
 int64_t emo_os_getpid(void);
+int64_t emo_os_desk_release(void);
 emo_value emo_os_getenv(emo_str name);
 int64_t emo_os_getppid(void);
 emo_value emo_os_fork(void);

@@ -212,5 +212,14 @@ SECTIONS
   . = KOFF + 0x87008000;
   .emo_comp (NOLOAD) : AT(ADDR(.emo_comp) - KOFF) { *(.emo_comp) } :tick
 
+  /* The arena's growth list, moved (T18.4's round): the fork's clone
+     seats the parent's every grown row beside its own, and the shell's
+     hundred-and-fifteen rows against the old two hundred seats refused
+     the first fork of the desktop's era. A thousand and twenty-four
+     rows past the signals' last span; the count at the head. NOLOAD —
+     the spawns and deaths fill and empty it. */
+  . = KOFF + 0x87048000;
+  .emo_grow2 (NOLOAD) : AT(ADDR(.emo_grow2) - KOFF) { *(.emo_grow2) } :tick
+
   /DISCARD/ : { *(.eh_frame .eh_frame_hdr .note .comment) }
 }

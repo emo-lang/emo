@@ -53,6 +53,12 @@ English version: [`README.md`](README.md).
 | M34 — 剪贴板 | 门之上的机器剪贴板:`clip_set`/`clip_get` 是门自己的一对(字节在 `.emo_clip`,长度在合成器页上,写入属于焦点应用,中间没有服务),语料的 `Clipper` 接缝,以及编辑器在光标所在行上的 `Ctrl+C`/`Ctrl+X`/`Ctrl+V` | complete |
 | M35 — 选区 | Shift 加方向键从锚点延伸出选区,帧缓冲的 marked span 把高亮混在字节之下(`ui.marked_text`,后端唯一可忽略的属性),编辑器的复制、剪切、输入、Backspace/Delete 与粘贴或取用它、或替换它 | complete |
 | M36 — 全局快捷键层 | Alt+1..4 由输入服务在每个应用之下解析,作为流的 0x5343 事件交给 panel 属主——无论哪个窗口持有焦点;壳的分派切换桌面并重绘 chrome——Alt-Tab 与概览将来骑在这一层上 | complete |
+| M37 — 暗色皮肤 | 皮肤的 tokens(Geist 风中性色阶、壁纸强调色 token 化、8 px 间距、圆角 6/10/16、骑 `emo_motion` 的阴影/透明度/动效配方)、Inter Semibold、chrome 可见字对的 kerning、统一窗口 chrome(标题栏、控件、tab strip 底座)、Dock 与 launcher 几何、顶栏状态区与光标族——先在 hosted canvas 上迭代;零新增动词(工作清单:[`../../docs/unkernel-plan-list.md`](../../docs/unkernel-plan-list.md)) | planned |
+| M38 — 终端 | 骑 pipes(动词 55–60)与 fork/exec 的 0..2 继承的会话,shell 作为子进程;终端窗口的 mono cell 网格(emo-terminal 评估的方案 B)、tabs、scrollback、选择、复制粘贴、光标闪烁、ANSI 子集;多会话 | planned |
+| M39 — chrome 的行为 | `win_resize` 与 resize 事件、边缘 snap 加预览与双击最大化、dock stacks 与 popovers 加右键菜单、Control Center v1(音量与亮度按 D15 缺席)、`sys_stats` 与顶栏米表、窗口内菜单原语 | planned |
+| M40 — 系统应用 | Settings、System Info 与 About 作为磁盘 ELF——provider 走 D14 seam 带 fixtures——以及 Files/Editor 换皮与卷上 RLE 之间的壁纸选择器 | planned |
+| M41 — 动效预算 | alpha 与 RLE 壁纸之后重新剖析合成、数字点名的优化(opaque fast path、各缓存、damage-only 重绘、直接 scanout)、M32 停靠对落地、minimize genie、dock 的 hover 与 bounce、toast 滑入、Control Center 的 spring、Overview(B7)与 Alt-Tab(B8) | planned |
+| M42 — 材质 | 缓存 blur(开机算一次、面板复用、底下窗口移动即失效)与 glass 的 tint、noise、边缘高光——在 M41 量出的预算内落地,或按 D15 记录缺席、只发 alpha + scrim | planned |
 
 编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 

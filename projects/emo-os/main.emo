@@ -159,9 +159,15 @@ const pgid_bound = 256
 const arena_for = koff + 0x8700d800
 const arena_bound = 256
 const user_program_cell = 0x87fff000
-const exit_count = koff + 0x87002118
-const exit_pids = koff + 0x87002120
-const exit_codes = koff + 0x87002160
+// The exits' table (T18.4's round): eight entries died on the proof
+// chain's unwaited children alone — the desktop era's forks answered
+// EAGAIN at the shell's first external command. Thirty-two entries on
+// the handoff page's free stretch past the blobs' cells; the append's
+// bound is this constant's, the scan and the compact are count-driven.
+const exit_count = koff + 0x87002300
+const exit_pids = koff + 0x87002308
+const exit_codes = koff + 0x87002408
+const exit_bound = 32
 const pending_flag = koff + 0x870021a0
 const pending_target = koff + 0x870021a8
 
@@ -462,6 +468,36 @@ const exit_ring_seats = 8
 const exit_ring_seat = 16
 const ev_exit = 0x4558
 
+// The desktop era's release (T18.4): the held desktop pass reads the
+// merged stream for this one word — type 0x4552 ("ER", the machine
+// types' own family beside "EM" and "EX"), the dress signal the era's
+// door flies. The verb's one-shot cell sits on the handoff page's free
+// stretch past the exits' table; the serial cell beside it is the
+// lane's sticky hand-over (the terminal the shell's from the door's
+// first flight on), the parked verb-2 read the derived half between
+// the shell's bytes.
+const ev_release = 0x4552
+const desk_release_cell = koff + 0x87002510
+const input_serial_cell = koff + 0x87002518
+
+// Whether the shell lane holds a read (T18.4): a parked verb-2 word
+// in the hold is the C shell's read waiting for its byte — the merged
+// stream's judgment skips the 0x454D heads while it sits, the lanes
+// never crossing, the bytes the read's alone.
+def input_byte_lane_waiting() Bool {
+  var i = 0
+  while i < input_hold_seats {
+    var seat = input_hold + (i * input_hold_seat)
+    if peek64(seat) != 0 {
+      if op_of(peek64(seat + 8)) == 2 {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  return false
+}
+
 // The parents (emo-desktop A12.1): one cell per pid, the spawner's
 // pid written at the spawn and at the exec — one write per pid ever,
 // the dead-owners' discipline. The death reads its own cell and the
@@ -485,6 +521,14 @@ const execargs_use_cell = koff + 0x8700f000 + 3248
 // window grants' rows — twelve words each, eight of them, zero = a
 // free row. All past the staging area's tail.
 const gpu_svc_cell = koff + 0x870029f8
+// The display driver's page-side pid number (T18.2): the supervisor's
+// restarts and the compositor's flush renewals read the truth here —
+// the boot seeds it at the announce, every restart keeps it fresh.
+// The gate's own routing cell above stays stale across the gap on
+// purpose: the shim's gpu route has no zero guard, and a post to a
+// dead mailbox is the drop it always was until the restart parks the
+// next pid.
+const comp_gpu_num = koff + 0x87002ff8
 const screen_grant_cell = koff + 0x87002a00
 const gpu_args = koff + 0x87002a08
 const caller_space_cell = koff + 0x87002a40
@@ -1360,7 +1404,7 @@ def process_serve_gate(w Int64) Void {
           }
           if phit0 == false {
             var n = peek64(exit_count)
-            if n < 8 {
+            if n < exit_bound {
               poke64(exit_pids + (n * 8), pid)
               poke64(exit_codes + (n * 8), status)
               poke64(exit_count, n + 1)
@@ -1929,18 +1973,23 @@ def gpu_service(boss Pid) Void {
   blk_zero(grant_table, 112)
   poke64(grant_next_cell, 0)
   boss <- self_pid()
-  while true {
+  // The supervisor lineage's stop (T18.2): the instance's own return
+  // is the death the comp supervisor restarts — the root's boot proof
+  // drives it with the mailbox's op 9, the fs stop's shape.
+  var running = true
+  while running {
     receive {
       (a, b, c) then {
         // The kernel's own mailbox (the boot smoke's protocol): op 0
         // the whole-screen flush, op 1 the mode packed, op 2 a rect
         // flush (T8.11: the compositor's cursor plane presents the
         // rectangle it touched — the rect rides the third word, and
-        // the answer is 0 or the present's refusal). The bindings are
-        // tagged words — the stores into these typed locals are the
-        // conversion (T7.2's lesson), which lets the typed op_of see
-        // the raw payload instead of a pointer; the sender rides a Pid
-        // local the same way.
+        // the answer is 0 or the present's refusal), op 9 the stop —
+        // no reply, the root waits the reborn announce. The bindings
+        // are tagged words — the stores into these typed locals are
+        // the conversion (T7.2's lesson), which lets the typed op_of
+        // see the raw payload instead of a pointer; the sender rides a
+        // Pid local the same way.
         var aw = 0
         var from = boss
         var cw = 0
@@ -1948,27 +1997,31 @@ def gpu_service(boss Pid) Void {
         from = b
         cw = c
         var op = op_of(aw)
-        if op == 0 {
-          var v = gpu_present(dev, q, gw, gh, 0, 0, gw, gh)
-          if v == 0 {
-            from <- aw
-          } else {
-            from <- v
-          }
+        if op == 9 {
+          running = false
         } else {
-          if op == 1 {
-            from <- (gw << 32) | gh
-          } else {
-            if op == 2 {
-              from <- gpu_present(dev, q, gw, gh, rect_x(cw), rect_y(cw), rect_w(cw), rect_h(cw))
+          if op == 0 {
+            var v = gpu_present(dev, q, gw, gh, 0, 0, gw, gh)
+            if v == 0 {
+              from <- aw
             } else {
-              if op == 3 {
-                // The composition's damage flush (EmoOS T10.1): the
-                // box the walk painted, the transfer and the flush
-                // over it — the reply the result, the await's word.
+              from <- v
+            }
+          } else {
+            if op == 1 {
+              from <- (gw << 32) | gh
+            } else {
+              if op == 2 {
                 from <- gpu_present(dev, q, gw, gh, rect_x(cw), rect_y(cw), rect_w(cw), rect_h(cw))
               } else {
-                from <- 0 - aw
+                if op == 3 {
+                  // The composition's damage flush (EmoOS T10.1): the
+                  // box the walk painted, the transfer and the flush
+                  // over it — the reply the result, the await's word.
+                  from <- gpu_present(dev, q, gw, gh, rect_x(cw), rect_y(cw), rect_w(cw), rect_h(cw))
+                } else {
+                  from <- 0 - aw
+                }
               }
             }
           }
@@ -2375,6 +2428,21 @@ def shortcut_take_for(pid Int64) Int64 {
 // is who the moves serve; no panel, and every head — the moves beside
 // the rest — falls to the focus's verdict, the A11.2 shape.
 def input_entitled_for(pid Int64, ty Int64) Bool {
+  // The serial lane's owner (T18.4): the shell's door flew (the cell,
+  // sticky — the terminal is the shell's for its life) or a shell read
+  // sits parked between its bytes — the merged stream's reader skips
+  // the 0x454D heads either way, the bytes waiting in the UART ring
+  // for the read that pops them. The REPL's era (the golden's) knows
+  // neither and the bytes ride the stream, the desktop loop's own
+  // hand.
+  if ty == 17741 {
+    if peek64(input_serial_cell) != 0 {
+      return false
+    }
+    if input_byte_lane_waiting() {
+      return false
+    }
+  }
   if ty == 3 {
     var panel = peek64(comp_panel_cell)
     if panel != 0 {
@@ -2591,12 +2659,36 @@ def input_hold_serve(dev Int64, q Int64) Void {
         if peek64(comp_dead_cells + (pid * 8)) != 0 {
           poke64(seat, 0)
         } else {
-          var e = exit_event_take(pid)
-          if e >= 0 {
+          // The lanes split by the seat's own word (T18.4): a verb-2
+          // seat is the shell's byte read — answered the moment the
+          // UART ring holds a byte, the merged judgment none of its
+          // business; a verb-12 seat takes the merged stream's path.
+          if op_of(peek64(seat + 8)) == 2 {
+            if peek64(in_cons) != peek64(in_prod) {
+              var w = peek64(seat + 8)
+              poke64(seat, 0)
+              gate_reply(caller_of(w), input_byte())
+            }
+          } else {
+          // The release before the deaths (T18.4): the shell's door
+          // flew while this reader held — the dress signal is its
+          // alone, the era painted the moment the loop top judges.
+          var rel = 0
+          if peek64(desk_release_cell) != 0 {
+            poke64(desk_release_cell, 0)
+            rel = (ev_release << 48) | 1
+          }
+          if rel != 0 {
             var w = peek64(seat + 8)
             poke64(seat, 0)
-            gate_reply(caller_of(w), e)
+            gate_reply(caller_of(w), rel)
           } else {
+            var e = exit_event_take(pid)
+            if e >= 0 {
+              var w = peek64(seat + 8)
+              poke64(seat, 0)
+              gate_reply(caller_of(w), e)
+            } else {
             // the shortcut before the focus's judgment (T16.1): the
             // panel's owner hears the chord whatever the focus names —
             // the held read answered with the pending event, the focus
@@ -2616,6 +2708,8 @@ def input_hold_serve(dev Int64, q Int64) Void {
                 }
               }
             }
+          }
+          }
           }
         }
       }
@@ -2642,11 +2736,21 @@ def input_serve_read(w Int64, dev Int64, q Int64) Int64 {
   // swallows it.
   var served = false
   while !served {
-    var ex = exit_event_take(caller_of(w))
-    if ex >= 0 {
-      gate_reply(caller_of(w), ex)
+    // The release first (T18.4): the shell's `desktop` door flew the
+    // cell while this serve was parked on the device world — the
+    // route's post woke it — and the dress signal outranks whatever
+    // the stream holds, the held desktop painting the era the moment
+    // its reader's next judgment runs.
+    if peek64(desk_release_cell) != 0 {
+      poke64(desk_release_cell, 0)
+      gate_reply(caller_of(w), (ev_release << 48) | 1)
       served = true
     } else {
+      var ex = exit_event_take(caller_of(w))
+      if ex >= 0 {
+        gate_reply(caller_of(w), ex)
+        served = true
+      } else {
       var ty = input_peek_type(dev, q)
       if ty < 0 {
         device_wait()
@@ -2694,6 +2798,7 @@ def input_serve_read(w Int64, dev Int64, q Int64) Int64 {
         }
       }
     }
+    }
   }
   return 0
 }
@@ -2715,12 +2820,35 @@ def input_parked(w Int64, dev Int64, q Int64) Void {
     }
   } else {
     if op == 2 {
-      gate_reply(caller_of(w), input_byte())
+      // The shell lane's read parks beside the merged reads (T18.4's
+      // two-lane serve): the byte answers from the hold when the UART
+      // ring holds one — the old shape blocked the whole service
+      // inside this arm, the merged stream's words starving behind
+      // the shell's typing.
+      if !input_hold_put(caller_of(w), w) {
+        println("input: the hold overflowed")
+        halt()
+      }
     } else {
       if op == 13 {
         // the re-judgment's kick (emo-desktop A11.2): the focus's
         // world moved — the held reads are judged by the loop's next
         // pass, nothing to answer
+      } else {
+      if op == 66 {
+        // desk_release (T18.4): the desktop era's door — the boot's
+        // shell stage flies it the moment the spawn lands (the root's
+        // own raw ecall), emosh's `desktop` word flies it again by
+        // hand. The one-shot cell is the held desktop pass's dress
+        // signal, the loop top's judgment (or the parked serve's own
+        // wake — the post woke it) hands the release event to the
+        // verb-12 reader that asks next. The serial cell rides sticky:
+        // the terminal is the shell's for its life, the merged
+        // stream's 0x454D heads skipped from here on. The answer flies
+        // now: the caller's next act costs it nothing.
+        poke64(desk_release_cell, 1)
+        poke64(input_serial_cell, 1)
+        gate_reply(caller_of(w), 0)
       } else {
       if op == 18 {
         // input_info (T8.13): the index-th pointer's axes, the
@@ -2732,6 +2860,7 @@ def input_parked(w Int64, dev Int64, q Int64) Void {
         } else {
           gate_reply(caller_of(w), -4)
         }
+      }
       }
       }
     }
@@ -2765,10 +2894,21 @@ def input_service(boss Pid) Void {
     // sender's own pid) go back a byte, the one send only a dynamic
     // binding carries.
     input_hold_serve(dev, q)
+    // The shell lane's starvation guard (T18.4): a verb-2 seat waits
+    // on the UART ring, the ring holds no byte — the service parks on
+    // the device world and the judgment re-runs at every wake until
+    // the byte is served. The park is the point: a device line's wake
+    // of the receive park re-parks without ever reaching this loop's
+    // top (the A11.2 rule), so falling through to the receive here
+    // would starve the seat the ticks' own broadcast never saves.
+    while input_byte_lane_waiting() && peek64(in_cons) == peek64(in_prod) {
+      device_wait()
+      input_hold_serve(dev, q)
+    }
     receive {
       x then {
         var op = op_of(x)
-        if op == 2 || op == 12 || op == 13 || op == 18 {
+        if op == 2 || op == 12 || op == 13 || op == 18 || op == 66 {
           input_parked(x, dev, q)
         } else {
           x <- input_byte()
@@ -4912,9 +5052,17 @@ def comp_compose(gpu Pid, me Pid) Int64 {
   // The flush carries the box (T10.1): the rect the walk painted, the
   // device's transfer and flush over it — the full-screen walk of
   // op 0 behind it. The box served, the next accumulation starts
-  // empty; the stash's presents mark after this line.
-  gpu <- (3 << 32, me, rect_word(dx, dy, dw, dh))
-  comp_await_flush()
+  // empty; the stash's presents mark after this line. The renewal
+  // (T18.2): the wake names the reborn driver's number — the flush
+  // re-sends there, the frame still lands whole.
+  var g = gpu
+  g <- (3 << 32, me, rect_word(dx, dy, dw, dh))
+  var anew = comp_await_flush()
+  while anew != 0 {
+    g = pid_at(anew)
+    g <- (3 << 32, me, rect_word(dx, dy, dw, dh))
+    anew = comp_await_flush()
+  }
   poke64(comp_dmg_w, 0)
   poke64(comp_dmg_h, 0)
   return sum
@@ -5031,25 +5179,48 @@ def cursor_rect(x0 Int64, y0 Int64, x1 Int64, y1 Int64) Int64 {
 // `op << 32` carries the Int64 tag in its low bits — and an `==` on
 // the Unknown binding would walk into the word as if it were a cell;
 // only the kernel's own sends are cells, and the `== 0` on them is the
-// flush's reply.
-def comp_await_flush() Void {
+// flush's reply. The driver's rebirth wake (T18.2) is the third shape:
+// the supervisor's restart tuple, op 7 — the shape test (the walk's
+// own guard makes it safe on any word) reads it, the page's number is
+// the answer, the caller re-sends the flush to the reborn pid. 0 the
+// flush landed, nonzero the number the caller renews against.
+def comp_await_flush() Int64 {
   var flushed = false
+  var renewed = 0
   while !flushed {
     receive {
       r then {
         if op_of(r) >= 0 {
           comp_stash_push(r)
         } else {
-          if r == 0 {
+          var kop = 0 - 1
+          case r {
+            (a0, b0, c0) then {
+              var aw0 = 0
+              aw0 = a0
+              kop = op_of(aw0)
+            }
+          }
+          if kop == 7 {
+            renewed = peek64(comp_gpu_num)
             flushed = true
           } else {
-            println("comp: the stop does not race the flush")
-            halt()
+            if kop != 0 - 1 {
+              println("comp: the stop does not race the flush")
+              halt()
+            }
+            if r == 0 {
+              flushed = true
+            } else {
+              println("comp: the flush refused")
+              halt()
+            }
           }
         }
       }
     }
   }
+  return renewed
 }
 
 // The pointer's notice (op 18): the flag cleared first — a report that
@@ -5192,8 +5363,16 @@ def comp_cursor_place(gpu Pid, me Pid) Void {
     poke64(comp_cursor_shown, 1)
     var rect = cursor_rect(x0, y0, x1, y1)
     if rect != 0 {
-      gpu <- (2 << 32, me, rect)
-      comp_await_flush()
+      // The cursor's flush rides the live driver too (T18.2): the same
+      // renewal the composition's flush takes.
+      var g = gpu
+      g <- (2 << 32, me, rect)
+      var anew = comp_await_flush()
+      while anew != 0 {
+        g = pid_at(anew)
+        g <- (2 << 32, me, rect)
+        anew = comp_await_flush()
+      }
     }
     if peek64(comp_cursor_said) == 0 {
       poke64(comp_cursor_said, 1)
@@ -5772,16 +5951,49 @@ def comp_word(w Int64, gpu Pid, me Pid) Void {
 // (the stop) and handing the raw words to the word handling.
 def comp_service(boss Pid, gpu Pid) Void {
   var me2 = self_pid()
+  // The driver's live pid (T18.2): the param is the spawn's word, the
+  // page-side cell the truth after it — the supervisor's restarts and
+  // the flush's renewals both land there, and the loop reads the cell
+  // back after every word it serves.
+  var gpu_cur = gpu
   var gen = peek64(comp_gen_cell) + 1
   poke64(comp_gen_cell, gen)
   poke64(comp_dmg_first, 1)
-  gpu <- (1 << 32, me2, 0)
-  receive {
-    m then {
-      var mw = 0
-      mw = m
-      poke64(comp_mode_w, op_of(mw))
-      poke64(comp_mode_h, caller_of(mw))
+  var got_mode = false
+  while !got_mode {
+    gpu_cur <- (1 << 32, me2, 0)
+    receive {
+      m then {
+        if op_of(m) >= 0 {
+          // A raw word mid-mode-fetch (a gate's drop, T8.14's shape):
+          // not the driver's answer — set aside the way the stash does.
+          comp_stash_push(m)
+        } else {
+          var kop = 0 - 1
+          case m {
+            (a0, b0, c0) then {
+              var aw0 = 0
+              aw0 = a0
+              kop = op_of(aw0)
+            }
+          }
+          if kop == 7 {
+            // The driver's wake (T18.2): the supervisor's restart
+            // tuple — the page names the reborn pid, ask again there.
+            gpu_cur = pid_at(peek64(comp_gpu_num))
+          } else {
+            if kop != 0 - 1 {
+              println("comp: the mode fetch got nobody's tuple")
+              halt()
+            }
+            var mw = 0
+            mw = m
+            poke64(comp_mode_w, op_of(mw))
+            poke64(comp_mode_h, caller_of(mw))
+            got_mode = true
+          }
+        }
+      }
     }
   }
   println("comp gen ${gen}")
@@ -5790,29 +6002,46 @@ def comp_service(boss Pid, gpu Pid) Void {
   // sprite shows, is a composition the new instance owes before it
   // announces — the pages say where the sprite stands.
   if peek64(pointer_notice_cell) != 0 || peek64(pointer_gen_cell) != peek64(comp_cursor_gen) {
-    comp_cursor_place(gpu, me2)
+    comp_cursor_place(gpu_cur, me2)
   }
   boss <- self_pid()
   var running = true
   while running {
     var w = comp_stash_pop()
     if w != 0 {
-      comp_word(w, gpu, me2)
+      comp_word(w, gpu_cur, me2)
+      gpu_cur = pid_at(peek64(comp_gpu_num))
     } else {
       receive {
         x then {
           if op_of(x) >= 0 {
-            comp_word(x, gpu, me2)
+            comp_word(x, gpu_cur, me2)
+            gpu_cur = pid_at(peek64(comp_gpu_num))
           } else {
-            var kop = 0
+            var kop = 0 - 1
             case x {
               (a, b, c, d, e, f) then { kop = a }
             }
             if kop == 0 {
               running = false
             } else {
-              println("comp: the message is nobody's")
-              halt()
+              var kop3 = 0 - 1
+              case x {
+                (a3, b3, c3) then {
+                  var aw3 = 0
+                  aw3 = a3
+                  kop3 = op_of(aw3)
+                }
+              }
+              if kop3 == 7 {
+                // The driver's wake (T18.2): the restart's tuple — the
+                // page names the reborn pid, the next word serves
+                // against it.
+                gpu_cur = pid_at(peek64(comp_gpu_num))
+              } else {
+                println("comp: the message is nobody's")
+                halt()
+              }
             }
           }
         }
@@ -5831,9 +6060,21 @@ def comp_run(boss Pid, gpu Pid) Void {
 // pass's death posts drop here (T8.14): the dead owner's windows go
 // home through the comp page's dead-owner cell, read at the next
 // composition inside the service — the stack's walk and the reclaim
-// never race.
+// never race. And since T18.2 the gpu's restart rides here too: this
+// is the one process every death notice reaches (the trap's comp
+// block posts them all), so the display driver's death restarts its
+// instance from this loop — the spawn borrowing the display's arena
+// bracket, the reborn pid on the gate's cell and the comp page's
+// number, the announce to the root, the wake to the compositor's
+// parked flush — instead of a supervisor process of its own, and the
+// boot's spawn order (the wire's ready lines, the pids the golden
+// pins) stays exactly what it was. The two children's announces
+// cannot cross: each restart's wait_pid runs to its own announce
+// before the loop's next receive, and a child announces only after
+// its own restart began.
 def comp_supervisor(boss Pid, gpu Pid) Void {
   var me3 = self_pid()
+  var gpu_cur = gpu
   poke64(comp_sup_cell, pid_num(me3))
   do comp_run(me3, gpu)
   var inst = wait_pid()
@@ -5844,10 +6085,29 @@ def comp_supervisor(boss Pid, gpu Pid) Void {
       w then {
         if op_of(w) == notice_op {
           if caller_of(w) == pid_num(inst) {
-            do comp_run(me3, gpu)
+            // The restart's spawn reads the driver's page-side number
+            // (T18.2): the supervisor's own param went stale the moment
+            // the gpu died and the next instance announced — the cell
+            // is the truth the restarts keep fresh.
+            do comp_run(me3, pid_at(peek64(comp_gpu_num)))
             inst = wait_pid()
             poke64(comp_svc_cell, pid_num(inst))
             boss <- inst
+          } else {
+            if caller_of(w) == pid_num(gpu_cur) {
+              frames.arena_for_display()
+              do gpu_service(me3)
+              frames.arena_for_service()
+              gpu_cur = wait_pid()
+              poke64(gpu_svc_cell, pid_num(gpu_cur))
+              poke64(comp_gpu_num, pid_num(gpu_cur))
+              boss <- gpu_cur
+              var csvc = peek64(comp_svc_cell)
+              if csvc != 0 {
+                var cpid = pid_at(csvc)
+                cpid <- (7 << 32, 0, 0)
+              }
+            }
           }
         }
       }
@@ -6085,6 +6345,7 @@ receive { c2 then { poke64(process_svc_cell, pid_num(c2)) } }
 receive { c3 then { blk_svc = c3 } }
 receive { g1 then {
   poke64(gpu_svc_cell, pid_num(g1))
+  poke64(comp_gpu_num, pid_num(g1))
   gpu_svc = g1
 } }
 receive { i1 then {
@@ -6126,6 +6387,16 @@ receive { n1 then {
   poke64(comp_svc_cell, pid_num(n1))
   comp_svc = n1
 } }
+
+// The display driver's restart proof (T18.2): the stop (op 9, the fs
+// stop's shape) the root drives once at boot — the death the comp
+// supervisor restarts, the reborn pid the wire's next announce
+// carries, the compositor's wake the same restart posts. The desktop's
+// first frame later lands on the reborn driver: the recovery the
+// era's digest pins.
+gpu_svc <- (9 << 32, me, 0)
+receive { g3 then { gpu_svc = g3 } }
+println("gpu restart ok")
 
 do supervisor(me, blk_svc)
 receive { f1 then { fs_svc = f1 } }
