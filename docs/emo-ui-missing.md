@@ -85,8 +85,17 @@ no event, so it was read-only on every backend: `ui_ssr` emitted
 a label. No application could take a line of typed text through the
 core, on any platform.
 
-**Keyboard and focus.** Through the core's seam the only event any backend
-delivers is a button's click — the three that keep their widgets connect
+**Keyboard and focus.** *The keys half landed 2026-11-28, the same day
+(`feat/emo-ui`): an event is `deliver(tag, text, key)`, a field registers
+one `on_input` tag for both its text and its keys, and the backend
+forwards what its toolkit does not consume — Enter everywhere a field
+owns a key, Escape on GTK and the DOM — to the focused field's tag.
+Focus itself stays toolkit-internal, decided: routing keys needs the
+focused widget and the toolkit knows it; the focus *model* — events,
+steering, the caret an application can see, Tab traversal in the core —
+is the next input-model round, and until it lands the application still
+cannot ask which control has the keyboard.* Through the rest of the
+core's seam the only event any backend delivers is a button's click — the three that keep their widgets connect
 exactly that one (`projects/emo-ui/macos/shim.m`,
 `projects/emo-ui/gtk/shim.c`, `projects/emo-ui/browser/ui_browser.emo`'s
 `dom_connect`) — or, on the terminal, a scripted list. Real keys and real
@@ -277,23 +286,26 @@ Its README carries each with its evidence. None is decided here.
 ## What follows
 
 **Decided and landed, 2026-11-28 (`feat/emo-ui`).** The event carries
-`deliver(tag, text)` — one method, the payload as the method's own
-marshaled parameter, because the C→Emo callback contract names a
-single-method interface and `String` is in its marshaling tier. A message
-that carries a value is the application's own class, built by a factory
-the registry stores under a name (`on_text`), which retires the
-one-tag-per-value limit in the same pass. A backend that owns an editable
-widget keeps the keystrokes across renders by writing a kept field back
-only where the model's value differs. Two facts of the language decided
-the message shape: `is()` raises on an enum member, so a loop that takes
-one payload takes every message as a class instance (a field-less class
-still dedups — equality on instances is structural); and the raw loop
-refuses text, because its message is the tag itself. The shape is in
-[`emo-ui.md`](emo-ui.md), Layer 5.
+`deliver(tag, text, key)` — one method, the payloads as the method's own
+marshaled parameters, because the C→Emo callback contract names a
+single-method interface and `String` and `Int64` are in its marshaling
+tier. A message that carries a value is the application's own class,
+built by a factory the registry stores under a name (`on_input` — one
+tag per field for its text and its keys), which retires the
+one-tag-per-value limit in the same pass. A backend that owns an
+editable widget keeps the keystrokes across renders by writing a kept
+field back only where the model's value differs, and forwards the keys
+its toolkit does not consume to the focused field's tag. Two facts of
+the language decided the message shape: `is()` raises on an enum member,
+so a loop that takes one payload takes every message as a class instance
+(a field-less class still dedups — equality on instances is structural);
+and the raw loop refuses a payload of either kind, because its message
+is the tag itself. The shape is in [`emo-ui.md`](emo-ui.md), Layer 5.
 
-What the decision carried is the text payload only. After it, in the
-order the dependencies allow: the rest of the input model (focus, keys,
-pointer, scroll, resize); a `Style` that can say a color; the effect
-model, with the two-event-loop question it has always been; and only
-then a wider widget vocabulary — widgets are cheap to add once input and
-style can serve them.
+What the decision carried is the text and the key. After it, in the
+order the dependencies allow: the focus model (events, steering, the
+caret — the keys' routing already rides the toolkit's); pointer, scroll,
+resize; a `Style` that can say a color; the effect model, with the
+two-event-loop question it has always been; and only then a wider widget
+vocabulary — widgets are cheap to add once input and style can serve
+them.

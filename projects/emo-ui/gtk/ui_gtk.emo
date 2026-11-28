@@ -31,7 +31,7 @@ foreign def ui_autotest_arm(script String) Void = "ui_autotest_arm"
 // the cell starts as an `Events` that delivers to no one — never as a
 // number that could not later become one.
 class Unmounted {
-  def deliver(tag Int64, text String) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
   }
 }
 

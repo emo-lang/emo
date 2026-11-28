@@ -1,0 +1,17 @@
+// A key on a tag no field registered — a click tag carries no key, so a
+// backend that sends one is a wiring mistake, refused where it is made.
+// The gate pins the exit status and the message, on the interpreter and
+// on the `c` target.
+//
+//   emo run key_on_click.emo   -> exits 1 with E3010
+
+enum Msg { bump }
+
+def main() {
+  const reg = ui.Registry.new()
+  const bump = reg.on(Msg.bump)
+  reg.message_for(bump, "", ui.key_escape())
+  println("delivered")
+}
+
+main()

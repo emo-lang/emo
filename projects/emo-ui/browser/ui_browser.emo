@@ -55,7 +55,7 @@ def carries(n ui.Node) Bool {
 // number that could not later become one. The root's cell is a number
 // for good: a DOM node is an `Int64` handle.
 class Unmounted {
-  def deliver(tag Int64, text String) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
   }
 }
 
@@ -81,8 +81,8 @@ class Dom {
       const pair = rs[i]
       emo.dom_set_style(point, pair[0], pair[1])
     }
-    emo.dom_sink() -> (tag Int64, text String) {
-      self.sink.read().deliver(tag, text)
+    emo.dom_sink() -> (tag Int64, text String, key Int64) {
+      self.sink.read().deliver(tag, text, key)
     }
     const top = self.build(root)
     emo.dom_append(point, top)
@@ -291,6 +291,8 @@ class Dom {
       emo.dom_set_prop(h, "type", "text")
       if n.event() >= 0 {
         emo.dom_set_prop(h, "name", "emo-" + n.event().to_string())
+        // The page's own Tab traversal needs the field in the order.
+        emo.dom_set_prop(h, "tabindex", "0")
       } else {
         emo.dom_set_prop(h, "readOnly", true)
       }
@@ -316,6 +318,7 @@ class Dom {
     if n.is(ui.TextInput) {
       if n.event() >= 0 {
         emo.dom_connect(h, "input", n.event())
+        emo.dom_connect(h, "keydown", n.event())
       }
     }
     if carries(n) {

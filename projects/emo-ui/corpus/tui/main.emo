@@ -5,19 +5,20 @@ require "emo/ui_corpus"
 // The terminal entry of the convergence corpus (T48.12): the shared
 // application, painted by `ui_tui`. The input is a script rather than a
 // terminal, so the bytes are fixed — inc, inc, dec, the draft field
-// typed, submit, in a 34x13 frame. A typed step carries the text beside
-// its tag, the way a field's delivery does. `wasm` is not a target
+// typed, Enter on it, submit, in a 34x13 frame. A step carries the text
+// and the key beside its tag, the way a field's delivery does. `wasm` is not a target
 // here: the terminal backend writes stdout and the runtime has no
 // `printf`. The interpreter's output is `expected.txt`.
 
 def main() {
   const backend = ui_tui.backend(width: 34, height: 13,
     input: ui_tui.steps([
-      ui_tui.Step.new(tag: 0, text: ""),
-      ui_tui.Step.new(tag: 0, text: ""),
-      ui_tui.Step.new(tag: 1, text: ""),
-      ui_tui.Step.new(tag: 3, text: "hi"),
-      ui_tui.Step.new(tag: 2, text: "")
+      ui_tui.Step.new(tag: 0, text: "", key: 0),
+      ui_tui.Step.new(tag: 0, text: "", key: 0),
+      ui_tui.Step.new(tag: 1, text: "", key: 0),
+      ui_tui.Step.new(tag: 3, text: "hi", key: 0),
+      ui_tui.Step.new(tag: 3, text: "", key: ui.key_enter()),
+      ui_tui.Step.new(tag: 2, text: "", key: 0)
     ]))
   ui.run(ui_corpus.view, ui_corpus.update, ui_corpus.initial(), backend)
 }

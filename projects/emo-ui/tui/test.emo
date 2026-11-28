@@ -110,15 +110,28 @@ def script_checks() {
     (R.error, _) then { check(true, "and keeps saying it") }
     (R.ok, _) then { check(false, "and keeps saying it") }
   }
-  // A typed step carries its text beside the tag.
-  const t = ui_tui.steps([ui_tui.Step.new(tag: 7, text: "hi")])
+  // A typed step carries its text beside the tag; a key step carries the
+  // key.
+  const t = ui_tui.steps([ui_tui.Step.new(tag: 7, text: "hi", key: 0),
+    ui_tui.Step.new(tag: 7, text: "", key: ui.key_enter())])
   step = t.next()
   case step {
     (R.ok, got) then {
-      check(got.tag() == 7 && got.text() == "hi", "a typed step keeps its text")
+      check(got.tag() == 7 && got.text() == "hi" && got.key() == 0,
+        "a typed step keeps its text")
     }
     (R.error, _) then {
       check(false, "a typed step keeps its text")
+    }
+  }
+  step = t.next()
+  case step {
+    (R.ok, got) then {
+      check(got.tag() == 7 && got.text() == "" && got.key() == ui.key_enter(),
+        "a key step keeps its key")
+    }
+    (R.error, _) then {
+      check(false, "a key step keeps its key")
     }
   }
 }

@@ -47,8 +47,8 @@ replaced gets a fresh widget, and the widgets no leaf keeps leave.
 
 `script` is the self-driving input, the counterpart of the terminal's
 `Script`: a comma-separated list of steps — a bare tag is a click on the
-control carrying it, `tag=text` types into the field carrying the tag.
-It is
+control carrying it, `tag=text` types into the field carrying the tag,
+`tag^key` presses a key on it. It is
 honored only when `EMO_GUI_AUTOTEST` is set, so a real application
 passes `""` and a person drives the window.
 
@@ -84,11 +84,13 @@ Emo cannot name. `ui_place` moves a widget already on the canvas, and
 `ui_connect` connects a button's handler once and leaves the tag to be
 read as the click lands, so a kept button can take a new one between
 frames. The loop's sink crosses the FFI as the same `ui.Events`
-trampoline and userdata pair; a click carries its tag and an empty
-text, a field's "changed" signal carries the tag and what was typed. A
-kept field's text is written back only where the model's value differs,
-and the programmatic write is flagged so the signal it fires delivers to
-no one.
+trampoline and userdata pair; a click carries its tag and empties, a
+field's "changed" signal carries the tag and what was typed, and the
+key controller each field wears forwards Enter and Escape as the key on
+the field's tag — every editing key propagates and stays the toolkit's.
+A kept field's text is written back only where the model's value
+differs, and the programmatic write is flagged so the signal it fires
+delivers to no one.
 
 ## The gate
 

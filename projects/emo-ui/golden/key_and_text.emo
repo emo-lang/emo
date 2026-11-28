@@ -1,0 +1,28 @@
+// A delivery carrying text and a key at once — the shape no event has:
+// a click is ("", 0), a field's typing is (text, 0), a key is ("", the
+// key). The registry refuses the pair where it is made. The gate pins
+// the exit status and the message, on the interpreter and on the `c`
+// target.
+//
+//   emo run key_and_text.emo   -> exits 1 with E3010
+
+class Note {
+  def init(text String) {
+    self.text = text
+  }
+
+  def text() String {
+    return self.text
+  }
+}
+
+def main() {
+  const reg = ui.Registry.new()
+  const field = reg.on_input("draft", -> (t String, k Int64) {
+    return Note.new(text: t)
+  })
+  reg.message_for(field, "typed", 10)
+  println("delivered")
+}
+
+main()

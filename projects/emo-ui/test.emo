@@ -135,7 +135,7 @@ def script() Array[String] {
 
 def click_all(e ui.Events, tree Box, labels Array[String], i Int64) {
   if i < labels.length() {
-    e.deliver(tag_of(tree.read(), labels[i]), "")
+    e.deliver(tag_of(tree.read(), labels[i]), "", 0)
     click_all(e, tree, labels, i + 1)
   }
 }
@@ -406,9 +406,10 @@ def diff_checks() {
 
 // ---- The payload round-trip -----------------------------------------
 //
-// A field's typed text: the factory the registry stores builds the
-// message, the tag stays stable across renders, and the loop hands
-// `update` what was typed. The messages are classes — `is()` raises on
+// A field's typed text and its keys: the factory the registry stores
+// builds the message, the tag stays stable across renders, and the loop
+// hands `update` what came — typing as (text, 0), a key on the focused
+// field as ("", the key). The messages are classes — `is()` raises on
 // an enum member, so a loop that takes one field's text takes every
 // message as a class instance — and a field-less class still dedups,
 // because equality on instances is structural.
@@ -455,7 +456,7 @@ def draft_update(msg Block, m Draft) Draft {
 
 def draft_view(reg ui.Registry, m Draft) ui.Node {
   const bump = reg.on(Bump.new())
-  const field = reg.on_text("draft", -> (t String) {
+  const field = reg.on_input("draft", -> (t String, k Int64) {
     return SetText.new(text: t)
   })
   return ui.column([
@@ -467,14 +468,14 @@ def draft_view(reg ui.Registry, m Draft) ui.Node {
 
 def payload_checks() {
   const reg = ui.Registry.new()
-  const field = reg.on_text("draft", -> (t String) {
+  const field = reg.on_input("draft", -> (t String, k Int64) {
     return SetText.new(text: t)
   })
-  check(field == 0, "a text factory gets the first tag")
-  check(reg.on_text("draft", -> (t String) {
+  check(field == 0, "an input factory gets the first tag")
+  check(reg.on_input("draft", -> (t String, k Int64) {
       return SetText.new(text: t)
     }) == field, "a name keeps the tag it was first given")
-  check(reg.on_text("other", -> (t String) {
+  check(reg.on_input("other", -> (t String, k Int64) {
       return SetText.new(text: t)
     }) == 1, "another name gets another tag")
   const click = reg.on(Bump.new())
@@ -482,17 +483,20 @@ def payload_checks() {
   check(reg.on(Bump.new()) == click,
     "a field-less class keeps its tag: equality on instances is structural")
 
-  const built = reg.message_for(field, "hi")
+  const built = reg.message_for(field, "hi", 0)
   check(built.is(SetText) && built.text() == "hi",
     "message_for calls the factory with what was typed")
-  check(reg.message_for(click, "").is(Bump),
+  const keyed = reg.message_for(field, "", ui.key_escape())
+  check(keyed.is(SetText) && keyed.text() == "",
+    "and with a key on the focused field, the key riding as the key")
+  check(reg.message_for(click, "", 0).is(Bump),
     "message_for dispatches a click tag's own message")
 
-  const m1 = draft_update(reg.message_for(field, "hi"),
+  const m1 = draft_update(reg.message_for(field, "hi", 0),
     Draft.new(count: 0, text: ""))
   check(m1.text() == "hi" && m1.count() == 0,
     "the built message updates the model's text")
-  const m2 = draft_update(reg.message_for(click, ""), m1)
+  const m2 = draft_update(reg.message_for(click, "", 0), m1)
   check(m2.count() == 1 && m2.text() == "hi",
     "a click bumps and keeps the model's text")
 

@@ -56,7 +56,8 @@ static double g_height = 0.0;
 // program's own streams, whose bytes are the program's.
 static int g_made = 0;
 
-typedef void (*emo_sink_fn)(int64_t tag, const char *text, void *userdata);
+typedef void (*emo_sink_fn)(int64_t tag, const char *text, int64_t key,
+                            void *userdata);
 static emo_sink_fn g_sink = NULL;
 static void *g_sink_data = NULL;
 
@@ -179,9 +180,9 @@ void ui_remove(int64_t child) {
 
 // A control's tag is whatever the frame gave it last: the verb runs
 // again for a kept control whose event changed, and the target and
-// action are the same ones every time. A field takes only the tag — its
-// delegate was set at `ui_entry_make`, and a target here would make
-// Return deliver a click.
+// action are the same ones every time. A field's action is the Enter
+// delivery — AppKit fires it when the person presses Return in the
+// field — and its delegate was set at `ui_entry_make`.
 void ui_connect(int64_t child, int64_t tag) {
   @autoreleasepool {
     id view = handle_to_id(child);
@@ -194,7 +195,10 @@ void ui_connect(int64_t child, int64_t tag) {
       btn.target = g_delegate;
       btn.action = @selector(clicked:);
     } else if ([view isKindOfClass:[NSTextField class]]) {
-      ((NSTextField *)view).tag = tag;
+      NSTextField *field = (NSTextField *)view;
+      field.tag = tag;
+      field.target = g_delegate;
+      field.action = @selector(submitted:);
     }
   }
 }
@@ -208,8 +212,16 @@ int64_t ui_root(void) { return id_to_handle(g_window.contentView); }
 - (void)clicked:(NSButton *)sender {
   if (g_sink != NULL) {
     // The tag is read as the click lands, so a kept button can take a
-    // new one between frames. A click carries no text.
-    g_sink((int64_t)sender.tag, "", g_sink_data);
+    // new one between frames. A click carries no text and no key.
+    g_sink((int64_t)sender.tag, "", 0, g_sink_data);
+  }
+}
+
+// A field's Enter: AppKit fires the control's action when the person
+// presses Return in the field, and the field carries the frame's tag.
+- (void)submitted:(NSTextField *)sender {
+  if (g_sink != NULL) {
+    g_sink((int64_t)sender.tag, "", 10, g_sink_data);
   }
 }
 
@@ -220,7 +232,7 @@ int64_t ui_root(void) { return id_to_handle(g_window.contentView); }
 - (void)controlTextDidChange:(NSNotification *)obj {
   if (g_sink != NULL) {
     NSTextField *field = (NSTextField *)obj.object;
-    g_sink((int64_t)field.tag, field.stringValue.UTF8String, g_sink_data);
+    g_sink((int64_t)field.tag, field.stringValue.UTF8String, 0, g_sink_data);
   }
 }
 
@@ -233,16 +245,18 @@ int64_t ui_root(void) { return id_to_handle(g_window.contentView); }
 // ---- The self-driving script --------------------------------------------
 //
 // Steps run one per tick: a bare tag is a click on the control carrying
-// it, and `tag=text` types into the field carrying the tag — the text
-// goes into the field and the delivery is made by hand, because a
+// it, `tag=text` types into the field carrying the tag — the text goes
+// into the field and the delivery is made by hand, because a
 // programmatic write fires no `controlTextDidChange` and the simulation
-// stands in for a person. The gate sets EMO_GUI_AUTOTEST and compares
+// stands in for a person — and `tag^key` presses a key on the field,
+// delivered by hand the same way. The gate sets EMO_GUI_AUTOTEST and compares
 // the application's stdout; a real run leaves the variable unset and
 // `ui_autotest_arm` does nothing.
 
 typedef struct {
   int64_t tag;
   char *text;
+  int64_t key;
 } emo_step;
 
 static emo_step g_script[64];
@@ -265,8 +279,18 @@ void ui_autotest_arm(const char *script) {
     }
     g_script[g_script_len].tag = (int64_t)v;
     g_script[g_script_len].text = NULL;
+    g_script[g_script_len].key = 0;
     p = end;
-    if (*p == '=') {
+    if (*p == '^') {
+      p++;
+      char *key_end = NULL;
+      long long k = strtol(p, &key_end, 10);
+      if (key_end == p) {
+        break;
+      }
+      g_script[g_script_len].key = (int64_t)k;
+      p = key_end;
+    } else if (*p == '=') {
       p++;
       const char *start = p;
       while (*p != '\0' && *p != ',') {
@@ -323,8 +347,15 @@ static NSTextField *emo_field_with_tag(int64_t tag) {
       if (field != nil) {
         field.stringValue = [NSString stringWithUTF8String:step.text];
         if (g_sink != NULL) {
-          g_sink((int64_t)field.tag, step.text, g_sink_data);
+          g_sink((int64_t)field.tag, step.text, 0, g_sink_data);
         }
+      }
+    } else if (step.key != 0) {
+      // The same delivery AppKit's action makes for Return in the
+      // field: the tag the frame gave it, the key as the number.
+      NSTextField *field = emo_field_with_tag(step.tag);
+      if (field != nil && g_sink != NULL) {
+        g_sink((int64_t)field.tag, "", step.key, g_sink_data);
       }
     } else {
       NSButton *btn = emo_button_with_tag(step.tag);
@@ -361,7 +392,8 @@ static void emo_autotest_schedule(void) {
                                             repeats:YES];
 }
 
-void ui_run(void (*events_cb)(int64_t __p0, const char *__p1, void *userdata),
+void ui_run(void (*events_cb)(int64_t __p0, const char *__p1, int64_t __p2,
+                              void *userdata),
             void *events_data) {
   @autoreleasepool {
     g_sink = events_cb;

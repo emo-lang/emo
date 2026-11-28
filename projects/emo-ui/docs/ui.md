@@ -56,7 +56,12 @@ below, and `-1` is a display-only field — the mark's convention. A
 backend that owns the widget keeps a person's keystrokes across renders:
 a kept field's text is written back only where it differs from the
 model's value, so the model answers the delivery and nothing else
-moves.
+moves. The field's keys ride the same tag: a backend forwards the keys
+its toolkit does not consume — Enter on every backend that owns a field,
+Escape on GTK and the DOM — and the delivery carries the key as its own
+number, `("", ui.key_enter())`. The registration for a field is
+`on_input`, whose factory takes the text and the key; the messages of a
+key-taking loop are classes like every other message.
 
 A backend narrows a node with `is()` — each backend knows the core
 classes plus its own platform's classes, and that union is its dispatch
@@ -179,21 +184,21 @@ rebuilds it every frame.
 
 ```emo
 interface Events {
-  def deliver(tag Int64, text String) Void
+  def deliver(tag Int64, text String, key Int64) Void
 }
 
 class Registry {
   def init()
   def index_of(msg Block, i Int64) Int64
   def on(msg Block) Int64
-  def on_text(name String, make Block) Int64
-  def message_for(tag Int64, text String) Block
+  def on_input(name String, make Block) Int64
+  def message_for(tag Int64, text String, key Int64) Block
   def dispatch(tag Int64) Block
 }
 
 class App {
   def init(view Block, update Block, model Block, backend Backend)
-  def deliver(tag Int64, text String) Void
+  def deliver(tag Int64, text String, key Int64) Void
   def root() Node
 }
 
@@ -229,11 +234,13 @@ message class (a click's) dedups to one tag like an enum's member does.
 
 A message that carries a value cannot be `on`'d — it is a distinct
 message per value, so a message built from a changing string would
-allocate a tag per render. `on_text` is the shape for it: the
+allocate a tag per render. `on_input` is the shape for it: the
 application registers a *factory*, a block that builds the message from
-the typed text, under a name of its choosing, and every later call with
-that name returns the same tag. Delivery calls the factory with what was
-typed, so `update` receives a message of the application's own class:
+the field's delivery, under a name of its choosing, and every later call
+with that name returns the same tag. Delivery calls the factory with the
+text and the key — typing as `(text, 0)`, a key on the focused field as
+`("", the key)` — so `update` receives a message of the application's
+own class:
 
 ```emo
 class Typed {
@@ -241,7 +248,10 @@ class Typed {
 }
 
 def view(reg ui.Registry, m Model) ui.Node {
-  const draft = reg.on_text("draft", -> (t String) {
+  const draft = reg.on_input("draft", -> (t String, k Int64) {
+    if k == ui.key_enter() {
+      return Submitted.new()
+    }
     return Typed.new(text: t)
   })
   return ui.text_input(m.draft(), draft, ui.style())
@@ -255,10 +265,11 @@ The registry cannot compare two blocks for equality, so a name already
 registered answers its tag and the factory stored first is the one every
 delivery goes through — the view passes the same factory each render,
 and the name is the contract. An empty name is refused. `message_for`
-raises when text rides a tag no field registered: a click tag carries no
-text, and a backend that sends some is a wiring mistake, refused where
-it is made. `dispatch` raises on a tag that was never registered: an
-unregistered tag is a backend bug, not data.
+raises when a payload rides a tag no field registered — a click tag
+carries no text and no key — and when a delivery carries text and a key
+together, or nothing at all: a delivery is one or the other, refused
+where it is made. `dispatch` raises on a tag that was never registered:
+an unregistered tag is a backend bug, not data.
 
 The registry is an object the loop owns and hands to `view`, not a
 module-level table: a module-level `const` re-runs its initializer on
@@ -277,7 +288,7 @@ right and every target obeys it (`CHECK.md`, `probe/eval_order`).
 ```emo
 class RawApp {
   def init(view Block, update Block, model Block, backend Backend)
-  def deliver(tag Int64, text String) Void
+  def deliver(tag Int64, text String, key Int64) Void
   def root() Node
 }
 
@@ -292,9 +303,9 @@ deduplicated linearly on every render would cost more than the frame
 paints on the metal. `view` still receives a `Registry`, so both loop
 shapes keep one application signature; an application that adds a
 button under `run_raw` registers it as `run`'s does. The delivery's
-text parameter is refused when it is not `""` — the raw loop's message
-is the tag itself, and a payload has no integer to be; a field's typed
-text belongs to the tagged loop. The key
+payload parameters are refused when either is set — the raw loop's
+message is the tag itself, and a payload has no integer to be; a field's
+typed text and its keys belong to the tagged loop. The key
 vocabulary the raw loop's backends and applications share — the
 printable bytes, the control chords, and the arrows' numbers above 255
 — is the core's: `key_backspace`, `key_tab`, `key_enter`, `key_quit`,

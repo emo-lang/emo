@@ -424,17 +424,19 @@ def paint(root ui.Node, width Int64, height Int64) {
 // T48.5's own work, in its own standard-library package; a backend only
 // needs a stream of events, so the seam is here and `Script` is the
 // source a golden runs on — no terminal, no timing, the same bytes every
-// time. One step is one delivery: the tag, and the text it carries — ""
-// for a click, the typed text for a field's.
+// time. One step is one delivery: the tag, the text it carries — "" for
+// a click, the typed text for a field's — and the key it carries, 0 for
+// every delivery that is not a key.
 interface Input {
   def next() (R, Step)
 }
 
 // One delivery.
 class Step {
-  def init(tag Int64, text String) {
+  def init(tag Int64, text String, key Int64) {
     self.tag = tag
     self.text = text
+    self.key = key
   }
 
   def tag() Int64 {
@@ -443,6 +445,10 @@ class Step {
 
   def text() String {
     return self.text
+  }
+
+  def key() Int64 {
+    return self.key
   }
 }
 
@@ -455,7 +461,7 @@ class Script {
 
   def next() (R, Step) {
     if self.pos.read() >= self.steps.length() {
-      return (R.error, Step.new(tag: 0, text: ""))
+      return (R.error, Step.new(tag: 0, text: "", key: 0))
     }
     const step = self.steps[self.pos.read()]
     self.pos.replace(self.pos.read() + 1)
@@ -463,18 +469,19 @@ class Script {
   }
 }
 
-// A click-only script: each tag delivers with no text.
+// A click-only script: each tag delivers with no text and no key.
 def script(tags Array[Int64]) Input {
   const out = ArrayBuilder.new()
   for var i = 0; i < tags.length(); i = i + 1 {
-    out.push(Step.new(tag: tags[i], text: ""))
+    out.push(Step.new(tag: tags[i], text: "", key: 0))
   }
   return Script.new(steps: out.to_array())
 }
 
-// A script with typed text in it: the caller builds the steps, a click
-// as `Step.new(tag: n, text: "")` and a keystroke's worth of text as
-// `Step.new(tag: field, text: "hi")`.
+// A script with typed text and keys in it: the caller builds the steps,
+// a click as `Step.new(tag: n, text: "", key: 0)`, typing as
+// `Step.new(tag: field, text: "hi", key: 0)` and a key on the focused
+// field as `Step.new(tag: field, text: "", key: ui.key_enter())`.
 def steps(xs Array[Step]) Input {
   return Script.new(steps: xs)
 }
@@ -484,7 +491,7 @@ def steps(xs Array[Step]) Input {
 // the cell starts as an `Events` that delivers to no one — never as a
 // number that could not later become one.
 class Unmounted {
-  def deliver(tag Int64, text String) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
   }
 }
 
@@ -519,7 +526,7 @@ class Tui {
     while more {
       const step = self.input.next()
       case step {
-        (R.ok, s) then { self.sink.read().deliver(s.tag(), s.text()) }
+        (R.ok, s) then { self.sink.read().deliver(s.tag(), s.text(), s.key()) }
         (R.error, _) then { more = false }
       }
     }

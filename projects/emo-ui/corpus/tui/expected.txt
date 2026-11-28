@@ -81,3 +81,17 @@ submit 1 draft hi
                                   
                                   
             Emo counter           
+submit 1 draft hi
+[2J[H                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+            Emo counter           

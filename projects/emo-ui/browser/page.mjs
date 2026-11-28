@@ -121,18 +121,39 @@ const tick = () => new Promise((done) => setTimeout(done, 0));
 await import(pathToFileURL(resolve(bundle)).href);
 await tick();
 
-// A step is a tag to click, or `tag=text` to type into the field
-// carrying that tag: the value is set and the field's `input` listeners
-// fire, which is what a keystroke is to the runtime's host.
+// The core's key vocabulary, for the steps that press a key.
+const keyNumbers = { Enter: 10, Escape: 27 };
+const keyNames = { 10: "Enter", 27: "Escape" };
+
+// A step is a tag to click, `tag=text` to type into the field carrying
+// that tag, or `tag^key` to press a key on it: the field's `keydown`
+// listeners fire with the key's name, which is what a pressed key is to
+// the runtime's host.
 for (const step of script.split(",").filter((s) => s.length > 0)) {
+  const caret = step.indexOf("^");
   const eq = step.indexOf("=");
-  const tag = eq >= 0 ? step.slice(0, eq) : step;
+  const tag = step.slice(0, caret >= 0 ? caret : eq >= 0 ? eq : step.length);
   const text = eq >= 0 ? step.slice(eq + 1) : null;
+  const key = caret >= 0 ? Number(step.slice(caret + 1)) : null;
   const target =
-    text === null ? findTagged(root, tag) : findInput(root, "emo-" + tag);
+    text === null && key === null
+      ? findTagged(root, tag)
+      : findInput(root, "emo-" + tag);
   if (target === null) {
     console.error("page: no element carries event " + tag);
     process.exit(1);
+  }
+  if (key !== null) {
+    const name = keyNames[key];
+    if (name === undefined) {
+      console.error("page: no key number " + key + " in the vocabulary");
+      process.exit(1);
+    }
+    for (const fn of target.listeners.keydown ?? []) {
+      fn({ key: name });
+    }
+    await tick();
+    continue;
   }
   if (text !== null) {
     target.value = text;

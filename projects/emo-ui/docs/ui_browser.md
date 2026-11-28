@@ -67,7 +67,7 @@ props and styles:
 |---|---|
 | `Text` | `span` with the body as text |
 | `Button` | `button` with `type="button"` and the tag in the `name="event"`/`value` pair, plus a click listener |
-| `TextInput` | `input type="text"` showing the model's value; with an event it is editable, its tag rides the `name="emo-<tag>"` pair, and its `input` events deliver what was typed |
+| `TextInput` | `input type="text"` showing the model's value; with an event it is editable, its tag rides the `name="emo-<tag>"` pair, its `input` events deliver what was typed, and its `keydown`s deliver Enter and Escape as the key |
 | `Image` | `img` with `src` and an empty `alt` |
 | `Spacer` | `div` |
 | `Column`, `Row`, `Scroll` | `div` with its children appended |

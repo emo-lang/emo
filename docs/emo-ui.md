@@ -602,29 +602,43 @@ satisfied by these, and the "compiler optimizes to targeted refreshes"
 promise is a later pass over exactly those reads, not a hidden graph.
 
 **The payload decision (landed 2026-11-28, `feat/emo-ui`).** An event is
-`deliver(tag, text)`: one method, and the payload rides as the method's
-own marshaled parameter — a single-method interface is the only shape
-the C→Emo callback contract names (`CHECK.md`), and `String` is in its
-marshaling tier. A click's text is `""`; a field's typed text rides with
-its tag. The message that carries the value is the application's own
-class, built by a *factory* the registry stores under a name:
-`on_text("draft", -> (t String) { return Typed.new(text: t) })` hands
-out one stable tag — a message built from the field's contents would be
-a distinct tag per render, the table's old limit, and the name-keyed
-dedup (mirroring `keyed`'s, not comparing `Block`s, which have no
-equality worth trusting) is what retires it. Two facts of the language
-shaped the rest, both found by probe: `is()` raises on an enum member,
-so a loop that takes one field's typed text takes *every* message as a
-class instance — a click's message is a field-less class, which still
+`deliver(tag, text, key)`: one method, and the payloads ride as the
+method's own marshaled parameters — a single-method interface is the
+only shape the C→Emo callback contract names (`CHECK.md`), and `String`
+and `Int64` are in its marshaling tier. A click is `("", 0)`; a field's
+typed text rides as the text; a key lands on the focused field's tag as
+the key — an `Int64` of the core's vocabulary, which a String can never
+carry honestly, so the payload row grew a column when the keys landed
+(the key decision, same day). The message that carries the value is the
+application's own class, built by a *factory* the registry stores under
+a name: `on_input("draft", -> (t String, k Int64) { … })` hands out one
+stable tag for everything the field delivers — typing arrives
+`(text, 0)`, a key the backend did not consume arrives
+`("", the key)`, and the factory tells one from the other by the key
+being zero. A message built from the field's contents would be a
+distinct tag per render, the table's old limit, and the name-keyed dedup
+(mirroring `keyed`'s, not comparing `Block`s, which have no equality
+worth trusting) is what retires it. Two facts of the language shaped the
+rest, both found by probe: `is()` raises on an enum member, so a loop
+that takes one field's typed text takes *every* message as a class
+instance — a click's message is a field-less class, which still
 dedups to one tag because equality on instances is structural; and the
-raw loop's delivery refuses text outright, because its message is the
-tag itself and a payload has no integer to be. The backend that owns an
-editable widget keeps the person's keystrokes across renders: a kept
-field's text is written back only where it differs from the model's
-value, so the model answers the delivery and nothing else moves. The
-corpus carries the whole shape: its messages are four classes, its
-field is `on_text("draft", …)`, and one typed step runs byte-identical
-on every hosted backend.
+raw loop's delivery refuses a payload of either kind outright, because
+its message is the tag itself and a payload has no integer to be. The
+backend that owns an editable widget keeps the person's keystrokes
+across renders: a kept field's text is written back only where it
+differs from the model's value, so the model answers the delivery and
+nothing else moves. What the toolkit consumes, the application never
+sees: editing keys stay native, and the backend forwards only what it
+does not consume — Enter on every backend that owns a field, Escape on
+GTK and the DOM. **Focus stays toolkit-internal, decided:** routing keys
+needs the focused widget and the toolkit already knows it; a core focus
+model needs a Bool or an identity payload — another seam growth — so
+focus events and application steering are the next input-model round.
+The corpus carries the whole shape: its messages are four classes, its
+field is `on_input("draft", …)` reading the key, and one typed step and
+one pressed Enter run byte-identical on every backend that can press
+them.
 
 A second loop shape skips the table: `run_raw` hands the backend's tag
 to `update` as the message itself. The table earns its place when
@@ -695,15 +709,16 @@ interface Backend {
 ```
 
 `mount` hands the backend the first tree and the sink it delivers events
-into — a single-method `Events` interface, `deliver(tag, text)`, which is
-the whole of what a backend knows about the application: a tag, and the
-text when the event is a field's (a click's text is `""`). A
-single-method interface is the callback type the C→Emo contract already
-names (`CHECK.md`), so a native shim reaches the sink through the same
-trampoline as any other callback, and the payload crosses as the
-method's own marshaled parameter. Landed as `ui.Backend`/`ui.Events`
-(T48.2); the text parameter is the payload decision of 2026-11-28
-(Layer 5).
+into — a single-method `Events` interface, `deliver(tag, text, key)`,
+which is the whole of what a backend knows about the application: a
+tag, and the payloads when the event is a field's (a click is `("", 0)`,
+typing rides as the text, a key as the key). A single-method interface
+is the callback type the C→Emo contract already names (`CHECK.md`), so a
+native shim reaches the sink through the same trampoline as any other
+callback, and the payloads cross as the method's own marshaled
+parameters. Landed as `ui.Backend`/`ui.Events` (T48.2); the text
+parameter is the payload decision of 2026-11-28 and the key parameter
+the key decision of the same day (Layer 5).
 
 Each platform implements it:
 

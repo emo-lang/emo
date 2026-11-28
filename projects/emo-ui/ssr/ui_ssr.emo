@@ -468,7 +468,7 @@ def page(title String, root ui.Node) String {
 // the cell starts as an `Events` that delivers to no one — never as a
 // number that could not later become one.
 class Unmounted {
-  def deliver(tag Int64, text String) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
   }
 }
 
@@ -481,9 +481,10 @@ def unmounted() ui.Events {
 // swaps in (the htmx shape docs/emo-ui.md settles on). `mount` prints
 // the first, `patch` prints the second, and `run` returns without
 // driving anything — there is no input source on a server; the request
-// is what delivers an event, through `deliver` for a click and
+// is what delivers an event, through `deliver` for a click,
 // `deliver_text` for a field's posted value (the body's `emo-<tag>`
-// name paired with what was typed).
+// name paired with what was typed) and `deliver_key` for a key the
+// page handed the round trip.
 class Ssr {
   def init(title String) {
     self.title = title
@@ -503,11 +504,15 @@ class Ssr {
   }
 
   def deliver(tag Int64) {
-    self.sink.read().deliver(tag, "")
+    self.sink.read().deliver(tag, "", 0)
   }
 
   def deliver_text(tag Int64, text String) {
-    self.sink.read().deliver(tag, text)
+    self.sink.read().deliver(tag, text, 0)
+  }
+
+  def deliver_key(tag Int64, key Int64) {
+    self.sink.read().deliver(tag, "", key)
   }
 }
 

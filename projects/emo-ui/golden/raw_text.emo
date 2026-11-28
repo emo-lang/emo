@@ -1,7 +1,7 @@
-// The raw loop's message is the tag itself, so an event that carries
-// text has no integer to be — `run_raw`'s delivery refuses it rather
-// than dropping the payload. The gate pins the exit status and the
-// message, on the interpreter and on the `c` target.
+// The raw loop's message is the tag itself, so an event that carries a
+// payload has no integer to be — `run_raw`'s delivery refuses it rather
+// than dropping it. The gate pins the exit status and the message, on
+// the interpreter and on the `c` target.
 //
 //   emo run raw_text.emo   -> exits 1 with E3010
 

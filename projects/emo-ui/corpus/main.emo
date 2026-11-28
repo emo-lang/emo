@@ -15,8 +15,10 @@
 // that takes one field's typed text takes every message as a class
 // instance. A click's message is a field-less class — `==` on instances
 // is structural, so `on` dedups it to one stable tag — and a field's is
-// a class the factory builds from what was typed, registered under a
-// name so the tag is stable across renders.
+// a class the factory builds from what came, registered under a name so
+// the tag is stable across renders. The draft field's factory reads the
+// delivery's key: Enter on the focused field submits, exactly as the
+// submit button does.
 
 class Inc {
   def init() {
@@ -89,7 +91,10 @@ def view(reg ui.Registry, m Model) ui.Node {
   const inc = reg.on(Inc.new())
   const dec = reg.on(Dec.new())
   const submit = reg.on(Submit.new())
-  const draft = reg.on_text("draft", -> (t String) {
+  const draft = reg.on_input("draft", -> (t String, k Int64) {
+    if k == ui.key_enter() {
+      return Submit.new()
+    }
     return Typed.new(text: t)
   })
   const items = ArrayBuilder.new()

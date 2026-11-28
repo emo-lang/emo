@@ -774,7 +774,7 @@ def make_window(c wayland.Conn, comp_id Int64, shm_id Int64, wm_id Int64,
 // table loop (`ui.App`) and a raw one (`ui.RawApp`, the editor's)
 // stand beside each other in the same slot.
 interface FaceApp {
-  def deliver(tag Int64, text String) Void
+  def deliver(tag Int64, text String, key Int64) Void
   def root() ui.Node
 }
 
@@ -1237,7 +1237,7 @@ def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
                                           const tag = rect_tag(opened.win().rect_table(), ev.x(), ev.y())
                                           if tag >= 0 {
                                             println("face: click delivers tag " + tag.to_string() + " to " + opened.slot().name())
-                                            opened.slot().app().deliver(tag, "")
+                                            opened.slot().app().deliver(tag, "", 0)
                                             paint_app_window(opened.win(), opened.slot().app(), f, opened.slot().name())
                                           }
                                         }
@@ -1295,7 +1295,7 @@ def present_bridge(c wayland.Conn, comp_id Int64, surface_id Int64,
                                           const tag = name_tag(opened.slot().keys(), ev.name())
                                           if tag >= 0 {
                                             println("face: key " + ev.name() + " delivers tag " + tag.to_string() + " to " + opened.slot().name())
-                                            opened.slot().app().deliver(tag, "")
+                                            opened.slot().app().deliver(tag, "", 0)
                                             paint_app_window(opened.win(), opened.slot().app(), f, opened.slot().name())
                                           }
                                         }

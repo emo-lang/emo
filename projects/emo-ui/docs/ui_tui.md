@@ -50,9 +50,10 @@ def script(tags Array[Int64]) Input
 def steps(xs Array[Step]) Input
 
 class Step {
-  def init(tag Int64, text String)
+  def init(tag Int64, text String, key Int64)
   def tag() Int64
   def text() String
+  def key() Int64
 }
 ```
 

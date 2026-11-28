@@ -42,7 +42,8 @@ static GMainLoop *g_loop = NULL;
 // program's own streams, whose bytes are the program's.
 static int g_made = 0;
 
-typedef void (*emo_sink_fn)(int64_t tag, const char *text, void *userdata);
+typedef void (*emo_sink_fn)(int64_t tag, const char *text, int64_t key,
+                            void *userdata);
 static emo_sink_fn g_sink = NULL;
 static void *g_sink_data = NULL;
 
@@ -53,6 +54,9 @@ static int g_setting_text = 0;
 static int g_autotest_requested = 0;
 static gboolean emo_autotest_tick(gpointer data);
 static void emo_entry_changed(GtkEditable *editable, gpointer user_data);
+static gboolean emo_entry_key(GtkEventControllerKey *controller,
+                              guint keyval, guint keycode,
+                              GdkModifierType state, gpointer user_data);
 
 // The tag table is the tree itself: a control carries whatever tag the
 // last frame gave it, so a button is whichever canvas button carries
@@ -138,6 +142,10 @@ int64_t ui_entry_make(const char *text) {
   gtk_editable_set_text(GTK_EDITABLE(entry), text);
   g_signal_connect(G_OBJECT(entry), "changed",
                    G_CALLBACK(emo_entry_changed), NULL);
+  GtkEventControllerKey *keys = gtk_event_controller_key_new();
+  g_signal_connect(G_OBJECT(keys), "key-pressed",
+                   G_CALLBACK(emo_entry_key), NULL);
+  gtk_widget_add_controller(GTK_WIDGET(entry), GTK_EVENT_CONTROLLER(keys));
   return (int64_t)(intptr_t)entry;
 }
 
@@ -185,10 +193,10 @@ static void emo_clicked(GtkButton *button, gpointer user_data) {
   (void)user_data;
   if (g_sink != NULL) {
     // The tag is read as the click lands, so a kept button can take a
-    // new one between frames. A click carries no text.
+    // new one between frames. A click carries no text and no key.
     g_sink(
         (int64_t)(intptr_t)g_object_get_data(G_OBJECT(button), "emo-tag"), "",
-        g_sink_data);
+        0, g_sink_data);
   }
 }
 
@@ -201,8 +209,37 @@ static void emo_entry_changed(GtkEditable *editable, gpointer user_data) {
     g_sink(
         (int64_t)(intptr_t)g_object_get_data(G_OBJECT(GTK_WIDGET(editable)),
                                              "emo-tag"),
-        gtk_editable_get_text(editable), g_sink_data);
+        gtk_editable_get_text(editable), 0, g_sink_data);
   }
+}
+
+// The keys a field hands the application: Enter and Escape, the two the
+// toolkit does not consume as editing. Every other key propagates — the
+// controller returns FALSE and the entry edits itself, arriving as the
+// "changed" signal's text instead.
+static gboolean emo_entry_key(GtkEventControllerKey *controller,
+                              guint keyval, guint keycode,
+                              GdkModifierType state, gpointer user_data) {
+  (void)controller;
+  (void)keycode;
+  (void)state;
+  (void)user_data;
+  GtkWidget *entry = gtk_event_controller_get_widget(
+      GTK_EVENT_CONTROLLER(controller));
+  int64_t key = 0;
+  if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
+    key = 10;
+  } else if (keyval == GDK_KEY_Escape) {
+    key = 27;
+  } else {
+    return FALSE;
+  }
+  if (g_sink != NULL) {
+    g_sink(
+        (int64_t)(intptr_t)g_object_get_data(G_OBJECT(entry), "emo-tag"), "",
+        key, g_sink_data);
+  }
+  return TRUE;
 }
 
 // A control's tag is whatever the frame gave it last. A button's click
@@ -224,7 +261,8 @@ int64_t ui_root(void) { return (int64_t)(intptr_t)g_canvas; }
 
 // ---- The event loop -----------------------------------------------------
 
-void ui_run(void (*events_cb)(int64_t __p0, const char *__p1, void *userdata),
+void ui_run(void (*events_cb)(int64_t __p0, const char *__p1, int64_t __p2,
+                              void *userdata),
             void *events_data) {
   g_sink = events_cb;
   g_sink_data = events_data;
@@ -241,15 +279,18 @@ void ui_run(void (*events_cb)(int64_t __p0, const char *__p1, void *userdata),
 // ---- The self-driving script --------------------------------------------
 //
 // Steps run one per tick: a bare tag is a click on the control carrying
-// it, and `tag=text` types into the field carrying the tag — the text
-// goes in through `gtk_editable_set_text` unflagged, so the "changed"
-// signal delivers it exactly as a keystroke would. The gate sets
+// it, `tag=text` types into the field carrying the tag — the text goes
+// in through `gtk_editable_set_text` unflagged, so the "changed" signal
+// delivers it exactly as a keystroke would — and `tag^key` presses a
+// key on the field carrying the tag, the same delivery the key
+// controller makes. The gate sets
 // EMO_GUI_AUTOTEST and compares the application's stdout; a real run
 // leaves the variable unset and `ui_autotest_arm` does nothing.
 
 typedef struct {
   int64_t tag;
   char *text;
+  int64_t key;
 } emo_step;
 
 static emo_step g_script[64];
@@ -264,6 +305,15 @@ static gboolean emo_autotest_tick(gpointer data) {
       GtkWidget *entry = emo_entry_with_tag(step.tag);
       if (entry != NULL) {
         gtk_editable_set_text(GTK_EDITABLE(entry), step.text);
+      }
+    } else if (step.key != 0) {
+      // The same delivery the key controller makes for a pressed key:
+      // the tag the frame gave the field, the key as the number.
+      GtkWidget *entry = emo_entry_with_tag(step.tag);
+      if (entry != NULL && g_sink != NULL) {
+        g_sink((int64_t)(intptr_t)g_object_get_data(G_OBJECT(entry),
+                                                    "emo-tag"),
+               "", step.key, g_sink_data);
       }
     } else {
       GtkWidget *button = emo_button_with_tag(step.tag);
@@ -302,8 +352,18 @@ void ui_autotest_arm(const char *script) {
     }
     g_script[g_script_len].tag = (int64_t)v;
     g_script[g_script_len].text = NULL;
+    g_script[g_script_len].key = 0;
     p = end;
-    if (*p == '=') {
+    if (*p == '^') {
+      p++;
+      char *key_end = NULL;
+      long long k = strtoll(p, &key_end, 10);
+      if (key_end == p) {
+        break;
+      }
+      g_script[g_script_len].key = (int64_t)k;
+      p = key_end;
+    } else if (*p == '=') {
       p++;
       const char *start = p;
       while (*p != '\0' && *p != ',') {

@@ -689,10 +689,11 @@ def has(xs Array[Int64], x Int64, i Int64) Bool {
   return has(xs, x, i + 1)
 }
 
-// ---- The raw loop's key vocabulary ----
+// ---- The key vocabulary ----
 //
-// One event per key, shared by the backends that translate a device's
-// reports and the applications that read them. A printable key is its
+// One number per key, shared by the backends that translate a device's
+// reports and the applications that read them — the raw loop's message
+// and the focused field's delivery are the same numbers. A printable key is its
 // own byte, and the ASCII control codes a Ctrl chord produces are the
 // chords' bytes (`Ctrl+Q` is 17, `Ctrl+S` is 19); every key that has no
 // byte — the arrows, Home and End — is a number above 255, so no
@@ -714,6 +715,10 @@ def key_enter() Int64 {
 
 def key_quit() Int64 {
   return 17
+}
+
+def key_escape() Int64 {
+  return 27
 }
 
 def key_delete() Int64 {
@@ -788,16 +793,18 @@ def key_shift_end() Int64 {
 // boundary docs/emo-ui.md records under "A worked shape".
 
 // The event sink. A backend delivers an event by calling
-// `deliver(tag, text)`, which is the whole of what it knows about the
-// application — one integer per event, plus the text when the event is
-// a field's: a click's text is "", a typed text rides with its tag. One
-// method is deliberate — the C→Emo callback contract names a
-// single-method interface as the callback type (CHECK.md), so a native
-// shim reaches the sink through its trampoline exactly as it reaches any
-// other callback, and the payload crosses as the method's own marshaled
-// parameter.
+// `deliver(tag, text, key)`, which is the whole of what it knows about
+// the application — one integer per event, plus the payload when the
+// event is a field's: a click is ("", 0), a typed text rides as the
+// text, a key lands on the focused field's tag as the key (a key is an
+// `Int64` of the core's vocabulary, never a string, so it takes its own
+// parameter and the two are never both set). One method is deliberate —
+// the C→Emo callback contract names a single-method interface as the
+// callback type (CHECK.md), so a native shim reaches the sink through
+// its trampoline exactly as it reaches any other callback, and every
+// payload crosses as the method's own marshaled parameters.
 interface Events {
-  def deliver(tag Int64, text String) Void
+  def deliver(tag Int64, text String, key Int64) Void
 }
 
 // The tag table: a tag is the index of the message it stands for, and
@@ -810,16 +817,19 @@ interface Events {
 //
 // A message that carries a value cannot be `on`'d — it is a distinct
 // message per value, so a message built from a changing string (a text
-// field's own contents) would allocate a tag per render. `on_text` is
+// field's own contents) would allocate a tag per render. `on_input` is
 // the answer: the application registers a *factory*, a `Block` that
-// builds the message from the typed text, under a name of its choosing,
-// and the name is what the tag dedups on — the tag is stable across
-// renders, and delivery calls the factory with what was typed. The
-// registry cannot compare two `Block`s for equality, so a name that is
-// already registered answers its tag and the factory stored first is the
-// one every delivery goes through; the view passes the same factory each
-// render, and the name is the contract. An empty name is refused — there
-// is no field it names.
+// builds the message from the field's delivery, under a name of its
+// choosing, and the name is what the tag dedups on — the tag is stable
+// across renders, and delivery calls the factory with what came. The
+// factory takes two values, the delivery's text and its key: typing
+// arrives as (text, 0), a key on the focused field as ("", the key's
+// number), and the factory tells one from the other by the key being
+// zero. The registry cannot compare two `Block`s for equality, so a
+// name that is already registered answers its tag and the factory
+// stored first is the one every delivery goes through; the view passes
+// the same factory each render, and the name is the contract. An empty
+// name is refused — there is no field it names.
 //
 // The table is an object the loop owns and hands to `view`, not a
 // module-level binding — a module-level `const` lowers to a thunk that
@@ -872,9 +882,9 @@ class Registry {
     return reg.length()
   }
 
-  def on_text(name String, make Block) Int64 {
+  def on_input(name String, make Block) Int64 {
     if name == "" {
-      raise Exception.new(message: "ui.on_text: the name is empty")
+      raise Exception.new(message: "ui.on_input: the name is empty")
     }
     const known = self.named_at(name, 0)
     if known >= 0 {
@@ -888,16 +898,26 @@ class Registry {
   }
 
   // The message a delivery becomes. A click tag dispatches its message;
-  // a text tag calls its factory with what was typed. Text on a click
-  // tag is a backend bug, refused here where it is made.
-  def message_for(tag Int64, text String) Block {
-    if self.carries.read()[tag] {
-      const make = self.table.read()[tag]
-      return make(text)
-    }
-    if text != "" {
+  // an input tag calls its factory with the delivery's text and key. A
+  // delivery carries text or a key, never both, and never neither; a
+  // payload on a click tag is a backend bug, refused here where it is
+  // made.
+  def message_for(tag Int64, text String, key Int64) Block {
+    if text != "" && key != 0 {
       raise Exception.new(message:
-        "ui: the event at tag ${tag} carries text, and no field registered it")
+        "ui: the event at tag ${tag} carries text and a key, and a delivery carries one")
+    }
+    if self.carries.read()[tag] {
+      if text == "" && key == 0 {
+        raise Exception.new(message:
+          "ui: the event at tag ${tag} carries nothing")
+      }
+      const make = self.table.read()[tag]
+      return make(text, key)
+    }
+    if text != "" || key != 0 {
+      raise Exception.new(message:
+        "ui: the event at tag ${tag} carries a payload, and no field registered it")
     }
     return self.table.read()[tag]
   }
@@ -930,9 +950,9 @@ class App {
   // The view and the update sit in `Box`es rather than in plain fields
   // because `self.view(...)` reads as a method call wherever a class has
   // no method of that name, and Emo cannot call a `Block` out of a field.
-  def deliver(tag Int64, text String) Void {
-    const next = self.update_fn.read()(self.registry.message_for(tag, text),
-      self.model.read())
+  def deliver(tag Int64, text String, key Int64) Void {
+    const next = self.update_fn.read()(self.registry.message_for(tag, text,
+      key), self.model.read())
     self.model.replace(next)
     const tree = self.view_fn.read()(self.registry, next)
     self.backend.patch(self.current.read(), tree)
@@ -974,13 +994,14 @@ class RawApp {
     self.current = Box.new(view(self.registry, model))
   }
 
-  def deliver(tag Int64, text String) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
     // The raw loop's message is the tag itself: an event with a payload
-    // has no integer to be, so text here is a wiring mistake, refused
-    // where it is made. A field's typed text belongs to the tagged loop.
-    if text != "" {
+    // has no integer to be, so text or a key here is a wiring mistake,
+    // refused where it is made. A field's typed text and its keys belong
+    // to the tagged loop.
+    if text != "" || key != 0 {
       raise Exception.new(message:
-        "ui.run_raw: the event at tag ${tag} carries text, and the raw loop's messages are the tags themselves")
+        "ui.run_raw: the event at tag ${tag} carries a payload, and the raw loop's messages are the tags themselves")
     }
     const next = self.update_fn.read()(tag, self.model.read())
     self.model.replace(next)

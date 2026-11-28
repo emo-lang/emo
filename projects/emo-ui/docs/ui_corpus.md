@@ -37,7 +37,9 @@ every message as a class instance, because `is()` raises on an enum
 member; a click's message is a field-less class, which dedups to one tag
 because equality on instances is structural. `view` registers them in
 statements of its own — `inc`, `dec`, `submit` at tags `0`, `1` and `2`,
-and the draft field's factory under the name `"draft"` at tag `3` — and
+and the draft field's factory under the name `"draft"` at tag `3`, a
+factory that reads the delivery's key (Enter submits, exactly as the
+button does) — and
 builds a titled column: two buttons in a row, the field that takes typed
 text, a scrolled list of two texts and an image, a submit button, and a
 growing spacer. The children are an explicit `Array[ui.Node]`, with the
@@ -63,11 +65,12 @@ Six entries consume the package:
 
 Each entry is a `require` of the shared package plus a single `ui.run`
 over that backend. The debug entry steps `inc, inc, dec, the draft
-field typed, submit` by hand — `deliver` for a click, `deliver_text`
-for the field's text — and prints the trees it logged; the SSR entry
-steps the same five through the printing backend. The TUI, macOS, GTK 4
-and browser entries run the same steps as a script — `0,0,1,3=hi,2`,
-where `3=hi` is the typing — through their own input source.
+field typed, Enter on it, submit` by hand — `deliver` for a click,
+`deliver_text` for the field's text, `deliver_key` for the key — and
+prints the trees it logged; the SSR entry steps the same six through
+the printing backend. The TUI, macOS, GTK 4 and browser entries run the
+same steps as a script — `0,0,1,3=hi,3^10,2`, where `3=hi` is the
+typing and `3^10` is Enter — through their own input source.
 
 `corpus/check.sh` stages the core, the corpus, `ui_ssr` and `ui_tui`
 into a content-named registry and pins one `expected.txt` per entry:

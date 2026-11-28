@@ -172,7 +172,7 @@ def update(msg Block, m Model) Model {
 
 def view(reg ui.Registry, m Model) ui.Node {
   const bump = reg.on(Bump.new())
-  const note = reg.on_text("note", -> (t String) {
+  const note = reg.on_input("note", -> (t String, k Int64) {
     return Note.new(text: t)
   })
   return ui_ssr.form("/bump", [
@@ -187,6 +187,7 @@ def backend_checks() {
   ui.run(view, update, Model.new(count: 0, note: ""), be)
   be.deliver(0)
   be.deliver_text(1, "hello")
+  be.deliver_key(1, ui.key_enter())
   check(true, "the backend mounts a page and patches fragments")
 }
 

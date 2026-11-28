@@ -850,7 +850,7 @@ def script(tags Array[Int64]) Input {
 // the cell starts as an `Events` that delivers to no one — never as a
 // number that could not later become one.
 class Unmounted {
-  def deliver(tag Int64, text String) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
   }
 }
 
@@ -863,7 +863,9 @@ def unmounted() ui.Events {
 // present it, one commit per frame; `run` pulls the input and hands each
 // tag to the loop's sink, which is the whole of what a backend knows
 // about the application (`ui.Events`, a tag and its text — this
-// backend's seats deliver clicks and keys, whose text is empty). The
+// backend's seats deliver clicks and keys as tags, whose text and key
+// are empty: the keys' numbers ride as the tags themselves, the seat's
+// table mode or raw mode choosing). The
 // surface is the caller's: the hosted canvas, or the carve a full-screen
 // pass was authorized (A7.2). The backend allocates no screen, and
 // whoever owns the surface reads the frame back.
@@ -894,7 +896,7 @@ class Fb {
     while more {
       const step = self.input.next()
       case step {
-        (R.ok, tag) then { self.sink.read().deliver(tag, "") }
+        (R.ok, tag) then { self.sink.read().deliver(tag, "", 0) }
         (R.error, _) then { more = false }
       }
     }
