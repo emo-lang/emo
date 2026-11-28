@@ -385,23 +385,24 @@ tour:
 tour-selftest:
     devtools/tour-check-selftest.sh
 
-# tour-site: render docs/intro/tour.md and its Chinese mirror into the static
-# site under _build/tour-site (inline CSS, GitHub links for the docs the
-# page points at). Needs python3 with the `markdown` package.
+# docs-site: render the documentation pages (the language tour and the
+# EmoUI guide, each with its Chinese mirror) into the static site under
+# _build/docs-site (inline CSS, GitHub links for the docs a page points
+# at). Needs python3 with the `markdown` package.
 #
-# tour-site: build the tour as a static HTML site
-tour-site:
-    python3 devtools/build-tour-site.py
+# docs-site: build the documentation site as static HTML
+docs-site:
+    python3 devtools/build-docs-site.py
 
-# publish-tour: build and upload the tour site to docs.emo-lang.cn over
-# the same SSH channel the release uses (EMO_DOCS_HOST /
-# EMO_DOCS_ROOT). The one-time DNS + nginx + certbot setup is in
-# devtools/nginx/docs.emo-lang.cn.conf.
+# publish-docs: build and upload the documentation site to
+# docs.emo-lang.cn over the same SSH channel the release uses
+# (EMO_DOCS_HOST / EMO_DOCS_ROOT). The one-time DNS + nginx + certbot
+# setup is in devtools/nginx/docs.emo-lang.cn.conf.
 #
-# publish-tour: upload the tour to docs.emo-lang.cn
-publish-tour:
-    devtools/publish-tour.sh
+# publish-docs: upload the documentation site to docs.emo-lang.cn
+publish-docs:
+    devtools/publish-docs.sh
 
-# publish-tour-dry: show what publish-tour would upload, touching nothing
-publish-tour-dry:
-    devtools/publish-tour.sh --dry-run
+# publish-docs-dry: show what publish-docs would upload, touching nothing
+publish-docs-dry:
+    devtools/publish-docs.sh --dry-run

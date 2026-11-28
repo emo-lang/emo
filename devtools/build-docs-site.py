@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Build the language tour as a static HTML site.
+"""Build the documentation site: the language tour and the EmoUI guide.
 
-Renders docs/intro/tour.md and docs/zh-CN/intro/tour.md into a self-contained page
-each (inline CSS, a small copy-button script, no external assets beyond
-the logo). The output is what `devtools/publish-tour.sh` uploads to
+Each page renders from its Markdown source into a self-contained HTML
+file (inline CSS, a small copy-button script, no external assets beyond
+the logo). The output is what `devtools/publish-docs.sh` uploads to
 docs.emo-lang.cn.
 
 Requires Python 3 and the `markdown` package (python-markdown):
     python3 -c 'import markdown'
 
-    build-tour-site.py [--out DIR] [--repo URL] [--branch NAME]
+    build-docs-site.py [--out DIR] [--repo URL] [--branch NAME]
 
 The links inside the tour point at other Markdown files; on the public
 page they are rewritten to the repository's GitHub blob/tree URLs, so a
@@ -27,7 +27,7 @@ import sys
 try:
     import markdown
 except ImportError:
-    sys.exit("build-tour-site: needs python-markdown (python3 -m pip install markdown)")
+    sys.exit("build-docs-site: needs python-markdown (python3 -m pip install markdown)")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -35,13 +35,13 @@ PAGES = [
     {
         "src": "docs/intro/tour.md",
         "out": "guides/tour/index.html",
-        "logo": "/logo.png",
         "lang": "en",
         "title": "A tour of Emo",
         "description": "A ten-minute tour of Emo: every runnable block is compiled to Wasm and checked against its output.",
-        "home_href": "/guides/tour/",
         "switch_href": "/zh/guides/tour/",
         "switch_label": "中文",
+        "nav_href": "/guides/emo-ui/intro",
+        "nav_label": "EmoUI",
         "source": "docs/intro/tour.md",
         "source_href": "/guides/tour/tour.md",
         "source_label": "source",
@@ -50,17 +50,47 @@ PAGES = [
     {
         "src": "docs/zh-CN/intro/tour.md",
         "out": "zh/guides/tour/index.html",
-        "logo": "/logo.png",
         "lang": "zh-CN",
         "title": "Emo 语言导览",
         "description": "十分钟的 Emo 语言导览:每个可运行的代码块都编译为 Wasm,并与输出逐字节核对。",
-        "home_href": "/zh/guides/tour/",
         "switch_href": "/guides/tour/",
         "switch_label": "English",
+        "nav_href": "/zh/guides/emo-ui/intro",
+        "nav_label": "EmoUI",
         "source": "docs/zh-CN/intro/tour.md",
         "source_href": "/zh/guides/tour/tour.md",
         "source_label": "源码",
         "verified": "每个可运行的代码块都编译为 Wasm,并由 <code>just tour</code> 核对。",
+    },
+    {
+        "src": "docs/emo-ui/intro.md",
+        "out": "guides/emo-ui/intro.html",
+        "lang": "en",
+        "title": "Getting started with EmoUI",
+        "description": "Build two EmoUI applications from scratch: a Hello, World window and a counter, with complete code.",
+        "switch_href": "/zh/guides/emo-ui/intro",
+        "switch_label": "中文",
+        "nav_href": "/guides/tour/",
+        "nav_label": "Tour",
+        "source": "docs/emo-ui/intro.md",
+        "source_href": "/guides/emo-ui/intro.md",
+        "source_label": "source",
+        "verified": "Both programs build against the in-tree EmoUI packages.",
+    },
+    {
+        "src": "docs/zh-CN/emo-ui/intro.md",
+        "out": "zh/guides/emo-ui/intro.html",
+        "lang": "zh-CN",
+        "title": "EmoUI 入门",
+        "description": "从零写两个 EmoUI 应用:Hello, World 窗口与计数器,含完整代码。",
+        "switch_href": "/guides/emo-ui/intro",
+        "switch_label": "English",
+        "nav_href": "/zh/guides/tour/",
+        "nav_label": "导览",
+        "source": "docs/zh-CN/emo-ui/intro.md",
+        "source_href": "/zh/guides/emo-ui/intro.md",
+        "source_label": "源码",
+        "verified": "两个程序都针对仓库内的 EmoUI 包构建。",
     },
 ]
 
@@ -322,10 +352,12 @@ def render(page, repo, branch):
         lang=page["lang"],
         title=html.escape(page["title"]),
         description=html.escape(page["description"]),
-        logo=page["logo"],
-        home_href=page["home_href"],
+        logo="/logo.png",
+
         switch_href=page["switch_href"],
         switch_label=html.escape(page["switch_label"]),
+        nav_href=page["nav_href"],
+        nav_label=html.escape(page["nav_label"]),
         source_href=page["source_href"],
         source_label=html.escape(page["source_label"]),
         toc=toc,
@@ -348,8 +380,9 @@ TEMPLATE = """<!doctype html>
 </head>
 <body>
 <header>
-  <a class="brand" href="{home_href}">emo<span>.tour</span></a>
+  <a class="brand" href="/">emo<span>.docs</span></a>
   <nav>
+    <a href="{nav_href}">{nav_label}</a>
     <a href="{switch_href}">{switch_label}</a>
     <a href="{source_href}">{source_label}</a>
   </nav>
@@ -370,7 +403,7 @@ TEMPLATE = """<!doctype html>
 
 def main():
     ap = argparse.ArgumentParser(description="Build the Emo language tour site.")
-    ap.add_argument("--out", default=os.path.join(ROOT, "_build", "tour-site"))
+    ap.add_argument("--out", default=os.path.join(ROOT, "_build", "docs-site"))
     ap.add_argument("--repo", default="https://github.com/emo-lang/emo")
     ap.add_argument("--branch", default="develop")
     args = ap.parse_args()
@@ -393,7 +426,7 @@ def main():
             raw = f.read()
         copy_dir = os.path.join(out, os.path.dirname(page["out"]))
         os.makedirs(copy_dir, exist_ok=True)
-        copy = os.path.join(copy_dir, "tour.md")
+        copy = os.path.join(copy_dir, os.path.basename(page["source"]))
         with open(copy, "w", encoding="utf-8") as f:
             f.write(raw)
         print("built %s" % os.path.relpath(copy, ROOT))
