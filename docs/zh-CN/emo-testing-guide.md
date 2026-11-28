@@ -1,7 +1,7 @@
 # Emo 测试指南
 
 Emo 自带测试运行器和四个断言内建。没有要安装的框架，没有要写的 import，
-没有要加的 `deps` 条目:`emo test` 按约定发现测试，而 `expect_equal`、
+没有要加的 `deps` 条目：`emo test` 按约定发现测试，而 `expect_equal`、
 `expect_true`、`expect_false`、`expect_fail` 是每个程序都已经拥有的
 裸名字。
 
@@ -11,7 +11,7 @@ Emo 自带测试运行器和四个断言内建。没有要安装的框架，没�
 
 ## 快速开始
 
-一个项目就是带有 `package.emo` manifest 与 `test/` 目录的目录:
+一个项目就是带有 `package.emo` manifest 与 `test/` 目录的目录：
 
 ```text
 my-project/
@@ -21,7 +21,7 @@ my-project/
     arithmetic.emo
 ```
 
-`package.emo` 是普通 manifest;项目留在本地时，普通名字就够:
+`package.emo` 是普通 manifest;项目留在本地时，普通名字就够：
 
 ```emo
 package {
@@ -33,7 +33,7 @@ package {
 }
 ```
 
-`main.emo` 放着被测试的代码:
+`main.emo` 放着被测试的代码：
 
 ```emo
 def add(a Int64, b Int64) Int64 {
@@ -41,7 +41,7 @@ def add(a Int64, b Int64) Int64 {
 }
 ```
 
-`test/arithmetic.emo` 放着测试:
+`test/arithmetic.emo` 放着测试：
 
 ```emo
 def test_add() {
@@ -53,7 +53,7 @@ def test_negative() {
 }
 ```
 
-在项目根目录运行它们:
+在项目根目录运行它们：
 
 ```console
 $ emo test
@@ -79,7 +79,7 @@ ok test.arithmetic.test_negative
   的形式是 Void `def`。
 - **顺序是确定的。** 模块按路径排序运行，模块内的测试按名字排序运行。
 
-没有名字过滤，也没有 `skip` 属性:整棵 `test/` 树都会运行。
+没有名字过滤，也没有 `skip` 属性：整棵 `test/` 树都会运行。
 
 ## 断言内建
 
@@ -95,7 +95,7 @@ ok test.arithmetic.test_negative
 
 ### `expect_equal(expected, actual)`
 
-用语言的结构化 `==` 比较，也就是普通代码用的同一个关系:
+用语言的结构化 `==` 比较，也就是普通代码用的同一个关系：
 
 - 原语按值比较;`Int64`、`Byte`、`Char`、`String` 中类型不同的值永不
   相等，因为没有跨类型强制;
@@ -113,7 +113,7 @@ expect_equal([1, [2, "x"]], [1, [2, "x"]])
 expect_equal(("ok", 3), result)
 ```
 
-一次失败读起来是:
+一次失败读起来是：
 
 ```text
 expect_equal: expected 3, got 2
@@ -121,7 +121,7 @@ expect_equal: expected 3, got 2
 
 ### `expect_true(value)` 与 `expect_false(value)`
 
-接受一个 `Bool` 表达式——比较、谓词调用或 Bool 变量:
+接受一个 `Bool` 表达式——比较、谓词调用或 Bool 变量：
 
 ```emo
 expect_true(main.is_even(4))
@@ -130,13 +130,13 @@ expect_true(user.is_older?())
 ```
 
 值不对时以确切消息 `expect_true: got false` 或 `expect_false: got true`
-失败。非 Bool 参数是运行时错误:checker 把参数留在 `Unknown`，运行时
+失败。非 Bool 参数是运行时错误：checker 把参数留在 `Unknown`，运行时
 报告 `` E3001: `expect_true` expects a Bool, got Int64 ``，运行器把它
 报告为 `ERROR`，而不是 `FAIL`。
 
 ### `expect_fail(message)`
 
-总是抛出，原样携带 `message`。它是其余三个无法表达的条件的安全出口:
+总是抛出，原样携带 `message`。它是其余三个无法表达的条件的安全出口：
 
 ```emo
 def test_parse() {
@@ -164,7 +164,7 @@ def test_parse() {
 
 ## 一轮运行如何报告
 
-每个测试恰好产生一个结果:
+每个测试恰好产生一个结果：
 
 - **pass**——测试返回且没有抛出。运行器打印 `ok <module>.<test>`。
 - **fail**——某个断言失败，或测试抛出了其他异常。运行器打印
@@ -174,12 +174,12 @@ def test_parse() {
   Bool、越界索引，或带参数的测试函数。运行器打印
   `ERROR <module>.<test>` 连同诊断与捕获的输出。
 
-模块路径包含 `test` 目录:`test/arithmetic.emo` 里名为 `test_add` 的
+模块路径包含 `test` 目录：`test/arithmetic.emo` 里名为 `test_add` 的
 测试报告为 `test.arithmetic.test_add`。如果测试模块自己的顶层代码在
 加载时抛出或出错，结果是 `ERROR <module>.<load>`，该模块的测试不会
 运行。
 
-一次典型的失败运行:
+一次典型的失败运行：
 
 ```console
 $ emo test
@@ -197,7 +197,7 @@ FAIL test.fail.test_bad
 运行器先打印渲染后的诊断——含源码摘录与指示符——再打印捕获的输出。
 失败测试的调用栈跟在摘录之后，每行一帧;超过 20 帧的链显示最内层
 20 帧，并注明隐藏了多少。测试打印的输出被捕获，只在该测试失败或出错
-时显示;通过的测试不显示输出。汇总行统计全部三种结果:
+时显示;通过的测试不显示输出。汇总行统计全部三种结果：
 
 ```text
 3 tests, 0 passed, 1 failed, 2 errors
@@ -209,7 +209,7 @@ FAIL test.fail.test_bad
 `emo test --fail-fast` 在第一个失败或出错的测试处停下;此时汇总只统计
 已运行的测试，也没有回顾。
 
-退出码:
+退出码：
 
 | 码 | 含义 |
 | --- | --- |
@@ -228,7 +228,7 @@ FAIL test.fail.test_bad
 抛出，所以一个失败不会停下其他测试——除非 `--fail-fast` 要求它停下。
 测试启动的进程在它的调度器运行结束时被丢弃。
 
-模块环境则不同:一个测试模块**只加载一次**，它的所有测试都在同一个
+模块环境则不同：一个测试模块**只加载一次**，它的所有测试都在同一个
 环境上运行。模块级的可变值——顶层 `var`，或在模块作用域创建的 `Box`、
 `List`、`Map`、`ArrayBuilder`——被该模块的每个测试共享，不在测试之间
 重置。测试之间不能互相观察时，请在测试内部(或它调用的辅助函数内部)
@@ -245,5 +245,5 @@ FAIL test.fail.test_bad
 - **仅解释器。** `emo test` 总是解释执行。编译后端不降低断言内建，
   编译构建会把 `test/` 下的每个模块排除在程序之外——测试不被检查、
   不被降低、不被发布。产品模块若调用断言，仍会到达后端的拒绝
-  (wasm、beam、riscv64)或运行时失败(`c`、`ocaml`、`typescript`),
+  (wasm、beam、riscv64)或运行时失败(`c`、`ocaml`、`typescript`)，
   所以请把断言留在 `test/`。

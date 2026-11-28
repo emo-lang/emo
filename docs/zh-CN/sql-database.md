@@ -3,15 +3,15 @@
 写于 2026-10-06。这是一份技术可行性评估，不是已定的设计决策;文中
 关于项目状态的描述以写作日期的仓库为准。
 
-问题:用 Emo 造一款声称 SQL 标准兼容的原创数据库产品，到底有多难?
+问题：用 Emo 造一款声称 SQL 标准兼容的原创数据库产品，到底有多难?
 
 ## 结论
 
 **可行，但要分档——而且难度的大头与语言无关。** 十分里七八分的工程量
-是语言无关的:SQL 标准的广度、存储引擎的正确性、一致性验证的证据。
+是语言无关的：SQL 标准的广度、存储引擎的正确性、一致性验证的证据。
 Emo 的 actor 模型与直接风格 IO 在架构上是真适配——比多数系统类目都
 近——但产品要踩的头两层，持久化 IO 与精确数值，恰恰是 Emo 今天做不到
-的:`file` 包只有两个函数，FFI 只放行三种类型。分档给结论:
+的：`file` 包只有两个函数，FFI 只放行三种类型。分档给结论：
 
 | 档位 | 产品 | 工作量量级 |
 |---|---|---|
@@ -27,7 +27,7 @@ PostgreSQL——在役系统里对标准追踪最紧的一个——不声称完�
 任何其他系统这么声称。
 
 官方的一致性认证体系随 NIST 的 SQL 验证计划(FIPS 127-2)一起死在了
-上世纪 90 年代。今天"兼容"在实践中的含义是一组东西:明确声明的方言
+上世纪 90 年代。今天"兼容"在实践中的含义是一组东西：明确声明的方言
 档位、对着 SQLite 的 SQLLogicTest 语料(数百万条查询)做 diff 测试、
 以 PostgreSQL wire 协议为事实互操作标准、SQLSTATE 错误码、
 `information_schema`。第一个产品决策就是把"兼容"降维成其中可验收的
@@ -61,7 +61,7 @@ PostgreSQL——在役系统里对标准追踪最紧的一个——不声称完�
 - **不可变优先天然是 MVCC 形态。** 不可变页在构造上就能跨进程安全
   共享，`Box` 的可变性不跨进程边界，快照是一个值而不是一种纪律。
 
-SQL 前端本身也是有先例的地盘:已经用 Emo 写成的 wasm 解码器与验证器
+SQL 前端本身也是有先例的地盘：已经用 Emo 写成的 wasm 解码器与验证器
 (目前约 3900 行)就是同一工种——文法、二进制格式、索引空间校验——
 只是规模差一到五十倍。
 
@@ -90,7 +90,7 @@ SQL 前端本身也是有先例的地盘:已经用 Emo 写成的 wasm 解码器�
 
 ## 需要先在 Emo 落地什么
 
-- `file`:fsync、append、seek 与定位写、`Bytes` IO。
+- `file`：fsync、append、seek 与定位写、`Bytes` IO。
 - FFI 放行 `Bytes`(最终是指针)，native 目标优先。
 - `Int32`/`Int128`——NUMERIC 进入视野的那天，numeric-width 文档里的
    未来宽度就成了前置条件。
@@ -111,10 +111,10 @@ SQL 前端本身也是有先例的地盘:已经用 Emo 写成的 wasm 解码器�
 
 ## 参考资料
 
-- ISO/IEC 9075(SQL)，最新版 SQL:2023:<https://www.iso.org>
-- SQLLogicTest,SQLite 的语料测试工具:
+- ISO/IEC 9075(SQL)，最新版 SQL:2023：<https://www.iso.org>
+- SQLLogicTest,SQLite 的语料测试工具：
   <https://www.sqlite.org/sqllogictest/>
 - SQLite:<https://www.sqlite.org>
-- PostgreSQL wire 协议文档:
+- PostgreSQL wire 协议文档：
   <https://www.postgresql.org/docs/current/protocol.html>
 - DuckDB:<https://duckdb.org>

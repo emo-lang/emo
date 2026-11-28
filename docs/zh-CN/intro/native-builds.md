@@ -31,7 +31,7 @@ built myapp
   ```
 
   回调方法的参数留在封送层（`Float64`、`String`、`Bool`、`Int64`），返回额外允许 `Void`。满足同一接口的两个不同类的对象各自分发到自己的方法——对象就骑在 userdata 里。没有该契约的目标在检查期拒绝该参数，与任何无法兑现的 `foreign def` 一致。
-- **复合数据以 struct 形状跨界。** 类型为 tuple——或载体类——的 `foreign def` 参数按值传递一个 C 结构体:元素类型按序就是布局，嵌套 tuple 在结构体内再嵌一层结构体，类实例贡献它 init 赋值的字段(类的形状就是它的 init 签名)。复合返回以 tuple 回来:
+- **复合数据以 struct 形状跨界。** 类型为 tuple——或载体类——的 `foreign def` 参数按值传递一个 C 结构体：元素类型按序就是布局，嵌套 tuple 在结构体内再嵌一层结构体，类实例贡献它 init 赋值的字段(类的形状就是它的 init 签名)。复合返回以 tuple 回来：
 
   ```emo
   foreign def stretch(r ((Float64, Float64), Float64)) (Float64, Float64) = "stretch"

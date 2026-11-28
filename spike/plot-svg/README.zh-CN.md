@@ -1,6 +1,6 @@
-# 绘图 spike:用纯 Emo 画出一张真正的二维图
+# 绘图 spike：用纯 Emo 画出一张真正的二维图
 
-这个 spike 在动手建任何绘图库之前先回答一个问题:**只靠 Emo 的值类型和
+这个 spike 在动手建任何绘图库之前先回答一个问题：**只靠 Emo 的值类型和
 字符串拼接——没有 FFI、没有图形运行时——能不能产出真正的二维图表?**
 答案是能——`main.emo` 把"月份对销售额"的图画进了 `chart.png`，而它的
 源程序只有 `Float64`、`Array`、`String` 和循环。
@@ -34,18 +34,18 @@ rsvg-convert -w 760 -h 460 chart.svg -o chart.png   # 任意 SVG 查看器均可
 
 ## 这个 spike 发现的缺口
 
-它同时也是一次目标矩阵探测。同一份源码在 `develop` 树(`v0.28.1`)上:
+它同时也是一次目标矩阵探测。同一份源码在 `develop` 树(`v0.28.1`)上：
 
 | 目标 | 折线图 | 带坐标轴与刻度的图 |
 |---|---|---|
 | `emo run`(解释器) | 可运行 | 可运行 |
-| `ocaml` | 可运行，与解释器逐字节一致 | **失败**:`non-native expression in specialized body`(`Type_ref margin_t`) |
+| `ocaml` | 可运行，与解释器逐字节一致 | **失败**：`non-native expression in specialized body`(`Type_ref margin_t`) |
 | `typescript` | 构建通过 | 构建通过 |
-| `c` | **拒绝**:“does not support method calls yet” | **拒绝**:“does not support the type-level method `fig_w.to_int64`” |
-| `wasm` | **拒绝**:`to_float64` 无静态分派 | **拒绝**:同上 |
-| `beam` | **拒绝**:`to_float64` 无分派 | **拒绝**:同上 |
+| `c` | **拒绝**：“does not support method calls yet” | **拒绝**：“does not support the type-level method `fig_w.to_int64`” |
+| `wasm` | **拒绝**：`to_float64` 无静态分派 | **拒绝**：同上 |
+| `beam` | **拒绝**：`to_float64` 无分派 | **拒绝**：同上 |
 
-由此得两条结论，均记入评估文档:
+由此得两条结论，均记入评估文档：
 
 1. **浮点方法分派的目标对齐是前提。** 一张图要用到数值上的
    `to_float64`、`to_int64`、`floor`、`ceil`、`to_string`;今天六个

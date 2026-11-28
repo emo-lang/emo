@@ -1,9 +1,9 @@
 # `os` 包
 
-标准库的进程级接口:进程 id、`fork`、`execv`、`execvp`、`waitpid`、
+标准库的进程级接口：进程 id、`fork`、`execv`、`execvp`、`waitpid`、
 管道、描述符接线、环境变量、信号、工作目录、目录列举，以及裸
 (非缓冲、基于 fd)文件 IO——系统程序在搭建一切之前需要的底层能力
-(shell 便是其一)。与格式包不同，`os` 不是纯 Emo:它的调用分发
+(shell 便是其一)。与格式包不同，`os` 不是纯 Emo：它的调用分发
 到以 POSIX 为底座的运行时实现，因此只声明宿主能承载这套接口的
 目标——`ocaml`、`c`，以及 `wasm`(fd、目录与工作目录半边;进程半边
 在那里改为调用时 raise 并点名能力)。给浏览器或字节码目标声明这个
@@ -15,7 +15,7 @@
 require "os"
 ```
 
-标准库随编译器一起发布，但它的包和其他依赖一样带版本:`require "os"` 需要在 manifest 的 `deps` 块里钉上 `"os" = "0.1.0"`。本包声明 `ocaml`、`c` 和 `wasm` 目标，其他目标的构建会拒绝它。
+标准库随编译器一起发布，但它的包和其他依赖一样带版本：`require "os"` 需要在 manifest 的 `deps` 块里钉上 `"os" = "0.1.0"`。本包声明 `ocaml`、`c` 和 `wasm` 目标，其他目标的构建会拒绝它。
 
 ## 错误
 
@@ -46,7 +46,7 @@ def _exit(status Int64) Void
 中是子进程的 pid。`waitpid(pid)` 阻塞到该子进程改变状态，回答
 `(pid, status)`;`status` 是内核原始的 16 位状态字，由 `wait_*` 系列
 辅助函数解码——与所有 Unix 内核相同的编码，所以在两个目标上这些
-数字含义一致:
+数字含义一致：
 
 ```emo
 const w = os.waitpid(pid)
@@ -59,7 +59,7 @@ if os.wait_exited(w[1]) {
 - `wait_signaled` / `wait_signal` —— 被信号杀死，以及是哪个信号。
 - `wait_stopped` / `wait_stop_signal` —— 被停止，以及是哪个信号。
 
-`waitpid_nohang(pid)` 是 waitpid 的轮询半:尚无子进程退出时，调用
+`waitpid_nohang(pid)` 是 waitpid 的轮询半：尚无子进程退出时，调用
 者继续走自己的路。已退出的子进程回答 `(R.ok, (pid, status))`
 ——与 waitpid 携带的同一个原始状态字;有子进程但都没退回答
 `(R.ok, (0, 0))`，内核自己的零;谁也不是的 pid 以 errno reason
@@ -70,7 +70,7 @@ if os.wait_exited(w[1]) {
 ——fork 子进程随后接 `_exit`，因为在那里抛异常会把父进程的清理
 逻辑再跑一遍。`_exit(status)` 立即结束调用进程，不做任何展开——
 这是 fork 子进程的出口，保证子进程不会把父进程的清理逻辑再跑一遍。
-`execvp(file, argv)` 是同一种替换，只是多一步查找:`file` 沿 `PATH`
+`execvp(file, argv)` 是同一种替换，只是多一步查找：`file` 沿 `PATH`
 环境变量搜索(与 shell 自己的查找一致;带斜杠的名字原样使用)。
 成功时它绝不返回;失败时它回答 `(R.error, "os: execvp: …")`——
 `PATH` 里没有的名字是 `No such file or directory`，不能运行的是
@@ -78,13 +78,13 @@ if os.wait_exited(w[1]) {
 暗号。
 
 `kill(pid, sig)` 把 `sig` 发给 `pid`——进程 id，或其负数，代表以它
-为 id 的整个进程组，这是监护者赖以生存的纪律:一次调用结束一个组。
+为 id 的整个进程组，这是监护者赖以生存的纪律：一次调用结束一个组。
 `sig_*` 常量就是这些数字。越界的信号在调用之前就被拒绝——
 `os: kill 99: invalid signal`——每个目标上同样的固定原因;内核的
 拒绝则是数据驱动的值(`os: kill: No such process`)。
 `setpgid(pid, pgid)` 把 `pid` 挪进以 `pgid` 为 id 的进程组
 (`pgid 0` 表示 `pid` 自己的组)——fork 子进程的第一步，在 exec
-之前立起自己的新组，是 shell 赖以生存的纪律:此后父进程用一次负
+之前立起自己的新组，是 shell 赖以生存的纪律：此后父进程用一次负
 pid 的 kill 就能结束整个组。
 
 ## 描述符接线与终端
@@ -101,12 +101,12 @@ def tty_restore(fd Int64, saved Array[Int64]) (R, Int64)
 文件上。`isatty` 回答 `fd` 是否连接着终端——程序由此分辨交互会话
 与管道、脚本喂入的 stdin。两者都是朴素 POSIX，没有缓冲，没有意外。
 
-`tty_raw(fd)` 把终端放进 raw 模式——一次读一个字节，如打即得:
+`tty_raw(fd)` 把终端放进 raw 模式——一次读一个字节，如打即得：
 无回显、无行纪律、无信号生成——并答出当时的状态作为不透明字，
 即 `tty_restore(fd, saved)` 交回去的那份。raw 是行编辑器自己的读
-法，策略归 os:`cfmakeraw` 是可移植的门(旗标位本身在 macOS 与
+法，策略归 os：`cfmakeraw` 是可移植的门(旗标位本身在 macOS 与
 Linux 之间不同)，保存的字只归造出它的那个运行时读， blob 不出配
-对之外。陌生的描述符——管道、普通文件——以 errno 文本作值拒绝:
+对之外。陌生的描述符——管道、普通文件——以 errno 文本作值拒绝：
 `os: tty_raw: Inappropriate ioctl for device`，每个目标同样字节。
 调用者在任何命令运行之前先恢复，子进程保持在经典的熟模式终端。
 
@@ -121,7 +121,7 @@ def unsetenv(name String) (R, Int64)
 
 `argv()` 返回进程自己的参数向量，`argv[0]` 是进程启动时的名字——
 永不失败。`getenv` 返回变量的值;未设置与其他数据驱动的失败一样
-是值:`(R.error, "os: getenv HOME: is not set")`。`setenv` 设置或
+是值：`(R.error, "os: getenv HOME: is not set")`。`setenv` 设置或
 替换(POSIX 恒覆盖形式);fork 子进程经 exec 继承环境——shell 的
 `export` 正是这样传给它运行的命令的。
 
@@ -145,7 +145,7 @@ def signal_default(sig Int64) (R, Int64)
 signal_ignore 99: invalid signal")`——两个目标上文字相同，由构造
 保证。
 
-这是 shell 赖以为生的纪律:shell 自己的进程里忽略 `sig_int`(和
+这是 shell 赖以为生的纪律：shell 自己的进程里忽略 `sig_int`(和
 `sig_quit`)，fork 子进程在 exec 之前调 `signal_default` 撤销。
 *忽略*的处置会跨 exec 存活——所以子进程必须撤销——*handler* 的
 处置则不会;这一对就是全部技巧。shell 里忽略 `sig_pipe`，写进
@@ -157,7 +157,7 @@ signal_ignore 99: invalid signal")`——两个目标上文字相同，由构造
 def pipe() (R, (Int64, Int64))
 ```
 
-`(R.ok, (读端, 写端))`——单向、字节流、进程内。经典形状，一写一读:
+`(R.ok, (读端, 写端))`——单向、字节流、进程内。经典形状，一写一读：
 
 ```emo
 const (R.ok, p) = os.pipe()
@@ -176,7 +176,7 @@ os.close(p[0])
 
 ## 裸文件 IO
 
-非缓冲:每次 `read` 和 `write` 都直接进内核。
+非缓冲：每次 `read` 和 `write` 都直接进内核。
 
 ```emo
 def open_read(path String) (R, Int64)
@@ -204,7 +204,7 @@ def chdir(path String) (R, Int64)
 ```
 
 `list_dir` 返回目录里的条目名，按字节序排序，不含 `.` 和 `..`——
-两个目标上顺序一致，目录列举可复现。这里的一切都只收发普通路径:
+两个目标上顺序一致，目录列举可复现。这里的一切都只收发普通路径：
 还没有文件类型查询，没有 stat。
 
 ## fork 纪律

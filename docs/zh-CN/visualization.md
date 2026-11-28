@@ -1,16 +1,16 @@
 # Emo 与可视化 —— 一份评估与一个设计方向
 
 写于 2026-10-12。这是一份技术可行性评估外加一个设计方向;文中关于
-项目状态的描述以写作日期的仓库为准(`develop`,`v0.28.1`)。方向已
+项目状态的描述以写作日期的仓库为准(`develop`，`v0.28.1`)。方向已
 于 2026-10-12 讨论定案(见末尾的已记录决定一节)，但在工作被拆成
 plan 步骤之前仍留在 `docs/` 设计笔记里;只有成为已定设计时才进入
 `README.md`。
 
-问题:要让 Emo 具备与 Python 的 **Matplotlib** 和 **Seaborn** 相当的
+问题：要让 Emo 具备与 Python 的 **Matplotlib** 和 **Seaborn** 相当的
 绘图与统计图形能力，到底要做什么?
 
 证据基础是一个可运行的 spike
-([`spike/plot-svg`](../../spike/plot-svg/README.zh-CN.md)):一张真正的二维
+([`spike/plot-svg`](../../spike/plot-svg/README.zh-CN.md))：一张真正的二维
 图——nice-number 刻度、绘图框、网格线、坐标轴标签、带标记点的折线
 序列——由一个没有任何 FFI 的纯 Emo 程序渲染成 SVG。这个 spike 同时
 也是一次目标矩阵探测，它的失败与成功一样有信息量。
@@ -18,7 +18,7 @@ plan 步骤之前仍留在 `docs/` 设计笔记里;只有成为已定设计时�
 ## 结论
 
 **可行，但要分档——而且渲染器是容易的部分。** 难的是它下面的数值与
-可移植性基底:六个目标、只放行 `c`/`ocaml` 的 FFI、以及停在
+可移植性基底：六个目标、只放行 `c`/`ocaml` 的 FFI、以及停在
 `sqrt`/`floor`/`ceil`/`trunc` 的核心浮点面。以 SVG 为输出格式消掉了
 古典意义上最大的障碍——字体渲染——因为文本归查看器管，不归库管。
 剩下的就是算术、布局，以及大量有纪律的普通代码。
@@ -63,18 +63,18 @@ statsmodels 之上。第一个产品决策，和 SQL 那份评估完全一样，
 
 spike 把能力盘点钉到了具体条目上。
 
-**已经具备、且够绘制层用:** `Float64`(IEEE 754)与 `Int64`(绕回)、
+**已经具备、且够绘制层用：** `Float64`(IEEE 754)与 `Int64`(绕回)、
 带插值与 `printf` 的 `String`、不可变且可 `append` 的 `Array`、`Map`、
 `List`(带 `push_back`/`pop_back` 的双端队列)、`Box`、带字节与
 小端访问器的 `Bytes`、元组、枚举、类、结构化接口、函数组、挂载块、
 `for`/`while`，以及可声明目标集的包机制。
 
-**缺口，各带代价:**
+**缺口，各带代价：**
 
 1. **超越函数面是缺的。** 核心停在 `sqrt`、`floor`、`ceil`、`trunc`、
    `to_int64`、`to_float64`;没有 `sin`、`cos`、`atan2`、`exp`、
    `log`、`pow`。统计层需要 `exp`/`log`(KDE、对数坐标、回归区间)与
-   正态分位函数(误差棒、置信带)。两条路:**纯 Emo 数学层**(运算
+   正态分位函数(误差棒、置信带)。两条路：**纯 Emo 数学层**(运算
    顺序固定，因而确定，因而可逐字节对齐 golden——标准库走的路)，
    或者**核心/FFI 原语**(快，但要跨六个目标做对齐，且引出确定性
    问题，见风险一节)。
@@ -89,14 +89,14 @@ spike 把能力盘点钉到了具体条目上。
    精确长度填充)作为这个包的第一件工具。
 4. **没有 `sort` / `map` / `filter` / `reverse`，也没有泛型。** 分位数、
    箱线图、刻度排序、直方图分箱都需要数值排序。包内这是一个
-   `sort_float64s` 加一个索引排序——不讨喜但有边界，而且诚实:这门
+   `sort_float64s` 加一个索引排序——不讨喜但有边界，而且诚实：这门
    语言有意地没有泛型定义语法。
 5. **没有字体尺度信息。** SVG 把渲染交了出去，却没把*测量*交出去，而
-   自动布局(标签避让、旋转刻度、图例)需要宽度。两个答案:一张按
+   自动布局(标签避让、旋转刻度、图例)需要宽度。两个答案：一张按
    字符的基础字体步进表(近似、零依赖)，或者一套 **Hershey 笔画
    字体**——公有领域、纯几何、可精确测量——它同时还能当栅格后端的
    文本来源。
-6. **没有默认参数。** 已核实:`def f(a Int64, b Int64)` 以 `f(1)` 调用
+6. **没有默认参数。** 已核实：`def f(a Int64, b Int64)` 以 `f(1)` 调用
    会报 E4009。命名参数有，默认值没有。于是样式选项改由按 mark 的
    样式值配 `with_*` 复制方法来携带(见"Emo 里的 API")——这是一个
    真问题，不是脚注。
@@ -130,17 +130,17 @@ interface Renderer {
 }
 ```
 
-T0 只交付一个实现:`SvgRenderer`。终端渲染器(盲文/方块字符，承
+T0 只交付一个实现：`SvgRenderer`。终端渲染器(盲文/方块字符，承
 `UnicodePlot` 的精神)与 PNG 光栅器是同一接口的后续实现——终端这个
-已于 Step 44(2026-10-20)落地为 `internal.term.TermRenderer`:mark
+已于 Step 44(2026-10-20)落地为 `internal.term.TermRenderer`：mark
 与边框用盲文格子，标签用网格自身的字符，每个颜色按它对图背景色的
 亮度对比着墨;PNG 这个于 Step 45(2026-10-21)落地为
-`internal.png.PngRenderer`:2 倍超采样的 RGB 样本平均成像素、扫描线
+`internal.png.PngRenderer`：2 倍超采样的 RGB 样本平均成像素、扫描线
 填充、方画笔的 Bresenham 线、Hershey Simplex 笔画字体，文件背后是包
 自带的 DEFLATE、CRC-32 与 Adler-32——`finish()` 对所有渲染器应答
 `Bytes`，文本格式即其 UTF-8 字节。`svg`、`terminal` 与 `png` 经同一个
 与渲染器无关的 `render` 遍历同一张图。`Renderer`
-是绘图层自身的抽象，不是 Emo 的目标:Emo 的构建目标是
+是绘图层自身的抽象，不是 Emo 的目标：Emo 的构建目标是
 `c`/`ocaml`/`typescript`/`browser`/`wasm`/`beam`/`riscv64`(解释器
 直接求值程序、不产生产物;见 `demo-targets.md`)，而 EmoUI 是跑在
 它们之上的库，其平台后端是 OS 工具包(AppKit、GTK 4)。EmoUI 当前的
@@ -150,13 +150,13 @@ T0 只交付一个实现:`SvgRenderer`。终端渲染器(盲文/方块字符，�
 ### 第 1 层 —— 几何、比例尺、刻度
 
 `Point`/`Rect` 用普通元组或小类;线性、对数、band、时间比例尺;
-色图;以及 "nice numbers" 刻度定位与格式化(Heckbert 的 `nicenum`,
+色图;以及 "nice numbers" 刻度定位与格式化(Heckbert 的 `nicenum`，
 约三十行，也是坐标轴看起来专业而非"算法味"的原因)。除了对数与时间
 比例尺需要缺口 1 的数学层，其余全是语言今天就能做的算术。
 
 ### 第 2 层 —— 图与坐标轴
 
-对象模型是一张值图:`Figure` 持有一个或多个 `Axes`，每个 `Axes`
+对象模型是一张值图：`Figure` 持有一个或多个 `Axes`，每个 `Axes`
 有自己的比例尺、mark 列表、图例与标签。构造一张图就是一次普通调用，
 返回一个普通值;渲染是再下一次调用。
 
@@ -168,14 +168,14 @@ const chart = plot.figure(
 plot.save(chart, "chart.svg")
 ```
 
-刻意**不要 pyplot 式的全局状态**:Emo 的最小惊讶原则反对隐藏的
+刻意**不要 pyplot 式的全局状态**：Emo 的最小惊讶原则反对隐藏的
 "当前图"与"当前坐标轴"，而这恰是 Matplotlib 最受批评的设计决定。
-表面是声明式的(2026-10-12 决定):一张图是一个值，不是对一块活
+表面是声明式的(2026-10-12 决定)：一张图是一个值，不是对一块活
 画布的一串改动。
 
 ### 第 3 层 —— Matplotlib 式的表面
 
-mark 是 `plot.mark` 子模块里的值:`plot.mark.line(x, y)`、
+mark 是 `plot.mark` 子模块里的值：`plot.mark.line(x, y)`、
 `plot.mark.scatter(x, y)`、`plot.mark.bar(labels, values)`、
 `plot.mark.area(x, y)`、`plot.mark.hist(values, bins)`。每个返回一个
 携带数据与默认样式的 mark，`plot.axes(marks: [...])` 通过结构化
@@ -187,10 +187,10 @@ mark 是 `plot.mark` 子模块里的值:`plot.mark.line(x, y)`、
 ### 第 4 层 —— 面向数据集的图表表面(`plot.*`)
 
 在同一个引擎之上的、面向数据集的 API，位于 `plot` 包根
-(2026-10-12 决定):一个图表收一个 `Table` 加一张通道映射，返回一整
-张 `Figure`。Seaborn 的洞见是:一张图就是从数据列到美学通道的*映射*，
+(2026-10-12 决定)：一个图表收一个 `Table` 加一张通道映射，返回一整
+张 `Figure`。Seaborn 的洞见是：一张图就是从数据列到美学通道的*映射*，
 加一个统计变换，加一个 mark，再按一个或多个分组列分面。Emo 用一个
-`Table` 加上同一套 `Figure`/`Mark` 值恰好能表达:
+`Table` 加上同一套 `Figure`/`Mark` 值恰好能表达：
 
 ```
 plot.scatter(tips, { "x": "total_bill", "y": "tip", "color": "time" })
@@ -199,24 +199,24 @@ plot.box(tips,     { "x": "time", "y": "total_bill" })
 plot.heatmap(correlation)
 ```
 
-通道键是 Emo 自己的词表(2026-10-12 决定):`x`、`y`、`color`、`size`、
+通道键是 Emo 自己的词表(2026-10-12 决定)：`x`、`y`、`color`、`size`、
 `marker`、`dash`、`facet_row`、`facet_col`。每种图一个函数(2026-10-12
-决定):`scatter`、`line`、`hist`、`kde`、`ecdf`、`box`、`violin`、`bar`、
+决定)：`scatter`、`line`、`hist`、`kde`、`ecdf`、`box`、`violin`、`bar`、
 `count`、`strip`、`point`、`reg`、`heatmap`、`clustermap`;家族名
 (`relational`、`distributions`、`categorical`、`regression`、`matrix`)
 只是文档分组，不是 API。图表建在低层的 `plot.mark` mark 之上，后者也
 是公开的(第 3 层)。
 
-其下的统计子层:`describe`、`quantile`、`histogram_bins`、`kde`、
+其下的统计子层：`describe`、`quantile`、`histogram_bins`、`kde`、
 `ecdf`、`ols` 加置信带、`box_stats`，以及一个确定性的 PRNG。全是纯
 算术;KDE 用 `math.exp`，而正态分位(`normal_quantile`)是统计层自己
 的(2026-10-12 决定)。
 
 **最小表**(2026-10-12 决定)是这一层唯一需要的新数据结构——Emo
-没有 data-frame，它也不能长成 data-frame。`Table` 是列式的:数值列放
-`Map[String, Array[Float64]]`，分类列放 `Map[String, Array[String]]`,
+没有 data-frame，它也不能长成 data-frame。`Table` 是列式的：数值列放
+`Map[String, Array[Float64]]`，分类列放 `Map[String, Array[String]]`，
 外加行数。缺失的数值不是带内的 `NaN`——beam 目标的 Erlang 浮点根本
-表示不了——而是一条并列的存在性列:
+表示不了——而是一条并列的存在性列：
 
 ```emo
 enum Presence { present, absent }
@@ -234,7 +234,7 @@ const tips = plot.table(
 
 `plot.table(numbers, labels)`(所有值都在)与
 `plot.table_missing(numbers, presence, labels)` 校验各列等长、列名唯一，
-形状违例时 raise:字面量写出的表是程序意图，写错就是契约违反——将来
+形状违例时 raise：字面量写出的表是程序意图，写错就是契约违反——将来
 面向数据的入口(CSV 或 JSON 读取器)才返回 `(R.error, reason)`。访问用
 `number(name)` / `label(name)`，存在性数组在 `number` 旁边读取，并按列
 的类别校验。数据集 API 用一张
@@ -245,17 +245,17 @@ const tips = plot.table(
 ### 第 5 层 —— 其它后端与交互
 
 终端输出与 PNG 是进一步的 `Renderer` 实现。交互/GUI 图表**现在不
-做**(2026-10-12 决定):EmoUI 不是 Emo 的目标，且它当前的契约
+做**(2026-10-12 决定)：EmoUI 不是 Emo 的目标，且它当前的契约
 (`ui_window_make`/`ui_label_make`/`ui_place`/……)是摆放控件，没有
 绘制动词，所以把图画进 EmoUI 是 EmoUI 的一个新能力，不是绘图后端。
-若将来要追交互，那是 **EmoUI 内部的一条独立方向**:一套共享的
+若将来要追交互，那是 **EmoUI 内部的一条独立方向**：一套共享的
 向量画布契约，由 EmoUI 的画布控件与本库的 `Renderer` 各自实现
 (2026-10-12 决定)。它现在不得塑造静态 API。
 
 ## Emo 里的 API
 
 不需要任何新语法，这本身就是设计合身的强信号。表面是声明式的
-(2026-10-12 决定):一张图就是一个值——`Figure` 持有 `Axes`，每个
+(2026-10-12 决定)：一张图就是一个值——`Figure` 持有 `Axes`，每个
 `Axes` 持有 mark——一次调用即渲染。没有对隐藏当前图的改动。
 
 ```emo
@@ -274,8 +274,8 @@ const chart = plot.figure(
 plot.save(chart, "chart.svg")
 ```
 
-`marks` 是 `Array[Mark]`,`Mark` 是一个结构化接口，于是 `Line` 与
-`Scatter` 这两个不同的类可以放进同一个数组，而不需要继承:
+`marks` 是 `Array[Mark]`，`Mark` 是一个结构化接口，于是 `Line` 与
+`Scatter` 这两个不同的类可以放进同一个数组，而不需要继承：
 
 ```emo
 interface Mark {
@@ -284,7 +284,7 @@ interface Mark {
 ```
 
 块当子节点(EmoUI 也用这个形状，但这里只是语法类比——没有依赖)
-是可能的第二种写法;数组参数是主形态:显式、顺序可见、不需要任何
+是可能的第二种写法;数组参数是主形态：显式、顺序可见、不需要任何
 新东西。
 
 ### 样式是唯一真正的设计难题
@@ -295,7 +295,7 @@ E4009——于是可选的样式无法挂在函数签名上。每个选项要么
 路——默认参数——在其后权衡。
 
 **mark 是值，默认样式已烘焙其中。** mark 工厂只收数据，返回一个已经
-带样式的 mark:
+带样式的 mark：
 
 ```emo
 def line(x Array[Float64], y Array[Float64]) Line {
@@ -305,7 +305,7 @@ def line(x Array[Float64], y Array[Float64]) Line {
 
 **每个 mark 家族有自己的样式类**，于是样式永远不会带一个它的 mark
 会忽略的字段——严格，没有静默忽略的选项——并且每个类为每个选项暴露
-一个 `with_*` 复制方法:
+一个 `with_*` 复制方法：
 
 ```emo
 class LineStyle {
@@ -338,7 +338,7 @@ def line_style() LineStyle {
 ```
 
 **mark 持有一个样式，且只有一个样式入口 `with_style`**(2026-10-12
-决定——不做 `with_*` 直通，于是每个 mark 的样式入口完全一致):
+决定——不做 `with_*` 直通，于是每个 mark 的样式入口完全一致)：
 
 ```emo
 class Line {
@@ -354,7 +354,7 @@ class Line {
 }
 ```
 
-调用点仍是普通 Emo:
+调用点仍是普通 Emo：
 
 ```emo
 plot.mark.line(months, sales)                               // 默认
@@ -364,7 +364,7 @@ plot.mark.line(months, sales).with_style(
   plot.mark.line_style().with_color("#c0392b").with_width(2.5))  // 改几项
 ```
 
-样板是机械的，且在包里只出现一次。代价是诚实的:`N` 个选项意味着每个
+样板是机械的，且在包里只出现一次。代价是诚实的：`N` 个选项意味着每个
 样式类 `N` 个复制方法，而没有泛型，语言消不掉这份重复。因为 mark 只有
 `with_style`，这份代价每个样式类只付一次，不会乘以 mark 的数量。改一
 项的写法比直通啰嗦;若真实图表代码显示这份啰嗦占了大头，给 mark 补
@@ -383,7 +383,7 @@ plot.mark.line(months, sales, color: "#c0392b", width: 2.5)   // 覆盖
 ```
 
 这会彻底消掉样式类、`with_*` 样板与 `plot.mark.line_style()` 工厂，并给出
-最干净的调用点。它是语言特性，不是库特性:必须严格检查(默认值不得
+最干净的调用点。它是语言特性，不是库特性：必须严格检查(默认值不得
 引用后面的参数;按名覆盖保持无歧义;漏掉*无默认值*的参数仍是
 E4009)，而且它需要自己的设计评审与第二个消费者。建议是**先按
 `with_*` 设计把库建起来**——不改语言、样板有界——再让真实图表的摩擦
@@ -455,7 +455,7 @@ def axes() Axes
 
 `Domain.auto` 由 mark 数据的并集推断范围;`Domain.fixed` 携带显式的
 `(low, high)`。“标签 + 枚举标签装在元组里”正是 README 自己推荐的
-携带式枚举惯用形。`grid` 是 `(行, 列)`,`share` 决定分面各面板是否
+携带式枚举惯用形。`grid` 是 `(行, 列)`，`share` 决定分面各面板是否
 共享数据域(默认 `Share.all`)。手动单轴图就是 `(1, 1)`。类不可变，
 所以没有就地改的 `add`;mark 通过 `with_marks([...])` 进来。
 
@@ -511,10 +511,10 @@ enum Weight { regular, bold }
 
 ### 输出缓冲
 
-Emo 没有 `StringBuilder` 也没有 `join`,`Bytes` 是定长的，而标准库的
+Emo 没有 `StringBuilder` 也没有 `join`，`Bytes` 是定长的，而标准库的
 `bufio` 包只有原生目标(`targets = ["ocaml", "c"]`，因为它构建在 `os`
 之上)，所以一个五目标的渲染器用不上它的内存汇。于是渲染器自带一个内部
-`Buffer`:`List` 里的分块加一个字节计数，终结的 `to_string` 开一个精确
+`Buffer`：`List` 里的分块加一个字节计数，终结的 `to_string` 开一个精确
 长度的 `Bytes` 把每块拷一次(线性;`Bytes` 没有批量写，所以是逐字节拷)。
 `SvgRenderer.finish()` 经由它返回。
 
@@ -562,17 +562,17 @@ def sequential() Colormap
 def diverging() Colormap
 ```
 
-主题是挂在 `Figure` 上的值，绝不是全局:
+主题是挂在 `Figure` 上的值，绝不是全局：
 `plot.scatter(t, ch).with_theme(plot.dark_theme())`。`color` 通道按列的
-类别分派:分类列按层级排序位置到 `Theme.palette` 取色;数值列归一化后
+类别分派：分类列按层级排序位置到 `Theme.palette` 取色;数值列归一化后
 到 `Theme.cmap` 取色。内置色图用少量停靠点插值近似，不追求逐点一致。
 主题只提供默认;mark 最终画出的仍是 `plot.mark` 的样式值。
 
 ## 命名与打包
 
 标准库拥有顶层短名，包名是小写单词(`json`、`yaml`、`http`、
-`base64`)。2026-10-12 的决定是**一个包 `plot`**:数据集图表在根，低层
-mark 在子模块:
+`base64`)。2026-10-12 的决定是**一个包 `plot`**：数据集图表在根，低层
+mark 在子模块：
 
 - **`plot`**(模块 `plot`，包根)——数据集图表(`plot.scatter`、
   `plot.line`、`plot.hist`、`plot.box`……)、`figure`/`axes`/`save`
@@ -590,29 +590,29 @@ target)，和那些格式包完全一致。`Table` 所依赖的 `Map` 地基在 
 
 ## 工作顺序
 
-依赖是真实的，所以顺序不是随意的。2026-10-12 的决定钉死了形状:
+依赖是真实的，所以顺序不是随意的。2026-10-12 的决定钉死了形状：
 SVG 优先，一个独立的 `math` 包，然后是这一个 `plot` 包。
 
 - **A。 先做数值基底。** 补上缺口 2(`c`/`wasm`/`beam` 的浮点方法
   分派)，并落地一个新的标准库 **`math` 包**——纯 Emo、五个目标，
-  以绘图所需为限(2026-10-12 决定):`exp`、`log`、`log10`、`pow`、
+  以绘图所需为限(2026-10-12 决定)：`exp`、`log`、`log10`、`pow`、
   `sqrt`、`min`、`max`、`abs`、`clamp`，以及常量 `e`/`pi`。三角函数
   暂缓(T0+T1 没有极坐标或 3D);`normal_quantile` 与 `normal_cdf`
   放在 `plot`(内部)，不进 `math`。可选的原生快路径在 `c`/`ocaml`
   上经由 `foreign def`，默认关闭，并写明其输出与目标绑定;拼写用独立的
   `*_native` 函数(`math.exp` 纯、`math.exp_native` 原生——2026-10-12
   决定)。分派修复与 `math` 一起门控其上的所有工作。
-- **B. `plot` T0 核心——只做 SVG。** `Buffer`、比例尺、刻度、
+- **B。 `plot` T0 核心——只做 SVG。** `Buffer`、比例尺、刻度、
   `plot.mark` 的 mark 及其样式类、`Renderer` 接口、`SvgRenderer`、
   声明式的 `figure`/`axes` 值、`Table`，以及带坐标轴、图例、标题的
-  `plot.mark.line`/`scatter`/`bar`/`area`/`hist`。出口条件:
+  `plot.mark.line`/`scatter`/`bar`/`area`/`hist`。出口条件：
   `examples/plot_demo` 产出的一批 SVG 在五个目标上逐字节一致——标准
   库的 golden 标准。
 - **C。 T1 图表。** 数据集图表函数(`plot.scatter`、`plot.hist`、
-  `plot.box`……):描述统计、分箱、KDE、ECDF、箱统计、带置信带的 OLS、
+  `plot.box`……)：描述统计、分箱、KDE、ECDF、箱统计、带置信带的 OLS、
   分类/分布/关系/矩阵图表、分面、调色板与主题——全部建在 T0 的 mark
   之上。
-- **D。 终端渲染器**(2026-10-12 决定:排在 PNG 之前)。便宜的第二
+- **D。 终端渲染器**(2026-10-12 决定：排在 PNG 之前)。便宜的第二
   `Renderer`——把字符打印到终端，不开窗口;让图在 CI 与 CLI 里可见，
   也检验第 0 层真的与格式无关。
 - **E。 PNG。** 纯 Emo 的 zlib(stored，再到固定 Huffman 的 DEFLATE
@@ -626,7 +626,7 @@ SVG 优先，一个独立的 `math` 包，然后是这一个 `plot` 包。
 
 ## 对语言与编译器的诉求
 
-明确写出来，好让它们被有意识地决断，而不是在实现中途被撞见:
+明确写出来，好让它们被有意识地决断，而不是在实现中途被撞见：
 
 1. **数值方法分派对齐(`c`、`wasm`、`beam`)**——这是阻塞项，不是
    锦上添花。多半就是 `ocaml` 与 `typescript` 发射器已经在做的同一套
@@ -634,7 +634,7 @@ SVG 优先，一个独立的 `math` 包，然后是这一个 `plot` 包。
 2. **spike 撞上的 `ocaml` specialization 缺陷**
    (`non-native expression in specialized body`、`Type_ref margin_t`)。
    这是 bug，不是设计项;先报它。
-3. **浮点数学放进一个标准库 `math` 包**(2026-10-12 决定):纯 Emo、
+3. **浮点数学放进一个标准库 `math` 包**(2026-10-12 决定)：纯 Emo、
    五个目标，暂时以绘图所需为限——`exp`、`log`、`log10`、`pow`、
    `sqrt`、`min`、`max`、`abs`、`clamp`、`e`、`pi`;三角函数暂缓;
    `normal_quantile` 与 `normal_cdf` 放 `plot` 内部。它在 `c`/`ocaml`
@@ -652,14 +652,14 @@ SVG 优先，一个独立的 `math` 包，然后是这一个 `plot` 包。
 - **性能。** 解释器下生成 SVG 能舒服地处理数千个点，但处理不了数百
    万;密集散点与光栅化属于 `c` 目标。specialization 很重要——基准
    套件就是用来量它的。
-- **确定性与原生数学。** *已接受(2026-10-12):* `math` 包默认是
+- **确定性与原生数学。** *已接受(2026-10-12)：* `math` 包默认是
   纯 Emo 且逐字节一致;它的原生 `foreign def` 快路径为可选加入，输出
   写明与目标绑定，所以默认路径保住了逐字节 golden 惯例。
 - **文本尺度。** 没有字体引擎，自动布局要么近似(步进表)，要么
   局限于随包字体。这是 gnuplot 做过的同一取舍，几十年来都可接受，
   但要写出来，不能藏。
 - **范围。** Matplotlib 的表面实际上无界(投影、日期区域设置、3D、
-  动画、GUI 事件循环)。分档表就是防线:T0 + T1，声明清楚，其余明确
+  动画、GUI 事件循环)。分档表就是防线：T0 + T1，声明清楚，其余明确
   排除。
 - **没有泛型。** 每种数值类型在包内要有自己的排序与归约辅助。有界，
   但确实是要靠语言消不掉的重复。
@@ -674,20 +674,20 @@ SVG 优先，一个独立的 `math` 包，然后是这一个 `plot` 包。
 - **Seaborn**(Python)——面向数据集的映射(数据列 → 美学)、统计
   变换、主题与调色板。它的 API 是第 4 层的范本。
 - **ggplot2 / Vega-Lite / Observable Plot**——图形语法与 spec 优先的
-  取向，以及 SVG 优先输出。*已采纳(2026-10-12):* Emo 的表面是
+  取向，以及 SVG 优先输出。*已采纳(2026-10-12)：* Emo 的表面是
   声明式的——一次调用渲染一个 `Figure` 值——而不是就地改动的 `Axes`
   对象。
 - **gnuplot**(C)——终端后端、Hershey 字体、一个核心多种输出格式。
   SVG + 终端 + PNG 计划最接近的祖先，也是"这个计划古老而可靠"的
   证明。
-- **Elixir 的 `VegaLite` 与 `UnicodePlot`**——BEAM 谱系的两个答案:
+- **Elixir 的 `VegaLite` 与 `UnicodePlot`**——BEAM 谱系的两个答案：
   发一份 spec，或者画到终端。两者都贴 Emo 的 actor 与文本优先世界。
 - **Go 的 `gonum/plot`**——证明一个小型纯语言绘图库、带渲染器接口与
   SVG 后端，是一个人就能做的项目。借机制，不借命名与 API 形状。
 
 ## 建议
 
-站得住脚的第一个产品，现在已作为方向定案:**一个 `plot` 包——纯
+站得住脚的第一个产品，现在已作为方向定案：**一个 `plot` 包——纯
 Emo、SVG 优先、声明式、`Renderer` 接口、逐字节 golden 校验，T0，数据集
 图表在根、低层 mark 在 `plot.mark`——前置为数值分派对齐与一个标准库
 `math` 包。** 不需要任何语言改动。任何原生
@@ -703,7 +703,7 @@ Seaborn 对等”从目标表述中删掉，换成声明清楚的档位 T0 + T1�
    携带，不改语言。默认参数暂缓;详细对比见"Emo 里的 API"。
 3. **表面——声明式。** 一张图是一个 `Figure`/`Axes`/`Mark` 值图，
    一次调用渲染。
-4. **数据——一个最小 `Table`**:列式，数值列 `Map[String, Array[Float64]]`、
+4. **数据——一个最小 `Table`**：列式，数值列 `Map[String, Array[Float64]]`、
    分类列 `Map[String, Array[String]]`，再加一条并列的
    `Map[String, Array[Presence]]`(`enum Presence { present, absent }`)
    表示缺失;由 `plot.table(numbers, labels)`(全在)或
@@ -716,7 +716,7 @@ Seaborn 对等”从目标表述中删掉，换成声明清楚的档位 T0 + T1�
 7. **确定性——接受可选加入的原生快数学路径**，写明与目标绑定。
 8. **流程——先留这份 `docs/` 笔记**，等数值基底工作被拆细后再开
    `plan/step-NN-*.md`;`README.md` 等已定设计。
-9. **EmoUI——现在不做。** EmoUI 不是 Emo 的目标:它是跑在 Emo
+9. **EmoUI——现在不做。** EmoUI 不是 Emo 的目标：它是跑在 Emo
    native 目标之上的库，平台后端是 OS 工具包，且当前契约是摆放控件、
    没有绘制动词。因此交互/GUI 图表被排除在本项工作之外。若将来真做
    画布，共享的向量画布契约是一条**独立的 EmoUI 方向**(2026-10-12
@@ -728,7 +728,7 @@ Seaborn 对等”从目标表述中删掉，换成声明清楚的档位 T0 + T1�
 11. **mark 不做直通。** mark 唯一的样式入口是 `with_style`;样式类保留
     自己的 `with_*` 复制方法。
 12. **渲染器先后——终端，然后 PNG。**
-13. **`math` 以绘图为限**:`exp`、`log`、`log10`、`pow`、`sqrt`、
+13. **`math` 以绘图为限**：`exp`、`log`、`log10`、`pow`、`sqrt`、
     `min`、`max`、`abs`、`clamp`、`e`、`pi`;不做三角函数;
     `normal_quantile`/`normal_cdf` 放 `plot` 内部。
 14. **声明式树只用数组**——不做尾随块写法。
@@ -763,10 +763,10 @@ Seaborn 对等”从目标表述中删掉，换成声明清楚的档位 T0 + T1�
 24. **主题——挂在 `Figure` 上的值**，含背景/前景、网格/轴/标题/标签
     样式、调色板、色图、间距与默认尺寸;`color` 通道按列类别分派。
 25. **缺失数值——存在性枚举，不是 `NaN`。** beam 目标的 Erlang 浮点
-    无法表示 `NaN` 或无穷，所以数值列带一条并列的 `Array[Presence]`,
+    无法表示 `NaN` 或无穷，所以数值列带一条并列的 `Array[Presence]`，
     统计跳过 `absent` 项;该类型放在 `plot` 里，不进语言核心。
 
 ## 剩余的开放问题
 
-1. **从哪里开工。** 暂缓(2026-10-12 决定):设计还没定完，先不开
+1. **从哪里开工。** 暂缓(2026-10-12 决定)：设计还没定完，先不开
    `plan/step-NN-*.md`。

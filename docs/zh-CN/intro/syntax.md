@@ -195,6 +195,6 @@ raise Exception.with_data("connect timed out", { "op": "connect", "peer": host }
 - `List` 是 Box 旁边的双端队列：Box 守着一个单元格，List 在两端原地增删。`List.new([1, 2, "foo"])` 只把数组当作初始化来源——元素被复制进一个全新的双端队列，返回值就是这个队列本身；数组不会被保留，两者从此看不到彼此的任何修改。`list.push_front(x)` 与 `list.push_back(x)` 在两端插入并返回该列表；`list.pop_front()` 与 `list.pop_back()` 移除并给出元素；`list.length()` 计长。对空 List 弹出是运行时错误，与越界索引同理；`==` 按元素比较。把 List 发给另一个进程送达的是快照副本——可变性永不跨越进程边界。
 - `ArrayBuilder` 一次一个元素地把数组长出来。`ArrayBuilder.new()` 不取任何参数——builder 出生即空，而它是唯一一处「事先不知道长度也能建数组」的地方。`b.push(v)` 追加并返回 builder 本身，所以 push 可以连写；`b.length()` 计长；`b.get(i)` 按下标读回；`b.to_array()` 返回一份**新建的** `Array[T]`，装着此刻已 push 的元素。builder 留着自己那份元素，所以 `to_array` 之后再继续增长，不会动它已经交出去的那个数组——这与 `List.new` 恰好相反，后者是在元素**进来**时拷贝。读出已 push 前缀之外是运行时错误，`==` 按元素比较。把 ArrayBuilder 发给另一个进程送达的是快照副本。
 
-  元素类型由第一条参数类型已知的 `push` 钉住：`const kids = ArrayBuilder.new()` 之后接 `kids.push("a")`，就把 `kids` 钉成 `ArrayBuilder[String]`，于是 `kids.push(1)` 是类型错误。钉的是**被 push 链最底端那个 `const` 绑定**——`kids.push("a").push("b")` 一样把 `kids` 钉住——而 `var` 绑定接受任何元素类型，写在更大表达式内部的 push 什么也不钉，因为只有整条语句才是能定下绑定类型的地方。这比 `List.new` 刻意更严:后者的元素直到有人读取时才被检查。
+  元素类型由第一条参数类型已知的 `push` 钉住：`const kids = ArrayBuilder.new()` 之后接 `kids.push("a")`，就把 `kids` 钉成 `ArrayBuilder[String]`，于是 `kids.push(1)` 是类型错误。钉的是**被 push 链最底端那个 `const` 绑定**——`kids.push("a").push("b")` 一样把 `kids` 钉住——而 `var` 绑定接受任何元素类型，写在更大表达式内部的 push 什么也不钉，因为只有整条语句才是能定下绑定类型的地方。这比 `List.new` 刻意更严：后者的元素直到有人读取时才被检查。
 
   在 BEAM 目标上 `get(i)` 需要走过 builder 的反转累加器，因此是 O(n)，而 `push` 是 O(1)；其余各处 `get` 都是 O(1)。

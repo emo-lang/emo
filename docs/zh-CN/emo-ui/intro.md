@@ -1,26 +1,26 @@
 # EmoUI 入门
 
-EmoUI 是 Emo 的 UI 框架:一棵声明式组件树，渲染到 macOS/AppKit 窗口、
+EmoUI 是 Emo 的 UI 框架：一棵声明式组件树，渲染到 macOS/AppKit 窗口、
 GTK 4 窗口、终端、服务端页面与浏览器 DOM。一个应用就是普通 Emo——一个
 model、一个纯 `update`、一个纯 `view`——后端是唯一与平台相关的部分。
 
-本指南从零写两个应用:一个显示 Hello, World 的窗口，以及一个带加减按钮
-的计数器。两者都是完整的:每个例子的 `package.emo` 与 `main.emo` 都完整
+本指南从零写两个应用：一个显示 Hello, World 的窗口，以及一个带加减按钮
+的计数器。两者都是完整的：每个例子的 `package.emo` 与 `main.emo` 都完整
 给出。
 
 ## 组成
 
-- **`emo/ui`** 是可移植核心:节点构造器(`column`、`row`、`text`、
+- **`emo/ui`** 是可移植核心：节点构造器(`column`、`row`、`text`、
   `button`……)、带类型的 `Style`、循环(`ui.run`)以及后端接缝。它是
   纯 Emo，不点名任何平台。
-- **后端包**负责把树画出来:`emo/ui_macos`、`emo/ui_gtk`、`emo/ui_tui`、
+- **后端包**负责把树画出来：`emo/ui_macos`、`emo/ui_gtk`、`emo/ui_tui`、
   `emo/ui_ssr`、`emo/ui_browser`，以及无头的 `ui.debug`。
 - **下面两个应用在每个后端上都一样。** 改掉 `main` 的最后一行——以及
   manifest 里的后端依赖——同一个窗口就搬到 GTK、终端、网页或浏览器上。
 
 EmoUI 住在本仓库的 `projects/emo-ui/` 下;它的包版本是 `0.1.0`，不在
 编译器内置的标准库里。下面的例子用 macOS 后端和 `c` 目标。先像项目自己
-的门禁那样，把仓库里的包 stage 成一个 registry:
+的门禁那样，把仓库里的包 stage 成一个 registry：
 
 ```console
 $ cd <emo checkout>
@@ -28,7 +28,7 @@ $ scripts/stage-registry.sh "$PWD/.emo-registry"
 $ export EMO_REGISTRY="$PWD/.emo-registry"
 ```
 
-原生窗口是一个构建出来的程序，不是解释器运行:`emo run` 拒绝 foreign
+原生窗口是一个构建出来的程序，不是解释器运行：`emo run` 拒绝 foreign
 代码(E3009)，所以用 `emo build` 构建，再启动二进制。
 
 ## 1 · Hello, World
@@ -71,7 +71,7 @@ def main() {
 main()
 ```
 
-在放着这两个文件的目录里构建并运行:
+在放着这两个文件的目录里构建并运行：
 
 ```console
 $ emo build main.emo --target c -o hello
@@ -81,7 +81,7 @@ $ ./hello
 一个标题为 "Hello, World" 的窗口打开，320 × 120 点，文字距四边 24 点。
 第一次构建还会写出 `package.lock`;把它和 manifest 放在一起。
 
-每一部分在做什么:
+每一部分在做什么：
 
 - **`ui.column([...], style)`** 是根。子节点是一份显式的
   `Array[ui.Node]`——永远不是块，也没有隐式子节点收集。
@@ -97,7 +97,7 @@ $ ./hello
 
 ## 2 · 循环与后端接缝
 
-整个框架就是一个循环:
+整个框架就是一个循环：
 
 ```text
 model ──view──▶ tree ──backend──▶ window
@@ -107,19 +107,19 @@ model ──view──▶ tree ──backend──▶ window
 
 `view` 收到循环的 `Registry` 和 model。按钮不携带闭包，它携带一个
 **`Int64` tag**，因为闭包无法跨过 FFI。`reg.on(msg)` 注册一条消息并
-返回它的 tag:
+返回它的 tag：
 
 ```emo
 const plus = reg.on(Msg.inc)
 ```
 
-取 tag 要放在自己的语句里、建树之前:`on` 是一个副作用，独立语句让注册
+取 tag 要放在自己的语句里、建树之前：`on` 是一个副作用，独立语句让注册
 顺序在调用处可见。用户点击时，后端投递 tag，循环把它映射回消息、调用
-`update`、重建 view。model 是值:`update` 返回新的一个，而不是修改旧的。
+`update`、重建 view。model 是值：`update` 返回新的一个，而不是修改旧的。
 
 一个后端实现三个方法——`mount(root, events)`、`patch(old, next)` 与
 `run()`——并且只知道一个整数代表一个事件。这就是同一个应用能到处跑的
-原因:
+原因：
 
 | 后端 | 传给 `ui.run` 的入口 | 目标 |
 | --- | --- | --- |
@@ -135,7 +135,7 @@ const plus = reg.on(Msg.inc)
 
 ## 3 · Counter
 
-第二个应用持有一个数字并改变它:两个按钮，加号与减号，以及一行显示
+第二个应用持有一个数字并改变它：两个按钮，加号与减号，以及一行显示
 计数。
 
 ```emo
@@ -188,7 +188,7 @@ def main() {
 main()
 ```
 
-同样构建并运行:
+同样构建并运行：
 
 ```console
 $ emo build main.emo --target c -o counter
@@ -196,10 +196,10 @@ $ ./counter
 ```
 
 一个 260 × 160 的窗口打开，顶部是 `0`，下面是两个按钮。点击 `+` 发送
-`inc` tag,`update` 返回 `count + 1`，循环重建 view;后端保留已有的
+`inc` tag，`update` 返回 `count + 1`，循环重建 view;后端保留已有的
 文字控件、只改它的内容，所以窗口不会闪烁。点击 `-` 则反过来。
 
-每一部分在做什么:
+每一部分在做什么：
 
 - **`enum Msg { inc, dec }`** 是消息类型。消息可以是枚举、元组或任何值;
   这里两个成员就够了。
@@ -214,7 +214,7 @@ $ ./counter
 - **`ui.run(view, update, 0, ...)`** 从零开始计数。
 
 计数器可以减到负数，没有任何东西阻止它——如果要有业务规则，它属于
-`update`，不属于按钮。这就是这个循环的意义:`update` 拥有策略，`view`
+`update`，不属于按钮。这就是这个循环的意义：`update` 拥有策略，`view`
 拥有画面，后端拥有平台。
 
 ## 4 · 一页讲完布局与样式
@@ -225,10 +225,10 @@ $ ./counter
 - **叶子**是 `ui.text`、`ui.button`、`ui.text_input`、`ui.image` 与
   `ui.spacer`。`ui.button` 是唯一携带事件的叶子。
 - **样式是不可变值。** `ui.style()` 是空的;每个 `with_*` 返回只改一个
-  属性的副本:`with_padding`、`with_gap`、`with_align`、`with_grow`、
+  属性的副本：`with_padding`、`with_gap`、`with_align`、`with_grow`、
   `with_width`、`with_height`。没有默认参数，所以不带样式的调用要把工厂
-  写出来:`ui.text("a", ui.style())`。
-- **宽度和高度是 `(R, Float64)`**:`(R.ok, 12.0)` 是一个尺寸，
+  写出来：`ui.text("a", ui.style())`。
+- **宽度和高度是 `(R, Float64)`**：`(R.ok, 12.0)` 是一个尺寸，
   `(R.error, 0.0)` 交给平台决定。上面的计数器用 `grow` 而不是固定宽度，
   因为 `Style` 的数字在 macOS 和 GTK 上是点、在终端是字符格、在浏览器
   是像素——固定尺寸在这些单位之间不可移植。
@@ -238,12 +238,12 @@ $ ./counter
 ## 5 · 接下来
 
 - [`projects/emo-ui/apps/calculator/`](../../../projects/emo-ui/apps/calculator/)
-  ——完整演算的应用:一个 model、一个纯 update、一个纯 view，以及共享同一个
+  ——完整演算的应用：一个 model、一个纯 update、一个纯 view，以及共享同一个
   app 模块的七个后端入口(debug、TUI、SSR、macOS、GTK、浏览器、
   framebuffer)。
 - [`projects/emo-ui/docs/ui.md`](../../../projects/emo-ui/docs/ui.md)——
-  核心参考:节点、样式、diff 与循环。
-- 旁边的后端参考:
+  核心参考：节点、样式、diff 与循环。
+- 旁边的后端参考：
   [`ui_macos`](../../../projects/emo-ui/docs/ui_macos.md)、
   [`ui_gtk`](../../../projects/emo-ui/docs/ui_gtk.md)、
   [`ui_tui`](../../../projects/emo-ui/docs/ui_tui.md)、

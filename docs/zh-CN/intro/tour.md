@@ -9,8 +9,8 @@
 
 ## 0 · 快速开始
 
-Emo 的程序就是从上到下读的声明与语句。类是值类型，函数就是普通的 `def`,
-购物车不过是一个 Item 数组:
+Emo 的程序就是从上到下读的声明与语句。类是值类型，函数就是普通的 `def`，
+购物车不过是一个 Item 数组：
 
 ```emo run id=quickstart
 class Item {
@@ -36,14 +36,14 @@ println("${cart.length()} items, ${total(cart)} yuan")
 2 items, 42 yuan
 ```
 
-那段程序里的一切都是普通语法:绑定是 `const` 或 `var`，调用有括号，
+那段程序里的一切都是普通语法：绑定是 `const` 或 `var`，调用有括号，
 `for` 循环有三个子句，`return` 写在明处。Emo 没有隐式的"最后表达式作为
 返回值"，没有继承，也没有模板语言。
 
 ## 1 · 值与绑定
 
 `const` 绑定一次;`var` 绑定可变值，作用域是所在的块。数字、字符串与布尔
-都是普通值，字符串里的 `${...}` 可以运行任意表达式:
+都是普通值，字符串里的 `${...}` 可以运行任意表达式：
 
 ```emo run id=values
 const name = "Emo"
@@ -63,7 +63,7 @@ Emo: 4 visits, ratio 2.5, flag true
 ```
 
 字符串是 UTF-8 字节序列，`Char` 是一个码点。字符串长度按字节计;
-`chars()` 按码点遍历:
+`chars()` 按码点遍历：
 
 ```emo run id=values-strings
 const greeting = "hello"
@@ -86,7 +86,7 @@ ab
 ## 2 · 控制流
 
 `if` 只有一种语句形状，`else` 可选;没有 `else if`，进一步的判断是可见地
-嵌套的 `if`。单行形式是表达式，用来选一个值:
+嵌套的 `if`。单行形式是表达式，用来选一个值：
 
 ```emo run id=control-if
 const n = 42
@@ -106,7 +106,7 @@ big
 
 `for` 接受三个用 `;` 分隔的子句，并在头部绑定索引。`while` 判断一个条件。
 `break` 离开最近的循环，`continue` 跳到下一次迭代，并先运行 `for` 的
-post 子句:
+post 子句：
 
 ```emo run id=control-loops
 for var i = 1; i <= 3; i = i + 1 {
@@ -146,7 +146,7 @@ countdown 1
 
 `def` 声明函数或方法。参数类型必须显式;返回类型写在参数表之后，声明了
 返回类型的函数必须在每条路径上返回。实参可以按位置或按名字传递——具名
-实参保持参数顺序:
+实参保持参数顺序：
 
 ```emo run id=functions-def
 def area(width Int64, height Int64) Int64 {
@@ -169,7 +169,7 @@ true
 ```
 
 箭头块是匿名函数，调用可以把尾随块作为最后一个实参。接收块的函数把参数
-声明为 `Block`，并像函数一样调用它:
+声明为 `Block`，并像函数一样调用它：
 
 ```emo run id=functions-blocks
 const double = -> (n Int64) { return n * 2 }
@@ -199,7 +199,7 @@ each([1, 2, 3]) -> (v Int64) {
 30
 ```
 
-函数可以用元组一次返回多个值，绑定模式把它拆开:
+函数可以用元组一次返回多个值，绑定模式把它拆开：
 
 ```emo run id=functions-tuples
 def min_max(xs Array[Int64]) (Int64, Int64) {
@@ -227,7 +227,7 @@ min 1, max 9
 ## 4 · 类与接口
 
 `class` 是用户定义类型的唯一写法。字段只在 `init` 里通过 `self.x = ...`
-产生，别处都不行——类是值类型，内容相等的实例 `==`:
+产生，别处都不行——类是值类型，内容相等的实例 `==`：
 
 ```emo run id=objects-values
 class Point {
@@ -254,7 +254,7 @@ println(p == Point.new(x: 1, y: 2))
 true
 ```
 
-方法返回 Bool 时以 `?` 结尾。"修改"值的方法返回一个新实例，原值不变:
+方法返回 Bool 时以 `?` 结尾。"修改"值的方法返回一个新实例，原值不变：
 
 ```emo run id=objects-methods
 class Ticket {
@@ -292,7 +292,7 @@ true
 ```
 
 `interface` 声明方法签名，满足是结构性的——没有 `implements` 声明，没有
-继承。接口属于使用方:类永远不需要知道它存在:
+继承。接口属于使用方：类永远不需要知道它存在：
 
 ```emo run id=objects-interfaces
 interface Greeter {
@@ -327,7 +327,7 @@ Hello!
 ## 5 · 枚举与 `case`
 
 `enum` 是一组封闭的具名值。`case` 用一个值去匹配模式;分支写作
-`pattern then { ... }`，第一个匹配者胜出，枚举匹配必须覆盖每个成员:
+`pattern then { ... }`，第一个匹配者胜出，枚举匹配必须覆盖每个成员：
 
 ```emo run id=enums-color
 enum Color {
@@ -354,7 +354,7 @@ blue
 ```
 
 分支可以带 `when` 守卫，元组被匹配值可以一次匹配多个事实。`_` 匹配任何
-东西:
+东西：
 
 ```emo run id=enums-case
 def mood(n Int64) String {
@@ -393,7 +393,7 @@ odd
 ## 6 · 集合
 
 数组是定长值，写作 `[a, b, c]`;`ArrayBuilder` 通过 push 增长，用
-`to_array()` 交出数组:
+`to_array()` 交出数组：
 
 ```emo run id=collections-arrays
 const xs = [3, 1, 4, 1, 5]
@@ -417,7 +417,7 @@ println(ys.length())
 ```
 
 `Map` 可变且保持插入顺序，写作 `{ "key": value }`。`get` 读一个键，`set`
-插入或替换并返回这个 map，`keys()`/`values()` 按插入顺序作答:
+插入或替换并返回这个 map，`keys()`/`values()` 按插入顺序作答：
 
 ```emo run id=collections-maps
 const ages = { "alice": 30, "bob": 25 }
@@ -437,8 +437,8 @@ false
 
 ## 7 · 错误是值
 
-可能因数据而失败的调用返回元组:`(R.ok, value)` 或 `(R.error, reason)`。
-`R` 是内建的结果枚举;用 `case` 匹配，编译器会把两个分支都看在眼里:
+可能因数据而失败的调用返回元组：`(R.ok, value)` 或 `(R.error, reason)`。
+`R` 是内建的结果枚举;用 `case` 匹配，编译器会把两个分支都看在眼里：
 
 ```emo run id=errors-matching
 def parse_flag(raw String) (R, String) {
@@ -465,7 +465,7 @@ read failed: flag: expected `on`
 ```
 
 绑定模式断言形状并绑定载荷。不匹配的模式是运行时错误，所以只在调用方已经
-知道该调用不会失败时使用:
+知道该调用不会失败时使用：
 
 ```emo run id=errors-binding
 def half(n Int64) (R, Int64) {
@@ -484,8 +484,8 @@ println(value)
 ```
 
 违例——破坏调用纪律，而不是数据——用 `raise`。`:raise` 借用这个关键字，
-改写成异常构造器。这个块不执行:raise 会结束进程，没有可通过的运行可
-展示:
+改写成异常构造器。这个块不执行：raise 会结束进程，没有可通过的运行可
+展示：
 
 ```emo no-run id=errors-raise
 def check(n Int64) Int64 {
@@ -498,7 +498,7 @@ def check(n Int64) Int64 {
 
 ## 8 · 模块与包
 
-文件就是模块，目录就是模块路径。包是模块前缀:`require "json"` 把标准库
+文件就是模块，目录就是模块路径。包是模块前缀：`require "json"` 把标准库
 的 JSON 包引入作用域，manifest 钉住版本。没有安装步骤——编译器把标准库
 带在二进制里。
 
@@ -518,7 +518,7 @@ tea
 ```
 
 同一个包也能构造文档，不只是读取。对象与数组由显式的键值对和数组搭起来，
-`encode` 写出紧凑形式:
+`encode` 写出紧凑形式：
 
 ```emo run id=modules-json-build deps=json
 require "json"
@@ -536,7 +536,7 @@ println(json.encode(order))
 
 ## 9 · 进程
 
-进程很便宜:`do call()` 启动一个，并给出它的 pid。消息用 `<-` 发送，
+进程很便宜：`do call()` 启动一个，并给出它的 pid。消息用 `<-` 发送，
 `receive` 用分支去匹配邮箱头部的消息。语言还提供**选择性**接收——一个
 守卫(`n when n > 3`)或一个头部不匹配的模式会让邮箱被扫描，不匹配的
 消息留在队列里——但本树中的 Wasm 后端只分派头部，所以下面的可运行块都用
@@ -559,7 +559,7 @@ receive {
 ```
 
 消息按到达顺序排队，每个 `receive` 取走头部。在 Wasm 上 `receive` 必须是
-它所在体的最后一条语句，所以第二次取用要写成一个独立函数:
+它所在体的最后一条语句，所以第二次取用要写成一个独立函数：
 
 ```emo run id=processes-queue
 def first(boss Pid) {
@@ -590,9 +590,9 @@ second
 
 ## 10 · 一个小业务切片
 
-各部分在一个程序里会合:来自外部世界的 JSON、承载领域值的类、为可能出错
+各部分在一个程序里会合：来自外部世界的 JSON、承载领域值的类、为可能出错
 的数据准备的 `(R, …)`、为报表准备的 `Map`，以及用整数运算处理金额。它
-解码一笔订单，逐行校验，按类别汇总，再加上税额——一个小服务的形状:
+解码一笔订单，逐行校验，按类别汇总，再加上税额——一个小服务的形状：
 
 ```emo run id=business deps=json
 require "json"
@@ -663,17 +663,17 @@ if doc.is(json.JsonObject) {
 net 74, tax 7, total 81
 ```
 
-程序从不问"这会不会是 null":一个值就是 `Json`,`is()` 收窄证明它的
+程序从不问"这会不会是 null"：一个值就是 `Json`，`is()` 收窄证明它的
 形状，解析失败是 `case` 处理的值。领域类承载算术，`Map` 让报表保持类别
 首次出现的顺序。
 
 ## 11 · 接下来
 
-你现在已经知道这门语言的形状:显式的调用、`const`/`var`、作为不可变值
+你现在已经知道这门语言的形状：显式的调用、`const`/`var`、作为不可变值
 类型的类、结构化接口、带守卫的 `case`、集合、`(R, …)` 错误、包，以及
 进程。
 
-接下来的阅读:
+接下来的阅读：
 
 - [`examples/language_tour/`](../../../examples/language_tour/) —— 一个更长的
   程序，在每个目标上运行，并带有 golden 输出。
@@ -681,7 +681,7 @@ net 74, tax 7, total 81
   (`:chain`、`:foreach`、`:when`)与命名规则。
 - [`docs/intro/type-system.md`](type-system.md) —— 渐近类型、显式
   位宽的数值与收窄。
-- [`docs/stdlib.md`](../stdlib.md) —— 标准库:JSON、YAML、TOML、HTTP、SQL、
+- [`docs/stdlib.md`](../stdlib.md) —— 标准库：JSON、YAML、TOML、HTTP、SQL、
   crypto、绘图，等等。
 - [`docs/intro/testing.md`](testing.md) —— `emo test` 与 `expect_*`
   断言(仅解释器，所以本导览不运行它们)。

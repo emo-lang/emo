@@ -1,12 +1,12 @@
 # `slog` 包
 
-标准库的结构化日志器:每条记录一行，logfmt 或 JSON 两种格式，按最
+标准库的结构化日志器：每条记录一行，logfmt 或 JSON 两种格式，按最
 低级别过滤。纯 Emo 写在共享运行时之上，所以包所声明的每个目标都
 回答相同的字节。
 
 日志器是一个不透明句柄——`slog.new` 产出它，`slog.child` 派生一个
 改名的副本——句柄本身就携带名字、最低级别和格式。日志器是普通的
-值:幕后没有可配置的东西，没有需要清理的东西，包里没有任何全局状
+值：幕后没有可配置的东西，没有需要清理的东西，包里没有任何全局状
 态。
 
 ## 使用包
@@ -15,9 +15,9 @@
 require "slog"
 ```
 
-标准库随编译器一起发布，但它的包和其他依赖一样带版本:`require "slog"` 需要在 manifest 的 `deps` 块里钉上 `"slog" = "0.1.0"`。本包声明全部五个宿主目标:`ocaml`、`c`、`typescript`、`wasm`、`beam`。
+标准库随编译器一起发布，但它的包和其他依赖一样带版本：`require "slog"` 需要在 manifest 的 `deps` 块里钉上 `"slog" = "0.1.0"`。本包声明全部五个宿主目标：`ocaml`、`c`、`typescript`、`wasm`、`beam`。
 
-收口时立下的规则是:声明今天可用的目标，缺口合上时加宽。`Map`——也就是 attrs 的类型——在 step 52(2026-10-19)到达 wasm 与 beam 运行时，清单随之加宽;示例的 golden 在 wasm 与 beam 两份名单上逐字节一致。
+收口时立下的规则是：声明今天可用的目标，缺口合上时加宽。`Map`——也就是 attrs 的类型——在 step 52(2026-10-19)到达 wasm 与 beam 运行时，清单随之加宽;示例的 golden 在 wasm 与 beam 两份名单上逐字节一致。
 
 ## 接口
 
@@ -40,26 +40,26 @@ def warn(handle String, msg String, attrs Map[String, String])
 def error(handle String, msg String, attrs Map[String, String])
 ```
 
-级别有序，`debug < info < warn < error`:低于日志器最低级别的记录
+级别有序，`debug < info < warn < error`：低于日志器最低级别的记录
 什么都不打印;`enabled` 在调用者构建记录之前回答同一个问题。子日
 志器把名字嵌在父名之下(`web` + `db` 得到 `web.db`)，并继承级别与
 格式。
 
 ## 记录
 
-记录写到 stdout，每条一次 `println`，不带时间戳:记录格式不拥有的
+记录写到 stdout，每条一次 `println`，不带时间戳：记录格式不拥有的
 戳记，会让同一条记录在不同目标、在测试里打印得不一样，确定性的输
 出比这更值钱。手上有时间的调用者(`time.now()` 会回答)，把它当
 作普通属性传进来即可。
 
-logfmt 格式:
+logfmt 格式：
 
 ```emo
 level=info logger=web msg=listening addr=127.0.0.1:8080
 level=warn logger=web msg="slow query" ms=412 table=users
 ```
 
-json 格式把同一条记录渲染成一行一个对象:
+json 格式把同一条记录渲染成一行一个对象：
 
 ```emo
 {"level":"info","logger":"worker","msg":"job done","job":"resize","ms":"38"}
@@ -70,7 +70,7 @@ attrs。值的每个字节都能裸存活于行内时(无空格、控制字节�
 `=`、`\`)裸着输出，否则带转义加引号;UTF-8 文本原样通过。json 格
 式按 RFC 8259 转义。
 
-attrs 是 `Map[String, String]`:数字和布尔先用插值渲染再传入
+attrs 是 `Map[String, String]`：数字和布尔先用插值渲染再传入
 ("${port}")。
 
 ## 严格性

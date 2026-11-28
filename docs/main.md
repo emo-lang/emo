@@ -1,9 +1,9 @@
-## What Emo is
+# What Emo is
 
 Emo is a general-purpose programming language with three design axes:
 **Go's simplicity, C's speed, Ruby's elegance**.
 
-### Go's simplicity
+## Go's simplicity
 
 Emo borrows Go's *mechanisms* and keeps its own *surface*. The
 mechanics that make a language small and predictable are here:
@@ -32,7 +32,7 @@ What Emo does not take from Go is the look: the syntax, the keywords,
 and the tooling names are its own. Mechanisms may be borrowed from any
 language; a recognizable single-source fingerprint is not.
 
-### C's speed
+## C's speed
 
 The default build target emits C and compiles it with the system `cc`,
 so a program is a standalone native binary with no OCaml runtime and no
@@ -56,7 +56,7 @@ against 980 ms on the interpreter, and a 10-million-iteration tail loop
 at 37 ms against 6.2 s. The same sources still build for WebAssembly,
 TypeScript, and the BEAM.
 
-### Ruby's elegance
+## Ruby's elegance
 
 Expressiveness is a design axis, not decoration:
 

@@ -151,7 +151,7 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
   一直在跑的确定性轮询循环（Unix，无 eio），因此 runtime 只声明
   `unix`（随编译器附带）与 `ssl`（唯一的 opam 依赖），缺席时以
   清晰的消息拒绝。
-- **`emo doctor` 失去了 installation 行。** "installation:
+- **`emo doctor` 失去了 installation 行。** "installation：
   source/prebuilt" 的报告删除了——每个 target 的行只报自己的
   工具链，退出码只反映真正损坏的部分。
 

@@ -70,9 +70,9 @@ served.compare_exchange(1, 0)    // (true, 1) when it swapped
 | `exchange(v)` | `Bytes` | 替换该缓冲区，返回旧值 |
 | `compare_exchange(expected, new)` | `(Bool, Bytes)` | 同一对子契约，作用在缓冲区上 |
 
-一句诚实的注意，现已收回:`beam` 的标量 cell 底座是 Erlang 的 `atomics`
+一句诚实的注意，现已收回：`beam` 的标量 cell 底座是 Erlang 的 `atomics`
 数组——只能装整数——所以该目标上的 Bytes cell 是一个持有裸缓冲区的 holder
-进程。每个操作都是一次带标签的同步调用，由 holder 按它自己的邮箱顺序应答:
+进程。每个操作都是一次带标签的同步调用，由 holder 按它自己的邮箱顺序应答：
 一个进程、一条队列，cell 的全部操作历史被串行化——顺序一致性承诺由此按构造
 成立。holder 的 pid 跨进程边界就是同一 cell 的句柄，载荷以裸缓冲区走消息
 (每个进程把应答包成自己的 `Bytes` 值)，holder 挂在程序的子进程表上——cell
@@ -134,7 +134,7 @@ served.compare_exchange(1, 0)    // (true, 1) when it swapped
 | `wasm` | 精确空操作 | 全集 | 空操作 |
 | `c` | `__atomic` 内建，顺序一致性序 | 全集 | `__atomic_thread_fence` |
 | `ocaml` | `Atomic` 模块，单调度域 | 全集；按位 `fetch_*` 以比较并交换环补足 | 空操作 |
-| `beam` | 标量：运行时的 `atomics` 数组;`Bytes`:持有裸缓冲区的 holder 进程，每个操作一次带标签的同步调用 | 全集；按位 `fetch_*` 以比较并交换环补足 | 空操作 |
+| `beam` | 标量：运行时的 `atomics` 数组;`Bytes`：持有裸缓冲区的 holder 进程，每个操作一次带标签的同步调用 | 全集；按位 `fetch_*` 以比较并交换环补足 | 空操作 |
 | `riscv64` | AMO、LR/SC、`fence`——生成镜像中的运行时助手 | 全集 | `fence` 指令 |
 
 各行背后的诚实注记：

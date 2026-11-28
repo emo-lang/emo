@@ -11,7 +11,7 @@ def parse_config(text String) json_tools.Json {
 ```
 
 - **`require` 是把包的短名带入作用域的文件级语句。** 包侧无需对应物——包的公开面就是它的模块树。完全限定的路径永远可用。
-- **包的模块树挂载在短名之下。** 包根的 `main.emo` 就是 `require` 绑定的模块 `<short>`，包根没有 `main.emo` 时则是 `<short>.emo`——从一个项目发布出来的包保留它当初写就的入口文件;这个文件在包内也仍以当初的名字可达:`main.emo` 的兄弟文件写 `main.tagged()`，两种写法是同一个模块、同一份定义。其余文件或目录都是它的子节点——`plot/internal/svg.emo` 就是 `plot.internal.svg`,`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`plot.emo` 里的 `internal.scale` 即 `plot.internal.scale`)，因此一个包无论单独构建还是挂载在前缀下，编译结果一致。
+- **包的模块树挂载在短名之下。** 包根的 `main.emo` 就是 `require` 绑定的模块 `<short>`，包根没有 `main.emo` 时则是 `<short>.emo`——从一个项目发布出来的包保留它当初写就的入口文件;这个文件在包内也仍以当初的名字可达：`main.emo` 的兄弟文件写 `main.tagged()`，两种写法是同一个模块、同一份定义。其余文件或目录都是它的子节点——`plot/internal/svg.emo` 就是 `plot.internal.svg`，`plot/mark.emo` 就是 `plot.mark`——所以两个包的 `internal` 和 `mark` 永不冲突。包内部引用以包根为基准书写(`plot.emo` 里的 `internal.scale` 即 `plot.internal.scale`)，因此一个包无论单独构建还是挂载在前缀下，编译结果一致。
 - **每个 `require` 都要在 `deps` 里有对应的 pin——标准库也不例外。** 官方标准库独占顶层短名（`json.decode()`、`http.get(url)`）并内嵌在编译器里发布，但它的包和其他包一样带版本号、彼此之间也以精确版本相互钉住，所以 `require "json"` 需要在 `deps` 里写 `"json" = "0.1.0"`，和 `acme/json_tools` 完全一样；被钉住的包自己依赖的包则通过它自己的 manifest 进来。require 一个 manifest 没有钉的包是编译错误，报错信息会直接给出要加的那一行；标准库没有发布的短名在 require 处报错。pin 的意义在于编译器升级不会把程序的依赖挪走：内嵌 registry 只增不删，旧的 pin 在新编译器上始终可解析，要挪动它是一次有意为之的 `emo deps update`——严格优先，manifest 只因显式操作而改变。
 
 - **包扎根于你站的地方。** 根就是工作目录，它必须放着 `package.emo`——编译器从不向上看，所以在一个没有 manifest 的目录里启动的命令会以 E5010 停下（``run `emo new <name>` to scaffold a project here``），而不属于那里所扎根的包的入口是 E5011。先 `cd` 进包里：那个目录就是模块树，每条命令都从那里读它，于是同一个文件无论命令在哪里敲下都指同一件事。
@@ -37,7 +37,7 @@ def parse_config(text String) json_tools.Json {
 
   `registry` 字段只在 manifest 是项目根时被读取——依赖的 manifest 是从消费方已选定的注册表抓取的，它的字段在那里被忽略。这个字段直接命名本包的注册表：`emo emoji publish` 向它上传，`emo emoji login` 在 `--registry` 与 `EMO_REGISTRY` 都未指明时也向它验证（见下文）。
 
-- **`deps` 的键是字符串字面量**——这个块唯一的写法。包名在这里和在其它所有地方一样是数据(`name` 字段、`require`、lockfile、注册表)，所以 scope 能叫什么不取决于词法:owner 是关键字(`emo`)也写得出来。包字段(`name`、`version`、`targets`、`link`、`pkg_config`、`frameworks`、`registry`)仍是标识符绑定——一边是固定 schema 的字段，另一边是 名字→版本 的映射。
+- **`deps` 的键是字符串字面量**——这个块唯一的写法。包名在这里和在其它所有地方一样是数据(`name` 字段、`require`、lockfile、注册表)，所以 scope 能叫什么不取决于词法：owner 是关键字(`emo`)也写得出来。包字段(`name`、`version`、`targets`、`link`、`pkg_config`、`frameworks`、`registry`)仍是标识符绑定——一边是固定 schema 的字段，另一边是 名字→版本 的映射。
 
 - **包可以自带原生代码。** 包目录树里的 `.c`、`.h`、`.m` 文件是包的一部分——与 `.emo` 模块一同被收集、校验、发布。c 目标会把依赖包的 C 与 Objective-C 源文件编进程序（Objective-C 在 ARC 下编译），并链接其 `link` 字段声明的库、`pkg_config` 字段声明的模块（`--cflags` 进编译、`--libs` 进链接）与 `frameworks` 字段声明的 framework（`-framework NAME`），所以消费 `sqlite3` 这类原生绑定包只需 `require`——不用 `--cclib`，不用手写 shim。`link`、`pkg_config`、`frameworks` 都只接受裸名；空、旗标形状或路径形状的条目在读取 manifest 时拒绝。包的原生输入只有 c 目标兑现；其他目标在构建期拒绝这样的依赖，manifest 的 `targets` 则在解析期拒绝。
 

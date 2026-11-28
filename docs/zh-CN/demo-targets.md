@@ -23,7 +23,7 @@ demo/
 ```
 
 包根下每个 `.emo` 文件都是位于其路径上的模块，所以 `src/lib.emo` 就是模块
-`src.lib`,`main.emo` 通过 `src.lib.greet` 调用它。
+`src.lib`，`main.emo` 通过 `src.lib.greet` 调用它。
 
 `package.emo` 初始为 `targets = ["ocaml", "c"]`。这个字段有两个作用：该包作为**依赖**被别人使用时，目标不在列表里的构建会在发射前被解析门拒绝；`emo emoji build` 也只构建列表里的 target。直接对项目自己的入口执行 `emo build --target X <entry>` 不受它阻挡——下面七个 target 都能用默认脚手架直接构建。要让包在所有后端可构建，就声明全部：
 
@@ -71,7 +71,7 @@ ok test.greet.test_greet
 
 `emo run` 直接对模块树求值，不产生产物。文件之后的词就是程序自己的 `os.argv`——`emo run main.emo x y` 回答 `["main.emo"; "x"; "y"]`，argv[0] 是文件名，与编译产物 argv[0] 是它被调用的路径同理(开头的 `--` 是选项分隔符，会被吃掉);`--target` 的产物拿不到参数。`emo build` 的 `--target` 不是运行方式；`emo run --target` 支持 `riscv64`、`wasm` 和 `beam`。
 
-有一个标志属于解释器自己的运行:`emo run --curfew SECONDS` 给这次求值一个墙钟截止。程序经标准库的 `time` 包读时钟，但失控的程序不必配合——所以结束它的截止住在这里、住在工具链里:求值器每 65,536 步检查一次截止，过了截止，运行以退出码 124(与 `timeout(1)` 同一个数)结束，stderr 带着裁定。`--target` 的产物不使用 curfew，而 `--curfew` 与 `--target` 同时给出会被拒绝。这个标志为 playground([`projects/emo-playground`](../../projects/emo-playground))而存在——它的服务器给每次提交一个;其余场景不被要求使用它。
+有一个标志属于解释器自己的运行：`emo run --curfew SECONDS` 给这次求值一个墙钟截止。程序经标准库的 `time` 包读时钟，但失控的程序不必配合——所以结束它的截止住在这里、住在工具链里：求值器每 65,536 步检查一次截止，过了截止，运行以退出码 124(与 `timeout(1)` 同一个数)结束，stderr 带着裁定。`--target` 的产物不使用 curfew，而 `--curfew` 与 `--target` 同时给出会被拒绝。这个标志为 playground([`projects/emo-playground`](../../projects/emo-playground))而存在——它的服务器给每次提交一个;其余场景不被要求使用它。
 
 ## `c`（默认 target）
 
@@ -244,9 +244,9 @@ Hello, world!
 
 - 宿主**必须**是 `wasmtime run -S cli`（或任何带 WASI 0.3 CLI 宿主的运行时）；`--dir` 授予文件系统。没有 `-S cli` 时门能链接但列表返回空。
 - **guest 侧 `%g` 浮点格式化器完整渲染所有浮点**：node 宿主的 `floatStr`/`g6` 规则以 wat 级移植——整值 `x.0` 形式、1e-4 到 1e6 之间六位有效数字的 fixed 形式、区间外带符号两位指数的 exp 形式——与 Node 和 c 目标逐字节一致。
-- **文件链端到端可用**:经 preopen 表到 `open-at` 的路径解析、stream 读/写循环、目录项扫描——`file`、`bufio`、`os` 的 fd/目录半区与 Node 和 c 目标逐字节一致。把项目目录映射为 guest 根(`--dir <dir>::/`;`emo run` 会替你做):WASI 0.3 没有 cwd 概念——`get-initial-cwd` 在 wasmtime 下答 none——preopen 根是相对路径唯一的锚。
+- **文件链端到端可用**：经 preopen 表到 `open-at` 的路径解析、stream 读/写循环、目录项扫描——`file`、`bufio`、`os` 的 fd/目录半区与 Node 和 c 目标逐字节一致。把项目目录映射为 guest 根(`--dir <dir>::/`;`emo run` 会替你做)：WASI 0.3 没有 cwd 概念——`get-initial-cwd` 在 wasmtime 下答 none——preopen 根是相对路径唯一的锚。
 - `os` 的进程半边与 Node 宿主一致，调用即 raise。
-- 金测:`test/emo_cli/emo_cli_test.ml` 的 `wasi_examples`(67 个 demo 与 Node 金测逐字节一致)，`devtools/wasmtime-smoke.sh` 的第二个 rung 执行同一清单。
+- 金测：`test/emo_cli/emo_cli_test.ml` 的 `wasi_examples`(67 个 demo 与 Node 金测逐字节一致)，`devtools/wasmtime-smoke.sh` 的第二个 rung 执行同一清单。
 
 ## `beam`
 

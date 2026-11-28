@@ -89,13 +89,13 @@ $ ./start.sh
 
 ## 相关文档
 
-- [`docs/how-to-start-emoos.zh-CN.md`](docs/how-to-start-emoos.zh-CN.md) — 启动机器:构建、金测、手动启动、提示符。
+- [`docs/how-to-start-emoos.zh-CN.md`](docs/how-to-start-emoos.zh-CN.md) — 启动机器：构建、金测、手动启动、提示符。
 - [`docs/sv39.zh-CN.md`](docs/sv39.zh-CN.md) — 内核的高半区布局：两个半区、内核的表、两个别名、启动。
 - [`docs/fs.zh-CN.md`](docs/fs.zh-CN.md) — 文件系统服务：权威态与可重建态的分裂、磁盘布局、提交点、重启。
-- [`docs/shell.zh-CN.md`](docs/shell.zh-CN.md) — shell REPL:行、七个命令、表面携带的严格性、边界。
+- [`docs/shell.zh-CN.md`](docs/shell.zh-CN.md) — shell REPL：行、七个命令、表面携带的严格性、边界。
 - [`docs/EmoOS.TASKS.zh-CN.md`](docs/EmoOS.TASKS.zh-CN.md) — Linux 生态 tracker:C 的门、POSIX 底座、libc、emosh 与软件语料(B 方案，源码移植)。
-- [`docs/ui.zh-CN.md`](docs/ui.zh-CN.md) — 控制台渲染器:控制台通货下的 EmoUI 脊架、帧、Elm 循环、计数器演示、边界。
-- [`docs/desktop-abi.zh-CN.md`](docs/desktop-abi.zh-CN.md) — 桌面协议的稳定性契约:冻结的 ABI、可搬的实现、可加的扩展、八个接缝。桌面本身在 [`projects/emo-desktop`](../emo-desktop)。
+- [`docs/ui.zh-CN.md`](docs/ui.zh-CN.md) — 控制台渲染器：控制台通货下的 EmoUI 脊架、帧、Elm 循环、计数器演示、边界。
+- [`docs/desktop-abi.zh-CN.md`](docs/desktop-abi.zh-CN.md) — 桌面协议的稳定性契约：冻结的 ABI、可搬的实现、可加的扩展、八个接缝。桌面本身在 [`projects/emo-desktop`](../emo-desktop)。
 - [`docs/atomics.md`](../../docs/atomics.md) — 原子内存模型：只有顺序一致性、操作集、每目标矩阵、数据竞争语义。
 - [`docs/rtos-assessment.md`](../../docs/rtos-assessment.md) — 实时边界分析（Emo 主树）。
 - [`docs/xv6.md`](../../docs/xv6.md) — xv6 量级可行性评估：Emo 替换什么、什么留在汇编。

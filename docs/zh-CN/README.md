@@ -35,7 +35,7 @@ Windows：WSL2 是受支持路径——在 WSL 内按 Linux 的方式安装；�
 
 ## EmoUI
 
-[EmoUI](../../projects/emo-ui) 是用 Emo 写的组件式 UI 框架:一棵声明式组件树，渲染到终端、服务端页面、macOS/AppKit 窗口、GTK 4 窗口与浏览器 DOM。Emo 的语法就是为它塑形的，原则是**没有模板语言——UI 就是普通的 Emo 代码**，与配置同一哲学。组件树是嵌套调用，子节点是一份显式的 `Array[ui.Node]`:
+[EmoUI](../../projects/emo-ui) 是用 Emo 写的组件式 UI 框架：一棵声明式组件树，渲染到终端、服务端页面、macOS/AppKit 窗口、GTK 4 窗口与浏览器 DOM。Emo 的语法就是为它塑形的，原则是**没有模板语言——UI 就是普通的 Emo 代码**，与配置同一哲学。组件树是嵌套调用，子节点是一份显式的 `Array[ui.Node]`：
 
 ```emo
 def card(user User) ui.Node {
@@ -57,17 +57,17 @@ def inbox(users Array[User]) ui.Node {
 }
 ```
 
-这里的一切都是普通语法(见 [`docs/zh-CN/intro/syntax.md`](intro/syntax.md)):显式括号的调用、具名参数、不可变数据。子节点是一个实参，永远不是一个块:尾随块是给回调和迭代用的，它产出值时自己 `return`。要到遍历时才知道的子节点列表，用语言自带的 `ArrayBuilder` 攒起来、以 `to_array()` 交出去。没有隐式子节点收集，组件就是普通函数——大写类型从不被调用，`.new` 从不出现在树里。
+这里的一切都是普通语法(见 [`docs/zh-CN/intro/syntax.md`](intro/syntax.md))：显式括号的调用、具名参数、不可变数据。子节点是一个实参，永远不是一个块：尾随块是给回调和迭代用的，它产出值时自己 `return`。要到遍历时才知道的子节点列表，用语言自带的 `ArrayBuilder` 攒起来、以 `to_array()` 交出去。没有隐式子节点收集，组件就是普通函数——大写类型从不被调用，`.new` 从不出现在树里。
 
-这个框架是已定设计:
+这个框架是已定设计：
 
 - **一种树类型。** `ui.Node` 是接口;`Column`、`Row`、`Text`、`Button`、`TextInput`、`Image`、`Spacer` 与 `Scroll` 是带类型化属性的类，经小写构造函数(`ui.column`、`ui.text`、`ui.button`……)建起。同一个名字在每个后端上都是同一个组件。
 - **带类型的样式。** `ui.Style` 是由 `ui.style()` 建起、经 `with_padding`、`with_gap`、`with_align`、`with_grow`、`with_width` 与 `with_height` 拷贝的带类型值——没有字符串 map，也没有默认参数。它的属性就是那套可移植的布局词汇，每个后端把它映射到平台自己的布局引擎。
-- **Elm 状态。** 一个应用是 model、纯 `update`、纯 `view` 加一个后端:`ui.run(view, update, model, backend)`。`view` 收到循环自己的 `Registry`，用 `reg.on(msg)` 登记每条带类型消息并拿回后端投递的 `Int64` tag——应用的类型从不跨过后端接缝。
+- **Elm 状态。** 一个应用是 model、纯 `update`、纯 `view` 加一个后端：`ui.run(view, update, model, backend)`。`view` 收到循环自己的 `Registry`，用 `reg.on(msg)` 登记每条带类型消息并拿回后端投递的 `Int64` tag——应用的类型从不跨过后端接缝。
 - **一条后端接缝。** 后端实现 `ui.Backend`——`mount(root, events)`、`patch(old, new)`、`run()`——它只知道一个整数代表一个事件。后端包是 `ui_tui`、`ui_ssr`、`ui_macos`、`ui_gtk` 与 `ui_browser`，外加无头的 `ui.debug`。
 - **一个应用，每个后端。** `emo/ui_corpus` 是各关口在每个后端上原样运行的共享应用;它的 debug 与 SSR 入口在 `c`、`ocaml`、`typescript`、`wasm`、`beam` 这五个托管目标上产出相同的字节。
 
-EmoUI 是 [`projects/emo-ui/`](../../projects/emo-ui) 下的独立项目，不是标准库包——它的原生后端带着每平台 shim 与标准库用不到的 manifest 字段(`.m`、`frameworks`、`pkg_config`)。各包的参考文档就在那里:[`ui`](../../projects/emo-ui/docs/ui.md)、[`debug`](../../projects/emo-ui/docs/debug.md)、[`ui_tui`](../../projects/emo-ui/docs/ui_tui.md)、[`ui_ssr`](../../projects/emo-ui/docs/ui_ssr.md)、[`ui_macos`](../../projects/emo-ui/docs/ui_macos.md)、[`ui_gtk`](../../projects/emo-ui/docs/ui_gtk.md)、[`ui_browser`](../../projects/emo-ui/docs/ui_browser.md)、[`ui_corpus`](../../projects/emo-ui/docs/ui_corpus.md)。
+EmoUI 是 [`projects/emo-ui/`](../../projects/emo-ui) 下的独立项目，不是标准库包——它的原生后端带着每平台 shim 与标准库用不到的 manifest 字段(`.m`、`frameworks`、`pkg_config`)。各包的参考文档就在那里：[`ui`](../../projects/emo-ui/docs/ui.md)、[`debug`](../../projects/emo-ui/docs/debug.md)、[`ui_tui`](../../projects/emo-ui/docs/ui_tui.md)、[`ui_ssr`](../../projects/emo-ui/docs/ui_ssr.md)、[`ui_macos`](../../projects/emo-ui/docs/ui_macos.md)、[`ui_gtk`](../../projects/emo-ui/docs/ui_gtk.md)、[`ui_browser`](../../projects/emo-ui/docs/ui_browser.md)、[`ui_corpus`](../../projects/emo-ui/docs/ui_corpus.md)。
 
 ## EmoOS
 
@@ -75,7 +75,7 @@ Emo 的触角伸到操作系统层：这门语言有能力写内核，于是 Emo
 
 EmoOS 是 [`../../projects/emo-os/`](../../projects/emo-os) 下的独立项目——定案设计与任务追踪都在它的 [README](../../projects/emo-os/README.zh-CN.md) 里。
 
-其上的桌面也是独立项目:[`projects/emo-desktop/`](../../projects/emo-desktop)——EmoOS 门上的合成窗口 GUI，单语言闭环的下一段路。
+其上的桌面也是独立项目：[`projects/emo-desktop/`](../../projects/emo-desktop)——EmoOS 门上的合成窗口 GUI，单语言闭环的下一段路。
 
 ## Emo Playground
 
@@ -98,11 +98,11 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 
 ## 文档
 
-文档在 `docs/` 之下;本页就是它的完整中文索引，英文索引见根目录 [`README.md`](../../README.md) 的 Documentation 一节。叙述版的地图见 [`main.md`](main.md):三条设计轴、文档分布与阅读路径。中文文档与英文文档同构，未翻译的页面在下方逐条标出。
+文档在 `docs/` 之下;本页就是它的完整中文索引，英文索引见根目录 [`README.md`](../../README.md) 的 Documentation 一节。叙述版的地图见 [`main.md`](main.md)：三条设计轴、文档分布与阅读路径。中文文档与英文文档同构，未翻译的页面在下方逐条标出。
 
 ### 语言
 
-- [`intro/syntax.md`](intro/syntax.md)——语法:调用与尾随块、`def` 与绑定、
+- [`intro/syntax.md`](intro/syntax.md)——语法：调用与尾随块、`def` 与绑定、
   控制流、值，以及类型定义构造。
 - [`reserved_words.md`](reserved_words.md)——编译器保留的全部保留字、保留
   字面量与内建名。
@@ -112,7 +112,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
   即模块树、`internal/` 隐私、显式依赖。
 - [`intro/package-management.md`](intro/package-management.md)——包即模块前缀、
   MVS 精确解析、发布。
-- [`intro/concurrency.md`](intro/concurrency.md)——进程与消息传递:`do`、
+- [`intro/concurrency.md`](intro/concurrency.md)——进程与消息传递：`do`、
   `<-`、`receive`。
 - [`intro/networking.md`](intro/networking.md)——`net` 与 `http` 包之上的
   直接风格网络 API。
@@ -122,27 +122,27 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
   `expect_*` 断言。
 - [`intro/native-builds.md`](intro/native-builds.md)——`emo build`、二进制内的
   运行时，以及 `foreign def` C 互操作。
-- [`intro/macros.md`](intro/macros.md)——编译期宏:指令、`Syntax` API 与
+- [`intro/macros.md`](intro/macros.md)——编译期宏：指令、`Syntax` API 与
   quote 面。
 
 ### 指南
 
-- [`intro/tour.md`](intro/tour.md)——语言导览:快速开始加十章，每个可运行的 Emo 块在检查文档时编译成 Wasm 并运行。
-- [`emo-ui/intro.md`](emo-ui/intro.md)——EmoUI 入门:Hello, World 窗口与计数器，含完整代码。
-- [`httpd-guide.md`](httpd-guide.md)——Web 服务器指南:从十行的
+- [`intro/tour.md`](intro/tour.md)——语言导览：快速开始加十章，每个可运行的 Emo 块在检查文档时编译成 Wasm 并运行。
+- [`emo-ui/intro.md`](emo-ui/intro.md)——EmoUI 入门：Hello, World 窗口与计数器，含完整代码。
+- [`httpd-guide.md`](httpd-guide.md)——Web 服务器指南：从十行的
   `httpd.serve` 到带进程自有状态、中间件与优雅关闭的 JSON API。
-- [`emosh-guide.md`](emosh-guide.md)——用 Emo 写的命令解释器 `emosh`:
+- [`emosh-guide.md`](emosh-guide.md)——用 Emo 写的命令解释器 `emosh`：
   管道、重定向、展开与内建命令。
-- [`plot-guide.md`](plot-guide.md)——用 `plot` 包画图:完整公开 API 与示例。
+- [`plot-guide.md`](plot-guide.md)——用 `plot` 包画图：完整公开 API 与示例。
 - [`playwright-guide.md`](playwright-guide.md)——从 Emo 驱动真实浏览器。
-- [`macro-guide.md`](macro-guide.md)——面向任务的宏走读:配方与错误表。
-- [`emo-testing-guide.md`](emo-testing-guide.md)——详细的测试指南:发现规则、
+- [`macro-guide.md`](macro-guide.md)——面向任务的宏走读：配方与错误表。
+- [`emo-testing-guide.md`](emo-testing-guide.md)——详细的测试指南：发现规则、
   四个断言内建、报告与隔离。
 - [`lsp.md`](lsp.md)——语言服务器 `emo-lsp` 与编辑器集成。
 
 ### 编译目标与工具链
 
-- [`c-backend.md`](c-backend.md)——默认目标:发射 C、C 运行时与 C FFI。
+- [`c-backend.md`](c-backend.md)——默认目标：发射 C、C 运行时与 C FFI。
 - [`ocaml-backend.md`](ocaml-backend.md)——发射 OCaml 的后端与 OCaml 工具链
   要求。
 - [`demo-targets.md`](demo-targets.md)——用一个脚手架项目走遍全部目标，
@@ -150,18 +150,18 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 - [`runtime-and-freestanding.md`](runtime-and-freestanding.md)——"runtime" 与
   "freestanding" 各指什么，以及它们如何对应 Emo 的各目标。
 - [`toolchain.md`](toolchain.md)——构建与安装 `emo` CLI。
-- [`toolchain-distribution.md`](toolchain-distribution.md)——工具链如何分发:
+- [`toolchain-distribution.md`](toolchain-distribution.md)——工具链如何分发：
   安装渠道、`emo doctor` 与签名。
 - [`numeric-width.md`](numeric-width.md)——所有目标上的显式位宽数值类型。
 - [`var-escape.md`](var-escape.md)——`var` 逃逸规则。
 - [`raw-memory.md`](raw-memory.md)——`peek`/`poke` 与裸内存接口。
-- [`atomics.md`](atomics.md)——`Atomic`,`Box` 的同步孪生。
+- [`atomics.md`](atomics.md)——`Atomic`，`Box` 的同步孪生。
 - [`gc-heap.md`](gc-heap.md)——GC 堆的 arena、对象模型与 Emo 写的收集器。
 
 ### 标准库
 
-- [`stdlib.md`](stdlib.md)——导览:每个包的用途与对外接口。
-- [`stdlib/`](stdlib/)——各包的 API 参考。大致分组:
+- [`stdlib.md`](stdlib.md)——导览：每个包的用途与对外接口。
+- [`stdlib/`](stdlib/)——各包的 API 参考。大致分组：
   - **格式与文本**——[`json`](stdlib/json.md)、[`yaml`](stdlib/yaml.md)、
     [`toml`](stdlib/toml.md)、[`xml`](stdlib/xml.md)、[`csv`](stdlib/csv.md)、
     [`template`](stdlib/template.md)、[`dom`](stdlib/dom.md)、
@@ -188,16 +188,16 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 
 ### 项目
 
-每个项目的文档与代码放在一起:
+每个项目的文档与代码放在一起：
 
 - **EmoUI**——[`../../projects/emo-ui/docs/`](../../projects/emo-ui/docs/README.zh-CN.md):
   横跨终端、服务端页面、macOS、GTK 4 与浏览器 DOM 的组件框架。
 - **EmoOS**——[`../../projects/emo-os/`](../../projects/emo-os/README.zh-CN.md):
   内核、shell，以及通往完整操作系统的路径。
-- **Emo 桌面**——[`../../projects/emo-desktop/`](../../projects/emo-desktop/README.zh-CN.md):
+- **Emo 桌面**——[`../../projects/emo-desktop/`](../../projects/emo-desktop/README.zh-CN.md)：
   EmoOS 门之上的合成窗口 GUI。
 - **EmoDB**——[`../../projects/emo-db/`](../../projects/emo-db/README.zh-CN.md),
-  设计记录见 [`emo-db.md`](emo-db.md):一条 SQL 表面、两台引擎。
+  设计记录见 [`emo-db.md`](emo-db.md)：一条 SQL 表面、两台引擎。
 - **Emo shell**——[`../../projects/emo-shell/`](../../projects/emo-shell/),
   指南见 [`emosh-guide.md`](emosh-guide.md)。
 - **Emo Playground**——
@@ -207,7 +207,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 ### 评估与设计记录
 
 这些文档记录一次调研、一个决策或一个方向。它们不是教程，其中一部分
-是历史记录:读它们的推理，而不是当作当前参考。
+是历史记录：读它们的推理，而不是当作当前参考。
 
 - **EmoUI**——[`emo-ui.md`](emo-ui.md)(可行性评估与设计方向)、
   [`emo-ui-composition.md`](emo-ui-composition.md)(一棵树怎么写出来)、
@@ -237,7 +237,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 
 ### 翻译状态
 
-除本页(项目 README 的中文版)外，`docs/zh-CN/` 与英文 `docs/` 同构;以下页面目前只有英文:
+除本页(项目 README 的中文版)外，`docs/zh-CN/` 与英文 `docs/` 同构;以下页面目前只有英文：
 
 - [`../emo-test-ir.md`](../emo-test-ir.md)
 - [`../temp-check-bugs.md`](../temp-check-bugs.md)

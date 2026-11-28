@@ -1,6 +1,6 @@
 # 标准库
 
-标准库是编译器自带的一组包:它们随编译器内置的 registry 一起分发，像普通依赖一样参与解析——每个包都带版本，并且都要在 manifest 的 `deps` 块里钉住。使用一个包，就是这条钉住的版本加上 `require`:
+标准库是编译器自带的一组包：它们随编译器内置的 registry 一起分发，像普通依赖一样参与解析——每个包都带版本，并且都要在 manifest 的 `deps` 块里钉住。使用一个包，就是这条钉住的版本加上 `require`：
 
 ```emo
 // package.emo
@@ -15,18 +15,18 @@ require "json"
 
 manifest 没有钉住的 `require` 是编译错误(E5006)，错误消息直接指出要补哪一行;被引入的包自身依赖什么，由它自己的 manifest 带入。包的 `targets` 不含本次构建目标的，在解析阶段直接拒绝——格式类包在所有目标上运行，系统类包只声明拥有 Unix 形态宿主的目标，网络类包声明 `ocaml`、`c` 与 `typescript`。
 
-REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本，标准库的名字直接从内置 registry 解析(`require "math"` 之后，`math.pow(2.0, 10.0)` 即答)。带 scope 的名字或标准库没有的名字在 REPL 里拒绝(E5015)并指回项目路径——registry 包仍然是 manifest 的事。
+REPL 是唯一没有 manifest 的 `require`：会话不钉任何版本，标准库的名字直接从内置 registry 解析(`require "math"` 之后，`math.pow(2.0, 10.0)` 即答)。带 scope 的名字或标准库没有的名字在 REPL 里拒绝(E5015)并指回项目路径——registry 包仍然是 manifest 的事。
 
-两条约定贯穿所有包:
+两条约定贯穿所有包：
 
-- **预期内的失败是值，违例才抛出。** 可能因数据而失败的调用返回 `(R.ok, value)` 或 `(R.error, reason)`——reason 是以包名加冒号开头的字符串(`json: expected array element at byte 3`、`os: open_write notes.txt: Permission denied`;`file` 的错误以 `os:` 报出，因为系统调用由共享的 os 运行时执行)。没有错误码，没有 nil。抛出保留给契约违例:`Exception` 是唯一的异常类，`Exception.with_data` 的 `data` Map 装机器可读的上下文，不往消息里拼接，抛出即结束进程。流结束不是错误:空字符串表示流结束。
+- **预期内的失败是值，违例才抛出。** 可能因数据而失败的调用返回 `(R.ok, value)` 或 `(R.error, reason)`——reason 是以包名加冒号开头的字符串(`json: expected array element at byte 3`、`os: open_write notes.txt: Permission denied`;`file` 的错误以 `os:` 报出，因为系统调用由共享的 os 运行时执行)。没有错误码，没有 nil。抛出保留给契约违例：`Exception` 是唯一的异常类，`Exception.with_data` 的 `data` Map 装机器可读的上下文，不往消息里拼接，抛出即结束进程。流结束不是错误：空字符串表示流结束。
 - **语言够用就用纯 Emo。** 格式类包和编解码器用 Emo 写在共享运行时之上，声明的每个目标都给出逐字节相同的答案。`os` 与 `file` 分发到 POSIX 支撑的运行时实现，也只有它们是仅原生目标;`net` 与 `http` 同样分发到运行时实现——在 `ocaml`/`c` 上由 POSIX 支撑，在 `typescript` 上由 Node 支撑。
 
 ## `emo` 运行时命名空间
 
-编译器自带一个不属于任何包的命名空间:`emo`，运行时自己的门。需要宿主能力的包只包一层门——`file.read` 就是 `return emo.file_read(path)`,`write` 同理;`os`、`net`、`rand`、`time` 用同样的写法调用各自的门，浏览器目标的 `emo.dom_*` 家族就是 DOM 能力层。`emo` 是内建的:不需要 `dep` 条目，不需要 `require`，也没有版本号。任何程序都可以调用它;命名空间里没有的名字是编译错误，而不带 `emo.` 的裸门名(`file_read(...)`)根本不存在。
+编译器自带一个不属于任何包的命名空间：`emo`，运行时自己的门。需要宿主能力的包只包一层门——`file.read` 就是 `return emo.file_read(path)`，`write` 同理;`os`、`net`、`rand`、`time` 用同样的写法调用各自的门，浏览器目标的 `emo.dom_*` 家族就是 DOM 能力层。`emo` 是内建的：不需要 `dep` 条目，不需要 `require`，也没有版本号。任何程序都可以调用它;命名空间里没有的名字是编译错误，而不带 `emo.` 的裸门名(`file_read(...)`)根本不存在。
 
-各包一览:
+各包一览：
 
 | 包 | 提供的能力 | 目标 |
 |---|---|---|
@@ -47,34 +47,34 @@ REPL 是唯一没有 manifest 的 `require`:会话不钉任何版本，标准库
 | [`template`](#template-包) | 文本加洞，从 json 上下文渲染，步步从严 | 全部五个 |
 | [`base64`](#base64-包) | RFC 4648 base64 编解码 | 全部五个 |
 | [`crypto`](#crypto-包) | SHA-2/SHA-3、HMAC、HKDF/PBKDF2、ChaCha20-Poly1305、AES-GCM、Ed25519、X25519 | 全部五个与 `riscv64` |
-| [`hash`](#hash-包) | 锁的摘要:SHA-256/224、常数时间比较、hex 渲染 | 全部五个与 `riscv64` |
+| [`hash`](#hash-包) | 锁的摘要：SHA-256/224、常数时间比较、hex 渲染 | 全部五个与 `riscv64` |
 | [`rand`](#rand-包) | 操作系统熵与确定性的 HMAC-DRBG 流 | `ocaml`、`c`、`typescript`、`beam`、`wasm` |
 | [`uuid`](#uuid-包) | RFC 9562 UUID:v4/v7/v3/v5，严格的文本与字节形式 | 全部五个 |
 | [`csv`](#csv-包) | RFC 4180 CSV 记录，UTF-8 | 全部五个 |
 | [`float`](#float-包) | binary64 与十进制文本的精确转换 | 全部五个 |
 | [`math`](#math-包) | 浮点标量、超越函数、复数、FFT、BLAS1、稠密求解器 | 全部五个 |
-| [`fastmath`](#fastmath-包) | 宿主 libm:`math` 的标量、原生速度 | `ocaml`、`c` |
+| [`fastmath`](#fastmath-包) | 宿主 libm：`math` 的标量、原生速度 | `ocaml`、`c` |
 | [`quad`](#quad-包) | 标量回调之后的 QUADPACK 自适应求积 | `c` |
 | [`plot`](#plot-包) | 声明式二维图表，渲染为 SVG | 全部五个 |
 | [`slog`](#slog-包) | 结构化日志，logfmt 或 JSON | 全部五个 |
-| [`sync`](#sync-包) | 等待组:让一个进程等待 N 份工作完成 | 全部五个 |
+| [`sync`](#sync-包) | 等待组：让一个进程等待 N 份工作完成 | 全部五个 |
 | [`time`](#time-包) | 墙钟、单调时钟、日历与定时家族 | `ocaml`、`c`、`typescript`、`wasm`（时钟半）、`beam` |
 | [`sql`](#sql-包) | SQL 文本解析为抽象语法树 | 全部五个 |
-| [`sqlite3`](#sqlite3-包) | SQLite:预备语句、逐行步进 | `c` |
-| [`postgres`](#postgres-包) | 基于 libpq 的 PostgreSQL 客户端:`$1` 参数、错误是值 | `c` |
-| [`term`](#term-包) | 终端输入:按行读取、raw mode、按键事件、尺寸 | `c` |
-| [`wayland`](#wayland-包) | Wayland 客户端协议:编解码器、核心与 xdg-shell 接口表、shm | `c` |
-| [`syscall`](#syscall-包) | EmoOS 门的用户侧:带类型的 `ecall` 表面 | `riscv64` |
-| [`wasm`](#wasm-包) | 用 Emo 写的 WebAssembly 运行时:解码、验证、执行、宿主 import | `ocaml`, `c` |
-| [`gc`](#gc-包) | GC 堆的收集器:机器对象模型上的打标访问器，带环回收的 mark-sweep | 解释器运行、`c`、`riscv64` |
+| [`sqlite3`](#sqlite3-包) | SQLite：预备语句、逐行步进 | `c` |
+| [`postgres`](#postgres-包) | 基于 libpq 的 PostgreSQL 客户端：`$1` 参数、错误是值 | `c` |
+| [`term`](#term-包) | 终端输入：按行读取、raw mode、按键事件、尺寸 | `c` |
+| [`wayland`](#wayland-包) | Wayland 客户端协议：编解码器、核心与 xdg-shell 接口表、shm | `c` |
+| [`syscall`](#syscall-包) | EmoOS 门的用户侧：带类型的 `ecall` 表面 | `riscv64` |
+| [`wasm`](#wasm-包) | 用 Emo 写的 WebAssembly 运行时：解码、验证、执行、宿主 import | `ocaml`， `c` |
+| [`gc`](#gc-包) | GC 堆的收集器：机器对象模型上的打标访问器，带环回收的 mark-sweep | 解释器运行、`c`、`riscv64` |
 
-"全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单，不是语言的:解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
+"全部五个"指这些包各自声明的那组托管目标——`c`、`ocaml`、`typescript`、`wasm`、`beam`。这是包的清单，不是语言的：解释器直接求值程序、不产生产物;完整的构建目标集合——`c`、`ocaml`、`typescript`、`browser`、`wasm`、`beam`、`riscv64`——在 [`demo-targets.md`](demo-targets.md) 里被逐一走通。
 
-所有包版本均为 0.1.0。每个包在 [`docs/stdlib/`](../stdlib/) 下有完整的 API 参考(中文翻译在 [`docs/zh-CN/stdlib/`](stdlib/));程序直接调用的每个包在 `examples/` 下有可运行的示例。同样的页面随编译器二进制分发:`emo man <package>` 在终端里渲染其中一页，`emo man` 列出全部页面(见 [`docs/toolchain.md`](../toolchain.md))。
+所有包版本均为 0.1.0。每个包在 [`docs/stdlib/`](../stdlib/) 下有完整的 API 参考(中文翻译在 [`docs/zh-CN/stdlib/`](stdlib/));程序直接调用的每个包在 `examples/` 下有可运行的示例。同样的页面随编译器二进制分发：`emo man <package>` 在终端里渲染其中一页，`emo man` 列出全部页面(见 [`docs/toolchain.md`](../toolchain.md))。
 
 ## file 包
 
-调度器上的直接风格整文件 IO:一次调用读入整个文件，一次调用写出整个文件。路径按原样使用(相对路径相对进程的工作目录解析)。
+调度器上的直接风格整文件 IO：一次调用读入整个文件，一次调用写出整个文件。路径按原样使用(相对路径相对进程的工作目录解析)。
 
 ```emo
 def read(path String) (R, String)
@@ -91,11 +91,11 @@ const (R.ok, text) = file.read("notes.txt")
 println(text)
 ```
 
-参考:[`docs/zh-CN/stdlib/file.md`](stdlib/file.md) · 示例:`examples/file_read`。
+参考：[`docs/zh-CN/stdlib/file.md`](stdlib/file.md) · 示例：`examples/file_read`。
 
 ## os 包
 
-进程级的外部接口:进程 id、`fork`、`execv`、`execvp`、`waitpid`、管道、描述符接线、环境变量、信号、工作目录、目录列举，以及裸(无缓冲、基于 fd 的)文件 IO——系统程序在构建任何东西之前需要的机器。
+进程级的外部接口：进程 id、`fork`、`execv`、`execvp`、`waitpid`、管道、描述符接线、环境变量、信号、工作目录、目录列举，以及裸(无缓冲、基于 fd 的)文件 IO——系统程序在构建任何东西之前需要的机器。
 
 ```emo
 def getpid() Int64
@@ -123,13 +123,13 @@ def getcwd() String
 def chdir(path String) (R, Int64)
 ```
 
-`fork()` 以 `(R.ok, pid)` 回答——子进程得 `0`，父进程得子进程的 pid——子进程通过 `_exit` 离开。`waitpid(pid)` 返回 `(pid, status)`,`status` 是内核原始的 16 位状态字，由 `wait_exited` / `wait_exit_code` / `wait_signaled` / `wait_signal` / `wait_stopped` / `wait_stop_signal` 这些助手解码。`open_write` 创建或截断，`open_append` 创建或追加;`read` 最多返回 `n` 字节，文件结束返回空字符串。`list_dir` 返回按字节序排序的目录项名，不含 `.` 和 `..`，两个目标上顺序一致。
+`fork()` 以 `(R.ok, pid)` 回答——子进程得 `0`，父进程得子进程的 pid——子进程通过 `_exit` 离开。`waitpid(pid)` 返回 `(pid, status)`，`status` 是内核原始的 16 位状态字，由 `wait_exited` / `wait_exit_code` / `wait_signaled` / `wait_signal` / `wait_stopped` / `wait_stop_signal` 这些助手解码。`open_write` 创建或截断，`open_append` 创建或追加;`read` 最多返回 `n` 字节，文件结束返回空字符串。`list_dir` 返回按字节序排序的目录项名，不含 `.` 和 `..`，两个目标上顺序一致。
 
-目标:`["ocaml", "c"]`。参考:[`docs/zh-CN/stdlib/os.md`](stdlib/os.md) · 示例:`examples/os_demo`。
+目标：`["ocaml", "c"]`。参考：[`docs/zh-CN/stdlib/os.md`](stdlib/os.md) · 示例：`examples/os_demo`。
 
 ## bufio 包
 
-缓冲 IO:在任意字节流前面放一块固定大小的内存缓冲，读方少量大块地读，写方把小写合并成大写，双方都获得整行和读到分隔符为止的读取。形状沿 Go 的 `bufio`:一个 `Reader` 和一个 `Writer`，架在两个单方法结构接口之上，具体流各有适配器，缓冲大小由调用方显式给定。
+缓冲 IO：在任意字节流前面放一块固定大小的内存缓冲，读方少量大块地读，写方把小写合并成大写，双方都获得整行和读到分隔符为止的读取。形状沿 Go 的 `bufio`：一个 `Reader` 和一个 `Writer`，架在两个单方法结构接口之上，具体流各有适配器，缓冲大小由调用方显式给定。
 
 ```emo
 interface ByteReader {
@@ -152,7 +152,7 @@ def writer(sink ByteWriter) Writer
 def writer_size(sink ByteWriter, size Int64) Writer
 ```
 
-任何具备匹配 `read` 或 `write` 的类都按形状满足接口，所以读缓冲可以层层堆叠。`Reader`:
+任何具备匹配 `read` 或 `write` 的类都按形状满足接口，所以读缓冲可以层层堆叠。`Reader`：
 
 ```emo
 r.read(n)            // 最多 n 字节;流结束返回 ""
@@ -177,13 +177,13 @@ w.available()   // 距离自动刷出还剩的空间
 w.reset(sink)   // 先刷出,再改挂到 sink
 ```
 
-流结束是一个值——空字符串——绝不是异常;`read_line` 保留终止符，空行因此始终可以和流结束区分。`Writer` 在流结束前必须 `flush`:缓冲里的尾巴属于调用方。
+流结束是一个值——空字符串——绝不是异常;`read_line` 保留终止符，空行因此始终可以和流结束区分。`Writer` 在流结束前必须 `flush`：缓冲里的尾巴属于调用方。
 
-目标:`["ocaml", "c"]`(构建在 `os` 之上，由它自己的 manifest 固定)。参考:[`docs/zh-CN/stdlib/bufio.md`](stdlib/bufio.md) · 示例:`examples/bufio_demo`。
+目标：`["ocaml", "c"]`(构建在 `os` 之上，由它自己的 manifest 固定)。参考：[`docs/zh-CN/stdlib/bufio.md`](stdlib/bufio.md) · 示例：`examples/bufio_demo`。
 
 ## net 包
 
-套接字:TCP、UDP、Unix 域套接字、DNS 和 TLS——一层薄而可读的 Emo 源码，架在运行时的网络实现之上。直接风格:阻塞调用读起来和其他函数调用一样，套接字忙时调度器把进程停驻。每个失败——连接被拒、名字解析不出、超时——都以 `(R.error, reason)` 返回，reason 写明对端、操作与原因。
+套接字：TCP、UDP、Unix 域套接字、DNS 和 TLS——一层薄而可读的 Emo 源码，架在运行时的网络实现之上。直接风格：阻塞调用读起来和其他函数调用一样，套接字忙时调度器把进程停驻。每个失败——连接被拒、名字解析不出、超时——都以 `(R.error, reason)` 返回，reason 写明对端、操作与原因。
 
 ```emo
 def resolve(host String) (R, Array[String])
@@ -221,9 +221,9 @@ socket.close()                   // (R, UdpSocket)
 socket.set_timeout(seconds)
 ```
 
-EOF 绝不是静默的部分结果:对端提前关闭时 `read_exactly` 以 reason 失败，行中途中闭是错误元组，`read_all` 是唯一把 EOF 当作正常读完的读取。Unix 域监听器没有端口——对它调 `port()` 是错误。
+EOF 绝不是静默的部分结果：对端提前关闭时 `read_exactly` 以 reason 失败，行中途中闭是错误元组，`read_all` 是唯一把 EOF 当作正常读完的读取。Unix 域监听器没有端口——对它调 `port()` 是错误。
 
-目标:`["ocaml", "c", "typescript"]`。在 `c` 上本包覆盖 TCP 与 TLS;UDP、Unix 域套接字与 `net.resolve` 在 `c` 上运行时被拒绝。参考:[`docs/zh-CN/stdlib/net.md`](stdlib/net.md) · 示例:`examples/tcp_echo`。
+目标：`["ocaml", "c", "typescript"]`。在 `c` 上本包覆盖 TCP 与 TLS;UDP、Unix 域套接字与 `net.resolve` 在 `c` 上运行时被拒绝。参考：[`docs/zh-CN/stdlib/net.md`](stdlib/net.md) · 示例：`examples/tcp_echo`。
 
 ## http 包
 
@@ -242,7 +242,7 @@ def request_with_via(proxy String, method String, url String, headers Array[(Str
 
 `timeout` 是整个请求的一份预算。代理从 `https_proxy` / `http_proxy` / `all_proxy` 读取，并遵守 `no_proxy`;`request_via` 显式指定代理(`""` 强制直连)。chunked 响应会被解码，靠关闭定界的正文读到关闭为止。
 
-URL 必须带显式的 `http://` 或 `https://` scheme;`https` 走 `net.tls_connect`——证书验证开启。`request_with` 把逐连接 TLS 策略(`net.tls_client_options()`)传给 `net.tls_connect_with`:私有信任库、客户端证书，或校验名覆盖。响应:
+URL 必须带显式的 `http://` 或 `https://` scheme;`https` 走 `net.tls_connect`——证书验证开启。`request_with` 把逐连接 TLS 策略(`net.tls_client_options()`)传给 `net.tls_connect_with`：私有信任库、客户端证书，或校验名覆盖。响应：
 
 ```emo
 class HttpResponse {
@@ -251,11 +251,11 @@ class HttpResponse {
 }
 ```
 
-目标:`["ocaml", "c", "typescript"]`(构建在 `net` 之上，由它自己的 manifest 固定)。在 `c` 上覆盖范围继承自 `net`:TCP 与 TLS。参考:[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例:`examples/http_roundtrip`、`examples/https_roundtrip`。
+目标：`["ocaml", "c", "typescript"]`(构建在 `net` 之上，由它自己的 manifest 固定)。在 `c` 上覆盖范围继承自 `net`：TCP 与 TLS。参考：[`docs/zh-CN/stdlib/http.md`](stdlib/http.md) · 示例：`examples/http_roundtrip`、`examples/https_roundtrip`。
 
 ## httpd 包
 
-构建在 `net` 之上的纯 Emo HTTP 服务器:每连接一进程，一个请求作为值进来、处理者用一个值应答——keep-alive、chunked 请求体、`100-continue`、每请求超时与尺寸限额、优雅关闭，全都住在包里，不住进每个程序的 accept 循环。客户端半边是 `http` 包。
+构建在 `net` 之上的纯 Emo HTTP 服务器：每连接一进程，一个请求作为值进来、处理者用一个值应答——keep-alive、chunked 请求体、`100-continue`、每请求超时与尺寸限额、优雅关闭，全都住在包里，不住进每个程序的 accept 循环。客户端半边是 `http` 包。
 
 ```emo
 const server = httpd.serve(listener) -> (req httpd.Request) {
@@ -268,7 +268,7 @@ server.wait()   // 等待排干
 
 `serve`(或带 `server_options()` 的 `serve_with`——读/空闲超时、头与体的限额对应 431/413、注入的 `Date` 时钟)立刻应答一个 `Server` 句柄;`wait()` 阻塞到排干完成。处理者收到一个完整的 `Request`——`method`、`path`、`query`、规范化过的 `headers`(大小写不敏感查找)、按 `Content-Length` 或 chunked 解出的 `body`(含 `100-continue`)、`params`——并应答一个 `Response` 值;线上恒带 `Content-Length`(派生，或处理者自带的)，HEAD/204/304 去体，keep-alive 保持到对端说关。
 
-路由住在 `httpd.router()`，一次注册一条:
+路由住在 `httpd.router()`，一次注册一条：
 
 ```emo
 var r = httpd.router()
@@ -280,11 +280,11 @@ const server = httpd.serve_routes(listener, r)
 
 最具体的模式胜出(字面量 > 通配 > rest，共享前缀之外更长者优先);形状以别的方法匹配时以 `Allow` 答 405;`//`、`.`、`..` 以 301 应清理后的路径。模式在注册时解析——坏的或冲突的会 raise。对端的坏字节是值(400/431/413 纯文本，连接关闭);包本身不碰时钟——`Date` 头需要调用方选定的时区，所以响应默认不带，除非经 `with_date` 注入(`time` 包的 UTC 时钟提供仪器)。
 
-目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/httpd.md`](stdlib/httpd.md) · 指南:[`docs/zh-CN/httpd-guide.md`](httpd-guide.md) · 示例:`examples/httpd_routes`、`examples/httpd_serve`、`examples/httpd_wire`、`examples/httpd_parse`、`examples/https_roundtrip`。
+目标：`["ocaml", "c", "typescript"]`。参考：[`docs/zh-CN/stdlib/httpd.md`](stdlib/httpd.md) · 指南：[`docs/zh-CN/httpd-guide.md`](httpd-guide.md) · 示例：`examples/httpd_routes`、`examples/httpd_serve`、`examples/httpd_wire`、`examples/httpd_parse`、`examples/https_roundtrip`。
 
 ## valkey 包
 
-构建在 `net` 之上的纯 Emo Valkey 客户端，讲 RESP2。直接风格;一条连接、一条命令、一个回复——没有流水线，没有连接池，没有把掉线藏起来的自动重连。服务器的错误回复是值:`(R.error, "valkey: " + 服务器原文)`。缺键是经 `is_null?()` 读取的 null 回复，不是错误。
+构建在 `net` 之上的纯 Emo Valkey 客户端，讲 RESP2。直接风格;一条连接、一条命令、一个回复——没有流水线，没有连接池，没有把掉线藏起来的自动重连。服务器的错误回复是值：`(R.error, "valkey: " + 服务器原文)`。缺键是经 `is_null?()` 读取的 null 回复，不是错误。
 
 ```emo
 valkey.connect(host, port, timeout)   // (R, Valkey) —— 另有 connect_unix、
@@ -301,11 +301,11 @@ v.command(args)             // (R, Reply) — 任意命令,原始回复
 
 四十五扇左右的类型化门覆盖字符串、键、哈希、列表、集合五族外加 `ping`/`echo`/`auth`/`select`;每扇门解码自己命令的契约所命名的形状，服务器答出别的形状就以错误值返回。回复是一棵 `Reply` 树——每种 RESP2 类型一个类(`rnull`、`rstring`、`rint`、`rarray`;简单字符串与 bulk 字符串同为一类)，`as_*` 访问器是调用者的断言，json 的规矩。timeout 约束每一次交换;`0.0` 表示无限等待。
 
-目标:`["ocaml", "c", "typescript"]`(构建在 `net` 之上，由它自己的 manifest 固定)。参考:[`docs/zh-CN/stdlib/valkey.md`](stdlib/valkey.md) · 示例:`examples/valkey_demo`。
+目标：`["ocaml", "c", "typescript"]`(构建在 `net` 之上，由它自己的 manifest 固定)。参考：[`docs/zh-CN/stdlib/valkey.md`](stdlib/valkey.md) · 示例：`examples/valkey_demo`。
 
 ## websocket 包
 
-构建在 `net` 之上的纯 Emo WebSocket 双半(RFC 6455):`connect` 拨号并校验握手的 accept，`accept` 接下一条客户端升级来的连接，双方在同一个 `Websocket` 上会合，交换单位是一条文本消息。帧留在这层屋顶之下——按角色加掩码、ping 用原载荷应答、close 被应答，拆成多帧的消息在 `recv_message` 应答前拼回。
+构建在 `net` 之上的纯 Emo WebSocket 双半(RFC 6455)：`connect` 拨号并校验握手的 accept，`accept` 接下一条客户端升级来的连接，双方在同一个 `Websocket` 上会合，交换单位是一条文本消息。帧留在这层屋顶之下——按角色加掩码、ping 用原载荷应答、close 被应答，拆成多帧的消息在 `recv_message` 应答前拼回。
 
 ```emo
 websocket.connect(host, port, path, timeout)  // (R, Websocket)
@@ -315,11 +315,11 @@ ws.recv_message()     // (R, String) —— 分片已拼回,控制帧已处理
 ws.close()            // (R, Websocket) —— 一个 close 帧,然后关套接字
 ```
 
-目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/websocket.md`](stdlib/websocket.md) · 示例:`examples/websocket_demo`。
+目标：`["ocaml", "c", "typescript"]`。参考：[`docs/zh-CN/stdlib/websocket.md`](stdlib/websocket.md) · 示例：`examples/websocket_demo`。
 
 ## playwright 包
 
-纯 Emo 的 Playwright 客户端:经 `websocket` 包对着官方 `playwright run-server` 讲驱动的通道协议。run-server 为连接预 launch 浏览器——客户端从不 launch——门面驱动页面。被拒的调用是 `(R.error, "playwright: " + 驱动原文)`;线路永不因驱动数据 raise。
+纯 Emo 的 Playwright 客户端：经 `websocket` 包对着官方 `playwright run-server` 讲驱动的通道协议。run-server 为连接预 launch 浏览器——客户端从不 launch——门面驱动页面。被拒的调用是 `(R.error, "playwright: " + 驱动原文)`;线路永不因驱动数据 raise。
 
 ```emo
 playwright.connect(host, port, timeout)  // (R, Playwright) —— chromium
@@ -332,12 +332,12 @@ page.screenshot()                        // (R, Bytes) —— 一张 PNG
 pw.close()                               // (R, Playwright)
 ```
 
-目标:`["ocaml", "c", "typescript"]`。参考:[`docs/zh-CN/stdlib/playwright.md`](stdlib/playwright.md) · 上手:[`docs/zh-CN/playwright-guide.md`](playwright-guide.md) · 示例:`examples/playwright_demo`。
+目标：`["ocaml", "c", "typescript"]`。参考：[`docs/zh-CN/stdlib/playwright.md`](stdlib/playwright.md) · 上手：[`docs/zh-CN/playwright-guide.md`](playwright-guide.md) · 示例：`examples/playwright_demo`。
 
 
 ## json 包
 
-JSON 读写器:严格、字节级的 RFC 8259 解码进 `Json` 值树，再编码回去——紧凑或带缩进。`Json` 是一个接口，每种 JSON 类一个实现类(`JsonNull`、`JsonBool`、`JsonInt`、`JsonFloat`、`JsonString`、`JsonArray`、`JsonObject`)，由 `JsonKind` 枚举区分。
+JSON 读写器：严格、字节级的 RFC 8259 解码进 `Json` 值树，再编码回去——紧凑或带缩进。`Json` 是一个接口，每种 JSON 类一个实现类(`JsonNull`、`JsonBool`、`JsonInt`、`JsonFloat`、`JsonString`、`JsonArray`、`JsonObject`)，由 `JsonKind` 枚举区分。
 
 ```emo
 def decode(text String) (R, Json)
@@ -345,7 +345,7 @@ def encode(v Json) String
 def encode_pretty(v Json) String   // 两空格缩进
 ```
 
-标量访问器在接口上——类型不对就抛出;数组和对象通过 `is()` 读进具体类:
+标量访问器在接口上——类型不对就抛出;数组和对象通过 `is()` 读进具体类：
 
 ```emo
 def as_bool() Bool
@@ -356,7 +356,7 @@ def kind() JsonKind
 def is_null?() Bool
 ```
 
-`JsonArray` 返回 `items()`(`Array[Json]`);`JsonObject` 返回 `entries()`(`Array[(String, Json)]`)和 `get(key)`——重复键后写者胜，缺键抛出。值用工厂构造，键和元素以显式数组给出:
+`JsonArray` 返回 `items()`(`Array[Json]`);`JsonObject` 返回 `entries()`(`Array[(String, Json)]`)和 `get(key)`——重复键后写者胜，缺键抛出。值用工厂构造，键和元素以显式数组给出：
 
 ```emo
 def null() Json
@@ -370,11 +370,11 @@ def object(entries Array[(String, Json)]) Json
 
 解码以 `(R.ok, doc)` 或 `(R.error, reason)` 回答——reason 带字节偏移，覆盖每个格式错误，嵌套超过 512 层同理。浮点以最短往返形式编码，且始终保持可见的浮点形态(`1.0`，绝不是 `1`)，因此 encode → decode → encode 是恒等——值与种类都不变。
 
-目标:全部五个——每个目标上都逐字节一致。参考:[`docs/zh-CN/stdlib/json.md`](stdlib/json.md) · 示例:`examples/json_demo`、`examples/json_edge`。
+目标：全部五个——每个目标上都逐字节一致。参考：[`docs/zh-CN/stdlib/json.md`](stdlib/json.md) · 示例：`examples/json_demo`、`examples/json_edge`。
 
 ## yaml 包
 
-YAML 读写器:YAML 1.2 的 core schema 解码进与 json 包同构设计的 `Yaml` 值树，再以块风格编码回去。两个包相互独立——require yaml 不需要 json。
+YAML 读写器：YAML 1.2 的 core schema 解码进与 json 包同构设计的 `Yaml` 值树，再以块风格编码回去。两个包相互独立——require yaml 不需要 json。
 
 ```emo
 def decode(text String) (R, Yaml)
@@ -385,33 +385,33 @@ def encode(v Yaml) String
 
 解码覆盖块映射与块序列(含紧凑的 `- key: value` 形式)、flow 集合、带 YAML 转义集的引号标量、注释、带 chomping 的 `|`/`>` 块标量，以及按 core schema 解析的 plain 标量(`null`/`~`、布尔、十进制与 `0x`/`0o` 整数、含 `.inf`/`.nan` 的浮点)。锚点与别名、tag、多文档输入、缩进中的 tab 都以 `(R.error, reason)` 返回并带字节偏移。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/yaml.md`](stdlib/yaml.md) · 示例:`examples/yaml_demo`、`examples/yaml_edge`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/yaml.md`](stdlib/yaml.md) · 示例：`examples/yaml_demo`、`examples/yaml_edge`。
 
 ## toml 包
 
-TOML 读写器:TOML 1.1.0 解码进与 json、yaml 包同构设计的 `Toml` 值树，再以文档形式编码回去。各包相互独立——require toml 不需要 json。
+TOML 读写器：TOML 1.1.0 解码进与 json、yaml 包同构设计的 `Toml` 值树，再以文档形式编码回去。各包相互独立——require toml 不需要 json。
 
 ```emo
 def decode(text String) (R, Toml)
 def encode(v Toml) String
 ```
 
-`Toml` 是一个接口，实现类为 `TomlBool`、`TomlInt`、`TomlFloat`、`TomlString`、`TomlDateTime`、`TomlArray`、`TomlTable`——TOML 没有 null——由 `TomlKind` 区分;访问器和工厂与 json 同名(`toml.bool(b)`、`toml.int64(n)`、`toml.float64(x)`、`toml.string(s)`、`toml.array(items)`、`toml.table(entries)`)。四种日期时间形式共享一个 `TomlDateTime` 类:解析出的字段、指明四种形式之一的 `datetime_kind()`，以及能把规范文本渲染回去的 `to_text()`。
+`Toml` 是一个接口，实现类为 `TomlBool`、`TomlInt`、`TomlFloat`、`TomlString`、`TomlDateTime`、`TomlArray`、`TomlTable`——TOML 没有 null——由 `TomlKind` 区分;访问器和工厂与 json 同名(`toml.bool(b)`、`toml.int64(n)`、`toml.float64(x)`、`toml.string(s)`、`toml.array(items)`、`toml.table(entries)`)。四种日期时间形式共享一个 `TomlDateTime` 类：解析出的字段、指明四种形式之一的 `datetime_kind()`，以及能把规范文本渲染回去的 `to_text()`。
 
-解码覆盖 1.1 全部表面:裸键、带引号键与点分键;四种字符串形式含 `\e` 与 `\xHH` 转义;十进制、十六进制、八进制、二进制整数带下划线;浮点(小写 `e`，小数点两侧必须有数字);全部四种日期时间形式，秒可省略，允许小写 `t`/`z`;数组与多行 inline table 带注释和尾逗号;以及严格的重复定义规则——点分键造出的表不再被 header 打开，inline table 不再增长，`[[x]]` 只向数组追加。`inf`/`nan` 浮点拼写与超出 Int64 的整数，连同一切畸形输入，都以 `(R.error, reason)` 返回并带字节偏移。
+解码覆盖 1.1 全部表面：裸键、带引号键与点分键;四种字符串形式含 `\e` 与 `\xHH` 转义;十进制、十六进制、八进制、二进制整数带下划线;浮点(小写 `e`，小数点两侧必须有数字);全部四种日期时间形式，秒可省略，允许小写 `t`/`z`;数组与多行 inline table 带注释和尾逗号;以及严格的重复定义规则——点分键造出的表不再被 header 打开，inline table 不再增长，`[[x]]` 只向数组追加。`inf`/`nan` 浮点拼写与超出 Int64 的整数，连同一切畸形输入，都以 `(R.error, reason)` 返回并带字节偏移。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/toml.md`](stdlib/toml.md) · 示例:`examples/toml_demo`、`examples/toml_edge`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/toml.md`](stdlib/toml.md) · 示例：`examples/toml_demo`、`examples/toml_edge`。
 
 ## xml 包
 
-XML 读写器:良构的 XML 解码进 `Xml` 值树，再编码回去。XML 全是文本——任何东西都不强转成数字或布尔，全部文本子节点都保留，因此 `encode(decode(x))` 精确复现原树。
+XML 读写器：良构的 XML 解码进 `Xml` 值树，再编码回去。XML 全是文本——任何东西都不强转成数字或布尔，全部文本子节点都保留，因此 `encode(decode(x))` 精确复现原树。
 
 ```emo
 def decode(text String) (R, Xml)
 def encode(v Xml) String
 ```
 
-`Xml` 是一个接口，实现类为 `XmlElement` 与 `XmlText`，由 `XmlKind` 区分:
+`Xml` 是一个接口，实现类为 `XmlElement` 与 `XmlText`，由 `XmlKind` 区分：
 
 ```emo
 def kind() XmlKind
@@ -419,7 +419,7 @@ def is_text?() Bool
 def as_text() String      // 文本节点;元素节点拒绝
 ```
 
-容器访问器在 `XmlElement` 上，经 `is()` 读入:`name()`、`attrs()`、`attr(name)`(属性缺失抛出)、`children()`(文档序的全部子节点)、`get(name)`(第一个该名字的子元素;缺失抛出)、`text()`(子树内全部文本)。值用工厂构造:
+容器访问器在 `XmlElement` 上，经 `is()` 读入：`name()`、`attrs()`、`attr(name)`(属性缺失抛出)、`children()`(文档序的全部子节点)、`get(name)`(第一个该名字的子元素;缺失抛出)、`text()`(子树内全部文本)。值用工厂构造：
 
 ```emo
 def element(name String, attrs Array[(String, String)], children Array[Xml]) Xml
@@ -428,11 +428,11 @@ def text(s String) Xml
 
 解码严格检查良构性——元素按序嵌套闭合、属性唯一且值带引号、根元素恰好一个——并跳过声明、注释、处理指令和不含内部子集的 DOCTYPE;CDATA 按原始文本解码;五个预定义实体加 `&#ddd;` / `&#xhh;` 字符引用在文本和属性值里处处解码。每个失败都以 `(R.error, reason)` 返回并带字节偏移。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/xml.md`](stdlib/xml.md) · 示例:`examples/xml_demo`、`examples/xml_edge`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/xml.md`](stdlib/xml.md) · 示例：`examples/xml_demo`、`examples/xml_edge`。
 
 ## dom 包
 
-只读的 DOM:严格 HTML 解析成 `Node` 树，用 CSS 选择器查询——goquery 的形状，纯 Emo 写在共享运行时之上。解析走 `xml.decode` 的方向:格式错误的输入以 `(R.error, reason)` 带字节位置回答，绝不返修一棵树;也不合成 `html`/`head`/`body`——树忠实反映源码，片段解析出它点名的那些元素。
+只读的 DOM：严格 HTML 解析成 `Node` 树，用 CSS 选择器查询——goquery 的形状，纯 Emo 写在共享运行时之上。解析走 `xml.decode` 的方向：格式错误的输入以 `(R.error, reason)` 带字节位置回答，绝不返修一棵树;也不合成 `html`/`head`/`body`——树忠实反映源码，片段解析出它点名的那些元素。
 
 ```emo
 dom.parse(text)               // (R, Document) —— 严格
@@ -451,11 +451,11 @@ sel.each(f Block)             // 尾随块走完整个 selection
 
 选择器带类型、`*`、类、id、属性测试(`[href]`、`=`、`^=`、`$=`、`*=`、`~=`、`|=`)、四个组合器、逗号分组、结构伪类(`:first-child`、`:nth-child(an+b)`、`:not(...)`、`:empty`、`:root`……)，以及 goquery 的 `:contains`。伪元素和未知伪类以选择器错误回答——`find` 从不悄悄匹配成空。`script`/`style` 存原始文本，`title`/`textarea` 只存字符引用;标签名和属性名折叠为小写。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/dom.md`](stdlib/dom.md) · 示例:`examples/dom_demo`、`examples/dom_edge`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/dom.md`](stdlib/dom.md) · 示例：`examples/dom_demo`、`examples/dom_edge`。
 
 ## template 包
 
-纯 Emo 写的文本模板引擎:文本加洞，从 `json` 上下文渲染——Go `text/template` 的机制、Emo 自己的表面。步步从严:解析以字节位置拒绝格式错误的动作(`dom.parse` 的方向);渲染拒绝没有文本的东西——缺键、类型不对、下标越界、null 洞、容器洞——从不悄悄输出空文本。上下文是 json 树，`json.decode` 直接可渲染，数字走 `float` 包的精确十进制文本，构造上就逐字节一致。
+纯 Emo 写的文本模板引擎：文本加洞，从 `json` 上下文渲染——Go `text/template` 的机制、Emo 自己的表面。步步从严：解析以字节位置拒绝格式错误的动作(`dom.parse` 的方向);渲染拒绝没有文本的东西——缺键、类型不对、下标越界、null 洞、容器洞——从不悄悄输出空文本。上下文是 json 树，`json.decode` 直接可渲染，数字走 `float` 包的精确十进制文本，构造上就逐字节一致。
 
 ```emo
 template.render(text, ctx)          // (R, String) —— 一次成型
@@ -464,26 +464,26 @@ set.with(name, text)                // (R, Set) —— 解析一个具名模板
 set.render(name, ctx)               // (R, String) —— 渲染一个成员
 ```
 
-动作:`{{ user.name }}` 数据洞，路径是裸点分(`users[0].name`、`m["a b"]`);过滤器管道(`{{ name | upper }}`——upper/lower/trim/length/join/default/escape_html，固定且 ASCII 安全);`{{ if }}`/`{{ else if }}`/`{{ else }}`/`{{ end }}`，"不是零值"的真值;`{{ for x in e }}` 遍历数组与对象，带 `{{ else }}`;`{{ template "name" e? }}` 引用(绑定不过引用边;深度上限点名链条);`{{- ` / ` -}}` 修剪标记与 `{{! ... }}` 注释。没有算术、没有比较——模板渲染，程序计算。
+动作：`{{ user.name }}` 数据洞，路径是裸点分(`users[0].name`、`m["a b"]`);过滤器管道(`{{ name | upper }}`——upper/lower/trim/length/join/default/escape_html，固定且 ASCII 安全);`{{ if }}`/`{{ else if }}`/`{{ else }}`/`{{ end }}`，"不是零值"的真值;`{{ for x in e }}` 遍历数组与对象，带 `{{ else }}`;`{{ template "name" e? }}` 引用(绑定不过引用边;深度上限点名链条);`{{- ` / ` -}}` 修剪标记与 `{{! ... }}` 注释。没有算术、没有比较——模板渲染，程序计算。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/template.md`](stdlib/template.md) · 示例:`examples/template_demo`、`examples/template_edge`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/template.md`](stdlib/template.md) · 示例：`examples/template_demo`、`examples/template_edge`。
 
 ## base64 包
 
-RFC 4648 base64 编解码器:字节进，带填充的 base64 文本出，再回来——纯 Emo 写在共享运行时之上，每个目标都给出相同的字节。
+RFC 4648 base64 编解码器：字节进，带填充的 base64 文本出，再回来——纯 Emo 写在共享运行时之上，每个目标都给出相同的字节。
 
 ```emo
 def encode(data String) String
 def decode(text String) (R, String)
 ```
 
-`encode` 永远输出标准字母表加 `=` 填充。`decode` 只接受编码器产出的东西:仅标准字母表，填充只在最后一个量子，RFC 要求为零的填充位必须真的是零——`QR==` 是错误，不是 `QQ==` 的同义词。不容忍空白，不接受换行拆分;每次拒绝都以 `(R.error, reason)` 返回，带出错字节偏移。
+`encode` 永远输出标准字母表加 `=` 填充。`decode` 只接受编码器产出的东西：仅标准字母表，填充只在最后一个量子，RFC 要求为零的填充位必须真的是零——`QR==` 是错误，不是 `QQ==` 的同义词。不容忍空白，不接受换行拆分;每次拒绝都以 `(R.error, reason)` 返回，带出错字节偏移。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/base64.md`](stdlib/base64.md) · 示例:`examples/base64_demo`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/base64.md`](stdlib/base64.md) · 示例：`examples/base64_demo`。
 
 ## crypto 包
 
-原语层:哈希、MAC、密钥派生、AEAD 密码、一个签名方案、一个密钥协商——纯 Emo 写在 `Int64` 与 `Bytes` 之上，每个目标都给出相同的字节，每个 golden 都是对 RFC 与 NIST 向量、以及(凡 Go 标准库带有该原语之处)对 Go 自家答案的一次 diff。一个根模块加八个子模块，按限定名调用:
+原语层：哈希、MAC、密钥派生、AEAD 密码、一个签名方案、一个密钥协商——纯 Emo 写在 `Int64` 与 `Bytes` 之上，每个目标都给出相同的字节，每个 golden 都是对 RFC 与 NIST 向量、以及(凡 Go 标准库带有该原语之处)对 Go 自家答案的一次 diff。一个根模块加八个子模块，按限定名调用：
 
 ```emo
 def constant_time_compare(a Bytes, b Bytes) Bool
@@ -505,13 +505,13 @@ def hex_decode(text String) (R, Bytes)
 // crypto.legacy: sha1、md5
 ```
 
-Bytes 进、Bytes 出;文本只在 hex 编解码处保持为文本。错误二分是标准库的那条:长度或计数不对 raise，数据原因是值——验不过的 tag 无论何种伪造都是 `(R.error, "crypto: authentication failed")`，坏签名是 `false`，全零的共享密钥是 `(R.error, "crypto: x25519 low-order point")`。常量时间是源码级纪律——没有取决于秘密的分支或下标，AES 的 S-box 查表是写明的例外——参考文档逐 target 说明这条纪律变成了什么，而在任何一个 target 上它都不是保证。SHA-1 与 MD5 收在 `crypto.legacy` 之后，对一切安全用途都是坏的，只为既有数据而存在。
+Bytes 进、Bytes 出;文本只在 hex 编解码处保持为文本。错误二分是标准库的那条：长度或计数不对 raise，数据原因是值——验不过的 tag 无论何种伪造都是 `(R.error, "crypto: authentication failed")`，坏签名是 `false`，全零的共享密钥是 `(R.error, "crypto: x25519 low-order point")`。常量时间是源码级纪律——没有取决于秘密的分支或下标，AES 的 S-box 查表是写明的例外——参考文档逐 target 说明这条纪律变成了什么，而在任何一个 target 上它都不是保证。SHA-1 与 MD5 收在 `crypto.legacy` 之后，对一切安全用途都是坏的，只为既有数据而存在。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/crypto.md`](stdlib/crypto.md) · 示例:`examples/crypto_hash`、`examples/crypto_aead`、`examples/crypto_sign`、`examples/crypto_ecdh`，以及仅 c 的 `examples/crypto_hash_million`、`examples/crypto_kdf`、`examples/crypto_sign_sweep`、`examples/crypto_ecdh_iterated`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/crypto.md`](stdlib/crypto.md) · 示例：`examples/crypto_hash`、`examples/crypto_aead`、`examples/crypto_sign`、`examples/crypto_ecdh`，以及仅 c 的 `examples/crypto_hash_million`、`examples/crypto_kdf`、`examples/crypto_sign_sweep`、`examples/crypto_ecdh_iterated`。
 
 ## hash 包
 
-机器的摘要孪生:SHA-256 与 SHA-224——一次性或流式——常数时间比较，以及小写 hex 渲染，逐字携带自 [`crypto`](#crypto-包) 包的引擎(完整叙述见 [`docs/zh-CN/stdlib/hash.md`](stdlib/hash.md)):crypto 的错误面把 `riscv64` 目标整个拒掉，而机器的锁只需要摘要。同一组向量钉住两边;等编译器的 raise 缺口合拢，孪生折回。
+机器的摘要孪生：SHA-256 与 SHA-224——一次性或流式——常数时间比较，以及小写 hex 渲染，逐字携带自 [`crypto`](#crypto-包) 包的引擎(完整叙述见 [`docs/zh-CN/stdlib/hash.md`](stdlib/hash.md))：crypto 的错误面把 `riscv64` 目标整个拒掉，而机器的锁只需要摘要。同一组向量钉住两边;等编译器的 raise 缺口合拢，孪生折回。
 
 ```emo
 def constant_time_compare(a Bytes, b Bytes) Bool
@@ -521,11 +521,11 @@ def hex_encode(data Bytes) String
 //              以及流式的 Digest 与 Wide 类
 ```
 
-目标:全部五个与 `riscv64`。参考:[`docs/zh-CN/stdlib/hash.md`](stdlib/hash.md)。
+目标：全部五个与 `riscv64`。参考：[`docs/zh-CN/stdlib/hash.md`](stdlib/hash.md)。
 
 ## rand 包
 
-熵，以及一条可复现的流:给密钥与 seed 用的操作系统随机字节，和一次式形状的 SP 800-90A HMAC-DRBG(SHA-256)，给一切必须每次回答相同字节的东西。
+熵，以及一条可复现的流：给密钥与 seed 用的操作系统随机字节，和一次式形状的 SP 800-90A HMAC-DRBG(SHA-256)，给一切必须每次回答相同字节的东西。
 
 ```emo
 def bytes(n Int64) (R, Bytes)
@@ -534,11 +534,11 @@ def drbg_sha256(seed Bytes, length Int64) Bytes
 
 `bytes` 按目标从 `/dev/urandom`、`getentropy`、Node 的 `crypto.randomBytes` 或 `crypto:strong_rand_bytes` 回答 `(R.ok, bytes)`，来源拒绝时回答 `(R.error, "rand: …")`;负计数 raise。`drbg_sha256` 回答只取决于 seed 的 `length` 个字节，在每个目标上永远相同——fixture 与测试密钥的生成器，不是秘密的来源。
 
-目标:`ocaml`、`c`、`typescript`、`beam`——wasm 宿主不提供熵，所以 manifest 直接拒绝，而不是运行时才失败。参考:[`docs/zh-CN/stdlib/rand.md`](stdlib/rand.md) · 示例:`examples/rand_demo`。
+目标：`ocaml`、`c`、`typescript`、`beam`——wasm 宿主不提供熵，所以 manifest 直接拒绝，而不是运行时才失败。参考：[`docs/zh-CN/stdlib/rand.md`](stdlib/rand.md) · 示例：`examples/rand_demo`。
 
 ## uuid 包
 
-RFC 9562 的标识符是一个不可变的 16 字节值:各版本是具名的门，文本和字节形式都是严格的转换。纯 Emo，骑 `crypto` 和 `rand`，每个目标逐字节一致。
+RFC 9562 的标识符是一个不可变的 16 字节值：各版本是具名的门，文本和字节形式都是严格的转换。纯 Emo，骑 `crypto` 和 `rand`，每个目标逐字节一致。
 
 ```emo
 def nil() Uuid
@@ -557,11 +557,11 @@ def ns_x500() Uuid
 
 `Uuid` 值经 `to_string` 回答它的规范形式——`id.to_string()` 是小写的 hex-and-dash 形式，而渲染出来的值是结构转储——并回答 `to_bytes`、`version`、`variant`、`is_nil?`、`is_max?`，以及 RFC 的大端 `compare`。`parse` 恰好接受规范的 36 字符形式，十六进制不区分大小写，每次拒绝都点名第一个出错的字节;`from_bytes` 的错误长度以同样的方式拒绝。`v4` 从操作系统的熵抽取 122 个随机位;`v7(now_ms)` 从调用方自己的时钟(`time.now()`)取 Unix 毫秒时间，骑 74 个随机位，负数或超出 48 位的时间戳 raise;`v3` 和 `v5` 是骑 `crypto.legacy` 摘要的确定性 name-based 门，四个 IANA namespace ID 在旁作 `ns_dns`/`ns_url`/`ns_oid`/`ns_x500`，任意 `Uuid` 都是自定义 namespace。v1/v2/v6 和 v8 构造器不在包内，参考文档里点名。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/uuid.md`](stdlib/uuid.md) · 示例:`examples/uuid_demo`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/uuid.md`](stdlib/uuid.md) · 示例：`examples/uuid_demo`。
 
 ## csv 包
 
-CSV 读写器:把 RFC 4180 记录表示成字符串字段的数组，只认 UTF-8。解码对引号、记录结尾和 UTF-8 都很严格;编码写的是 RFC 的规范形式，所以 `decode(encode(rows))` 就是 `rows`。纯 Emo，五个目标逐字节一致。
+CSV 读写器：把 RFC 4180 记录表示成字符串字段的数组，只认 UTF-8。解码对引号、记录结尾和 UTF-8 都很严格;编码写的是 RFC 的规范形式，所以 `decode(encode(rows))` 就是 `rows`。纯 Emo，五个目标逐字节一致。
 
 ```emo
 def decode(text String) (R, Array[Array[String]])
@@ -572,11 +572,11 @@ def encode_delimited(rows Array[Array[String]], delimiter String) String
 
 一份文档就是若干条记录，每条记录是一串字符串字段——不强行规定表头;第一条记录只有在调用方按表头读它时才是表头。记录在 CRLF、LF 或单独的 CR 处结束(末尾的一个不会再开出一条空记录);引号字段内可以放分隔符和换行;开头的 BOM 会被去掉;每个字节都必须是合法 UTF-8。单字节分隔符(TSV、分号)由 `_delimited` 这对函数承担。格式错误的输入是 `(R.error, reason)`，带字节偏移;分隔符不合法和零字段的记录会抛出。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/csv.md`](stdlib/csv.md) · 示例:`examples/csv_demo`、`examples/csv_edge`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/csv.md`](stdlib/csv.md) · 示例：`examples/csv_demo`、`examples/csv_edge`。
 
 ## float 包
 
-binary64 与十进制文本之间的精确转换:十进制字面量变成离它最近的那些位，`Float64` 变成能读回它的最短文本。两个方向都是包内 `internal` 子树里的 `Int64` 运算，所以五个目标都逐字节相同;`json`、`sql`、`yaml` 读写数字都经过它。
+binary64 与十进制文本之间的精确转换：十进制字面量变成离它最近的那些位，`Float64` 变成能读回它的最短文本。两个方向都是包内 `internal` 子树里的 `Int64` 运算，所以五个目标都逐字节相同;`json`、`sql`、`yaml` 读写数字都经过它。
 
 ```emo
 def parse_exact(neg Bool, digits Bytes, n Int64, e10 Int64) Int64
@@ -585,13 +585,13 @@ def finite_bits(bits Int64) Bool
 def to_text(x Float64) String
 ```
 
-`parse_decimal` 是格式类包读取字面量时经过的受检构造函数:把字面量的两段数字与指数变成最近的 binary64，并拒绝 binary64 装不下的量级。`parse_exact` 是它底下的裸原语，只舍入一次——就近舍入、平局取偶，即 `strtod` 的答案——超出 binary64 范围的值给出无穷的位模式;`finite_bits` 说明一个位模式究竟是不是值。`to_text` 打印最短的能读回原值的文本，非有限值没有十进制文本，于是 raise。
+`parse_decimal` 是格式类包读取字面量时经过的受检构造函数：把字面量的两段数字与指数变成最近的 binary64，并拒绝 binary64 装不下的量级。`parse_exact` 是它底下的裸原语，只舍入一次——就近舍入、平局取偶，即 `strtod` 的答案——超出 binary64 范围的值给出无穷的位模式;`finite_bits` 说明一个位模式究竟是不是值。`to_text` 打印最短的能读回原值的文本，非有限值没有十进制文本，于是 raise。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/float.md`](stdlib/float.md)。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/float.md`](stdlib/float.md)。
 
 ## math 包
 
-标准库其余部分所依赖的浮点函数:标量、2 的幂、超越函数、误差函数及其补函数、gamma 对、复数算术、radix-2 FFT、BLAS1 核心与稠密求解器。纯 Emo 写在五个目标共享的标量运算之上，级数顺序固定、系数写死在源码里，所以每个函数都逐字节相同。
+标准库其余部分所依赖的浮点函数：标量、2 的幂、超越函数、误差函数及其补函数、gamma 对、复数算术、radix-2 FFT、BLAS1 核心与稠密求解器。纯 Emo 写在五个目标共享的标量运算之上，级数顺序固定、系数写死在源码里，所以每个函数都逐字节相同。
 
 ```emo
 const e = 2.718281828459045
@@ -634,19 +634,19 @@ def lu(a Array[Float64], n Int64) (Array[Float64], Array[Int64])
 def solve(a Array[Float64], n Int64, b Array[Float64]) Array[Float64]
 ```
 
-`exp` 先把参数归约到 `2^k * exp(r)`，再用短 Taylor 级数展开 `exp(r)`;`log` 用 `log(x) = e*ln2 + log(m)` 加 atanh 级数;`tgamma` 与 `lgamma` 跑一组固定系数的 Lanczos 近似，负半轴经反射公式折叠。复数值是交错的 `(re, im)` 数对;矩阵是维度显式给出的扁平行主序数组。域外参数是契约违反而不是值——`log` 的非正数、三角归约界、gamma 极点(非正整数)、越过 `x ≈ 171.62` 的 `tgamma`、`lu` 的奇异矩阵——都 raise，因为 beam 目标的 Erlang 浮点根本无法表示 NaN 或无穷，返回值不是可选项。`examples/math_elefunt` 里源自 ELEFUNT 的电池按固定恒等式样本打印每个函数的最大与均方根位损失;golden 的 `expected.txt` 就是精度记录。整个包是纯的:宿主侧的更快档位在独立的 `fastmath` 包里。
+`exp` 先把参数归约到 `2^k * exp(r)`，再用短 Taylor 级数展开 `exp(r)`;`log` 用 `log(x) = e*ln2 + log(m)` 加 atanh 级数;`tgamma` 与 `lgamma` 跑一组固定系数的 Lanczos 近似，负半轴经反射公式折叠。复数值是交错的 `(re, im)` 数对;矩阵是维度显式给出的扁平行主序数组。域外参数是契约违反而不是值——`log` 的非正数、三角归约界、gamma 极点(非正整数)、越过 `x ≈ 171.62` 的 `tgamma`、`lu` 的奇异矩阵——都 raise，因为 beam 目标的 Erlang 浮点根本无法表示 NaN 或无穷，返回值不是可选项。`examples/math_elefunt` 里源自 ELEFUNT 的电池按固定恒等式样本打印每个函数的最大与均方根位损失;golden 的 `expected.txt` 就是精度记录。整个包是纯的：宿主侧的更快档位在独立的 `fastmath` 包里。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/math.md`](stdlib/math.md) · 示例:`examples/math_demo`、`examples/math_special`、`examples/math_elefunt`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/math.md`](stdlib/math.md) · 示例：`examples/math_demo`、`examples/math_special`、`examples/math_elefunt`。
 
 ## fastmath 包
 
-直接绑定平台 `libm` 的宿主数学函数:与 `math` 同一标量表面、宿主库的速度。每次调用就是一次纯粹的逐调用 libm 绑定——不重结合、不松弛——但位跟随宿主，不跨平台逐字节相同，也没有定义域卫兵:越界参数返回宿主所返回的，而不是 raise。
+直接绑定平台 `libm` 的宿主数学函数：与 `math` 同一标量表面、宿主库的速度。每次调用就是一次纯粹的逐调用 libm 绑定——不重结合、不松弛——但位跟随宿主，不跨平台逐字节相同，也没有定义域卫兵：越界参数返回宿主所返回的，而不是 raise。
 
-目标:`ocaml` 与 `c`(其余目标上 require 在装载期报 E5007;解释器下调用报 E3009)。参考:[`docs/zh-CN/stdlib/fastmath.md`](stdlib/fastmath.md) · 示例:`examples/fastmath_demo`、`examples/fastmath_elefunt`。
+目标：`ocaml` 与 `c`(其余目标上 require 在装载期报 E5007;解释器下调用报 E3009)。参考：[`docs/zh-CN/stdlib/fastmath.md`](stdlib/fastmath.md) · 示例：`examples/fastmath_demo`、`examples/fastmath_elefunt`。
 
 ## quad 包
 
-netlib 的 QUADPACK 自适应求积，vendored 进包树(f2c 转译，`d1mach` 为字面量，无 libf2c)，收在今天 FFI 唯一放行的形状之后——一个标量回调:
+netlib 的 QUADPACK 自适应求积，vendored 进包树(f2c 转译，`d1mach` 为字面量，无 libf2c)，收在今天 FFI 唯一放行的形状之后——一个标量回调：
 
 ```emo
 interface Integrand {
@@ -663,11 +663,11 @@ def integrate_infinite(f Integrand, range InfiniteRange, bound Float64,
 
 带 `at` 方法的类直接可积，状态随回调同行。`integrate` 在有限区间上跑 `dqags` 的全局自适应 21 点 Gauss–Kronrod 规则加 ε-算法;`integrate_infinite` 在枚举命名的三种无穷区间上跑变换后的 15 点规则。成功回答 `(R.ok, (value, abserr))`;QUADPACK 的每个失败码都以 netlib 自己的措辞回答 `(R.error, reason)`——收敛失败是值，不是违规，完整映射在 [`docs/zh-CN/stdlib/quad.md`](stdlib/quad.md)。
 
-目标:仅 `c`(其余目标上 require 在装载期报 E5007;解释器下调用报 E3009)。参考:[`docs/zh-CN/stdlib/quad.md`](stdlib/quad.md) · 示例:`examples/quad_demo`。
+目标：仅 `c`(其余目标上 require 在装载期报 E5007;解释器下调用报 E3009)。参考：[`docs/zh-CN/stdlib/quad.md`](stdlib/quad.md) · 示例：`examples/quad_demo`。
 
 ## plot 包
 
-声明式二维绘图包:一张图就是一个值——`Figure` 持有 `Axes`，每个 `Axes` 持有 mark——一次调用即渲染成 SVG。纯 Emo，五个目标逐字节相同。
+声明式二维绘图包：一张图就是一个值——`Figure` 持有 `Axes`，每个 `Axes` 持有 mark——一次调用即渲染成 SVG。纯 Emo，五个目标逐字节相同。
 
 ```emo
 def figure() Figure
@@ -687,11 +687,11 @@ def with_marks(m Array[Mark]) Axes
 
 `svg` 返回文档;写进文件是调用方的事——这个包在五个目标上都能跑，而文件 IO 只有原生目标可用。同一张图也能渲染成终端文本和一个 PNG 文件。
 
-目标:全部五个。带校验的 `Table` 之上有十四种数据集图表——关系型、分布型、类别型、矩阵型——外加对数刻度、固定域、图例、分面、主题，以及手搭的 mark。参考:[`docs/zh-CN/stdlib/plot.md`](stdlib/plot.md) · 指南:[`docs/zh-CN/plot-guide.md`](plot-guide.md) · 示例:`examples/plot_demo`。
+目标：全部五个。带校验的 `Table` 之上有十四种数据集图表——关系型、分布型、类别型、矩阵型——外加对数刻度、固定域、图例、分面、主题，以及手搭的 mark。参考：[`docs/zh-CN/stdlib/plot.md`](stdlib/plot.md) · 指南：[`docs/zh-CN/plot-guide.md`](plot-guide.md) · 示例：`examples/plot_demo`。
 
 ## slog 包
 
-结构化日志器:每条记录一行，logfmt 或 JSON，按最低级别过滤。日志器是一个不透明句柄——一个普通的值——自带名字、级别和格式;背后没有可配置的全局状态，没有需要拆除的东西。
+结构化日志器：每条记录一行，logfmt 或 JSON，按最低级别过滤。日志器是一个不透明句柄——一个普通的值——自带名字、级别和格式;背后没有可配置的全局状态，没有需要拆除的东西。
 
 ```emo
 def level_debug() Int64
@@ -729,14 +729,14 @@ slog.warn(cache, "slow query", {"ms": "412"})
 
 attrs 是 `Map[String, String]`;键只能是 ASCII 字母、数字、`_`、`.`、`-`，每次调用先校验句柄和键再过滤——即使记录本来不会打印，坏键也是错误。
 
-目标:全部五个。参考:[`docs/zh-CN/stdlib/slog.md`](stdlib/slog.md) · 示例:`examples/slog_demo`。
+目标：全部五个。参考：[`docs/zh-CN/stdlib/slog.md`](stdlib/slog.md) · 示例：`examples/slog_demo`。
 
 ## sync 包
 
-协调包:等待组——一个一次性的倒计数，让一个进程等待 N 份工作完
+协调包：等待组——一个一次性的倒计数，让一个进程等待 N 份工作完
 成。纯 Emo 写在进程原语之上——等待组就是一个持有计数的进程，
 `done` 是一条消息，`wait` 是另一条——所以在所有目标上可观察行为
-完全一致。它什么也不守卫:Emo 没有可守卫的共享内存(消息是快照拷
+完全一致。它什么也不守卫：Emo 没有可守卫的共享内存(消息是快照拷
 贝)，这正是包里没有 mutex 的原因——等待组只计数。
 
 ```emo
@@ -751,7 +751,7 @@ class WaitGroup {
 `WaitGroup.new(n)` 启动一个 `n` 份工作的倒计时并回答组的句柄;
 `done` 宣告一份工作完成;`wait` 阻塞到计数清零，若已清零则立即返
 回;`stop` 结束计数进程。多个进程可以在同一个组上 `wait`，每个都
-会被唤醒。计数一次性设定、只减不增:等待组是一次性的。超出计数
+会被唤醒。计数一次性设定、只减不增：等待组是一次性的。超出计数
 的 `done` 在调用方抛出而非无声消失;`stop` 落下时仍泊着的 `wait`
 会抛出而非悬挂。
 
@@ -769,16 +769,16 @@ wg.stop()
 等待组线上的每条消息都是打上 `"sync"`——包名——标签的元组，所以
 组的流量永远不会撞上应用自己的消息。
 
-目标:`["ocaml", "c", "typescript", "wasm", "beam"]`。参考:
-[`docs/zh-CN/stdlib/sync.md`](stdlib/sync.md) · 示例:
+目标：`["ocaml", "c", "typescript", "wasm", "beam"]`。参考：
+[`docs/zh-CN/stdlib/sync.md`](stdlib/sync.md) · 示例：
 `examples/sync_demo`。
 
 ## time 包
 
-时钟:`time.now()` 读操作系统的墙钟(UTC 纪元毫秒的 `Time`),
+时钟：`time.now()` 读操作系统的墙钟(UTC 纪元毫秒的 `Time`)，
 `time.mono()` 读单调时钟(纳秒——流逝测量的仪器)，日历字段、格
 式化和差距都是读数之上的纯 Emo,golden 能钉住的地方逐字节相同。
-定时家族说秒，和 `net` 的超时一样:`time.sleep(0.25)` 泊车进程;
+定时家族说秒，和 `net` 的超时一样：`time.sleep(0.25)` 泊车进程;
 `time.after(0.5) { ... }` 把块跑一次、自己的进程;`time.tick(3)
 { ... }` 是调用进程的心跳——每三秒、永远，块自己的 `halt()` 是停
 止。
@@ -804,13 +804,13 @@ println(time.mono() > start)             // true
 格式化是严格的记号排版，不是 Go 的参考时间——九个记号
 (`YYYY MM DD hh mm ss mmm Mmm Www`)，其余是字面量，没拼成完整记号
 的记号字母抛出并点名字节——日历永远是 UTC，所以排版的输出能进
-golden。区间截断到整毫秒(诚实的下限)，其余的拒绝:负的或非有限
+golden。区间截断到整毫秒(诚实的下限)，其余的拒绝：负的或非有限
 的区间、越过 1e9 秒上限的区间，抛出。
 
-目标:`["ocaml", "c", "typescript", "wasm", "beam"]`——时钟半在
+目标：`["ocaml", "c", "typescript", "wasm", "beam"]`——时钟半在
 wasm 上经由两个宿主导入运行，定时半在那里于调用处抛出(wasm 驱动
-在一次宿主调用内同步跑完);`riscv64` 和 `browser` 不声明。参考:
-[`docs/zh-CN/stdlib/time.md`](stdlib/time.md) · 示例:
+在一次宿主调用内同步跑完);`riscv64` 和 `browser` 不声明。参考：
+[`docs/zh-CN/stdlib/time.md`](stdlib/time.md) · 示例：
 `examples/time_demo`。
 
 ## sql 包
@@ -827,7 +827,7 @@ def split(text String) (R, Array[String])
 
 `SELECT` 全链路——带 DISTINCT 的选择列表、带 `ON`/`USING` 的连接、
 `WHERE`、`GROUP BY`、`HAVING`、`ORDER BY`、`LIMIT`、`OFFSET`——
-之下是完整的表达式语法:字面量、参数(`?`、`?NNN`)、带限定的列名、
+之下是完整的表达式语法：字面量、参数(`?`、`?NNN`)、带限定的列名、
 函数调用、`CAST`、`CASE`、`EXISTS`、子查询，以及按标准优先级排列的
 运算符体系。`SELECT` 旁还解析并规范渲染 `CREATE TABLE`(v0 类型、
 `NOT NULL`、`PRIMARY KEY`)、多行 `INSERT ... VALUES`、
@@ -844,19 +844,19 @@ const (R.ok, stmt) = sql.parse("SELECT * FROM users WHERE id = ?1")
 println(stmt.to_string())   // SELECT * FROM users WHERE id = ?1
 ```
 
-目标:`["ocaml", "c", "typescript", "wasm", "beam"]`。参考:
-[`docs/zh-CN/stdlib/sql.md`](stdlib/sql.md) · 示例:`examples/sql_demo`、
+目标：`["ocaml", "c", "typescript", "wasm", "beam"]`。参考：
+[`docs/zh-CN/stdlib/sql.md`](stdlib/sql.md) · 示例：`examples/sql_demo`、
 `examples/sql_edge`。
 
 ## postgres 包
 
-PostgreSQL 客户端:对 libpq——PostgreSQL 自家 C 库——的直接风格
+PostgreSQL 客户端：对 libpq——PostgreSQL 自家 C 库——的直接风格
 绑定。`Conn` 是一条服务器连接;语句经 `PQexecParams` 执行，
 `$1` 风格的占位符以 `Param` 传值，查询答出按 `(row, column)`
 读取、带类型校验的 `Rows`。调用经 `foreign def` 落到包自带的
 C shim,libpq 由清单的 `pkg_config` 字段解析——pkg-config 同时
 供给 shim 的头文件路径和链接用的 `-lpq`。预期失败是值，走
-`net` 的形状:服务器宕机、数据撞上的约束冲突，都以
+`net` 的形状：服务器宕机、数据撞上的约束冲突，都以
 `(R.error, reason)` 作答，携带服务端消息和 SQLSTATE。
 
 ```emo
@@ -900,16 +900,16 @@ while r < rows.count() {
 rows.finish()
 ```
 
-目标:`["c"]`——调用是 foreign def，解释器拒绝(E3009)，构建期
-libpq 还须经 pkg-config 解析得到。参考:
-[`docs/zh-CN/stdlib/postgres.md`](stdlib/postgres.md) · 示例:
+目标：`["c"]`——调用是 foreign def，解释器拒绝(E3009)，构建期
+libpq 还须经 pkg-config 解析得到。参考：
+[`docs/zh-CN/stdlib/postgres.md`](stdlib/postgres.md) · 示例：
 `examples/postgres_demo`。
 
 ## sqlite3 包
 
-数据库包:对 SQLite 预备语句(prepared statement)API 的直接风格
+数据库包：对 SQLite 预备语句(prepared statement)API 的直接风格
 绑定。`Database` 是一个打开的连接;`Statement` 是一条编译好的
-SQL，逐行步进、按类型读取列。它是标准库第一个原生绑定包:调用经
+SQL，逐行步进、按类型读取列。它是标准库第一个原生绑定包：调用经
 `foreign def` 落到包自带的 C shim，系统 sqlite3 库由清单的 `link`
 字段声明——消费方只需 `require`，无需 `--cclib`。
 
@@ -949,14 +949,14 @@ SQLite 自己的错误文本;而行读到尽头是值(`step()` 回答
 内嵌 NUL 的 String 会在边界处截断;blob 要等 `Bytes` 能过 FFI
 之后再说。
 
-目标:`["c"]`——这些调用是 foreign def，解释器拒绝执行(E3009)，
+目标：`["c"]`——这些调用是 foreign def，解释器拒绝执行(E3009)，
 所以 `emo run` 跑不了用到这个包的程序;请用 `emo build` 构建。参
-考:[`docs/zh-CN/stdlib/sqlite3.md`](stdlib/sqlite3.md) · 示例:
+考：[`docs/zh-CN/stdlib/sqlite3.md`](stdlib/sqlite3.md) · 示例：
 `examples/sqlite3_demo`。
 
 ## term 包
 
-stdin 上的终端输入:按行读取、raw mode、解码后的按键事件，以及终端
+stdin 上的终端输入：按行读取、raw mode、解码后的按键事件，以及终端
 尺寸。它是标准库里另一个原生绑定包——调用是 `foreign def`，绑定到
 包自带的一小段 C shim——使用它只需普通 `require`。
 
@@ -977,14 +977,14 @@ def read_key() (R, (Key, Int64))
 Shift-Tab 与 Alt+按键背后的序列。raw mode 下 Ctrl-C 是按键事件，不是
 信号。
 
-目标:`["c"]`——这些调用是 foreign def，解释器拒绝执行(E3009)，
+目标：`["c"]`——这些调用是 foreign def，解释器拒绝执行(E3009)，
 所以 `emo run` 跑不了用到这个包的程序;请用 `emo build` 构建。参
-考:[`docs/zh-CN/stdlib/term.md`](stdlib/term.md) · 示例:
+考：[`docs/zh-CN/stdlib/term.md`](stdlib/term.md) · 示例：
 `examples/term_demo`。
 
 ## wayland 包
 
-纯 Emo 的 Wayland 客户端协议，骑在 `net` 的 Unix 套接字上:线格式
+纯 Emo 的 Wayland 客户端协议，骑在 `net` 的 Unix 套接字上：线格式
 编解码器、接口表(核心、`wl_shm`、`xdg-shell`，opcode 写在调用点)、
 状态机——handshake、"先 configure 后 commit"的纪律——都是包自己的。
 一条连接、一根套接字、直接风格;fd 参数走带外队列，在流内不占字。
@@ -992,13 +992,13 @@ Emo 程序落在真实 compositor(headless sway,smoke 腿)上的第一帧，
 走的就是这个包。
 
 Targets: `c`。
-参考:[docs/zh-CN/stdlib/wayland.md](stdlib/wayland.md) · 示例:
+参考：[docs/zh-CN/stdlib/wayland.md](stdlib/wayland.md) · 示例：
 `examples/wayland_wire`、`examples/wayland_handshake`、
-`examples/wayland_paint`(smoke 腿:`devtools/wayland-smoke.sh`)。
+`examples/wayland_paint`(smoke 腿：`devtools/wayland-smoke.sh`)。
 
 ## syscall 包
 
-EmoOS 门的用户侧:机器裸 `ecall` 之上的带类型包装，也是用户程序看得见的唯一内核边界。这不是托管的 `os`——它应答 EmoOS 内核，并且只准入 `riscv64` 目标。ABI 契约(越界方式、门的校验、应答约定)在内核的 [`projects/emo-os/docs/syscalls.zh-CN.md`](../../projects/emo-os/docs/syscalls.zh-CN.md)。
+EmoOS 门的用户侧：机器裸 `ecall` 之上的带类型包装，也是用户程序看得见的唯一内核边界。这不是托管的 `os`——它应答 EmoOS 内核，并且只准入 `riscv64` 目标。ABI 契约(越界方式、门的校验、应答约定)在内核的 [`projects/emo-os/docs/syscalls.zh-CN.md`](../../projects/emo-os/docs/syscalls.zh-CN.md)。
 
 ```emo
 syscall.write(buf, len)                 // (R, Int64)——字节送到控制台
@@ -1007,15 +1007,15 @@ syscall.present(grant, 0, 0, 640, 480)  // (R, Int64)——提交一帧
 syscall.input_read()                    // Int64——一个打包的输入事件
 ```
 
-可失败的门应答 `(R.ok, payload)` 或 `(R.error, reason)`;门的原因是 `outside the caller's memory`、`not writable`、`bad argument`、`the kernel is out of a resource` 与 `no such file`。缓冲是调用程序自己内存里的裸地址，门在读写之前检查。`read` 与 `input_read` 改答裸 `Int64`,`exit` 从不返回。
+可失败的门应答 `(R.ok, payload)` 或 `(R.error, reason)`;门的原因是 `outside the caller's memory`、`not writable`、`bad argument`、`the kernel is out of a resource` 与 `no such file`。缓冲是调用程序自己内存里的裸地址，门在读写之前检查。`read` 与 `input_read` 改答裸 `Int64`，`exit` 从不返回。
 
 门覆盖控制台与进程半边(`exit`、`write`、`read`、`input_read`、`spawn`、`wait`、`exec`、`execve`)、文件系统(`file_write`、`file_read`、`file_list`、`list_dir`、`file_remove`)、时钟(`time`)，以及桌面协议的合成器表面——窗口缓冲、角色、工作空间、通知、剪贴板与帧脉冲。
 
-目标:`["riscv64"]`。参考:[`docs/zh-CN/stdlib/syscall.md`](stdlib/syscall.md) · 示例:`projects/emo-desktop/fb/apps/files/`、`projects/emo-desktop/fb/winbuf/`。
+目标：`["riscv64"]`。参考：[`docs/zh-CN/stdlib/syscall.md`](stdlib/syscall.md) · 示例：`projects/emo-desktop/fb/apps/files/`、`projects/emo-desktop/fb/winbuf/`。
 
 ## wasm 包
 
-用 Emo 写的 WebAssembly 运行时——解码器、验证器、解释器，正如 wazero 是用 Go 写的运行时。验收线是官方 spec 套件，而且已经到达:每条二进制 `assert_malformed` 与 `assert_invalid` 都在正确的阶段被拒绝，供应商化运行语料的每条 `assert_return` 都逐位精确。
+用 Emo 写的 WebAssembly 运行时——解码器、验证器、解释器，正如 wazero 是用 Go 写的运行时。验收线是官方 spec 套件，而且已经到达：每条二进制 `assert_malformed` 与 `assert_invalid` 都在正确的阶段被拒绝，供应商化运行语料的每条 `assert_return` 都逐位精确。
 
 ```emo
 wasm.load(data Bytes)                     // (R, Int64)——模块句柄
@@ -1026,12 +1026,12 @@ wasm.read_memory(inst, ptr, len)          // (R, Bytes)
 
 一个 wasm 值骑运行时的 `(kind, bits)` 对——构造器(`i32`/`i64`/`f32`/`f64`)造一个，读取器(`as_i32` 等)读回来，编码在参考文档里一次写清。宿主表是 `(module, name, fn)` 三元组，其闭包伺候函数 import——实参进、一个值出——解析先于 register 命名空间与内建 `spectest` 宿主，并拒绝什么都没指认的条目(调用者的笔误，当场浮出，不被携带)。
 
-目标:`["ocaml", "c"]`。参考:
-[`docs/zh-CN/stdlib/wasm.md`](stdlib/wasm.md) · 示例:`examples/wasm_demo`。
+目标：`["ocaml", "c"]`。参考：
+[`docs/zh-CN/stdlib/wasm.md`](stdlib/wasm.md) · 示例：`examples/wasm_demo`。
 
 ## gc 包
 
-GC 堆的分配器与收集器:首适配自由表与 mark-sweep 用纯 Emo 写，骑在解释器运行准入的对象模型门上([`docs/gc-heap.md`](gc-heap.md) 是设计笔记)。arena 属于宿主;刻块、带切分与合并的自由几何、追踪、sweep 属于这个包。一份源码服务三个应答相同门的宿主——解释器运行、`c` target、`riscv64` 金属——逐字节一致;其余 build target 在检查期整个家族拒绝(E4032)。
+GC 堆的分配器与收集器：首适配自由表与 mark-sweep 用纯 Emo 写，骑在解释器运行准入的对象模型门上([`docs/gc-heap.md`](gc-heap.md) 是设计笔记)。arena 属于宿主;刻块、带切分与合并的自由几何、追踪、sweep 属于这个包。一份源码服务三个应答相同门的宿主——解释器运行、`c` target、`riscv64` 金属——逐字节一致;其余 build target 在检查期整个家族拒绝(E4032)。
 
 ```emo
 gc.arena(65536)      // 每轮一次:分配器从此刻画的 arena
@@ -1040,7 +1040,7 @@ gc.collect()         // 从根标记,sweep 其余,应答收回的词数
 gc.compact()         // 标记、滑动、重写引用,应答归还的尾词
 ```
 
-堆词靠奇偶自描述:偶数词是标量(左移一位存储)，奇数词是引用，`0` 是 null。要被收集尊重的句柄放进根(`ref_new`);裸 `var` 里的句柄对收集器不可见，它指名的块死在下一次 `collect`。
+堆词靠奇偶自描述：偶数词是标量(左移一位存储)，奇数词是引用，`0` 是 null。要被收集尊重的句柄放进根(`ref_new`);裸 `var` 里的句柄对收集器不可见，它指名的块死在下一次 `collect`。
 
-目标:解释器运行、`c`、`riscv64`。参考:
-[`docs/zh-CN/stdlib/gc.md`](stdlib/gc.md) · 示例:`examples/gc_demo`。
+目标：解释器运行、`c`、`riscv64`。参考：
+[`docs/zh-CN/stdlib/gc.md`](stdlib/gc.md) · 示例：`examples/gc_demo`。
