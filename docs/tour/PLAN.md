@@ -1,6 +1,7 @@
 # Emo language tour — development plan
 
-**Status:** proposed (2026-11-27) · **Owner:** docs · **Prereq:** none
+**Status:** M0–M3 landed (2026-11-27); M4 optional · **Owner:** docs ·
+**Prereq:** none
 **Related:** `examples/language_tour/` (the one-program reference it
 complements), `docs/demo-targets.md` (the wasm run path),
 `justfile` (`example`, the golden-runner pattern), `devtools/`
@@ -177,19 +178,26 @@ block with `emo build --target wasm -o DIR/<id>` and keeps the
 ### `devtools/tour-check.sh`
 
 ```
-devtools/tour-check.sh [--keep] [--jobs N] [--filter ID] [--emit-dir DIR] FILE...
+devtools/tour-check.sh [--keep] [--filter ID] [--emit-dir DIR] FILE...
 devtools/tour-check.sh --pair EN.md ZH.md
 ```
 
 - Shell + awk, no new dependency; follows `just example`'s style and
-  its `cmp -s` byte comparison.
-- Report: one `ok` / `FAIL` line per block plus a summary
-  (`N blocks, M ok, K failed, S skipped`), exit 0 on success, 1 on any
+  its `cmp -s` byte comparison. An `awk` extractor turns the Markdown
+  into one record per block; the shell runner builds and runs each one.
+- Report: one `ok` / `FAIL` line per block (the id and the source line
+  on a failure, plus stderr and a unified diff) and a summary
+  (`N blocks, M ok, K failed, S skipped`); exit 0 on success, 1 on any
   block failure, 2 on a parse error, 3 on a missing tool.
-- `--jobs N` runs blocks in parallel; the default is sequential so the
-  log is deterministic.
+- Blocks run sequentially in document order. The measured cost of the
+  full tour (22 runnable blocks) is about six seconds, so parallelism
+  does not earn its place; `--jobs` stays out.
 - `--pair` compares the `(info, code, output)` sequence of two files,
   ignoring prose.
+- `devtools/tour-check-selftest.sh` pins the rejection paths: an
+  unlabeled fence, a duplicate id, a `require` without `deps`, a stray
+  `output` block (all exit 2), wrong stdout, and a program that does
+  not compile (both exit 1).
 
 ### `justfile`
 
@@ -197,9 +205,10 @@ devtools/tour-check.sh --pair EN.md ZH.md
 tour:
     dune build src/emo_cli/emo.exe
     devtools/tour-check.sh docs/tour.md docs/zh-CN/tour.md
-
-tour-pair:
     devtools/tour-check.sh --pair docs/tour.md docs/zh-CN/tour.md
+
+tour-selftest:
+    devtools/tour-check-selftest.sh
 ```
 
 The repository has no checked-in CI workflow today; `just tour` is the
@@ -237,47 +246,53 @@ totals them by category in a `Map`, and prints a report.
 ### M0 — Spike
 
 - [x] T0.1 — Write this plan to `docs/tour/PLAN.md`. (Done 2026-11-27.)
-- [ ] T0.2 — Implement `devtools/tour-check.sh`: parse fences, generate
-      the manifest, run, compare, report; no parallelism.
-- [ ] T0.3 — Add three blocks (`quickstart`, `values`, `errors`) to
-      `docs/tour.md` and make them pass.
-- [ ] T0.4 — Measure the per-block cost and record it in the plan;
-      decide whether `--jobs` is needed for the gate.
+- [x] T0.2 — Implement `devtools/tour-check.sh`: parse fences, generate
+      the manifest, build with `emo build --target wasm`, run under the
+      compiler's bundled Node host, compare, report.
+- [x] T0.3 — Add the first blocks (`quickstart`, `values`, `errors`) to
+      `docs/tour.md` and make them pass; the rest of the tour followed.
+- [x] T0.4 — Measure the per-block cost: 22 runnable blocks run in about
+      six seconds (≈0.2 s per block after a ≈1.5 s host build), so the
+      gate stays sequential and `--jobs` is not added.
 
-**Acceptance:** `devtools/tour-check.sh docs/tour.md` is green, and the
-timing is recorded.
+**Acceptance:** met — `devtools/tour-check.sh docs/tour.md` is green and
+the timing is recorded above.
 
 ### M1 — English core
 
-- [ ] T1.1 — Chapters 0–5 authored, every block passing.
-- [ ] T1.2 — `just tour` recipe wired; the README and the Chinese
-      README link the tour.
-- [ ] T1.3 — The checker rejects an unlabeled `emo` fence, a duplicate
-      id, a `require` without `deps`, and a stray `output` block; each
-      rejection has a test fixture (kept out of the tour).
+- [x] T1.1 — Chapters 0–5 authored (eight runnable blocks), all passing.
+- [x] T1.2 — `just tour` wired; `README.md` and `docs/zh-CN/README.md`
+      link the tour.
+- [x] T1.3 — `devtools/tour-check-selftest.sh` pins the rejection paths:
+      an unlabeled `emo` fence, a duplicate id, a `require` without
+      `deps`, and a stray `output` block exit 2; wrong stdout and a
+      program that does not compile exit 1.
 
-**Acceptance:** `just tour` green; every Emo fence is labeled;
+**Acceptance:** met — `just tour` is green; every Emo fence is labeled;
 `docs/tour.md` renders on GitHub without broken blocks.
 
 ### M2 — Chapters and translation
 
-- [ ] T2.1 — Chapters 6–10 authored, business slice included.
-- [ ] T2.2 — `docs/zh-CN/tour.md` translated; `--pair` green.
-- [ ] T2.3 — A prose review pass: each claim is backed by a block, and
-      every `no-run` block states why it cannot run.
+- [x] T2.1 — Chapters 6–10 authored, the business slice included.
+- [x] T2.2 — `docs/zh-CN/tour.md` translated; `--pair` green.
+- [x] T2.3 — A prose review pass: every claim is backed by a block, and
+      the one `no-run` block states why it cannot run. The Wasm receive
+      limit (head-only dispatch) is stated in the processes chapter and
+      its runnable blocks stay FIFO.
 
-**Acceptance:** `just tour` and `just tour-pair` green; the two files
-have identical run-block sequences and outputs.
+**Acceptance:** met — both files pass, and `--pair` reports identical
+executable payloads.
 
 ### M3 — Polish
 
-- [ ] T3.1 — Failure output: id, line, stderr, diff, path rewriting.
-- [ ] T3.2 — Timing budget recorded; `--jobs` on if needed.
-- [ ] T3.3 — The tour linked from the docs index, the README, and the
-      final chapter's "where next" list.
+- [x] T3.1 — Failure output: id, source line, stderr, unified diff, and
+      temporary paths rewritten to `<tour>/<id>`.
+- [x] T3.2 — Timing budget recorded (≈6 s for 22 blocks); no `--jobs`.
+- [x] T3.3 — The tour is linked from the docs index in both READMEs and
+      from the final chapter's "where next" list.
 
-**Acceptance:** a deliberately broken block fails with a readable
-report and a non-zero exit; the green run stays under the budget.
+**Acceptance:** met — a broken block fails with a readable report and a
+non-zero exit (pinned by the selftest); the green run is under budget.
 
 ### M4 — Optional
 
@@ -290,9 +305,14 @@ Each M4 item starts only if it earns its place; neither blocks M0–M3.
 
 ## Risks and mitigations
 
-- **Per-block build cost.** Measure in M0; if the whole file exceeds the
-  budget, add `--jobs` first, and only then consider one project with
-  one module per block.
+- **Per-block build cost.** Measured: 22 runnable blocks in ≈6 s
+  (≈0.2 s per block after a ≈1.5 s host build). Sequential is well under
+  the budget, so parallelism is not added.
+- **Wasm `receive` dispatches the head only.** A guard, or a shape the
+  head does not match, aborts with the case-no-match death instead of
+  scanning past the message; selective receive remains the interpreter
+  and native surface. The processes chapter says so and keeps its
+  runnable blocks FIFO.
 - **Node availability and version.** The Wasm target is WasmGC and needs
   a recent Node. The runner names the missing tool; `emo doctor` already
   reports it.
@@ -320,9 +340,12 @@ Each M4 item starts only if it earns its place; neither blocks M0–M3.
 
 ## Acceptance summary
 
+Met 2026-11-27:
+
 - `docs/tour.md` and `docs/zh-CN/tour.md` exist and are linked.
 - Every `emo` fence is labeled; every `run` block passes on
-  `emo run --target wasm`.
-- `just tour` and `just tour-pair` are green.
+  `emo build --target wasm` + the compiler's bundled host.
+- `just tour` (both files + `--pair`) is green; `just tour-selftest`
+  covers the rejection paths.
 - A broken block fails loudly with a readable report.
-- The whole run stays under the recorded time budget.
+- The whole run takes about six seconds.

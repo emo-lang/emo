@@ -364,3 +364,23 @@ lock-refresh REGISTRY="":
 
 push:
     git push origin && git push atom
+
+# tour: compile and run every ```emo block of the language tour, then
+# check that the two languages carry the same executable payload. Each
+# block is its own project built with `emo build --target wasm` and run
+# under the compiler's bundled Node host; stdout is compared byte for
+# byte with the block's ```output fence.
+#
+# tour: check the executable language tour
+tour:
+    dune build src/emo_cli/emo.exe
+    devtools/tour-check.sh docs/tour.md docs/zh-CN/tour.md
+    devtools/tour-check.sh --pair docs/tour.md docs/zh-CN/tour.md
+
+# tour-selftest: the checker rejects what the grammar forbids — unlabeled
+# fences, duplicate ids, a require without a dep, a stray output block,
+# wrong stdout, and a program that does not compile.
+#
+# tour-selftest: check the tour checker's rejection paths
+tour-selftest:
+    devtools/tour-check-selftest.sh
