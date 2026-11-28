@@ -384,3 +384,24 @@ tour:
 # tour-selftest: check the tour checker's rejection paths
 tour-selftest:
     devtools/tour-check-selftest.sh
+
+# tour-site: render docs/tour.md and its Chinese mirror into the static
+# site under _build/tour-site (inline CSS, GitHub links for the docs the
+# page points at). Needs python3 with the `markdown` package.
+#
+# tour-site: build the tour as a static HTML site
+tour-site:
+    python3 devtools/build-tour-site.py
+
+# publish-tour: build and upload the tour site to docs.emo-lang.cn over
+# the same SSH channel the release uses (EMO_DOCS_HOST /
+# EMO_DOCS_ROOT). The one-time DNS + nginx + certbot setup is in
+# devtools/nginx/docs.emo-lang.cn.conf.
+#
+# publish-tour: upload the tour to docs.emo-lang.cn
+publish-tour:
+    devtools/publish-tour.sh
+
+# publish-tour-dry: show what publish-tour would upload, touching nothing
+publish-tour-dry:
+    devtools/publish-tour.sh --dry-run
