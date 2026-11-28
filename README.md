@@ -114,6 +114,7 @@ Documentation lives under `docs/`, and this section is its complete map — desi
 
 ### Guides
 
+- [`docs/tour.md`](docs/tour.md) — the language tour: a quick start and ten chapters, every runnable Emo block compiled to Wasm and run when the docs are checked.
 - [`docs/httpd-guide.md`](docs/httpd-guide.md) — the web-server guide: from a ten-line `httpd.serve` to a JSON API with process-owned state, middleware, and graceful shutdown.
 - [`docs/emosh-guide.md`](docs/emosh-guide.md) — `emosh`, the command interpreter written in Emo: pipelines, redirections, expansion, and the builtins.
 - [`docs/plot-guide.md`](docs/plot-guide.md) — drawing charts with the `plot` package: the whole public API, with examples.
