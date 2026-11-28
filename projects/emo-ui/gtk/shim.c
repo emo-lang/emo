@@ -1,11 +1,11 @@
-// shim.c — the ten-verb GTK 4 vocabulary `ui_gtk.emo` declares.
+// shim.c — the GTK 4 vocabulary `ui_gtk.emo` declares.
 //
 // Every verb is one C symbol. GTK is already C, so this file is thinner
-// than the AppKit shim: two things still need it — the "clicked" signal
-// handler, because `g_signal_connect` takes a function pointer Emo cannot
-// produce, and the sink's function-pointer pair, which the compiler
-// expands from the `ui.Events` interface (`CHECK.md`). The layout, the
-// tree walk, and the event loop are Emo side.
+// than the AppKit shim: three things still need it — the "clicked" and
+// "changed" signal handlers, because `g_signal_connect` takes a function
+// pointer Emo cannot produce, and the sink's function-pointer pair,
+// which the compiler expands from the `ui.Events` interface (`CHECK.md`).
+// The layout, the tree walk, and the event loop are Emo side.
 //
 // Frames are placed from the window's top-left, the same origin the box
 // model in `box.emo` measures from, and GtkFixed's own origin, so
@@ -13,15 +13,20 @@
 //
 // A frame keeps the widgets the diff continues — `ui_place` moves a
 // widget already on the canvas — and `ui_set_text` and `ui_remove` are
-// the two verbs a kept frame needs beside it.
+// the two verbs a kept frame needs beside it. A kept field's text is
+// written back only where it differs from the model's, and the write is
+// flagged so the "changed" signal it fires is not delivered as typing.
 //
-//   EMO_GUI_AUTOTEST=1 ./app    clicks the script's tags in order,
-//                               then quits — the corpus gate runs with
-//                               no one at the keyboard
+//   EMO_GUI_AUTOTEST=1 ./app    runs the script's steps in order, a
+//                               tag clicked and `tag=text` typed into
+//                               the field carrying the tag, then quits
+//                               — the corpus gate runs with no one at
+//                               the keyboard
 
 #include <gtk/gtk.h>
 
 #include <stdlib.h>
+#include <string.h>
 
 // The compiler's own declarations for every foreign def above. A
 // signature that drifts on either side now fails at cc time.
@@ -37,21 +42,25 @@ static GMainLoop *g_loop = NULL;
 // program's own streams, whose bytes are the program's.
 static int g_made = 0;
 
-typedef void (*emo_sink_fn)(int64_t tag, void *userdata);
+typedef void (*emo_sink_fn)(int64_t tag, const char *text, void *userdata);
 static emo_sink_fn g_sink = NULL;
 static void *g_sink_data = NULL;
 
+// Set while `ui_set_text` writes a field's text programmatically, so
+// the "changed" signal the write fires is not delivered as typing.
+static int g_setting_text = 0;
+
 static int g_autotest_requested = 0;
 static gboolean emo_autotest_tick(gpointer data);
+static void emo_entry_changed(GtkEditable *editable, gpointer user_data);
 
-// The tag table is the tree itself: a button carries whatever tag the
-// last frame gave it, so a button is whichever canvas child carries the
-// tag now.
-static GtkWidget *emo_button_with_tag(int64_t tag) {
+// The tag table is the tree itself: a control carries whatever tag the
+// last frame gave it, so a control is whichever canvas child carries
+// the tag now.
+static GtkWidget *emo_widget_with_tag(int64_t tag) {
   for (GtkWidget *w = gtk_widget_get_first_child(g_canvas); w != NULL;
        w = gtk_widget_get_next_sibling(w)) {
-    if (GTK_IS_BUTTON(w) &&
-        (int64_t)(intptr_t)g_object_get_data(G_OBJECT(w), "emo-tag") == tag) {
+    if ((int64_t)(intptr_t)g_object_get_data(G_OBJECT(w), "emo-tag") == tag) {
       return w;
     }
   }
@@ -104,6 +113,18 @@ int64_t ui_button_make(const char *text) {
   return (int64_t)(intptr_t)gtk_button_new_with_label(text);
 }
 
+// An editable field. The initial text is set before `ui_run` stores the
+// sink, so the "changed" signal the write fires delivers to no one; a
+// later write is the flagged one in `ui_set_text`.
+int64_t ui_entry_make(const char *text) {
+  g_made++;
+  GtkWidget *entry = gtk_entry_new();
+  gtk_editable_set_text(GTK_EDITABLE(entry), text);
+  g_signal_connect(G_OBJECT(entry), "changed",
+                   G_CALLBACK(emo_entry_changed), NULL);
+  return (int64_t)(intptr_t)entry;
+}
+
 // Place a widget at a frame: one already on the canvas moves, and a new
 // one is put there.
 void ui_place(int64_t child, double x, double y, double w, double h) {
@@ -116,11 +137,22 @@ void ui_place(int64_t child, double x, double y, double w, double h) {
   }
 }
 
-// A kept widget shows the frame's text: a button's label, a label's own.
+// A kept widget shows the frame's text: a button's label, a label's
+// own, and a field's only where it differs from the model's — the
+// keystrokes typed since the last frame stay. The write is flagged, so
+// the "changed" signal it fires is not delivered as typing.
 void ui_set_text(int64_t child, const char *text) {
   GtkWidget *widget = (GtkWidget *)(intptr_t)child;
   if (GTK_IS_BUTTON(widget)) {
     gtk_button_set_label(GTK_BUTTON(widget), text);
+  } else if (GTK_IS_ENTRY(widget)) {
+    const char *current = gtk_editable_get_text(GTK_EDITABLE(widget));
+    if (g_strcmp0(current, text) == 0) {
+      return;
+    }
+    g_setting_text = 1;
+    gtk_editable_set_text(GTK_EDITABLE(widget), text);
+    g_setting_text = 0;
   } else {
     gtk_label_set_text(GTK_LABEL(widget), text);
   }
@@ -137,20 +169,35 @@ static void emo_clicked(GtkButton *button, gpointer user_data) {
   (void)user_data;
   if (g_sink != NULL) {
     // The tag is read as the click lands, so a kept button can take a
-    // new one between frames.
+    // new one between frames. A click carries no text.
     g_sink(
-        (int64_t)(intptr_t)g_object_get_data(G_OBJECT(button), "emo-tag"),
+        (int64_t)(intptr_t)g_object_get_data(G_OBJECT(button), "emo-tag"), "",
         g_sink_data);
   }
 }
 
-// A button's tag is whatever the frame gave it last, and its handler is
-// connected once: the verb runs again for a kept button whose event
-// changed, and a second handler would deliver one click twice.
+// A field's typed text: the tag is whatever the frame gave the entry
+// last, and the text is the entry's own. A programmatic write arrives
+// flagged and delivers to no one.
+static void emo_entry_changed(GtkEditable *editable, gpointer user_data) {
+  (void)user_data;
+  if (g_sink != NULL && !g_setting_text) {
+    g_sink(
+        (int64_t)(intptr_t)g_object_get_data(G_OBJECT(GTK_WIDGET(editable)),
+                                             "emo-tag"),
+        gtk_editable_get_text(editable), g_sink_data);
+  }
+}
+
+// A control's tag is whatever the frame gave it last. A button's click
+// handler is connected once: the verb runs again for a kept button
+// whose event changed, and a second handler would deliver one click
+// twice. A field's "changed" handler is connected at `ui_entry_make`.
 void ui_connect(int64_t child, int64_t tag) {
   GtkWidget *widget = (GtkWidget *)(intptr_t)child;
   g_object_set_data(G_OBJECT(widget), "emo-tag", (gpointer)(intptr_t)tag);
-  if (g_object_get_data(G_OBJECT(widget), "emo-connected") == NULL) {
+  if (GTK_IS_BUTTON(widget) &&
+      g_object_get_data(G_OBJECT(widget), "emo-connected") == NULL) {
     g_object_set_data(G_OBJECT(widget), "emo-connected", GINT_TO_POINTER(1));
     g_signal_connect(G_OBJECT(widget), "clicked", G_CALLBACK(emo_clicked),
                      NULL);
@@ -177,20 +224,33 @@ void ui_run(void (*events_cb)(int64_t __p0, void *userdata),
 
 // ---- The self-driving script --------------------------------------------
 //
-// A tag list, clicked one per tick. The gate sets EMO_GUI_AUTOTEST and
-// compares the application's stdout; a real run leaves the variable
-// unset and `ui_autotest_arm` does nothing.
+// Steps run one per tick: a bare tag is a click on the control carrying
+// it, and `tag=text` types into the field carrying the tag — the text
+// goes in through `gtk_editable_set_text` unflagged, so the "changed"
+// signal delivers it exactly as a keystroke would. The gate sets
+// EMO_GUI_AUTOTEST and compares the application's stdout; a real run
+// leaves the variable unset and `ui_autotest_arm` does nothing.
 
-static int64_t g_script[64];
+typedef struct {
+  int64_t tag;
+  char *text;
+} emo_step;
+
+static emo_step g_script[64];
 static int g_script_len = 0;
 static int g_script_pos = 0;
 
 static gboolean emo_autotest_tick(gpointer data) {
   (void)data;
   if (g_script_pos < g_script_len) {
-    GtkWidget *button = emo_button_with_tag(g_script[g_script_pos++]);
-    if (button != NULL) {
-      g_signal_emit_by_name(G_OBJECT(button), "clicked");
+    emo_step step = g_script[g_script_pos++];
+    GtkWidget *widget = emo_widget_with_tag(step.tag);
+    if (widget != NULL) {
+      if (step.text != NULL) {
+        gtk_editable_set_text(GTK_EDITABLE(widget), step.text);
+      } else if (GTK_IS_BUTTON(widget)) {
+        g_signal_emit_by_name(G_OBJECT(widget), "clicked");
+      }
     }
     return G_SOURCE_CONTINUE;
   }
@@ -221,8 +281,20 @@ void ui_autotest_arm(const char *script) {
     if (end == p) {
       break;
     }
-    g_script[g_script_len++] = (int64_t)v;
+    g_script[g_script_len].tag = (int64_t)v;
+    g_script[g_script_len].text = NULL;
     p = end;
+    if (*p == '=') {
+      p++;
+      const char *start = p;
+      while (*p != '\0' && *p != ',') {
+        p++;
+      }
+      size_t n = (size_t)(p - start);
+      g_script[g_script_len].text = calloc(n + 1, 1);
+      memcpy(g_script[g_script_len].text, start, n);
+    }
+    g_script_len++;
     if (*p == ',') {
       p++;
     }

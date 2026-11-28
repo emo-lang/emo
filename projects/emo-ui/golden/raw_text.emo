@@ -1,0 +1,33 @@
+// The raw loop's message is the tag itself, so an event that carries
+// text has no integer to be — `run_raw`'s delivery refuses it rather
+// than dropping the payload. The gate pins the exit status and the
+// message, on the interpreter and on the `c` target.
+//
+//   emo run raw_text.emo   -> exits 1 with E3010
+
+class Model {
+  def init(count Int64) {
+    self.count = count
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+}
+
+def update(tag Int64, m Model) Model {
+  return Model.new(count: m.count() + 1)
+}
+
+def view(reg ui.Registry, m Model) ui.Node {
+  return ui.text("count ${m.count()}", ui.style())
+}
+
+def main() {
+  const be = ui.debug.Debug.new()
+  ui.run_raw(view, update, Model.new(0), be)
+  be.deliver_text(0, "typed")
+  println("delivered")
+}
+
+main()

@@ -10,7 +10,11 @@ require "emo/ui_corpus"
 // `emo/ui_corpus`, never copied, and run through `ui.run` on a canvas
 // the size of the display's baseline mode with a script in the input's
 // seat: inc, inc, dec, submit, the tags the corpus's `view` registers
-// (0, 1 and 2, its registration order fixing them). Every frame's
+// (0, 1 and 2, its registration order fixing them). The draft field the
+// corpus gained with the payload decision (2026-11-28) renders here and
+// rides this session's digests; the typing step it takes on the other
+// entries waits for a seat that speaks text — this family's seats
+// deliver clicks and keys, whose text is empty. Every frame's
 // digest prints as the backend presents it, beside the state
 // transitions `update` says; the interpreter's bytes are
 // `expected.txt`, and every hosted target prints the same. The loop is

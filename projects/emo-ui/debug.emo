@@ -84,7 +84,8 @@ def head(n ui.Node) String {
       + brief(n.style()) + "\n"
   }
   if n.is(ui.TextInput) {
-    return "Input \"" + n.value() + "\" " + brief(n.style()) + "\n"
+    return "Input \"" + n.value() + "\" #" + n.event().to_string() + " "
+      + brief(n.style()) + "\n"
   }
   if n.is(ui.Image) {
     return "Image \"" + n.src() + "\" " + brief(n.style()) + "\n"
@@ -175,7 +176,7 @@ def gone_text(p ui.Patch, depth Int64) String {
 // the cell starts as an `Events` that delivers to no one — never as a
 // number that could not later become one.
 class Unmounted {
-  def deliver(tag Int64) Void {
+  def deliver(tag Int64, text String) Void {
   }
 }
 
@@ -190,9 +191,10 @@ def unmounted() ui.Events {
 //
 // `run` drives nothing: the debug backend has no input source, which is
 // what headless means here. An event is delivered by hand, through
-// `deliver` — the loop hands its sink to `mount` and `ui.run` does not
-// hand the loop back, so this is the only way to step one event at a
-// time from outside.
+// `deliver` for a click and `deliver_text` for a field's typed text —
+// the loop hands its sink to `mount` and `ui.run` does not hand the
+// loop back, so this is the only way to step one event at a time from
+// outside.
 class Debug {
   def init() {
     self.trees = Box.new([])
@@ -212,7 +214,11 @@ class Debug {
   }
 
   def deliver(tag Int64) {
-    self.sink.read().deliver(tag)
+    self.sink.read().deliver(tag, "")
+  }
+
+  def deliver_text(tag Int64, text String) {
+    self.sink.read().deliver(tag, text)
   }
 
   def log() Array[String] {

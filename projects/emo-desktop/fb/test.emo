@@ -79,7 +79,7 @@ def measure_checks() {
     "a column is its widest child plus padding, its children stacked a gap apart")
   extent_is(ui_fb.measure(paired(), -1, f), 71, 20,
     "a row lines its bracketed buttons up, one gap apart, one line box tall")
-  extent_is(ui_fb.measure(ui.text_input("n", ui.style().with_width(40.0)), -1, f),
+  extent_is(ui_fb.measure(ui.text_input("n", 0 - 1, ui.style().with_width(40.0)), -1, f),
     40, 20, "a fixed width overrides the intrinsic one")
   extent_is(ui_fb.measure(ui.scroll([ui.text("x", ui.style())],
     ui.style().with_height(64.0)), -1, f), 9, 64,

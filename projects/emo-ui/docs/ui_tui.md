@@ -35,7 +35,8 @@ class Tui {
 `backend` is the entry point an application passes to `ui.run`. The
 frame is `width` by `height` character cells; `mount` and `patch` both
 paint the current tree from scratch — the old tree is an offer a
-terminal never needs. `run` pulls event tags from the input and hands
+terminal never needs. `run` pulls the input's steps — a tag and the
+text it carries, a click's text empty — and hands
 each one to the loop's sink until the input says there are no more.
 
 ## Input
@@ -46,11 +47,18 @@ interface Input {
 }
 
 def script(tags Array[Int64]) Input
+def steps(xs Array[Step]) Input
+
+class Step {
+  def init(tag Int64, text String)
+  def tag() Int64
+  def text() String
+}
 ```
 
 `Input` is the backend's event source: `next` answers `(R.ok, tag)` for
 an event or `(R.error, _)` when the source is exhausted. `script` is
-the deterministic source the gates run on — a fixed list of tags,
+the deterministic source the gates run on — a fixed list of steps,
 consumed once, then `(R.error, _)` forever. A real terminal source
 reads raw-mode keys through the standard library's `term` package;
 wiring it in replaces the source, not the seam.

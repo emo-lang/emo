@@ -68,13 +68,22 @@ not share is the subject of the rest of this note.
 
 ## 1. The input model
 
-**Text input.** `TextInput` shows the model's value and carries no event,
-so it is read-only on every backend: `ui_ssr` emits `readonly`,
-`ui_browser` sets `readOnly`, and the native backends make it a label.
-`projects/emo-ui/browser/ui_browser.emo` gives the reason in one line:
-"typing has nowhere to go until a node with an event of its own exists". No
-application can take a line of typed text through the core, on any
-platform.
+**Text input.** *The payload half landed 2026-11-28 (`feat/emo-ui`); the
+keyboard-and-focus half below is still open.* `TextInput` now carries an
+event, and `deliver(tag, text)` carries what was typed: the web and
+native backends own editable widgets and deliver each field's text
+through the tag `Registry.on_text` registered for it, a kept field's
+text survives the renders in between, and the SSR field posts its value
+under `emo-<tag>`. The registry's one-tag-per-value limit went with it
+(the name-keyed factory replaced the per-value tag). What the field
+still does not have is a key event of its own — no focus, no caret the
+application sees, no Tab traversal — which is the paragraph below.
+
+Before that landing: `TextInput` showed the model's value and carried
+no event, so it was read-only on every backend: `ui_ssr` emitted
+`readonly`, `ui_browser` set `readOnly`, and the native backends made it
+a label. No application could take a line of typed text through the
+core, on any platform.
 
 **Keyboard and focus.** Through the core's seam the only event any backend
 delivers is a button's click — the three that keep their widgets connect
@@ -267,23 +276,24 @@ Its README carries each with its evidence. None is decided here.
 
 ## What follows
 
-One recommendation, so that the next step has a name. It is not a decision.
+**Decided and landed, 2026-11-28 (`feat/emo-ui`).** The event carries
+`deliver(tag, text)` — one method, the payload as the method's own
+marshaled parameter, because the C→Emo callback contract names a
+single-method interface and `String` is in its marshaling tier. A message
+that carries a value is the application's own class, built by a factory
+the registry stores under a name (`on_text`), which retires the
+one-tag-per-value limit in the same pass. A backend that owns an editable
+widget keeps the keystrokes across renders by writing a kept field back
+only where the model's value differs. Two facts of the language decided
+the message shape: `is()` raises on an enum member, so a loop that takes
+one payload takes every message as a class instance (a field-less class
+still dedups — equality on instances is structural); and the raw loop
+refuses text, because its message is the tag itself. The shape is in
+[`emo-ui.md`](emo-ui.md), Layer 5.
 
-**Decide how an event carries more than a tag.** The first four groups all
-stop at `Events.deliver(tag Int64)`: text input, a key, a pointer position,
-a scroll offset and a new window size are payload events, and no number of
-widgets or styles makes an application usable without them. The decision
-belongs to the core and the backends, not to the grammar — the tree is
-already expressible ([`emo-ui.md`](emo-ui.md), decision 10) — and it has
-three parts: the shape of the seam (`ui.Events`); the shape of a message
-that carries a value, given that an enum carries none; and how a backend
-that owns an editable widget keeps it across renders, which the retained
-diff now makes possible and was built for. The registry's
-one-tag-per-value limit belongs in the same pass, since typed text is the
-case that exposes it.
-
-After it, in the order the dependencies allow: the rest of the input model
-(focus, pointer, scroll, resize); a `Style` that can say a color; the effect
-model, with the two-event-loop question it has always been; and only then a
-wider widget vocabulary — widgets are cheap to add once input and style can
-serve them.
+What the decision carried is the text payload only. After it, in the
+order the dependencies allow: the rest of the input model (focus, keys,
+pointer, scroll, resize); a `Style` that can say a color; the effect
+model, with the two-event-loop question it has always been; and only
+then a wider widget vocabulary — widgets are cheap to add once input and
+style can serve them.

@@ -49,7 +49,7 @@ function browserCurrentPid(): number | null {
 let _domNext = 1;
 const _domNodes = new Map<number, any>();
 const _domHandles = new WeakMap<object, bigint>();
-let _domSink: ((tag: bigint) => any) | null = null;
+let _domSink: ((tag: bigint, text: string) => any) | null = null;
 
 function domHandle(node: any): bigint {
   if (typeof node === "object" && node !== null) {
@@ -58,7 +58,10 @@ function domHandle(node: any): bigint {
   }
   const id = _domNext++;
   _domNodes.set(id, node);
-  if (typeof node === "object" && node !== null) _domHandles.set(node, id);
+  // The handle is a BigInt like every Int64 the runtime carries: a
+  // plain number in dynamic position is a Byte there, and a known
+  // element's handle answered as one made `>=` against it refuse.
+  if (typeof node === "object" && node !== null) _domHandles.set(node, BigInt(id));
   return BigInt(id);
 }
 
@@ -135,10 +138,13 @@ function domClear(handle: any): void {
 }
 
 // Every event carries the tag the interface program chose for it; the
-// listener hands that tag to the sink, which steps the Elm loop.
+// listener hands that tag to the sink, which steps the Elm loop. An
+// `input` event is a field's: the element's own value rides with the
+// tag, the way a click's text is empty.
 function domConnect(handle: any, event: any, tag: any): void {
   domNode(handle).addEventListener(String(event), () => {
-    domDeliver(BigInt(tag));
+    const text = String(event) === "input" ? domValue(handle) : "";
+    domDeliver(BigInt(tag), text);
   });
 }
 
@@ -165,14 +171,14 @@ function domViewport(): any {
 // An event's failure is the root's: report it and keep the page
 // listening. A listener firing before the interface program installed
 // its sink is a wiring mistake, said so once per event.
-function domDeliver(tag: bigint): void {
+function domDeliver(tag: bigint, text: string): void {
   if (_domSink === null) {
     console.error(
       "dom: event " + tag + " fired before dom_sink registered a sink"
     );
     return;
   }
-  Promise.resolve(_domSink(tag)).catch((e: any) => {
+  Promise.resolve(_domSink(tag, text)).catch((e: any) => {
     try {
       _taskError(e);
     } catch (err) {

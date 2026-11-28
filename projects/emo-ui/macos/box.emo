@@ -135,6 +135,9 @@ def event_of(n ui.Node) Int64 {
   if n.is(ui.Button) {
     return n.event()
   }
+  if n.is(ui.TextInput) {
+    return n.event()
+  }
   return 0 - 1
 }
 

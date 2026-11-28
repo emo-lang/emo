@@ -53,7 +53,21 @@ dec 1
                                   
                                   
             Emo counter           
-submit 1
+draft hi
+[2J[H                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+                                  
+            Emo counter           
+submit 1 draft hi
 [2J[H                                  
                                   
                                   

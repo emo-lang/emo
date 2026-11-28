@@ -574,8 +574,10 @@ with its index, so `update` stays typed (`Msg`) while the backend only
 ever sees an integer:
 
 ```emo
-reg.on(msg Msg) Int64       // registers msg, returns its tag
-reg.dispatch(tag Int64) Msg // the driver's lookup
+reg.on(msg Msg) Int64              // registers msg, returns its tag
+reg.dispatch(tag Int64) Msg        // the driver's lookup
+reg.on_text(name String, make Block) Int64  // a field's factory, one stable tag
+reg.message_for(tag Int64, text String) Block // the message a delivery becomes
 ```
 
 The table is an object the loop owns and hands to `view`, not a
@@ -598,6 +600,31 @@ one cell, `List`/`Map` for collections — read during `view`; the
 README's "reactivity primitives live in the standard library" is
 satisfied by these, and the "compiler optimizes to targeted refreshes"
 promise is a later pass over exactly those reads, not a hidden graph.
+
+**The payload decision (landed 2026-11-28, `feat/emo-ui`).** An event is
+`deliver(tag, text)`: one method, and the payload rides as the method's
+own marshaled parameter — a single-method interface is the only shape
+the C→Emo callback contract names (`CHECK.md`), and `String` is in its
+marshaling tier. A click's text is `""`; a field's typed text rides with
+its tag. The message that carries the value is the application's own
+class, built by a *factory* the registry stores under a name:
+`on_text("draft", -> (t String) { return Typed.new(text: t) })` hands
+out one stable tag — a message built from the field's contents would be
+a distinct tag per render, the table's old limit, and the name-keyed
+dedup (mirroring `keyed`'s, not comparing `Block`s, which have no
+equality worth trusting) is what retires it. Two facts of the language
+shaped the rest, both found by probe: `is()` raises on an enum member,
+so a loop that takes one field's typed text takes *every* message as a
+class instance — a click's message is a field-less class, which still
+dedups to one tag because equality on instances is structural; and the
+raw loop's delivery refuses text outright, because its message is the
+tag itself and a payload has no integer to be. The backend that owns an
+editable widget keeps the person's keystrokes across renders: a kept
+field's text is written back only where it differs from the model's
+value, so the model answers the delivery and nothing else moves. The
+corpus carries the whole shape: its messages are four classes, its
+field is `on_text("draft", …)`, and one typed step runs byte-identical
+on every hosted backend.
 
 A second loop shape skips the table: `run_raw` hands the backend's tag
 to `update` as the message itself. The table earns its place when
@@ -668,12 +695,15 @@ interface Backend {
 ```
 
 `mount` hands the backend the first tree and the sink it delivers events
-into — a single-method `Events` interface, `deliver(tag)`, which is the
-whole of what a backend knows about the application. A single-method
-interface is the callback type the C→Emo contract already names
-(`CHECK.md`), so a native shim reaches the sink through the same
-trampoline as any other callback. Landed as `ui.Backend`/`ui.Events`
-(T48.2).
+into — a single-method `Events` interface, `deliver(tag, text)`, which is
+the whole of what a backend knows about the application: a tag, and the
+text when the event is a field's (a click's text is `""`). A
+single-method interface is the callback type the C→Emo contract already
+names (`CHECK.md`), so a native shim reaches the sink through the same
+trampoline as any other callback, and the payload crosses as the
+method's own marshaled parameter. Landed as `ui.Backend`/`ui.Events`
+(T48.2); the text parameter is the payload decision of 2026-11-28
+(Layer 5).
 
 Each platform implements it:
 
@@ -685,9 +715,14 @@ Each platform implements it:
   to native handles.
   `projects/emo-ui/macos/` is the package, and `corpus/` its entry into
   the convergence corpus (T48.12) — the shared application on one
-  screen, driven by a comma-separated tag script the shim clicks under
+  screen, driven by a comma-separated step script the shim runs under
   `EMO_GUI_AUTOTEST` before terminating, so its bytes are checked
-  without a keyboard or a screenshot.
+  without a keyboard or a screenshot: a bare tag is a click,
+  `tag=text` types into the field carrying the tag. An editable field
+  is an `NSTextField` whose delegate delivers what was typed with the
+  field's tag; a programmatic write fires no `controlTextDidChange`, so
+  the write can never read as typing, and `set_text` writes a kept
+  field back only where the model's value differs.
 - **GTK 4 (landed, T48.9):** the same ten-verb `ui_*` contract and the
   same point box model as the macOS backend, on the other side of the C
   ABI. `projects/emo-ui/gtk/` is the package and `corpus/` its entry
@@ -701,8 +736,10 @@ Each platform implements it:
   same generated C in a container (GTK 4 plus Xvfb), so the backend is
   checkable from a macOS host.
 - **TUI (landed, T48.4):** a pure-Emo class that lays the tree out on a
-  cell grid and writes ANSI; `run()` pulls a scripted input's tags and
-  hands them to the loop's sink. `projects/emo-ui/tui/` is the package,
+  cell grid and writes ANSI; `run()` pulls a scripted input's steps and
+  hands them to the loop's sink — a step is a tag and the text it
+  carries, so a scripted field takes typed text the way a native one
+  does. `projects/emo-ui/tui/` is the package,
   `tui/golden/` the scripted-input golden, and `corpus/` its entry into
   the convergence corpus: `screen` returns the grid as data, `paint`
   writes the bytes, and the same screen is byte-identical on the
@@ -712,7 +749,8 @@ Each platform implements it:
   instead of printing — so a caller decides when text reaches stdout and
   a golden is never disturbed by a backend that happens to be attached —
   and `run()` drives nothing, because headless means no input source: an
-  event is stepped by hand through `deliver` on the sink `mount` was
+  event is stepped by hand through `deliver` for a click and
+  `deliver_text` for a field's typed text, on the sink `mount` was
   given. `projects/emo-ui/golden/` is what it is for: one screen through
   the core as a consumer reaches it, out as text, byte-identical on the
   interpreter and all five hosted targets (the loop's `wasm` half closed
@@ -727,7 +765,10 @@ Each platform implements it:
   HTML and an interned stylesheet, byte-identical on all five targets.
   `mount` prints a whole document and `patch` prints the fragment a
   browser swaps in; `run()` returns, because a server has no input
-  source, and `deliver(tag)` is the request that steps one event. Forms
+  source, and `deliver` is the request that steps one event —
+  `deliver_text` for a field's posted value, which rides the body under
+  the name `emo-<tag>`. A field with an event renders editable (no
+  `readonly`); one without stays display-only. Forms
   and links are the interaction model, and the three nodes only a
   server round trip can honor (`form`, `link`, `field`) live in this
   package rather than in the core. `corpus/` is its entry into the
@@ -737,13 +778,23 @@ Each platform implements it:
   landed with the browser path (T48.10). The browser's own layout
   engine does the layout, so the package carries a style mapping
   (`css.emo`) rather than a point box model; `run()` hands control to
-  the browser and returns. `corpus/` is the convergence consumer, and
-  `page.mjs` is the stub page its gate clicks the script in.
+  the browser and returns. An editable field's `input` events deliver
+  the element's own value with its tag (the tag rides the `name`
+  `emo-<tag>`, the markup contract `ui_ssr` emits), and a kept field's
+  value is written back only where it differs — the browser fires no
+  `input` event for a programmatic write, so the write can never read
+  as typing. `corpus/` is the convergence consumer, and `page.mjs` is
+  the stub page its gate steps the script in.
 
 All of them now run the same application. `projects/emo-ui/corpus/` is
-the package `emo/ui_corpus` (T48.12): a counter as its state, an input
-and a submit button as its form, a scrolled list, and the tags `view`
-registers — one module, with no platform name in it. Each backend's
+the package `emo/ui_corpus` (T48.12): a counter as its state, a field
+that takes typed text and a submit button as its form, a scrolled list,
+and the tags `view` registers — one module, with no platform name in
+it. Its messages are classes rather than an enum, because a loop that
+takes one field's typed text takes every message as a class instance
+(Layer 5); the typed step runs on every entry, so the same line —
+`submit 1 draft hi` — is pinned byte for byte wherever bytes can be
+compared. Each backend's
 `corpus/` is the thin entry: `require` the shared package, build that
 backend, hand `ui_corpus.view` and `ui_corpus.update` to `ui.run`. The
 debug, SSR and TUI entries are checked by `corpus/check.sh` on every

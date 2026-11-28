@@ -102,6 +102,24 @@ Operand order is no longer a cross-target variable — the language states left
 to right and every target obeys it; the defect that made the two differ, and
 its fix, are in `CHECK.md` and `probe/eval_order`.
 
+**An event carries its text (2026-11-28).** The sink is
+`deliver(tag, text)` — one method, the payload as the method's own
+marshaled parameter, because the C→Emo callback contract names a
+single-method interface and `String` is in its marshaling tier. A
+click's text is empty; a field's typed text rides with its tag, the tag
+`reg.on_text(name, make)` registers: the application hands the registry
+a *factory* that builds the message from what was typed, under a name of
+its choosing, and the name — not the value — is what the tag dedups on,
+so a field keeps one tag however often its contents change. The
+messages of a loop that takes typed text are classes rather than an
+enum (`is()` raises on an enum member), a field-less class still dedups
+because equality on instances is structural, and the raw loop refuses
+text because its message is the tag itself. A backend that owns the
+widget keeps the keystrokes: a kept field's text is written back only
+where the model's value differs, on every backend that owns one —
+AppKit's `NSTextField`, GTK's `GtkEntry`, the DOM's `input`, an SSR
+form's `emo-<tag>` POST, the terminal's scripted step.
+
 `ui.run_raw` is the same loop without the table: the backend's tag is the
 message, handed to `update` as it arrives. It exists for applications whose
 messages are already integers — a text editor's keys, one per byte and one per

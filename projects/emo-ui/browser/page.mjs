@@ -1,8 +1,9 @@
 // The browser backend's page harness (T48.11): a stub page just large
 // enough for the runtime's `dom_*` host, the corpus bundle, and a script
-// of event tags clicked in order.
+// of steps — a tag clicked, or `tag=text` typed into the field carrying
+// that tag.
 //
-//   node page.mjs <bundle.js> <tag,tag,...>
+//   node page.mjs <bundle.js> <step,step,...>
 //
 // The bundle is a plain script — no imports, no `process` — so importing
 // it is running the program. A button carries its tag as the `name`/
@@ -100,16 +101,46 @@ function findTagged(node, tag) {
   return null;
 }
 
+// An editable field carries its tag as the `name` `emo-<tag>`, the same
+// markup contract `ui_ssr` emits.
+function findInput(node, name) {
+  if (node.tagName === "input" && node.name === name) {
+    return node;
+  }
+  for (const child of node.children) {
+    const found = findInput(child, name);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
 const tick = () => new Promise((done) => setTimeout(done, 0));
 
 await import(pathToFileURL(resolve(bundle)).href);
 await tick();
 
-for (const tag of script.split(",").filter((t) => t.length > 0)) {
-  const target = findTagged(root, tag);
+// A step is a tag to click, or `tag=text` to type into the field
+// carrying that tag: the value is set and the field's `input` listeners
+// fire, which is what a keystroke is to the runtime's host.
+for (const step of script.split(",").filter((s) => s.length > 0)) {
+  const eq = step.indexOf("=");
+  const tag = eq >= 0 ? step.slice(0, eq) : step;
+  const text = eq >= 0 ? step.slice(eq + 1) : null;
+  const target =
+    text === null ? findTagged(root, tag) : findInput(root, "emo-" + tag);
   if (target === null) {
     console.error("page: no element carries event " + tag);
     process.exit(1);
+  }
+  if (text !== null) {
+    target.value = text;
+    for (const fn of target.listeners.input ?? []) {
+      fn();
+    }
+    await tick();
+    continue;
   }
   const listeners = target.listeners.click ?? [];
   if (listeners.length === 0) {

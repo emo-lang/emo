@@ -1,0 +1,17 @@
+// Text on a tag no field registered — the delivery's one refusal: a
+// click tag carries no text, so a backend that sends some is a wiring
+// mistake, refused where it is made. The gate pins the exit status and
+// the message, on the interpreter and on the `c` target.
+//
+//   emo run text_on_click.emo   -> exits 1 with E3010
+
+enum Msg { bump }
+
+def main() {
+  const reg = ui.Registry.new()
+  const bump = reg.on(Msg.bump)
+  reg.message_for(bump, "typed")
+  println("delivered")
+}
+
+main()

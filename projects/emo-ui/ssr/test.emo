@@ -69,8 +69,12 @@ def markup_checks() {
     "a button submits its event tag", ui_ssr.fragment(ui.button("Go", 7, style())))
 
   same("<input class=\"e0\" type=\"text\" value=\"Ada &amp; Bob\" readonly>",
-    "a core text input shows the model's value and submits nothing",
-    ui_ssr.fragment(ui.text_input("Ada & Bob", style())))
+    "a core text input without an event shows the model's value and submits nothing",
+    ui_ssr.fragment(ui.text_input("Ada & Bob", 0 - 1, style())))
+
+  same("<input class=\"e0\" type=\"text\" name=\"emo-7\" value=\"Ada &amp; Bob\">",
+    "a core text input with an event submits its typed text under emo-<tag>",
+    ui_ssr.fragment(ui.text_input("Ada & Bob", 7, style())))
 
   same("<img class=\"e0\" src=\"a&amp;b.png\" alt=\"\">",
     "an image carries its escaped source", ui_ssr.fragment(ui.image("a&b.png", style())))
@@ -121,43 +125,69 @@ def document_checks() {
 // `ui.run` mounts one document and returns, because a server has no
 // input source; `deliver` is the request that steps one event, and its
 // response is the fragment the browser swaps in. Both reach stdout, so
-// the assertion is that the round trip runs to the end.
+// the assertion is that the round trip runs to the end. The messages
+// are classes, not an enum: `is()` raises on an enum member, so a loop
+// that takes one field's typed text takes every message as a class
+// instance (the shape the corpus carries).
 
-enum Msg { bump }
+class Bump {
+  def init() {
+  }
+}
+
+class Note {
+  def init(text String) {
+    self.text = text
+  }
+
+  def text() String {
+    return self.text
+  }
+}
 
 class Model {
-  def init(count Int64) {
+  def init(count Int64, note String) {
     self.count = count
+    self.note = note
   }
 
   def count() Int64 {
     return self.count
   }
 
-  def with_count(c Int64) Model {
-    return Model.new(count: c)
+  def note() String {
+    return self.note
   }
 }
 
-def update(msg Msg, m Model) Model {
-  case msg {
-    Msg.bump then { return m.with_count(m.count() + 1) }
+def update(msg Block, m Model) Model {
+  if msg.is(Note) {
+    return Model.new(count: m.count(), note: msg.text())
   }
+  if msg.is(Bump) {
+    return Model.new(count: m.count() + 1, note: m.note())
+  }
+  return m
 }
 
 def view(reg ui.Registry, m Model) ui.Node {
-  const bump = reg.on(Msg.bump)
+  const bump = reg.on(Bump.new())
+  const note = reg.on_text("note", -> (t String) {
+    return Note.new(text: t)
+  })
   return ui_ssr.form("/bump", [
     ui.text("count ${m.count()}", ui.style()),
+    ui.text_input(m.note(), note, ui.style()),
     ui.button("Bump", bump, ui.style())
   ], ui.style())
 }
 
 def backend_checks() {
   const be = ui_ssr.backend("Test page")
-  ui.run(view, update, Model.new(0), be)
+  ui.run(view, update, Model.new(count: 0, note: ""), be)
   be.deliver(0)
-  check(true, "the backend mounts a page and patches a fragment")
+  be.deliver_text(1, "hello")
+  check(true, "the backend mounts a page and patches fragments")
 }
 
 escaping()

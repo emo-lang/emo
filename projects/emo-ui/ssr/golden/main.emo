@@ -46,7 +46,7 @@ def inbox() ui.Node {
       ui.text("", ui.style())
     ], feed_style),
     ui.text("Tom & Jerry <\"quoted\"> 'single' — 世界", ui.style()),
-    ui.text_input("draft", input_style),
+    ui.text_input("draft", 0 - 1, input_style),
     ui_ssr.form("/send", [
       ui_ssr.field("message", "a & b <c>", field_style),
       ui_ssr.field("empty", "", ui.style()),

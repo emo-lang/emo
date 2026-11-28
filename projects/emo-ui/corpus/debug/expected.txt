@@ -1,13 +1,15 @@
 inc 1
 inc 2
 dec 1
-submit 1
+draft hi
+submit 1 draft hi
 Column pad=12.0 gap=8.0 align=start grow=false w=auto h=auto
   Text "Emo counter" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
   Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
     Button "inc" #0 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Button "dec" #1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
-  Input "count = 0" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "count = 0" #-1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "" #3 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
   Scroll pad=0.0 gap=0.0 align=start grow=false w=auto h=120.0
     Text "first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Text "second" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
@@ -20,7 +22,8 @@ Column pad=12.0 gap=8.0 align=start grow=false w=auto h=auto
   Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
     Button "inc" #0 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Button "dec" #1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
-  Input "count = 1" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "count = 1" #-1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "" #3 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
   Scroll pad=0.0 gap=0.0 align=start grow=false w=auto h=120.0
     Text "first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Text "second" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
@@ -33,7 +36,8 @@ Column pad=12.0 gap=8.0 align=start grow=false w=auto h=auto
   Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
     Button "inc" #0 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Button "dec" #1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
-  Input "count = 2" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "count = 2" #-1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "" #3 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
   Scroll pad=0.0 gap=0.0 align=start grow=false w=auto h=120.0
     Text "first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Text "second" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
@@ -46,7 +50,8 @@ Column pad=12.0 gap=8.0 align=start grow=false w=auto h=auto
   Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
     Button "inc" #0 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Button "dec" #1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
-  Input "count = 1" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "count = 1" #-1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "" #3 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
   Scroll pad=0.0 gap=0.0 align=start grow=false w=auto h=120.0
     Text "first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Text "second" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
@@ -59,7 +64,22 @@ Column pad=12.0 gap=8.0 align=start grow=false w=auto h=auto
   Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
     Button "inc" #0 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Button "dec" #1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
-  Input "count = 1" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "count = 1" #-1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "hi" #3 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Scroll pad=0.0 gap=0.0 align=start grow=false w=auto h=120.0
+    Text "first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Text "second" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Image "logo.png" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Button "submit" #2 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Spacer pad=0.0 gap=0.0 align=start grow=true w=auto h=auto
+
+Column pad=12.0 gap=8.0 align=start grow=false w=auto h=auto
+  Text "Emo counter" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Row pad=0.0 gap=8.0 align=start grow=false w=auto h=auto
+    Button "inc" #0 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+    Button "dec" #1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "count = 1" #-1 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
+  Input "hi" #3 pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
   Scroll pad=0.0 gap=0.0 align=start grow=false w=auto h=120.0
     Text "first" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto
     Text "second" pad=0.0 gap=0.0 align=start grow=false w=auto h=auto

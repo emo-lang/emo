@@ -70,7 +70,7 @@ def controls() ui.Node {
 
 def fixed_input() ui.Node {
   return ui.row([
-    ui.text_input("n", ui.style().with_width(120.0))
+    ui.text_input("n", 0 - 1, ui.style().with_width(120.0))
   ], ui.style())
 }
 

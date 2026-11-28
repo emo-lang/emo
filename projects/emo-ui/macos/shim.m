@@ -1,4 +1,4 @@
-// shim.m — the ten-verb AppKit vocabulary `ui_macos.emo` declares.
+// shim.m — the AppKit vocabulary `ui_macos.emo` declares.
 //
 // Every verb is one C symbol. Emo cannot name an Objective-C selector,
 // a struct parameter, or a method chain (E4200: Foreign, Int64,
@@ -9,8 +9,8 @@
 // The sink arrives through the callback contract: `ui_run` takes the
 // `ui.Events` interface as a foreign parameter, which the compiler
 // expands to a function pointer plus its userdata (`CHECK.md`). A click
-// calls the pair with the button's tag and nothing else — the FFI is
-// one integer wide in both directions.
+// calls the pair with the button's tag and an empty text; a field's
+// edited text calls it with the tag and what was typed.
 //
 // Frames are placed from the window's top-left, the same origin the box
 // model in `box.emo` measures from; AppKit's content view is
@@ -18,15 +18,21 @@
 //
 // A frame keeps the widgets the diff continues — `ui_place` moves a view
 // as readily as it places a new one — and `ui_set_text` and `ui_remove`
-// are the two verbs a kept frame needs beside it.
+// are the two verbs a kept frame needs beside it. A kept field's text is
+// written back only where it differs from the model's; a programmatic
+// `stringValue` write fires no `controlTextDidChange`, so the write can
+// never read as typing.
 //
-//   EMO_GUI_AUTOTEST=1 ./app    clicks the script's tags in order,
-//                               then terminates — the corpus gate runs
-//                               with no one at the keyboard
+//   EMO_GUI_AUTOTEST=1 ./app    runs the script's steps in order, a
+//                               tag clicked and `tag=text` typed into
+//                               the field carrying the tag, then
+//                               terminates — the corpus gate runs with
+//                               no one at the keyboard
 
 #import <AppKit/AppKit.h>
 
 #include <stdlib.h>
+#include <string.h>
 
 // The compiler's own declarations for every foreign def above. A
 // signature that drifts on either side now fails at cc time.
@@ -50,15 +56,16 @@ static double g_height = 0.0;
 // program's own streams, whose bytes are the program's.
 static int g_made = 0;
 
-typedef void (*emo_sink_fn)(int64_t tag, void *userdata);
+typedef void (*emo_sink_fn)(int64_t tag, const char *text, void *userdata);
 static emo_sink_fn g_sink = NULL;
 static void *g_sink_data = NULL;
 
-// Every button is wired to this one action: the tag is the whole
-// message, so no per-button selector or target is needed. The object
-// exists before `ui_run` because a frame's buttons are made during
-// `mount`, which is painted before the run loop starts.
-@interface EmoSink : NSObject <NSApplicationDelegate>
+// Every button is wired to this one action, and every editable field
+// takes this one object as its delegate: the tag is the whole message,
+// so no per-control selector or target is needed. The object exists
+// before `ui_run` because a frame's controls are made during `mount`,
+// which is painted before the run loop starts.
+@interface EmoSink : NSObject <NSApplicationDelegate, NSTextFieldDelegate>
 @end
 static EmoSink *g_delegate = nil;
 
@@ -114,6 +121,28 @@ int64_t ui_button_make(const char *text_utf8) {
   }
 }
 
+// An editable field. The initial text is set before `ui_run` stores the
+// sink, so even if a programmatic write did deliver, it would reach no
+// one; from then on `ui_set_text`'s compare-and-skip keeps the writes
+// honest.
+int64_t ui_entry_make(const char *text_utf8) {
+  g_made++;
+  @autoreleasepool {
+    NSTextField *entry = [[NSTextField alloc] initWithFrame:NSZeroRect];
+    entry.stringValue = [NSString stringWithUTF8String:text_utf8];
+    entry.editable = YES;
+    entry.selectable = YES;
+    entry.bordered = YES;
+    entry.font = [NSFont systemFontOfSize:13.0];
+    if (g_delegate == nil) {
+      g_delegate = [EmoSink new];
+    }
+    entry.delegate = g_delegate;
+    [g_window.contentView addSubview:entry];
+    return id_to_handle(entry);
+  }
+}
+
 void ui_place(int64_t child, double x, double y, double w, double h) {
   @autoreleasepool {
     NSView *view = handle_to_id(child);
@@ -121,8 +150,9 @@ void ui_place(int64_t child, double x, double y, double w, double h) {
   }
 }
 
-// A kept widget shows the frame's text: a button's title, a label's
-// string.
+// A kept widget shows the frame's text: a button's title, a label's or
+// a field's string — the field's only where it differs from the
+// model's, so the keystrokes typed since the last frame stay.
 void ui_set_text(int64_t child, const char *text_utf8) {
   @autoreleasepool {
     id view = handle_to_id(child);
@@ -130,7 +160,11 @@ void ui_set_text(int64_t child, const char *text_utf8) {
     if ([view isKindOfClass:[NSButton class]]) {
       ((NSButton *)view).title = text;
     } else {
-      ((NSTextField *)view).stringValue = text;
+      NSTextField *field = (NSTextField *)view;
+      if ([field.stringValue isEqualToString:text]) {
+        return;
+      }
+      field.stringValue = text;
     }
   }
 }
@@ -143,18 +177,25 @@ void ui_remove(int64_t child) {
   }
 }
 
-// A button's tag is whatever the frame gave it last: the verb runs again
-// for a kept button whose event changed, and the target and action are
-// the same ones every time.
+// A control's tag is whatever the frame gave it last: the verb runs
+// again for a kept control whose event changed, and the target and
+// action are the same ones every time. A field takes only the tag — its
+// delegate was set at `ui_entry_make`, and a target here would make
+// Return deliver a click.
 void ui_connect(int64_t child, int64_t tag) {
   @autoreleasepool {
-    NSButton *btn = handle_to_id(child);
+    id view = handle_to_id(child);
     if (g_delegate == nil) {
       g_delegate = [EmoSink new];
     }
-    btn.tag = tag;
-    btn.target = g_delegate;
-    btn.action = @selector(clicked:);
+    if ([view isKindOfClass:[NSButton class]]) {
+      NSButton *btn = (NSButton *)view;
+      btn.tag = tag;
+      btn.target = g_delegate;
+      btn.action = @selector(clicked:);
+    } else if ([view isKindOfClass:[NSTextField class]]) {
+      ((NSTextField *)view).tag = tag;
+    }
   }
 }
 
@@ -166,7 +207,20 @@ int64_t ui_root(void) { return id_to_handle(g_window.contentView); }
 
 - (void)clicked:(NSButton *)sender {
   if (g_sink != NULL) {
-    g_sink((int64_t)sender.tag, g_sink_data);
+    // The tag is read as the click lands, so a kept button can take a
+    // new one between frames. A click carries no text.
+    g_sink((int64_t)sender.tag, "", g_sink_data);
+  }
+}
+
+// A field's typed text: the tag is whatever the frame gave the field
+// last, and the text is the field's own. A programmatic `stringValue`
+// write fires no `controlTextDidChange`, so the delegate method sees
+// only what a person typed.
+- (void)controlTextDidChange:(NSNotification *)obj {
+  if (g_sink != NULL) {
+    NSTextField *field = (NSTextField *)obj.object;
+    g_sink((int64_t)field.tag, field.stringValue.UTF8String, g_sink_data);
   }
 }
 
@@ -178,11 +232,20 @@ int64_t ui_root(void) { return id_to_handle(g_window.contentView); }
 
 // ---- The self-driving script --------------------------------------------
 //
-// A tag list, clicked one per tick. The gate sets EMO_GUI_AUTOTEST and
-// compares the application's stdout; a real run leaves the variable
-// unset and `ui_autotest_arm` does nothing.
+// Steps run one per tick: a bare tag is a click on the control carrying
+// it, and `tag=text` types into the field carrying the tag — the text
+// goes into the field and the delivery is made by hand, because a
+// programmatic write fires no `controlTextDidChange` and the simulation
+// stands in for a person. The gate sets EMO_GUI_AUTOTEST and compares
+// the application's stdout; a real run leaves the variable unset and
+// `ui_autotest_arm` does nothing.
 
-static int64_t g_script[64];
+typedef struct {
+  int64_t tag;
+  char *text;
+} emo_step;
+
+static emo_step g_script[64];
 static int g_script_len = 0;
 static int g_script_pos = 0;
 static int g_timer_requested = 0;
@@ -200,21 +263,34 @@ void ui_autotest_arm(const char *script) {
     if (end == p) {
       break;
     }
-    g_script[g_script_len++] = (int64_t)v;
+    g_script[g_script_len].tag = (int64_t)v;
+    g_script[g_script_len].text = NULL;
     p = end;
+    if (*p == '=') {
+      p++;
+      const char *start = p;
+      while (*p != '\0' && *p != ',') {
+        p++;
+      }
+      size_t n = (size_t)(p - start);
+      g_script[g_script_len].text = calloc(n + 1, 1);
+      memcpy(g_script[g_script_len].text, start, n);
+    }
+    g_script_len++;
     if (*p == ',') {
       p++;
     }
   }
 }
 
-// The tag table is the tree itself: a button carries whatever tag the
-// last frame gave it, so the button for a tag is whichever subview
+// The tag table is the tree itself: a control carries whatever tag the
+// last frame gave it, so the control for a tag is whichever subview
 // carries it now.
-static NSButton *emo_button_with_tag(int64_t tag) {
+static NSControl *emo_control_with_tag(int64_t tag) {
   for (NSView *view in g_window.contentView.subviews) {
-    if ([view isKindOfClass:[NSButton class]] && ((NSButton *)view).tag == tag) {
-      return (NSButton *)view;
+    if ([view isKindOfClass:[NSControl class]] &&
+        ((NSControl *)view).tag == tag) {
+      return (NSControl *)view;
     }
   }
   return nil;
@@ -227,9 +303,18 @@ static NSButton *emo_button_with_tag(int64_t tag) {
 
 - (void)tick:(NSTimer *)timer {
   if (g_script_pos < g_script_len) {
-    NSButton *btn = emo_button_with_tag(g_script[g_script_pos++]);
-    if (btn != nil) {
-      [btn performClick:nil];
+    emo_step step = g_script[g_script_pos++];
+    NSControl *control = emo_control_with_tag(step.tag);
+    if (control != nil) {
+      if (step.text != NULL) {
+        NSTextField *field = (NSTextField *)control;
+        field.stringValue = [NSString stringWithUTF8String:step.text];
+        if (g_sink != NULL) {
+          g_sink((int64_t)control.tag, step.text, g_sink_data);
+        }
+      } else if ([control isKindOfClass:[NSButton class]]) {
+        [(NSButton *)control performClick:nil];
+      }
     }
     return;
   }
@@ -260,7 +345,7 @@ static void emo_autotest_schedule(void) {
                                             repeats:YES];
 }
 
-void ui_run(void (*events_cb)(int64_t __p0, void *userdata),
+void ui_run(void (*events_cb)(int64_t __p0, const char *__p1, void *userdata),
             void *events_data) {
   @autoreleasepool {
     g_sink = events_cb;

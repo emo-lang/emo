@@ -52,7 +52,7 @@ expect 0 "the core and its test type-check" "$rc"
 "$EMO" run test.emo >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the loop's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 41 "all forty-one assertions pass" "$n"
+expect 53 "all fifty-three assertions pass" "$n"
 
 # --- which targets can compile the package -------------------------------
 #
@@ -260,6 +260,10 @@ expect_refusal() {
 expect_refusal dup_key 'ui.diff: two children of one node share the key "k"'
 expect_refusal foreign_key \
   "ui.keyed: this node class is not one of the core's"
+expect_refusal text_on_click \
+  "ui: the event at tag 0 carries text, and no field registered it"
+expect_refusal raw_text \
+  "ui.run_raw: the event at tag 0 carries text, and the raw loop's messages are the tags themselves"
 
 # --- the backends' package gates ----------------------------------------
 #

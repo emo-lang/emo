@@ -31,17 +31,22 @@ def update(msg Msg, m Model) Model
 def view(reg ui.Registry, m Model) ui.Node
 ```
 
-The state is a counter. `view` registers its three messages in
-statements of its own — `inc`, `dec`, `submit` at tags `0`, `1` and `2`
-— and builds a titled column: two buttons in a row, an input showing the
-count, a scrolled list of two texts and an image, a submit button, and a
+The state is a counter and a draft string. The messages are classes
+rather than an enum — a loop that takes one field's typed text takes
+every message as a class instance, because `is()` raises on an enum
+member; a click's message is a field-less class, which dedups to one tag
+because equality on instances is structural. `view` registers them in
+statements of its own — `inc`, `dec`, `submit` at tags `0`, `1` and `2`,
+and the draft field's factory under the name `"draft"` at tag `3` — and
+builds a titled column: two buttons in a row, the field that takes typed
+text, a scrolled list of two texts and an image, a submit button, and a
 growing spacer. The children are an explicit `Array[ui.Node]`, with the
 list assembled through `ArrayBuilder`.
 
-`update` prints each state transition (`inc 1`, `dec 0`, `submit 0`), so
-the corpus's output is the loop's bytes rather than any one backend's
-rendering. That is what lets one `expected.txt` be pinned on every
-entry.
+`update` prints each state transition (`inc 1`, `dec 0`, `draft hi`,
+`submit 1 draft hi`), so the corpus's output is the loop's bytes rather
+than any one backend's rendering. That is what lets one `expected.txt`
+be pinned on every entry.
 
 ## Entries and the gate
 
@@ -57,11 +62,12 @@ Six entries consume the package:
 | `browser/corpus` | `ui_browser` | `browser/check.sh` |
 
 Each entry is a `require` of the shared package plus a single `ui.run`
-over that backend. The debug entry steps `inc, inc, dec, submit` by hand
-through `deliver` and prints the trees it logged; the SSR entry steps
-the same four through the printing backend. The TUI, macOS, GTK 4 and
-browser entries run the same tags as a script — `0,0,1,2` — through
-their own input source.
+over that backend. The debug entry steps `inc, inc, dec, the draft
+field typed, submit` by hand — `deliver` for a click, `deliver_text`
+for the field's text — and prints the trees it logged; the SSR entry
+steps the same five through the printing backend. The TUI, macOS, GTK 4
+and browser entries run the same steps as a script — `0,0,1,3=hi,2`,
+where `3=hi` is the typing — through their own input source.
 
 `corpus/check.sh` stages the core, the corpus, `ui_ssr` and `ui_tui`
 into a content-named registry and pins one `expected.txt` per entry:
