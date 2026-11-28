@@ -21,8 +21,8 @@ source; the code blocks are the tests.
 
 ## Goal
 
-- One Markdown file per language: `docs/tour.md` (English) and
-  `docs/zh-CN/tour.md` (Chinese), containing a quick start plus ten
+- One Markdown file per language: `docs/intro/tour.md` (English) and
+  `docs/zh-CN/intro/tour.md` (Chinese), containing a quick start plus ten
   chapters.
 - Every ```` ```emo run ```` block is a self-contained program compiled
   to Wasm and executed by `emo run --target wasm`; its stdout is
@@ -118,8 +118,8 @@ println(apply_twice(3, double))
 
 ### Placement
 
-- `docs/tour.md` — English, the authored source.
-- `docs/zh-CN/tour.md` — Chinese translation, same block sequence.
+- `docs/intro/tour.md` — English, the authored source.
+- `docs/zh-CN/intro/tour.md` — Chinese translation, same block sequence.
 - Linked from `README.md` → Documentation → Guides and from
   `docs/zh-CN/README.md` → 文档 → 指南.
 - `examples/language_tour/` stays: it is the one-program, all-target
@@ -204,8 +204,8 @@ devtools/tour-check.sh --pair EN.md ZH.md
 ```just
 tour:
     dune build src/emo_cli/emo.exe
-    devtools/tour-check.sh docs/tour.md docs/zh-CN/tour.md
-    devtools/tour-check.sh --pair docs/tour.md docs/zh-CN/tour.md
+    devtools/tour-check.sh docs/intro/tour.md docs/zh-CN/intro/tour.md
+    devtools/tour-check.sh --pair docs/intro/tour.md docs/zh-CN/intro/tour.md
 
 tour-selftest:
     devtools/tour-check-selftest.sh
@@ -250,12 +250,12 @@ totals them by category in a `Map`, and prints a report.
       the manifest, build with `emo build --target wasm`, run under the
       compiler's bundled Node host, compare, report.
 - [x] T0.3 — Add the first blocks (`quickstart`, `values`, `errors`) to
-      `docs/tour.md` and make them pass; the rest of the tour followed.
+      `docs/intro/tour.md` and make them pass; the rest of the tour followed.
 - [x] T0.4 — Measure the per-block cost: 22 runnable blocks run in about
       six seconds (≈0.2 s per block after a ≈1.5 s host build), so the
       gate stays sequential and `--jobs` is not added.
 
-**Acceptance:** met — `devtools/tour-check.sh docs/tour.md` is green and
+**Acceptance:** met — `devtools/tour-check.sh docs/intro/tour.md` is green and
 the timing is recorded above.
 
 ### M1 — English core
@@ -269,12 +269,12 @@ the timing is recorded above.
       program that does not compile exit 1.
 
 **Acceptance:** met — `just tour` is green; every Emo fence is labeled;
-`docs/tour.md` renders on GitHub without broken blocks.
+`docs/intro/tour.md` renders on GitHub without broken blocks.
 
 ### M2 — Chapters and translation
 
 - [x] T2.1 — Chapters 6–10 authored, the business slice included.
-- [x] T2.2 — `docs/zh-CN/tour.md` translated; `--pair` green.
+- [x] T2.2 — `docs/zh-CN/intro/tour.md` translated; `--pair` green.
 - [x] T2.3 — A prose review pass: every claim is backed by a block, and
       the one `no-run` block states why it cannot run. The Wasm receive
       limit (head-only dispatch) is stated in the processes chapter and
@@ -342,7 +342,7 @@ Each M4 item starts only if it earns its place; neither blocks M0–M3.
 
 Met 2026-11-27:
 
-- `docs/tour.md` and `docs/zh-CN/tour.md` exist and are linked.
+- `docs/intro/tour.md` and `docs/zh-CN/intro/tour.md` exist and are linked.
 - Every `emo` fence is labeled; every `run` block passes on
   `emo build --target wasm` + the compiler's bundled host.
 - `just tour` (both files + `--pair`) is green; `just tour-selftest`

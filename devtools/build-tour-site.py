@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the language tour as a static HTML site.
 
-Renders docs/tour.md and docs/zh-CN/tour.md into a self-contained page
+Renders docs/intro/tour.md and docs/zh-CN/intro/tour.md into a self-contained page
 each (inline CSS, a small copy-button script, no external assets beyond
 the logo). The output is what `devtools/publish-tour.sh` uploads to
 docs.emo-lang.cn.
@@ -33,7 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PAGES = [
     {
-        "src": "docs/tour.md",
+        "src": "docs/intro/tour.md",
         "out": "guides/tour/index.html",
         "logo": "/logo.png",
         "lang": "en",
@@ -42,13 +42,13 @@ PAGES = [
         "home_href": "/guides/tour/",
         "switch_href": "/zh/guides/tour/",
         "switch_label": "中文",
-        "source": "docs/tour.md",
+        "source": "docs/intro/tour.md",
         "source_href": "/guides/tour/tour.md",
         "source_label": "source",
         "verified": "Every runnable block is compiled to Wasm and checked by <code>just tour</code>.",
     },
     {
-        "src": "docs/zh-CN/tour.md",
+        "src": "docs/zh-CN/intro/tour.md",
         "out": "zh/guides/tour/index.html",
         "logo": "/logo.png",
         "lang": "zh-CN",
@@ -57,7 +57,7 @@ PAGES = [
         "home_href": "/zh/guides/tour/",
         "switch_href": "/guides/tour/",
         "switch_label": "English",
-        "source": "docs/zh-CN/tour.md",
+        "source": "docs/zh-CN/intro/tour.md",
         "source_href": "/zh/guides/tour/tour.md",
         "source_label": "源码",
         "verified": "每个可运行的代码块都编译为 Wasm,并由 <code>just tour</code> 核对。",

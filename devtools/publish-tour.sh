@@ -4,7 +4,7 @@
 #
 #   publish-tour.sh [--dry-run]
 #
-# The build renders docs/tour.md and docs/zh-CN/tour.md into static
+# The build renders docs/intro/tour.md and docs/zh-CN/intro/tour.md into static
 # HTML (devtools/build-tour-site.py). The upload rides the same SSH
 # channel as the release: EMO_DOCS_HOST (default
 # ubuntu@www.emo-lang.cn) must already accept your key, and

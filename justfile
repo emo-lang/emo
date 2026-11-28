@@ -374,8 +374,8 @@ push:
 # tour: check the executable language tour
 tour:
     dune build src/emo_cli/emo.exe
-    devtools/tour-check.sh docs/tour.md docs/zh-CN/tour.md
-    devtools/tour-check.sh --pair docs/tour.md docs/zh-CN/tour.md
+    devtools/tour-check.sh docs/intro/tour.md docs/zh-CN/intro/tour.md
+    devtools/tour-check.sh --pair docs/intro/tour.md docs/zh-CN/intro/tour.md
 
 # tour-selftest: the checker rejects what the grammar forbids — unlabeled
 # fences, duplicate ids, a require without a dep, a stray output block,
@@ -385,7 +385,7 @@ tour:
 tour-selftest:
     devtools/tour-check-selftest.sh
 
-# tour-site: render docs/tour.md and its Chinese mirror into the static
+# tour-site: render docs/intro/tour.md and its Chinese mirror into the static
 # site under _build/tour-site (inline CSS, GitHub links for the docs the
 # page points at). Needs python3 with the `markdown` package.
 #

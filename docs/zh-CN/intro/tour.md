@@ -675,19 +675,19 @@ net 74, tax 7, total 81
 
 接下来的阅读:
 
-- [`examples/language_tour/`](../../examples/language_tour/) —— 一个更长的
+- [`examples/language_tour/`](../../../examples/language_tour/) —— 一个更长的
   程序,在每个目标上运行,并带有 golden 输出。
-- [`docs/intro/syntax.md`](intro/syntax.md) —— 完整语法参考,包括糖
+- [`docs/intro/syntax.md`](syntax.md) —— 完整语法参考,包括糖
   (`:chain`、`:foreach`、`:when`)与命名规则。
-- [`docs/intro/type-system.md`](intro/type-system.md) —— 渐近类型、显式
+- [`docs/intro/type-system.md`](type-system.md) —— 渐近类型、显式
   位宽的数值与收窄。
-- [`docs/stdlib.md`](stdlib.md) —— 标准库:JSON、YAML、TOML、HTTP、SQL、
+- [`docs/stdlib.md`](../stdlib.md) —— 标准库:JSON、YAML、TOML、HTTP、SQL、
   crypto、绘图,等等。
-- [`docs/intro/testing.md`](intro/testing.md) —— `emo test` 与 `expect_*`
+- [`docs/intro/testing.md`](testing.md) —— `emo test` 与 `expect_*`
   断言(仅解释器,所以本导览不运行它们)。
-- [`docs/intro/concurrency.md`](intro/concurrency.md) —— 进程、消息传递与
+- [`docs/intro/concurrency.md`](concurrency.md) —— 进程、消息传递与
   调度器。
 
 语言之外,EmoUI 用同样的普通语法构建界面,EmoOS(及其桌面)把同样的代码
 带到裸机,playground 在浏览器标签页里运行 Emo。范围地图从
-[项目 README](../../README.md) 开始。
+[项目 README](../../../README.md) 开始。

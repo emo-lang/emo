@@ -127,7 +127,7 @@ Emo 通过 `foreign def` 与 C 互操作：`c` 后端经 C ABI 直接调用符�
 
 ### 指南
 
-- [`tour.md`](tour.md)——语言导览:快速开始加十章,每个可运行的 Emo 块在检查文档时编译成 Wasm 并运行。
+- [`intro/tour.md`](intro/tour.md)——语言导览:快速开始加十章,每个可运行的 Emo 块在检查文档时编译成 Wasm 并运行。
 - [`httpd-guide.md`](httpd-guide.md)——Web 服务器指南:从十行的
   `httpd.serve` 到带进程自有状态、中间件与优雅关闭的 JSON API。
 - [`emosh-guide.md`](emosh-guide.md)——用 Emo 写的命令解释器 `emosh`:

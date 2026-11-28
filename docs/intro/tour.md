@@ -698,22 +698,22 @@ guards, collections, `(R, …)` errors, packages, and processes.
 
 The next reads:
 
-- [`examples/language_tour/`](../examples/language_tour/) — one longer
+- [`examples/language_tour/`](../../examples/language_tour/) — one longer
   program that runs on every target, with a golden output.
-- [`docs/intro/syntax.md`](intro/syntax.md) — the complete syntax
+- [`docs/intro/syntax.md`](syntax.md) — the complete syntax
   reference, including sugar (`:chain`, `:foreach`, `:when`) and the
   naming rules.
-- [`docs/intro/type-system.md`](intro/type-system.md) — gradual typing,
+- [`docs/intro/type-system.md`](type-system.md) — gradual typing,
   width-explicit numbers, and narrowing.
-- [`docs/stdlib.md`](stdlib.md) — the standard library: JSON, YAML,
+- [`docs/stdlib.md`](../stdlib.md) — the standard library: JSON, YAML,
   TOML, HTTP, SQL, crypto, plotting, and more.
-- [`docs/intro/testing.md`](intro/testing.md) — `emo test` and the
+- [`docs/intro/testing.md`](testing.md) — `emo test` and the
   `expect_*` assertions (interpreter only, which is why this tour does
   not run them).
-- [`docs/intro/concurrency.md`](intro/concurrency.md) — processes,
+- [`docs/intro/concurrency.md`](concurrency.md) — processes,
   message passing, and the scheduler.
 
 Beyond the language, EmoUI builds interfaces from the same ordinary
 syntax, EmoOS (and its desktop) takes the same code to bare metal, and the
 playground runs Emo in a browser tab. Start with the
-[project README](../README.md) for the map.
+[project README](../../README.md) for the map.
