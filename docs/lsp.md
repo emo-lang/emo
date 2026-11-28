@@ -99,11 +99,12 @@ then a build inside the Emo checkout. The registry comes from `registry`, then
 `emo_path`, then `EMO_BIN`. `:checkhealth emo` reports what was resolved.
 
 Insert completion rides Neovim's own `vim.lsp.completion`, and opens only on
-request: nothing pops up while typing. Tab, `<C-n>`, and `<C-p>` ask for the
-candidate list — Tab and `<C-n>` are the next-candidate key, `<C-p>` the
-previous — and typing on narrows it (`os.getp` leaves `getpid` and `getppid`),
-with `<C-x><C-o>` completing by hand as before. The `completion` option hands
-the server to a completion plugin instead.
+request: nothing pops up while typing. `<C-n>`, `<C-p>`, and Tab off
+indentation ask for the candidate list — `<C-n>` and Tab are the
+next-candidate key, `<C-p>` the previous — and typing on narrows it (`os.getp`
+leaves `getpid` and `getppid`), with `<C-x><C-o>` completing by hand as before.
+Where only whitespace precedes the cursor, Tab indents instead of completing.
+The `completion` option hands the server to a completion plugin instead.
 
 The commands mirror the extension's — `:EmoRestart`, `:EmoCheck`, `:EmoBuild`,
 `:EmoRun`, `:EmoDepsResolve`, `:EmoDepsList`, `:EmoDepsUpdate`, and

@@ -11,9 +11,10 @@ local defaults = {
   -- names in `require "..."`. Unset means `$EMO_REGISTRY`.
   registry = nil,
   -- Drive insert completion through Neovim's built-in
-  -- `vim.lsp.completion`. Nothing opens while typing: Tab, `<C-n>`, and
-  -- `<C-p>` ask for the menu. Set false when a completion plugin
-  -- (nvim-cmp and friends) drives the server instead.
+  -- `vim.lsp.completion`. Nothing opens while typing: `<C-n>`, `<C-p>`,
+  -- and Tab ask for the menu, except that Tab with only whitespace before
+  -- the cursor indents. Set false when a completion plugin (nvim-cmp and
+  -- friends) drives the server instead.
   completion = true,
   -- Start the language server for `.emo` buffers.
   lsp = true,

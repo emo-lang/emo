@@ -14,13 +14,14 @@ function M.setup(opts)
 
   -- Insert-mode completion rides Neovim's own `vim.lsp.completion`, but
   -- only on an explicit request: the server advertises no trigger
-  -- characters, so nothing opens while typing. Tab and the two
-  -- completion keys open the menu when it is closed and keep their
-  -- native meaning — next and previous candidate — once it is open. The
-  -- attach event fires whichever way the client was enabled, the `lsp`
-  -- default or a user's own `vim.lsp.enable('emo')`, so one autocommand
-  -- covers both; `completion = false` hands the server to a completion
-  -- plugin instead.
+  -- characters, so nothing opens while typing. `<C-n>` and `<C-p>` open
+  -- the menu when it is closed and keep their native meaning — next and
+  -- previous candidate — once it is open. Tab does the same off
+  -- indentation, and indents where only whitespace precedes the cursor.
+  -- The attach event fires whichever way the client was enabled, the
+  -- `lsp` default or a user's own `vim.lsp.enable('emo')`, so one
+  -- autocommand covers both; `completion = false` hands the server to a
+  -- completion plugin instead.
   local function explicit_completion(direction)
     return function()
       if vim.fn.pumvisible() == 1 then
@@ -29,6 +30,27 @@ function M.setup(opts)
       vim.lsp.completion.get()
       return ''
     end
+  end
+
+  -- Nothing but whitespace before the cursor is indentation, not the
+  -- start of a name, so Tab there keeps its native meaning: it inserts a
+  -- tab, which 'expandtab' and 'shiftwidth' turn into indentation.
+  local function at_indent()
+    local line = vim.api.nvim_get_current_line()
+    return line:sub(1, vim.fn.col('.') - 1):match('^%s*$') ~= nil
+  end
+
+  local tab = vim.api.nvim_replace_termcodes('<Tab>', true, false, true)
+
+  local function explicit_tab()
+    if vim.fn.pumvisible() == 1 then
+      return vim.api.nvim_replace_termcodes('<C-n>', true, false, true)
+    end
+    if at_indent() then
+      return tab
+    end
+    vim.lsp.completion.get()
+    return ''
   end
 
   local group = vim.api.nvim_create_augroup('emo_completion', { clear = true })
@@ -43,12 +65,16 @@ function M.setup(opts)
         and config.get().completion
       then
         vim.lsp.completion.enable(true, client.id, args.buf, { autotrigger = false })
+        vim.keymap.set('i', '<Tab>', explicit_tab, {
+          buffer = args.buf,
+          expr = true,
+          desc = 'emo: indent, or open completion off indentation',
+        })
         local opts = {
           buffer = args.buf,
           expr = true,
           desc = 'emo: open completion, navigate while open',
         }
-        vim.keymap.set('i', '<Tab>', explicit_completion('<C-n>'), opts)
         vim.keymap.set('i', '<C-n>', explicit_completion('<C-n>'), opts)
         vim.keymap.set('i', '<C-p>', explicit_completion('<C-p>'), opts)
       end

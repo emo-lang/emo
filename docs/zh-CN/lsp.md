@@ -90,10 +90,10 @@ require('emo').setup({
 依次取 `emo_path`、`EMO_BIN`。`:checkhealth emo` 会报告实际解析到的结果。
 
 插入补全走 Neovim 自带的 `vim.lsp.completion`，但只在明确请求时打开：输入过程中
-不会自动弹出。按 Tab、`<C-n>`、`<C-p>` 才显示候选列表——Tab 与 `<C-n>` 是下一
-个候选，`<C-p>` 是上一个——继续输入即收窄（`os.getp` 只剩 `getpid` 与
-`getppid`），`<C-x><C-o>` 仍可手动补全。`completion` 选项用于把服务器交给补全
-插件接管。
+不会自动弹出。按 `<C-n>`、`<C-p>`，或在不处于行首缩进处的 Tab，才显示候选列表——
+`<C-n>` 与 Tab 是下一个候选，`<C-p>` 是上一个——继续输入即收窄（`os.getp` 只剩
+`getpid` 与 `getppid`），`<C-x><C-o>` 仍可手动补全。光标左侧只有空白时，Tab 按
+原生行为缩进而不是补全。`completion` 选项用于把服务器交给补全插件接管。
 
 命令与扩展一一对应——`:EmoRestart`、`:EmoCheck`、`:EmoBuild`、`:EmoRun`、
 `:EmoDepsResolve`、`:EmoDepsList`、`:EmoDepsUpdate`、`:EmoPackageInit`。
