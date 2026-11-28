@@ -55,12 +55,28 @@ static gboolean emo_autotest_tick(gpointer data);
 static void emo_entry_changed(GtkEditable *editable, gpointer user_data);
 
 // The tag table is the tree itself: a control carries whatever tag the
-// last frame gave it, so a control is whichever canvas child carries
-// the tag now.
-static GtkWidget *emo_widget_with_tag(int64_t tag) {
+// last frame gave it, so a button is whichever canvas button carries
+// the tag now. Only the widgets `ui_connect` tags carry the datum — a
+// label never does, and an unset datum reads as 0, so a click for tag 0
+// must not resolve to one.
+static GtkWidget *emo_button_with_tag(int64_t tag) {
   for (GtkWidget *w = gtk_widget_get_first_child(g_canvas); w != NULL;
        w = gtk_widget_get_next_sibling(w)) {
-    if ((int64_t)(intptr_t)g_object_get_data(G_OBJECT(w), "emo-tag") == tag) {
+    if (GTK_IS_BUTTON(w) &&
+        (int64_t)(intptr_t)g_object_get_data(G_OBJECT(w), "emo-tag") == tag) {
+      return w;
+    }
+  }
+  return NULL;
+}
+
+// The field carrying a tag, for the script's typed steps: whichever
+// canvas entry carries it now.
+static GtkWidget *emo_entry_with_tag(int64_t tag) {
+  for (GtkWidget *w = gtk_widget_get_first_child(g_canvas); w != NULL;
+       w = gtk_widget_get_next_sibling(w)) {
+    if (GTK_IS_ENTRY(w) &&
+        (int64_t)(intptr_t)g_object_get_data(G_OBJECT(w), "emo-tag") == tag) {
       return w;
     }
   }
@@ -208,7 +224,7 @@ int64_t ui_root(void) { return (int64_t)(intptr_t)g_canvas; }
 
 // ---- The event loop -----------------------------------------------------
 
-void ui_run(void (*events_cb)(int64_t __p0, void *userdata),
+void ui_run(void (*events_cb)(int64_t __p0, const char *__p1, void *userdata),
             void *events_data) {
   g_sink = events_cb;
   g_sink_data = events_data;
@@ -244,12 +260,15 @@ static gboolean emo_autotest_tick(gpointer data) {
   (void)data;
   if (g_script_pos < g_script_len) {
     emo_step step = g_script[g_script_pos++];
-    GtkWidget *widget = emo_widget_with_tag(step.tag);
-    if (widget != NULL) {
-      if (step.text != NULL) {
-        gtk_editable_set_text(GTK_EDITABLE(widget), step.text);
-      } else if (GTK_IS_BUTTON(widget)) {
-        g_signal_emit_by_name(G_OBJECT(widget), "clicked");
+    if (step.text != NULL) {
+      GtkWidget *entry = emo_entry_with_tag(step.tag);
+      if (entry != NULL) {
+        gtk_editable_set_text(GTK_EDITABLE(entry), step.text);
+      }
+    } else {
+      GtkWidget *button = emo_button_with_tag(step.tag);
+      if (button != NULL) {
+        g_signal_emit_by_name(G_OBJECT(button), "clicked");
       }
     }
     return G_SOURCE_CONTINUE;

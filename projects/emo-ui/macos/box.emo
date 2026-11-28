@@ -250,7 +250,10 @@ def place(p ui.Patch, x Float64, y Float64, w Float64, h Float64,
     return place_row(p, x, y, w, h, out)
   }
   const text = line_of(n)
-  if text.length() > 0 {
+  // A leaf takes a frame when it says something or carries an event: an
+  // empty label paints nothing, but a control that says nothing yet — a
+  // field whose value is "" — still exists to be clicked or typed into.
+  if text.length() > 0 || event_of(n) >= 0 {
     out.push(Frame.new(draw: Draw.new(x: x, y: y, w: w, h: h,
       kind: kind_of(n), text: text, event: event_of(n)), slot: p))
   }

@@ -144,8 +144,8 @@ expect 0 "the corpus's window run exits 0" "$rc"
 expect_same_file "$C/expected.txt" "$COUT/run.txt" \
   "and prints the file it is pinned to"
 got=$(cat "$COUT/count.txt" 2>/dev/null || true)
-expect "ui: made 8 widgets" \
-  "and the window keeps its widgets across the four events" "$got"
+expect "ui: made 9 widgets" \
+  "and the window keeps its widgets across the five events" "$got"
 
 # The dependency's manifest is reached before any emitter, so the
 # corpus's refusal is `ui_macos`'s target list, not the FFI.

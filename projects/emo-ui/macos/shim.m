@@ -283,14 +283,28 @@ void ui_autotest_arm(const char *script) {
   }
 }
 
-// The tag table is the tree itself: a control carries whatever tag the
-// last frame gave it, so the control for a tag is whichever subview
-// carries it now.
-static NSControl *emo_control_with_tag(int64_t tag) {
+// The tag table is the tree itself: the button for a tag is whichever
+// subview button carries it now. Only the controls `ui_connect` tags
+// carry a set tag — a label's is the NSControl default 0 — so a click
+// for tag 0 must not resolve to one.
+static NSButton *emo_button_with_tag(int64_t tag) {
   for (NSView *view in g_window.contentView.subviews) {
-    if ([view isKindOfClass:[NSControl class]] &&
-        ((NSControl *)view).tag == tag) {
-      return (NSControl *)view;
+    if ([view isKindOfClass:[NSButton class]] && ((NSButton *)view).tag == tag) {
+      return (NSButton *)view;
+    }
+  }
+  return nil;
+}
+
+// The field carrying a tag, for the script's typed steps: whichever
+// editable subview field carries it now — editable is exactly what
+// `ui_entry_make` made, and a label (an NSTextField of its own) never
+// carries a set tag.
+static NSTextField *emo_field_with_tag(int64_t tag) {
+  for (NSView *view in g_window.contentView.subviews) {
+    if ([view isKindOfClass:[NSTextField class]] &&
+        ((NSTextField *)view).editable && ((NSTextField *)view).tag == tag) {
+      return (NSTextField *)view;
     }
   }
   return nil;
@@ -304,16 +318,18 @@ static NSControl *emo_control_with_tag(int64_t tag) {
 - (void)tick:(NSTimer *)timer {
   if (g_script_pos < g_script_len) {
     emo_step step = g_script[g_script_pos++];
-    NSControl *control = emo_control_with_tag(step.tag);
-    if (control != nil) {
-      if (step.text != NULL) {
-        NSTextField *field = (NSTextField *)control;
+    if (step.text != NULL) {
+      NSTextField *field = emo_field_with_tag(step.tag);
+      if (field != nil) {
         field.stringValue = [NSString stringWithUTF8String:step.text];
         if (g_sink != NULL) {
-          g_sink((int64_t)control.tag, step.text, g_sink_data);
+          g_sink((int64_t)field.tag, step.text, g_sink_data);
         }
-      } else if ([control isKindOfClass:[NSButton class]]) {
-        [(NSButton *)control performClick:nil];
+      }
+    } else {
+      NSButton *btn = emo_button_with_tag(step.tag);
+      if (btn != nil) {
+        [btn performClick:nil];
       }
     }
     return;
