@@ -115,7 +115,7 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
   经 notarytool 提交（钥匙串 profile、App Store Connect API 密钥
   三件套或 Apple ID 凭据任选其一），回传归档并刷新 `SHA256SUMS`。
   裸可执行文件无法承载 staple（stapler 只把票据嵌进
-  .app/.dmg/.pkg），因此 Gatekeeper 在首次运行时在线校验公证
+  。app/。dmg/。pkg），因此 Gatekeeper 在首次运行时在线校验公证
   票据。
 - **原生 Windows 推迟，阻塞点如实记录。** C 运行时的进程是 POSIX
   `ucontext` 纤维、socket 是非阻塞 fd（T23.9/T23.10）；原生 Windows
@@ -148,10 +148,10 @@ C FFI（指针、结构体、数组、回调 —— `docs/industrial-software.md
   golden 子集。"源码安装带来 ocaml target"不再是故事；工具链才是。
 - **eio 离开链接行。** 过渡计划曾把 `eio_main` 保留为 target 侧
   依赖；移植定型了另一种结果——standalone 调度器就是编译产物
-  一直在跑的确定性轮询循环（Unix,无 eio）,因此 runtime 只声明
-  `unix`（随编译器附带）与 `ssl`（唯一的 opam 依赖）,缺席时以
+  一直在跑的确定性轮询循环（Unix，无 eio），因此 runtime 只声明
+  `unix`（随编译器附带）与 `ssl`（唯一的 opam 依赖），缺席时以
   清晰的消息拒绝。
-- **`emo doctor` 失去了 installation 行。** "installation:
+- **`emo doctor` 失去了 installation 行。** "installation：
   source/prebuilt" 的报告删除了——每个 target 的行只报自己的
   工具链，退出码只反映真正损坏的部分。
 

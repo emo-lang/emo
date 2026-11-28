@@ -1,7 +1,7 @@
 # The `valkey` Package
 
 The standard library's Valkey client, written in pure Emo on top of the
-[`net`](stdlib/net.md) package. Direct style throughout: a command reads
+[`net`](net.md) package. Direct style throughout: a command reads
 like any other function call, and the scheduler parks the process while
 the socket is busy. The wire is RESP2 — every request is the array of
 bulk strings the protocol names, every reply is one of the reply kinds

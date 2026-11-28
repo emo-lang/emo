@@ -31,24 +31,6 @@ Windows: WSL2 is the supported path — install inside WSL as you would on Linux
 
 Wherever you installed from, `emo doctor` checks the environment per target and names what is missing.
 
-## Design in detail
-
-Each area of the design has its own document:
-
-- [`docs/intro/syntax.md`](docs/intro/syntax.md) — the language syntax: calls and their trailing blocks, `def` and bindings, control flow, values, and the type-definition constructs.
-- [`docs/reserved_words.md`](docs/reserved_words.md) — the complete list of reserved words, reserved literals, and built-in names the compiler holds back.
-- [`docs/intro/type-system.md`](docs/intro/type-system.md) — gradual typing, width-explicit numeric types, structural narrowing.
-- [`docs/intro/modules-and-visibility.md`](docs/intro/modules-and-visibility.md) — the directory tree as the module tree, `internal/` privacy, explicit dependencies.
-- [`docs/intro/package-management.md`](docs/intro/package-management.md) — packages as module prefixes, exact versions resolved by MVS, publishing.
-- [`docs/intro/concurrency.md`](docs/intro/concurrency.md) — processes and message passing: `do`, `<-`, `receive`.
-- [`docs/intro/networking.md`](docs/intro/networking.md) — the direct-style async networking API over the `net` and `http` packages.
-- [`docs/httpd-guide.md`](docs/httpd-guide.md) — the web-server guide: from a ten-line `httpd.serve` to a JSON API with process-owned state, middleware, and graceful shutdown.
-- [`docs/emosh-guide.md`](docs/emosh-guide.md) — the shell guide: `emosh`, the command interpreter written in Emo — pipelines, redirections, expansion, the builtins, and the honest limits.
-- [`docs/intro/native-builds.md`](docs/intro/native-builds.md) — `emo build`, the runtime inside the binary, and the `foreign def` C interop.
-- [`docs/intro/testing.md`](docs/intro/testing.md) — `emo test`, the `test/` convention, and the `expect_*` assertions.
-- [`docs/emo-testing-guide.md`](docs/emo-testing-guide.md) — the detailed testing guide: discovery, the four assertion builtins, reporting, and isolation.
-- [`docs/intro/configuration.md`](docs/intro/configuration.md) — config as an Emo expression, evaluated in the restricted profile.
-
 ## EmoUI
 
 [EmoUI](projects/emo-ui) is the component-based UI framework written in Emo: one declarative tree of components rendering on a terminal, a server-rendered page, a macOS/AppKit window, a GTK 4 window, and the browser DOM. Emo's syntax is shaped to serve it, and the principle is **no template language — the UI is plain Emo code**, the same philosophy as configuration. A component tree is nested calls over an explicit `Array[ui.Node]`:
@@ -114,26 +96,90 @@ Emo interoperates with C through `foreign def`: the `c` backend calls the symbol
 
 ## Documentation
 
-Documentation lives under `docs/`. The Chinese translation of this README is [`docs/zh-CN/README.zh-CN.md`](docs/zh-CN/README.zh-CN.md).
+Documentation lives under `docs/`, and this section is its complete map — design documents, guides, and API references. [`docs/main.md`](docs/main.md) is the narrative version: the three design axes, the documentation layout, and the reading paths. The Chinese translation of this page, documentation index included, is [`docs/zh-CN/README.md`](docs/zh-CN/README.md).
+
+### The language
+
+- [`docs/intro/syntax.md`](docs/intro/syntax.md) — the syntax: calls and their trailing blocks, `def` and bindings, control flow, values, and the type-definition constructs.
+- [`docs/reserved_words.md`](docs/reserved_words.md) — every reserved word, reserved literal, and built-in name the compiler holds back.
+- [`docs/intro/type-system.md`](docs/intro/type-system.md) — gradual typing, width-explicit numeric types, structural narrowing.
+- [`docs/intro/modules-and-visibility.md`](docs/intro/modules-and-visibility.md) — the directory tree as the module tree, `internal/` privacy, explicit dependencies.
+- [`docs/intro/package-management.md`](docs/intro/package-management.md) — packages as module prefixes, exact versions resolved by MVS, publishing.
+- [`docs/intro/concurrency.md`](docs/intro/concurrency.md) — processes and message passing: `do`, `<-`, `receive`.
+- [`docs/intro/networking.md`](docs/intro/networking.md) — the direct-style networking API over the `net` and `http` packages.
+- [`docs/intro/configuration.md`](docs/intro/configuration.md) — config as an Emo expression, evaluated in the restricted profile.
+- [`docs/intro/testing.md`](docs/intro/testing.md) — `emo test`, the `test/` convention, and the `expect_*` assertions.
+- [`docs/intro/native-builds.md`](docs/intro/native-builds.md) — `emo build`, the runtime inside the binary, and the `foreign def` C interop.
+- [`docs/intro/macros.md`](docs/intro/macros.md) — compile-time macros: the directives, the `Syntax` API, and the quote surface.
+
+### Guides
+
+- [`docs/intro/tour.md`](docs/intro/tour.md) — the language tour: a quick start and ten chapters, every runnable Emo block compiled to Wasm and run when the docs are checked.
+- [`docs/emo-ui/intro.md`](docs/emo-ui/intro.md) — getting started with EmoUI: a Hello, World window and a counter, both with complete code.
+- [`docs/httpd-guide.md`](docs/httpd-guide.md) — the web-server guide: from a ten-line `httpd.serve` to a JSON API with process-owned state, middleware, and graceful shutdown.
+- [`docs/emosh-guide.md`](docs/emosh-guide.md) — `emosh`, the command interpreter written in Emo: pipelines, redirections, expansion, and the builtins.
+- [`docs/plot-guide.md`](docs/plot-guide.md) — drawing charts with the `plot` package: the whole public API, with examples.
+- [`docs/playwright-guide.md`](docs/playwright-guide.md) — driving a real browser from Emo with the `playwright` package.
+- [`docs/macro-guide.md`](docs/macro-guide.md) — the task-oriented macro walkthrough: recipes and the error table.
+- [`docs/emo-testing-guide.md`](docs/emo-testing-guide.md) — the detailed testing guide: discovery, the four assertion builtins, reporting, and isolation.
+- [`docs/lsp.md`](docs/lsp.md) — the language server, `emo-lsp`, and the editor integrations.
+
+### Compilation targets and the toolchain
 
 - [`docs/c-backend.md`](docs/c-backend.md) — the default target: emitted C, the C runtime, and the C FFI.
 - [`docs/ocaml-backend.md`](docs/ocaml-backend.md) — the emit-OCaml backend, and the OCaml toolchain requirement.
 - [`docs/demo-targets.md`](docs/demo-targets.md) — running one scaffolded project on every target, including how `beam` and `wasm` artifacts are executed.
-- [`docs/toolchain.md`](docs/toolchain.md) — building and installing the `emo` CLI: why dune is the one OCaml step, and the justfile automation.
-- [`docs/toolchain-distribution.md`](docs/toolchain-distribution.md) — how the toolchain is distributed: the OCaml requirement, `emo doctor`, and deferring the `c` backend.
 - [`docs/runtime-and-freestanding.md`](docs/runtime-and-freestanding.md) — what "runtime" and "freestanding" mean, and how they map to Emo's targets.
-- [`docs/stdlib/wasm.md`](docs/stdlib/wasm.md) — the `wasm` package: a WebAssembly runtime written in Emo (decoder, validator, interpreter), its execution surface, and the host-import interface.
-- [`docs/stdlib/gc.md`](docs/stdlib/gc.md) — the `gc` package: the GC heap's collector, mark-sweep written in Emo over the machine object model.
+- [`docs/toolchain.md`](docs/toolchain.md) — building and installing the `emo` CLI.
+- [`docs/toolchain-distribution.md`](docs/toolchain-distribution.md) — how the toolchain is distributed: the install channels, `emo doctor`, and signing.
 - [`docs/numeric-width.md`](docs/numeric-width.md) — width-explicit numeric types on every target.
 - [`docs/var-escape.md`](docs/var-escape.md) — the `var`-escape rule.
-- [`docs/stdlib.md`](docs/stdlib.md) — a tour of the standard library: every package, what it is for, and the surface it exposes.
-- [`docs/stdlib/`](docs/stdlib/) — the standard-library API references (`file`, `os`, `bufio`, `net`, `http`, `httpd`, `valkey`, `websocket`, `playwright`, `json`, `yaml`, `xml`, `dom`, `template`, `base64`, `csv`, `float`, `math`, `plot`, `slog`, `sync`, `postgres`, `sql`, `sqlite3`, `term`, `crypto`, `rand`, `uuid`, `wasm`, `gc`).
-- [`docs/lsp.md`](docs/lsp.md) — the language server and the VS Code extension.
-- [`docs/emo-ui.md`](docs/emo-ui.md) — the EmoUI assessment and the evidence: why one declarative tree works across TUI, server-rendered HTML, macOS, GTK 4, and the DOM, and what remains open.
-- [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) — how an EmoUI tree gets written: why children are an array rather than a block form, and whether the array form earns a literal spelling.
-- [`docs/emo-db.md`](docs/emo-db.md) — the emo-db design record: one SQL surface over two engines; arc one shipped (the row store behind the PostgreSQL wire, on RocksDB) and arc two's column format is landed, with the measured numbers in `projects/emo-db/bench`.
-- [`docs/industrial-software.md`](docs/industrial-software.md), [`docs/sql-database.md`](docs/sql-database.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md), [`docs/xv6.md`](docs/xv6.md), [`docs/visualization.md`](docs/visualization.md) — feasibility and market assessments.
-- [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist.
+- [`docs/raw-memory.md`](docs/raw-memory.md) — `peek`/`poke` and the raw-memory surface.
+- [`docs/atomics.md`](docs/atomics.md) — `Atomic`, the synchronized sibling of `Box`.
+- [`docs/gc-heap.md`](docs/gc-heap.md) — the GC heap's arena, object model, and the collector written in Emo.
+
+### The standard library
+
+- [`docs/stdlib.md`](docs/stdlib.md) — the tour: every package, what it is for, and the surface it exposes.
+- [`docs/stdlib/`](docs/stdlib/) — the per-package API references. Grouped roughly:
+  - **Formats and text** — [`json`](docs/stdlib/json.md), [`yaml`](docs/stdlib/yaml.md), [`toml`](docs/stdlib/toml.md), [`xml`](docs/stdlib/xml.md), [`csv`](docs/stdlib/csv.md), [`template`](docs/stdlib/template.md), [`dom`](docs/stdlib/dom.md), [`base64`](docs/stdlib/base64.md).
+  - **Numbers and charts** — [`float`](docs/stdlib/float.md), [`math`](docs/stdlib/math.md), [`fastmath`](docs/stdlib/fastmath.md), [`quad`](docs/stdlib/quad.md), [`plot`](docs/stdlib/plot.md).
+  - **Systems and IO** — [`file`](docs/stdlib/file.md), [`os`](docs/stdlib/os.md), [`bufio`](docs/stdlib/bufio.md), [`term`](docs/stdlib/term.md), [`net`](docs/stdlib/net.md), [`http`](docs/stdlib/http.md), [`httpd`](docs/stdlib/httpd.md), [`valkey`](docs/stdlib/valkey.md), [`websocket`](docs/stdlib/websocket.md), [`playwright`](docs/stdlib/playwright.md), [`wayland`](docs/stdlib/wayland.md), [`sync`](docs/stdlib/sync.md), [`time`](docs/stdlib/time.md), [`slog`](docs/stdlib/slog.md), [`syscall`](docs/stdlib/syscall.md) (the EmoOS gate's user side).
+  - **Runtime and data** — [`crypto`](docs/stdlib/crypto.md), [`hash`](docs/stdlib/hash.md), [`rand`](docs/stdlib/rand.md), [`uuid`](docs/stdlib/uuid.md), [`sql`](docs/stdlib/sql.md), [`sqlite3`](docs/stdlib/sqlite3.md), [`postgres`](docs/stdlib/postgres.md), [`gc`](docs/stdlib/gc.md), [`wasm`](docs/stdlib/wasm.md).
+
+The standard-library overview and every page under `docs/stdlib/` are embedded into the compiler binary at build time; `emo man <package>` renders one in the terminal and `emo man` lists them. Edit the Markdown there and the manual follows.
+
+### Projects
+
+Each project has its own documentation beside its code:
+
+- **EmoUI** — [`projects/emo-ui/docs/`](projects/emo-ui/docs/README.md): the component framework for the terminal, the server-rendered page, macOS, GTK 4, and the browser DOM.
+- **EmoOS** — [`projects/emo-os/`](projects/emo-os/README.md): the kernel, the shell, and the path to a complete operating system.
+- **Emo desktop** — [`projects/emo-desktop/`](projects/emo-desktop/README.md): the composited-window GUI on EmoOS's gate.
+- **EmoDB** — [`projects/emo-db/`](projects/emo-db/README.md), with the design record in [`docs/emo-db.md`](docs/emo-db.md): one SQL surface over two engines.
+- **Emo shell** — [`projects/emo-shell/`](projects/emo-shell/), with the guide in [`docs/emosh-guide.md`](docs/emosh-guide.md).
+- **Emo Playground** — [`projects/emo-playground/`](projects/emo-playground/README.md): the browser playground served by Emo's own `httpd`.
+
+### Assessments and design records
+
+These documents record an investigation, a decision, or a direction. They are not tutorials, and some of them are historical: read them for the reasoning, not as current reference.
+
+- **EmoUI** — [`docs/emo-ui.md`](docs/emo-ui.md) (the feasibility assessment and design direction), [`docs/emo-ui-composition.md`](docs/emo-ui-composition.md) (how a tree gets written), [`docs/emo-ui-check.md`](docs/emo-ui-check.md) (the decision gate), [`docs/emo-ui-missing.md`](docs/emo-ui-missing.md) (what remains open).
+- **Platforms** — [`docs/unkernel.md`](docs/unkernel.md), [`docs/noctalia-desktop.md`](docs/noctalia-desktop.md), [`docs/noctalia-v5.md`](docs/noctalia-v5.md), [`docs/industrial-software.md`](docs/industrial-software.md).
+- **Languages and toolchains** — [`docs/lua-backend.md`](docs/lua-backend.md), [`docs/zig-backend.md`](docs/zig-backend.md), [`docs/esp32.md`](docs/esp32.md), [`docs/xv6.md`](docs/xv6.md), [`docs/rtos-assessment.md`](docs/rtos-assessment.md).
+- **Data and mathematics** — [`docs/sql-database.md`](docs/sql-database.md), [`docs/math-netlib.md`](docs/math-netlib.md), [`docs/visualization.md`](docs/visualization.md).
+- **Language mechanics** — [`docs/macros.md`](docs/macros.md), the working design behind the macro surface (the tutorial is [`docs/intro/macros.md`](docs/intro/macros.md), the recipes are [`docs/macro-guide.md`](docs/macro-guide.md)).
+
+### Internals and tracking
+
+- [`docs/TASKS.md`](docs/TASKS.md) — the implementation task checklist, one section per milestone.
+- [`plan/README.md`](plan/README.md) — the step plans and their status table.
+- [`docs/emo-test-ir.md`](docs/emo-test-ir.md) — why the assertion builtins stay interpreter-only, and what a compiled build does with `test/`.
+- [`docs/temp-check-bugs.md`](docs/temp-check-bugs.md) — a working list of open bugs carried out of `CHECK.md`, not a design document.
+
+### Chinese translations
+
+Every page above has a Chinese mirror under [`docs/zh-CN/`](docs/zh-CN/README.md), except [`docs/emo-test-ir.md`](docs/emo-test-ir.md), [`docs/temp-check-bugs.md`](docs/temp-check-bugs.md), and [`docs/macros.md`](docs/macros.md). When an English page changes, update the mirror or note on the English page that the translation has not followed yet.
 
 ## License
 

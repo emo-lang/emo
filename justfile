@@ -364,3 +364,45 @@ lock-refresh REGISTRY="":
 
 push:
     git push origin && git push atom
+
+# tour: compile and run every ```emo block of the language tour, then
+# check that the two languages carry the same executable payload. Each
+# block is its own project built with `emo build --target wasm` and run
+# under the compiler's bundled Node host; stdout is compared byte for
+# byte with the block's ```output fence.
+#
+# tour: check the executable language tour
+tour:
+    dune build src/emo_cli/emo.exe
+    devtools/tour-check.sh docs/intro/tour.md docs/zh-CN/intro/tour.md
+    devtools/tour-check.sh --pair docs/intro/tour.md docs/zh-CN/intro/tour.md
+
+# tour-selftest: the checker rejects what the grammar forbids — unlabeled
+# fences, duplicate ids, a require without a dep, a stray output block,
+# wrong stdout, and a program that does not compile.
+#
+# tour-selftest: check the tour checker's rejection paths
+tour-selftest:
+    devtools/tour-check-selftest.sh
+
+# docs-site: render the documentation pages (the language tour and the
+# EmoUI guide, each with its Chinese mirror) into the static site under
+# _build/docs-site (inline CSS, GitHub links for the docs a page points
+# at). Needs python3 with the `markdown` package.
+#
+# docs-site: build the documentation site as static HTML
+docs-site:
+    python3 devtools/build-docs-site.py
+
+# publish-docs: build and upload the documentation site to
+# docs.emo-lang.cn over the same SSH channel the release uses
+# (EMO_DOCS_HOST / EMO_DOCS_ROOT). The one-time DNS + nginx + certbot
+# setup is in devtools/nginx/docs.emo-lang.cn.conf.
+#
+# publish-docs: upload the documentation site to docs.emo-lang.cn
+publish-docs:
+    devtools/publish-docs.sh
+
+# publish-docs-dry: show what publish-docs would upload, touching nothing
+publish-docs-dry:
+    devtools/publish-docs.sh --dry-run

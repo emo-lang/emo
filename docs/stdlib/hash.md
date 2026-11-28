@@ -17,7 +17,7 @@ the ciphers and the signature scheme in with it. The two packages pin
 the same vectors, and the pins are the twin's proof: any byte this
 engine answers, crypto's answers too.
 
-Chinese translation: [`hash.zh-CN.md`](hash.zh-CN.md).
+Chinese translation: [`docs/zh-CN/stdlib/hash.md`](../zh-CN/stdlib/hash.md).
 
 A root module and a SHA-2 module, called by their qualified names:
 

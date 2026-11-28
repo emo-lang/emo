@@ -1,24 +1,24 @@
 # emo-desktop
 
-门之上的桌面:EmoOS 的合成窗口 GUI,用 Emo 写成——屏幕、指针、字形、窗口、dock、桌面自己的脸面(壁纸、顶栏与桌面图标)与其上的应用,一门语言从上电走到桌面。它是 EmoOS 单语言闭环的延续,抵达机器剩下的最后一层:内核、服务、shell、控制台 UI 之后,桌面是证明的下一段路。
+门之上的桌面：EmoOS 的合成窗口 GUI，用 Emo 写成——屏幕、指针、字形、窗口、dock、桌面自己的脸面(壁纸、顶栏与桌面图标)与其上的应用，一门语言从上电走到桌面。它是 EmoOS 单语言闭环的延续，抵达机器剩下的最后一层：内核、服务、shell、控制台 UI 之后，桌面是证明的下一段路。
 
-emo-desktop 是与 [`projects/emo-os`](../emo-os)、[`projects/emo-ui`](../emo-ui) 并列的独立项目,而它们之间的边界就是机器自己的边界:**门(ecall gate)。** 门以下的一切——设备驱动、合成器的机制、gate 动词、地址空间与帧的管线、ABI 的稳定性契约、冒烟测试的 display 腿——属于 EmoOS,住在 EmoOS 树里。门以上的一切——framebuffer backend、字体、桌面 shell、应用、它们的 hosted 语料——属于本项目。
+emo-desktop 是与 [`projects/emo-os`](../emo-os)、[`projects/emo-ui`](../emo-ui) 并列的独立项目，而它们之间的边界就是机器自己的边界：**门(ecall gate)。** 门以下的一切——设备驱动、合成器的机制、gate 动词、地址空间与帧的管线、ABI 的稳定性契约、冒烟测试的 display 腿——属于 EmoOS，住在 EmoOS 树里。门以上的一切——framebuffer backend、字体、桌面 shell、应用、它们的 hosted 语料——属于本项目。
 
 English version: [`README.md`](README.md).
 
 ## 定位
 
-- **Wayland/Quartz 形状,QNX Screen 谱系。** 一个合成器拥有 scanout;客户端在授权缓冲里渲染再 present;输入是统一的事件流。这与 EmoOS 微内核已认的谱系同宗,用在像素上。
-- **包的集合,不是第二个镜像。** 内核只嵌一个用户镜像;M7–M10 期间桌面以包的形态骑在该镜像上(boot image `require`,`syscall` stub 包的先例)。到 M11、程序从文件系统以 ELF 装载时,应用原地变成磁盘 ELF——结构不变。
-- **hosted 内核,金属外壳。** fb backend 的逻辑(对一个 buffer 接口的 measure/place/clip/blend)是可移植 Emo,hosted 在语料里跑、也在金属上跑;只有薄的 raw 垫片(`peek`/`poke`)独属 riscv64。EmoOS 验证过的双跑纪律向上延伸。核心已落地为 [`fb/`](fb/)——包 `emo/ui_fb`(核心,自 A8.2 起带着指针精灵,自 A14.2 起带着它的字体——从 `fb/fonts/` 里的字体光栅化出的 Inter 与 JetBrains Mono,字体文件与其 SIL Open Font License 授权文本一同随附——取代了 A8.1 手绘的位图字体)、`emo/ui_fb_canvas`(hosted surface)、`emo/ui_fb_frame`(第一帧)与——自 A9.1 起——`emo/ui_fb_win`(窗口外壳的窗口),连同它们的测试、golden 和 gate(`fb/check.sh`);旁边是第一批应用(`fb/apps/`,`emo/ui_apps`——计数器、文件浏览器、编辑器,各自都是一个 corpus 包,由本项目自己的 gate 与家族同跑)、应用自己的程序树(`fb/apps/counter/` 及其兄弟——磁盘 ELF 的来源,各自一个 `main.emo` 会话)与它们共享的金属包(`fb/winbuf/`,`emo/ui_fb_winbuf`——窗口缓冲的 raw 垫片、输入座的表模式与 raw 模式),以及 shell 的 chrome(`fb/desktop/`,`emo_desktop`);垫片背后的 carve surface 住在 EmoOS 的用户镜像里,核心经它画出的第一帧就是机器开机时屏幕上的画面——carve、hosted canvas、display 三处读出同一个 digest。
+- **Wayland/Quartz 形状，QNX Screen 谱系。** 一个合成器拥有 scanout;客户端在授权缓冲里渲染再 present;输入是统一的事件流。这与 EmoOS 微内核已认的谱系同宗，用在像素上。
+- **包的集合，不是第二个镜像。** 内核只嵌一个用户镜像;M7–M10 期间桌面以包的形态骑在该镜像上(boot image `require`，`syscall` stub 包的先例)。到 M11、程序从文件系统以 ELF 装载时，应用原地变成磁盘 ELF——结构不变。
+- **hosted 内核，金属外壳。** fb backend 的逻辑(对一个 buffer 接口的 measure/place/clip/blend)是可移植 Emo,hosted 在语料里跑、也在金属上跑;只有薄的 raw 垫片(`peek`/`poke`)独属 riscv64。EmoOS 验证过的双跑纪律向上延伸。核心已落地为 [`fb/`](fb/)——包 `emo/ui_fb`(核心，自 A8.2 起带着指针精灵，自 A14.2 起带着它的字体——从 `fb/fonts/` 里的字体光栅化出的 Inter 与 JetBrains Mono，字体文件与其 SIL Open Font License 授权文本一同随附——取代了 A8.1 手绘的位图字体)、`emo/ui_fb_canvas`(hosted surface)、`emo/ui_fb_frame`(第一帧)与——自 A9.1 起——`emo/ui_fb_win`(窗口外壳的窗口)，连同它们的测试、golden 和 gate(`fb/check.sh`);旁边是第一批应用(`fb/apps/`，`emo/ui_apps`——计数器、文件浏览器、编辑器，各自都是一个 corpus 包，由本项目自己的 gate 与家族同跑)、应用自己的程序树(`fb/apps/counter/` 及其兄弟——磁盘 ELF 的来源，各自一个 `main.emo` 会话)与它们共享的金属包(`fb/winbuf/`，`emo/ui_fb_winbuf`——窗口缓冲的 raw 垫片、输入座的表模式与 raw 模式)，以及 shell 的 chrome(`fb/desktop/`，`emo_desktop`);垫片背后的 carve surface 住在 EmoOS 的用户镜像里，核心经它画出的第一帧就是机器开机时屏幕上的画面——carve、hosted canvas、display 三处读出同一个 digest。
 
 ## 命名——已定
 
-- 项目目录:**`projects/emo-desktop`**(不取 `emo-gui`——两个 ui 字头的顶层项目是慢性混淆;2026-10-31 定案)。
-- framebuffer backend 包:**`emo/ui_fb`**——EmoUI 的第六个 backend,加入解释器、TypeScript、wasm、BEAM、控制台家族。
-- 桌面 shell 包:**`emo_desktop`**——扁平系统名,`emo_os` 的先例。
-- 第一批应用的包:**`emo/ui_apps`**——一个家族包,三个应用为其子模块,各自守 `emo/ui_corpus` 的 corpus 纪律。
-- 目录命名项目,包名命名家族。
+- 项目目录：**`projects/emo-desktop`**(不取 `emo-gui`——两个 ui 字头的顶层项目是慢性混淆;2026-10-31 定案)。
+- framebuffer backend 包：**`emo/ui_fb`**——EmoUI 的第六个 backend，加入解释器、TypeScript、wasm、BEAM、控制台家族。
+- 桌面 shell 包：**`emo_desktop`**——扁平系统名，`emo_os` 的先例。
+- 第一批应用的包：**`emo/ui_apps`**——一个家族包，三个应用为其子模块，各自守 `emo/ui_corpus` 的 corpus 纪律。
+- 目录命名项目，包名命名家族。
 
 ## 路线图
 
@@ -30,40 +30,40 @@ English version: [`README.md`](README.md).
 | M10 — 桌面 | EmoUI fb backend 完整化、dock、第一批应用 | complete |
 | M11 — 诚实多应用 | 文件系统来的 ELF、每镜像段表、每进程 gate 检查、一个桌面上两个镜像 | complete |
 | M12 — 桌面 shell 时代 | dock 的 tile 启动磁盘 ELF、退出事件经合并流到达永不 wait 的 shell、REPL 的 feed 与 `exec` | complete |
-| M13 — macOS 的脸面 | 壁纸的艺术、顶栏、桌面图标,机器的桌面读起来是一个整体 | complete |
+| M13 — macOS 的脸面 | 壁纸的艺术、顶栏、桌面图标，机器的桌面读起来是一个整体 | complete |
 | M14 — HD 桌面 | 1920×1080、真实字体、圆角与阴影的原语、半透明 chrome、绘制图标、共享标题栏与抗锯齿指针 | complete |
-| M15 — 动画 | 合成成本实测(整屏 ~230 ms、窗级 ~36 ms)、损伤矩形、首个动画:三个 app 的窗口开时升起、关时沉下 | complete |
-| M16 — 窗口自己的菜单 | 标题栏的单个圆形按钮与它拉开的下拉菜单——Maximize、Minimize、Quit——骑 press-at 事件,标题栏可拖拽,最小化入隐藏项、dock 瓦片还原,最大化即 scale 的整数倍 | complete |
+| M15 — 动画 | 合成成本实测(整屏 ~230 ms、窗级 ~36 ms)、损伤矩形、首个动画：三个 app 的窗口开时升起、关时沉下 | complete |
+| M16 — 窗口自己的菜单 | 标题栏的单个圆形按钮与它拉开的下拉菜单——Maximize、Minimize、Quit——骑 press-at 事件，标题栏可拖拽，最小化入隐藏项、dock 瓦片还原，最大化即 scale 的整数倍 | complete |
 | M17 — 任意尺寸的字体 | 从字体文件生成轮廓、光栅器、任意像素尺寸的 strike、ink 的迁移 | complete |
-| M18 — Wayland 之门 | `c` 目标上的纯 Emo `wayland` 客户端包:线路编解码、fd 传递、shm 层、真实合成器上的第一帧 | complete |
+| M18 — Wayland 之门 | `c` 目标上的纯 Emo `wayland` 客户端包：线路编解码、fd 传递、shm 层、真实合成器上的第一帧 | complete |
 | M19 — 座位 | `wl_seat`、`wl_pointer`、`wl_keyboard`、虚拟设备注入、被钉住的 keymap fd | complete |
-| M20 — 界面骑上 Wayland | `LiveEye`/`LiveInput`,语料应用在 headless sway 下真实运行 | complete |
+| M20 — 界面骑上 Wayland | `LiveEye`/`LiveInput`，语料应用在 headless sway 下真实运行 | complete |
 | M21 — dock 可点击 | 指针的点击路径、逐帧绘制的桌面脸面 | complete |
 | M22 — 树接住指针 | 绘制走栈导出的矩形表、被启动 app 的树在帧内绘制、点击驱动 app 自己的 update | complete |
-| M23 — keymap 解码 | 解析合成器编译出的 xkb keymap,按键按 keysym 名投递 | complete |
-| M24 — app 成为窗口 | 一次启动把 app 立成自己的 toplevel,座位的焦点把它的字路过去 | complete |
-| M25 — 通知 | `notify` 动词族与通知服务,壳天生就是中心——toast、历史、勿扰 | complete |
-| M26 — 时钟 | 开发板 RTC 成为 time 动词,头条时钟与日历面板按 UTC 读真实墙钟 | complete |
-| M27 — 工作空间 | 合成器自有的四张桌面:窗口的指派动词、壳的切换、头条 pager 每次绘制读打包状态 | complete |
-| M28 — launcher 与锁 | dock 第一格即搜索面之门——卷上的 `.elf` 包枚举、过滤、启动;锁在不透明面背后接管会话,帐户文件即 hash 包自己的摘要 | complete |
-| M30 — 皮肤地基 | `win_format` 的 ARGB8888 与 walk 的逐像素 source-over(launcher 面板即第一块 ARGB 面),以及形状词——`win_shape` 的逐面 radius 与 softness,toplevel 带缺省的 10 和 16,每个角色都穿圆角与影环 | complete |
-| M31 — 壁纸的艺术与图标 | 壁纸成为卷宗自己的 RLE 文件(`gen-wallpaper.py` 的渲染,boot 时解码),取色为 chrome 供给强调色与材质,图标家族的笔画从 shapes 文件为 dock 瓦片、启动器行与通知行换装 | complete |
-| M32 — 动效层 | 缓动词表(`emo_motion.emo`——方衰、镜像、spring)落进桌面包,焦点的到来走扫入(窗条上四帧),启动器面板弹跳落座,workspace 的 pager 强调块跨条滑向下一格(D13:硬切保留,chrome 动画);dock 悬停与 toast 滑入在金属上停靠,画师与钉行站立(found-not-fixed:走查的 digest 差一、越界座位的 toplevel 挂死 walk) | complete |
-| M33 — 文本内核 | 编辑器的缓冲与光标——在光标处插入、Backspace/Delete 与行的合并、方向键、Home/End——raw Elm 循环(`ui.run_raw`)让一次按键不必查 tag 表,以及座位在 Shift 与 Ctrl 层级的 US 布局(`Ctrl+Q` 退出,`Ctrl+S` 保存编辑器) | complete |
-| M34 — 剪贴板 | 门之上的机器剪贴板:`clip_set`/`clip_get` 是门自己的一对(字节在 `.emo_clip`,长度在合成器页上,写入属于焦点应用,中间没有服务),语料的 `Clipper` 接缝,以及编辑器在光标所在行上的 `Ctrl+C`/`Ctrl+X`/`Ctrl+V` | complete |
-| M35 — 选区 | Shift 加方向键从锚点延伸出选区,帧缓冲的 marked span 把高亮混在字节之下(`ui.marked_text`,后端唯一可忽略的属性),编辑器的复制、剪切、输入、Backspace/Delete 与粘贴或取用它、或替换它 | complete |
-| M36 — 全局快捷键层 | Alt+1..4 由输入服务在每个应用之下解析,作为流的 0x5343 事件交给 panel 属主——无论哪个窗口持有焦点;壳的分派切换桌面并重绘 chrome——Alt-Tab 与概览将来骑在这一层上 | complete |
+| M23 — keymap 解码 | 解析合成器编译出的 xkb keymap，按键按 keysym 名投递 | complete |
+| M24 — app 成为窗口 | 一次启动把 app 立成自己的 toplevel，座位的焦点把它的字路过去 | complete |
+| M25 — 通知 | `notify` 动词族与通知服务，壳天生就是中心——toast、历史、勿扰 | complete |
+| M26 — 时钟 | 开发板 RTC 成为 time 动词，头条时钟与日历面板按 UTC 读真实墙钟 | complete |
+| M27 — 工作空间 | 合成器自有的四张桌面：窗口的指派动词、壳的切换、头条 pager 每次绘制读打包状态 | complete |
+| M28 — launcher 与锁 | dock 第一格即搜索面之门——卷上的 `.elf` 包枚举、过滤、启动;锁在不透明面背后接管会话，帐户文件即 hash 包自己的摘要 | complete |
+| M30 — 皮肤地基 | `win_format` 的 ARGB8888 与 walk 的逐像素 source-over(launcher 面板即第一块 ARGB 面)，以及形状词——`win_shape` 的逐面 radius 与 softness,toplevel 带缺省的 10 和 16，每个角色都穿圆角与影环 | complete |
+| M31 — 壁纸的艺术与图标 | 壁纸成为卷宗自己的 RLE 文件(`gen-wallpaper.py` 的渲染，boot 时解码)，取色为 chrome 供给强调色与材质，图标家族的笔画从 shapes 文件为 dock 瓦片、启动器行与通知行换装 | complete |
+| M32 — 动效层 | 缓动词表(`emo_motion.emo`——方衰、镜像、spring)落进桌面包，焦点的到来走扫入(窗条上四帧)，启动器面板弹跳落座，workspace 的 pager 强调块跨条滑向下一格(D13：硬切保留，chrome 动画);dock 悬停与 toast 滑入在金属上停靠，画师与钉行站立(found-not-fixed：走查的 digest 差一、越界座位的 toplevel 挂死 walk) | complete |
+| M33 — 文本内核 | 编辑器的缓冲与光标——在光标处插入、Backspace/Delete 与行的合并、方向键、Home/End——raw Elm 循环(`ui.run_raw`)让一次按键不必查 tag 表，以及座位在 Shift 与 Ctrl 层级的 US 布局(`Ctrl+Q` 退出，`Ctrl+S` 保存编辑器) | complete |
+| M34 — 剪贴板 | 门之上的机器剪贴板：`clip_set`/`clip_get` 是门自己的一对(字节在 `.emo_clip`，长度在合成器页上，写入属于焦点应用，中间没有服务)，语料的 `Clipper` 接缝，以及编辑器在光标所在行上的 `Ctrl+C`/`Ctrl+X`/`Ctrl+V` | complete |
+| M35 — 选区 | Shift 加方向键从锚点延伸出选区，帧缓冲的 marked span 把高亮混在字节之下(`ui.marked_text`，后端唯一可忽略的属性)，编辑器的复制、剪切、输入、Backspace/Delete 与粘贴或取用它、或替换它 | complete |
+| M36 — 全局快捷键层 | Alt+1..4 由输入服务在每个应用之下解析，作为流的 0x5343 事件交给 panel 属主——无论哪个窗口持有焦点;壳的分派切换桌面并重绘 chrome——Alt-Tab 与概览将来骑在这一层上 | complete |
 | M37 — 暗色皮肤 | 皮肤的 tokens(Geist 风中性色阶、壁纸强调色 token 化、8 px 间距、圆角 6/10/16、骑 `emo_motion` 的阴影/透明度/动效配方)、Inter Semibold、chrome 可见字对的 kerning、统一窗口 chrome(标题栏、控件、tab strip 底座)、Dock 与 launcher 几何、顶栏状态区与光标族——先在 hosted canvas 上迭代;零新增动词(工作清单:[`../../docs/unkernel-plan-list.md`](../../docs/unkernel-plan-list.md)) | planned |
-| M38 — 终端 | 骑 pipes(动词 55–60)与 fork/exec 的 0..2 继承的会话,shell 作为子进程;终端窗口的 mono cell 网格(emo-terminal 评估的方案 B)、tabs、scrollback、选择、复制粘贴、光标闪烁、ANSI 子集;多会话 | planned |
+| M38 — 终端 | 骑 pipes(动词 55–60)与 fork/exec 的 0..2 继承的会话，shell 作为子进程;终端窗口的 mono cell 网格(emo-terminal 评估的方案 B)、tabs、scrollback、选择、复制粘贴、光标闪烁、ANSI 子集;多会话 | planned |
 | M39 — chrome 的行为 | `win_resize` 与 resize 事件、边缘 snap 加预览与双击最大化、dock stacks 与 popovers 加右键菜单、Control Center v1(音量与亮度按 D15 缺席)、`sys_stats` 与顶栏米表、窗口内菜单原语 | planned |
 | M40 — 系统应用 | Settings、System Info 与 About 作为磁盘 ELF——provider 走 D14 seam 带 fixtures——以及 Files/Editor 换皮与卷上 RLE 之间的壁纸选择器 | planned |
 | M41 — 动效预算 | alpha 与 RLE 壁纸之后重新剖析合成、数字点名的优化(opaque fast path、各缓存、damage-only 重绘、直接 scanout)、M32 停靠对落地、minimize genie、dock 的 hover 与 bounce、toast 滑入、Control Center 的 spring、Overview(B7)与 Alt-Tab(B8) | planned |
-| M42 — 材质 | 缓存 blur(开机算一次、面板复用、底下窗口移动即失效)与 glass 的 tint、noise、边缘高光——在 M41 量出的预算内落地,或按 D15 记录缺席、只发 alpha + scrim | planned |
+| M42 — 材质 | 缓存 blur(开机算一次、面板复用、底下窗口移动即失效)与 glass 的 tint、noise、边缘高光——在 M41 量出的预算内落地，或按 D15 记录缺席、只发 alpha + scrim | planned |
 
-编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行,不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
+编译器轨道(字面量宽度修复、N-block arena、frame-scoped pool)在阶梯之旁并行，不在其内——那些任务是 Emo 主树与 EmoOS 追踪器的。
 
 ## 体验是什么——不是什么
 
-可达:合成窗口、拖动、聚焦、鼠标、带抗锯齿字形的真实字体、圆角与阴影的形状、半透明 chrome 盖在卷宗自己的壁纸上(emo-desktop M31 的 RLE 文件,boot 时解码)、dock、真实应用(计数器、文件浏览器、在光标处编辑、Shift 选区、并通过机器剪贴板复制粘贴的编辑器);键盘快捷键可从任何窗口切换桌面。这套栈上不可达:GPU 加速、模糊、动画级帧节奏、硬实时。诚实的体感是九十年代初的工作站长出了一副现代的脸面。架构在这之上的生长路径也是记录的一部分:[`docs/assessment.md`](docs/assessment.md) 收着可扩展性契约(什么冻结、什么可搬、什么可加)与完整的调研讨论,包括 M7 之前已定案的决策点(2026-10-31)。
+可达：合成窗口、拖动、聚焦、鼠标、带抗锯齿字形的真实字体、圆角与阴影的形状、半透明 chrome 盖在卷宗自己的壁纸上(emo-desktop M31 的 RLE 文件，boot 时解码)、dock、真实应用(计数器、文件浏览器、在光标处编辑、Shift 选区、并通过机器剪贴板复制粘贴的编辑器);键盘快捷键可从任何窗口切换桌面。这套栈上不可达：GPU 加速、模糊、动画级帧节奏、硬实时。诚实的体感是九十年代初的工作站长出了一副现代的脸面。架构在这之上的生长路径也是记录的一部分：[`docs/assessment.md`](docs/assessment.md) 收着可扩展性契约(什么冻结、什么可搬、什么可加)与完整的调研讨论，包括 M7 之前已定案的决策点(2026-10-31)。
 
 逐任务清单见 [`docs/TASKS.md`](docs/TASKS.md)。每个里程碑的内核侧一半住在 [EmoOS 的追踪器](../emo-os/docs/TASKS.md);ABI 的稳定性契约是 [EmoOS 的文档](../emo-os/docs/desktop-abi.md)。

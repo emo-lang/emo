@@ -63,7 +63,9 @@ undocumented ever acts.
 | 12 | `input_read()` | the next event of the machine's merged input stream, blocking until one exists; answers it packed (T8.3, below) |
 | 13 | `win_new(w, h)` | a window buffer of the given size: a contiguous run of the allocator's blocks mapped into the caller's own table; answers the buffer's frame number and the grant id packed (T8.5, below) |
 | 14 | `win_close(grant)` | the buffer's release: the run back to the allocator, the grant gone; answers 0 (T8.5, below) |
-| 17 | `win_role(grant, role)` | the buffer becomes a surface of that role on the compositor's stack — 0 toplevel, 1 popup, 2 subsurface, 3 panel; toplevel is the role the compositor implements, the rest are refused with reason 4, as are a second declaration and a grant with no surface behind it; a full stack is reason 5 (T8.13, below) |
+| 15 | `win_focus(grant)` | the compositor's stack records the window as the focused one; answers 0 (T8.6, below) |
+| 16 | `win_move(grant, x, y)` | the compositor's blit puts the window's frame at that position; answers 0 (T8.6, below) |
+| 17 | `win_role(grant, role)` | the buffer becomes a surface of that role on the compositor's stack — 0 toplevel, 1 popup, 2 subsurface, 3 panel, 4 wallpaper (the desktop's own canvas under every window, one to a machine; T8.27, emo-desktop A13). Every role is implemented: toplevel is free-standing, popup and subsurface bind a parent (verb 19), a panel stands alone as the topmost strip, and the wallpaper takes no focus. A second declaration, a second wallpaper, and a grant with no surface behind it are reason 4; a full stack is reason 5 (T8.13, T8.15, T8.27, below) |
 | 18 | `input_info(index)` | the index-th pointer's axes, the maxima the device's own config states, packed (the X's above the Y's); an index no device answers is reason 4 (T8.13, below) |
 | 19 | `win_parent(grant, parent)` | a popup or a subsurface names the toplevel it hangs from — its coordinates the parent's from the binding on, the walk painting it immediately above the parent, the parent's death taking it; the caller must own both grants, a surface with no entry, a role that takes no parent (toplevel, panel), a parent that is no live toplevel, all reason 4 (T8.15, below) |
 | 20 | `win_format(grant, format)` | the buffer's format recorded on its row — XRGB8888 (0) the first accepted value, ARGB8888 (1) the second (emo-desktop M30, A30.1: the walk composites an ARGB row per pixel, source-over, the buffer's alpha bytes the shape); the format binds at the declaration and a second call is reason 4; a format the compositor does not carry is reason 4, by its number (T8.15, below) |
@@ -168,10 +170,9 @@ Verbs 10 to 16 are **reserved for the desktop segment** (the gate's
 numbering rule holds: reserved numbers carry no meaning until their
 verb lands, frozen from that day) — `present`, `output_info`,
 `input_read`, `win_new`, `win_close`, `win_focus`, `win_move`, per
-[`docs/desktop-abi.md`](desktop-abi.md). Verbs 10 to 14 have landed
-(T8.3, T8.4, T8.5); 15 and 16 — `win_focus` and `win_move`, the
-compositor's stack's verbs — stay reserved until the compositor's
-mechanism (T8.6) gives them their substance. Verbs 17 and 18 (T8.13,
+[`docs/desktop-abi.md`](desktop-abi.md). Verbs 10 to 16 have landed
+(T8.3, T8.4, T8.5, T8.6) — `win_focus` and `win_move` are the
+compositor's stack's verbs. Verbs 17 and 18 (T8.13,
 emo-desktop A9.1) grew the segment under the same rule — additions
 under new numbers, never rewrites — and the route numbers they ride
 are the mailbox's, not the verb's: the composition request a window
@@ -353,12 +354,15 @@ thing the stack acts on. **Verb 17 (T8.13, emo-desktop A9.1)** is the
 role declaration the surface is: `win_role(grant, role)` makes the
 buffer a surface of that role on the compositor's stack, at the
 origin, until a move places it. The vocabulary is the gate's bounds
-(0 toplevel, 1 popup, 2 subsurface, 3 panel — past it reason 4) and
-the owner and the id are its checks; which roles the compositor
-implements is the compositor's answer — toplevel is, and popup,
-subsurface and panel are refused with reason 4, **by their number**:
-the protocol carries no text (the seventh seam), and the caller, who
-chose the role, is the one to name what it asked for. A second
+(0 toplevel, 1 popup, 2 subsurface, 3 panel, 4 wallpaper — past it
+reason 4) and the owner and the id are its checks; which roles the
+compositor implements is the compositor's answer — toplevel always,
+popup, subsurface and panel since T8.15 (a popup or a subsurface binds
+a parent with verb 19; a panel stands alone as the walk's topmost
+strip), and the wallpaper since T8.27 (the desktop's own canvas under
+every window, one to a machine, refused to `win_focus`). The protocol
+carries no text (the seventh seam), so the caller, who chose the role,
+is the one to name what it asked for. A second
 declaration for one surface is reason 4 (a surface's role does not
 change); a stack already holding eight surfaces is reason 5. The
 composition a window present posts walks the whole stack bottom to

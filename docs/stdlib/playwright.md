@@ -32,7 +32,7 @@ page.close()        // (R, Page)
 
 Targets: `["ocaml", "c", "typescript"]` (it builds on `websocket`,
 `json`, and `base64`). Reference:
-[`docs/stdlib/playwright.md`](stdlib/playwright.md) · Demo:
+[`docs/stdlib/playwright.md`](playwright.md) · Demo:
 `examples/playwright_demo`.
 
 ## Using the package
