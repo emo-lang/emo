@@ -76,6 +76,8 @@ class Debug {
   def patch(old ui.Node, next ui.Node)
   def run()
   def deliver(tag Int64)
+  def deliver_text(tag Int64, text String)
+  def deliver_key(tag Int64, key Int64)
   def log() Array[String]
 }
 ```
@@ -86,7 +88,9 @@ text reaches stdout. `log()` returns the rendered trees in delivery
 order.
 
 `run()` drives nothing: the backend has no input source, which is what
-headless means here. An event is stepped by hand through `deliver`, on
+headless means here. An event is stepped by hand through `deliver` for
+a click, `deliver_text` for a field's typed text and `deliver_key` for
+a key on the focused field, on
 the sink `mount` was given.
 
 ## Helpers

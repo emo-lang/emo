@@ -61,7 +61,7 @@ def view(reg ui.Registry, m Model) ui.Node {
   return ui.column([
     ui.text("ab", ui.style()),
     ui.row(buttons.to_array(), ui.style().with_gap(2.0)),
-    ui.text_input("${m.count()}", ui.style().with_width(12.0))
+    ui.text_input("${m.count()}", 0 - 1, ui.style().with_width(12.0))
   ], ui.style().with_padding(4.0).with_gap(2.0))
 }
 

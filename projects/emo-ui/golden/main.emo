@@ -25,7 +25,9 @@ enum Msg { save, cancel, retry }
 def field(label String, value String) ui.Node {
   return ui.row([
     ui.text(label, ui.style().with_width(64.0)),
-    ui.text_input(value, ui.style().with_grow(true))
+    // A display-only field: -1 is the no-event convention, and the
+    // editable form's tag shows up in the corpus and the tests.
+    ui.text_input(value, 0 - 1, ui.style().with_grow(true))
   ], ui.style().with_gap(8.0).with_align(ui.Align.center))
 }
 

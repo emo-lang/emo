@@ -102,6 +102,28 @@ Operand order is no longer a cross-target variable — the language states left
 to right and every target obeys it; the defect that made the two differ, and
 its fix, are in `CHECK.md` and `probe/eval_order`.
 
+**An event carries its text and its keys (2026-11-28).** The sink is
+`deliver(tag, text, key)` — one method, the payloads as the method's own
+marshaled parameters, because the C→Emo callback contract names a
+single-method interface and `String` and `Int64` are in its marshaling
+tiers. A click is `("", 0)`; a field's typed text rides as the text and
+a key the toolkit does not consume rides as the key, both on the tag
+`reg.on_input(name, make)` registers: the application hands the registry
+a *factory* that builds the message from the delivery, under a name of
+its choosing, and the name — not the value — is what the tag dedups on,
+so a field keeps one tag however often its contents change. The
+messages of a loop that takes typed text are classes rather than an
+enum (`is()` raises on an enum member), a field-less class still dedups
+because equality on instances is structural, and the raw loop refuses a
+payload because its message is the tag itself. A backend that owns the
+widget keeps the keystrokes: a kept field's text is written back only
+where the model's value differs, on every backend that owns one —
+AppKit's `NSTextField`, GTK's `GtkEntry`, the DOM's `input`, an SSR
+form's `emo-<tag>` POST, the terminal's scripted step — and forwards
+what its toolkit does not consume (Enter everywhere; Escape on GTK and
+the DOM) to the focused field's tag. Focus stays toolkit-internal: a
+core focus model is the next input-model round.
+
 `ui.run_raw` is the same loop without the table: the backend's tag is the
 message, handed to `update` as it arrives. It exists for applications whose
 messages are already integers — a text editor's keys, one per byte and one per

@@ -88,13 +88,16 @@ class Ssr {
   def patch(old ui.Node, next ui.Node)
   def run()
   def deliver(tag Int64)
+  def deliver_text(tag Int64, text String)
 }
 ```
 
 `mount` prints the whole document and `patch` prints the fragment the
 browser swaps in. `run()` returns without driving anything — a server
 has no input source; the request is what delivers an event, through
-`deliver`.
+`deliver` for a click and `deliver_text` for a field's posted value. A
+`ui.text_input` with an event renders editable and posts its value under
+the name `emo-<tag>`; one without stays display-only (`readonly`).
 
 A node class this renderer does not know raises rather than guessing
 markup.

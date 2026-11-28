@@ -63,7 +63,7 @@ expect 0 "the renderer and its test type-check" "$rc"
 EMO_REGISTRY="$REG" "$EMO" run test.emo >"$OUT.run" 2>&1 && rc=0 || rc=$?
 expect 0 "the renderer's test runs to the end" "$rc"
 n=$(grep -c '^ok ' "$OUT.run" || true)
-expect 12 "all twelve assertions pass" "$n"
+expect 13 "all thirteen assertions pass" "$n"
 
 # --- which targets can compile the package ------------------------------
 #

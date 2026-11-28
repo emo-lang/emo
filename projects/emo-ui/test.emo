@@ -135,7 +135,7 @@ def script() Array[String] {
 
 def click_all(e ui.Events, tree Box, labels Array[String], i Int64) {
   if i < labels.length() {
-    e.deliver(tag_of(tree.read(), labels[i]))
+    e.deliver(tag_of(tree.read(), labels[i]), "", 0)
     click_all(e, tree, labels, i + 1)
   }
 }
@@ -404,6 +404,116 @@ def diff_checks() {
     "it is of no kind the diff knows, and carries no key")
 }
 
+// ---- The payload round-trip -----------------------------------------
+//
+// A field's typed text and its keys: the factory the registry stores
+// builds the message, the tag stays stable across renders, and the loop
+// hands `update` what came — typing as (text, 0), a key on the focused
+// field as ("", the key). The messages are classes — `is()` raises on
+// an enum member, so a loop that takes one field's text takes every
+// message as a class instance — and a field-less class still dedups,
+// because equality on instances is structural.
+
+class Bump {
+  def init() {
+  }
+}
+
+class SetText {
+  def init(text String) {
+    self.text = text
+  }
+
+  def text() String {
+    return self.text
+  }
+}
+
+class Draft {
+  def init(count Int64, text String) {
+    self.count = count
+    self.text = text
+  }
+
+  def count() Int64 {
+    return self.count
+  }
+
+  def text() String {
+    return self.text
+  }
+}
+
+def draft_update(msg Block, m Draft) Draft {
+  if msg.is(SetText) {
+    return Draft.new(count: m.count(), text: msg.text())
+  }
+  if msg.is(Bump) {
+    return Draft.new(count: m.count() + 1, text: m.text())
+  }
+  return m
+}
+
+def draft_view(reg ui.Registry, m Draft) ui.Node {
+  const bump = reg.on(Bump.new())
+  const field = reg.on_input("draft", -> (t String, k Int64) {
+    return SetText.new(text: t)
+  })
+  return ui.column([
+    ui.text("count ${m.count()} draft ${m.text()}", ui.style()),
+    ui.text_input(m.text(), field, ui.style()),
+    ui.button("bump", bump, ui.style())
+  ], ui.style())
+}
+
+def payload_checks() {
+  const reg = ui.Registry.new()
+  const field = reg.on_input("draft", -> (t String, k Int64) {
+    return SetText.new(text: t)
+  })
+  check(field == 0, "an input factory gets the first tag")
+  check(reg.on_input("draft", -> (t String, k Int64) {
+      return SetText.new(text: t)
+    }) == field, "a name keeps the tag it was first given")
+  check(reg.on_input("other", -> (t String, k Int64) {
+      return SetText.new(text: t)
+    }) == 1, "another name gets another tag")
+  const click = reg.on(Bump.new())
+  check(click == 2, "a click message gets the tag after the factories")
+  check(reg.on(Bump.new()) == click,
+    "a field-less class keeps its tag: equality on instances is structural")
+
+  const built = reg.message_for(field, "hi", 0)
+  check(built.is(SetText) && built.text() == "hi",
+    "message_for calls the factory with what was typed")
+  const keyed = reg.message_for(field, "", ui.key_escape())
+  check(keyed.is(SetText) && keyed.text() == "",
+    "and with a key on the focused field, the key riding as the key")
+  check(reg.message_for(click, "", 0).is(Bump),
+    "message_for dispatches a click tag's own message")
+
+  const m1 = draft_update(reg.message_for(field, "hi", 0),
+    Draft.new(count: 0, text: ""))
+  check(m1.text() == "hi" && m1.count() == 0,
+    "the built message updates the model's text")
+  const m2 = draft_update(reg.message_for(click, "", 0), m1)
+  check(m2.count() == 1 && m2.text() == "hi",
+    "a click bumps and keeps the model's text")
+
+  const be = debug.Debug.new()
+  ui.run(draft_view, draft_update, Draft.new(count: 0, text: ""), be)
+  be.deliver_text(1, "hi")
+  be.deliver(0)
+  check(be.log().length() == 3, "a delivered text is one patch, like a click")
+  check(be.log()[1] == debug.render(
+      draft_view(ui.Registry.new(), Draft.new(count: 0, text: "hi"))),
+    "the loop hands `update` what was typed, and the tree shows it")
+  check(be.log()[2] == debug.render(
+      draft_view(ui.Registry.new(), Draft.new(count: 1, text: "hi"))),
+    "and a click after it keeps the model's text")
+}
+
+payload_checks()
 tag_checks()
 retained_checks()
 rebuild_checks()

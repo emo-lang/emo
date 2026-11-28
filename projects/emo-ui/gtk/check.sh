@@ -205,8 +205,8 @@ expect_same_file "$C/expected.txt" "$COUT/run.txt" \
 # forty. `EMO_GUI_COUNT` names a file the shim writes the number into as
 # it leaves (never a stream: `xvfb-run` folds stderr into stdout).
 got=$(cat "$COUT/count.txt" 2>/dev/null || true)
-expect "ui: made 8 widgets" \
-  "and the window keeps its widgets across the four events" "$got"
+expect "ui: made 9 widgets" \
+  "and the window keeps its widgets across the five events" "$got"
 
 # The dependency's manifest is reached before any emitter, so the
 # corpus's refusal is `ui_gtk`'s target list, not the FFI.

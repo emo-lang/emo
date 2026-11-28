@@ -124,8 +124,9 @@ why . ui_browser.emo beam "the runtime implementation"
 # backend's entry is pinned to.
 #
 # `page.mjs` is the stub page: it installs `document` and `window`,
-# imports the bundle, and clicks the tags in the script. The alarm is a
-# hung run's failure, not a wait forever.
+# imports the bundle, and steps the script — a tag clicked, `tag=text`
+# typed into the field carrying the tag, `tag^key` pressed on it. The
+# alarm is a hung run's failure, not a wait forever.
 
 C=$PWD/corpus
 COUT=$PWD/.emo-build/check/corpus
@@ -135,7 +136,7 @@ mkdir -p "$COUT"
     "$COUT/out" ) >"$OUT.log" 2>&1 && rc=0 || rc=$?
 expect 0 "the corpus builds for browser" "$rc"
 
-perl -e 'alarm 30; exec @ARGV' node page.mjs "$COUT/out.js" "0,0,1,2" \
+perl -e 'alarm 30; exec @ARGV' node page.mjs "$COUT/out.js" "0,0,1,3=hi,3^10,2" \
   >"$COUT/run.txt" 2>"$COUT/run.err" && rc=0 || rc=$?
 expect 0 "the corpus's page run exits 0" "$rc"
 expect_same_file "$C/expected.txt" "$COUT/run.txt" \

@@ -48,7 +48,9 @@ widget, and the widgets no leaf keeps leave. A kept button is given the
 new tag when its event changed.
 
 `script` is the self-driving input, the counterpart of the terminal's
-`Script`: a comma-separated list of event tags clicked in order. It is
+`Script`: a comma-separated list of steps — a bare tag is a click on the
+control carrying it, `tag=text` types into the field carrying the tag,
+`tag^key` presses a key on it. It is
 honored only when `EMO_GUI_AUTOTEST` is set, so a real application
 passes `""` and a person drives the window. A `NSTimer` clicks each tag
 in turn and terminates, so the gate needs no one at the keyboard and no

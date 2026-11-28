@@ -11,12 +11,14 @@ require "emo/ui"
 // The sink is the callback contract's worked case: `ui.Events` is a
 // single-method interface, so a foreign def's parameter of that type
 // crosses as a function pointer plus its userdata (`CHECK.md`). The
-// shim stores the pair, and a click calls it with nothing but the
-// event tag — the application's types never cross the FFI.
+// shim stores the pair, and a click calls it with the event tag and an
+// empty text; a field's edited text calls it with the tag and what was
+// typed — the application's types never cross the FFI.
 
 foreign def ui_window_make(title String, w Float64, h Float64) Int64 = "ui_window_make"
 foreign def ui_label_make(text String) Int64 = "ui_label_make"
 foreign def ui_button_make(text String) Int64 = "ui_button_make"
+foreign def ui_entry_make(text String) Int64 = "ui_entry_make"
 foreign def ui_set_text(child Int64, text String) Void = "ui_set_text"
 foreign def ui_place(child Int64, x Float64, y Float64, w Float64, h Float64) Void = "ui_place"
 foreign def ui_remove(child Int64) Void = "ui_remove"
@@ -30,7 +32,7 @@ foreign def ui_autotest_arm(script String) Void = "ui_autotest_arm"
 // the cell starts as an `Events` that delivers to no one — never as a
 // number that could not later become one.
 class Unmounted {
-  def deliver(tag Int64) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
   }
 }
 
@@ -113,8 +115,12 @@ class Mac {
       if handle < 0 {
         handle = self.make(d)
       } else {
+        // A kept field's text is written back only where it differs from
+        // the model's — the keystrokes typed since the last frame stay
+        // (the comparison is the shim's, in `ui_set_text`). The tag a
+        // control raises is refreshed whatever it is.
         ui_set_text(handle, d.text())
-        if d.kind() == box.Kind.button {
+        if d.kind() == box.Kind.button || d.kind() == box.Kind.input {
           ui_connect(handle, d.event())
         }
       }
@@ -145,6 +151,11 @@ class Mac {
   def make(d box.Draw) Int64 {
     if d.kind() == box.Kind.button {
       const handle = ui_button_make(d.text())
+      ui_connect(handle, d.event())
+      return handle
+    }
+    if d.kind() == box.Kind.input {
+      const handle = ui_entry_make(d.text())
       ui_connect(handle, d.event())
       return handle
     }

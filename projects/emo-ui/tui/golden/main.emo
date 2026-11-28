@@ -61,7 +61,7 @@ def view(reg ui.Registry, m Model) ui.Node {
       ui.text("older lines", ui.style()),
       ui.spacer(ui.style().with_grow(true))
     ], ui.style().with_height(2.0)),
-    ui.text_input("name", ui.style().with_width(12.0)),
+    ui.text_input("name", 0 - 1, ui.style().with_width(12.0)),
     ui.row([
       ui.button("Add", add, ui.style()),
       ui.button("Sub", sub, ui.style())

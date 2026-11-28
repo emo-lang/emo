@@ -12,9 +12,11 @@
 // the core because only a server round trip has anywhere to put them: a
 // form's action, a link's href and a field's name are the interaction
 // model itself, and the core's `button`/`text_input` carry only an event
-// tag and the model's value. An application that wants them spells the
-// names at the call site (`ui_ssr.form`), the way every platform node is
-// namespaced, so a portable component never grows an SSR-only name.
+// tag and the model's value — a field's typed text rides the POST under
+// the name `emo-<tag>`, and an application that wants a name of its own
+// spells it at the call site (`ui_ssr.field`), the way every platform
+// node is namespaced, so a portable component never grows an SSR-only
+// name.
 
 require "emo/ui"
 
@@ -379,6 +381,16 @@ def render_at(sheet Sheet, n ui.Node) String {
       + n.event().to_string() + "\">" + escape(n.label()) + "</button>"
   }
   if n.is(ui.TextInput) {
+    // A field with an event is editable, and its typed text rides the
+    // round trip under the name `emo-<tag>` — the posted body pairs the
+    // name with what was typed, and the server delivers the pair through
+    // `deliver_text`. A field without one is display-only, as the input
+    // has always been here.
+    if n.event() >= 0 {
+      return "<input" + class_attr(sheet, "input", n.style())
+        + " type=\"text\" name=\"emo-" + n.event().to_string()
+        + "\" value=\"" + escape(n.value()) + "\">"
+    }
     return "<input" + class_attr(sheet, "input", n.style())
       + " type=\"text\" value=\"" + escape(n.value()) + "\" readonly>"
   }
@@ -456,7 +468,7 @@ def page(title String, root ui.Node) String {
 // the cell starts as an `Events` that delivers to no one — never as a
 // number that could not later become one.
 class Unmounted {
-  def deliver(tag Int64) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
   }
 }
 
@@ -469,7 +481,10 @@ def unmounted() ui.Events {
 // swaps in (the htmx shape docs/emo-ui.md settles on). `mount` prints
 // the first, `patch` prints the second, and `run` returns without
 // driving anything — there is no input source on a server; the request
-// is what delivers an event, through `deliver`.
+// is what delivers an event, through `deliver` for a click,
+// `deliver_text` for a field's posted value (the body's `emo-<tag>`
+// name paired with what was typed) and `deliver_key` for a key the
+// page handed the round trip.
 class Ssr {
   def init(title String) {
     self.title = title
@@ -489,7 +504,15 @@ class Ssr {
   }
 
   def deliver(tag Int64) {
-    self.sink.read().deliver(tag)
+    self.sink.read().deliver(tag, "", 0)
+  }
+
+  def deliver_text(tag Int64, text String) {
+    self.sink.read().deliver(tag, text, 0)
+  }
+
+  def deliver_key(tag Int64, key Int64) {
+    self.sink.read().deliver(tag, "", key)
   }
 }
 

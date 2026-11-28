@@ -21,7 +21,9 @@ require "emo/ui"
 
 // The tag rides the button's `name`/`value` pair — the same markup
 // contract `ui_ssr` emits — so the page, and a test driving it, can see
-// which event an element carries without reaching into the runtime.
+// which event an element carries without reaching into the runtime. An
+// editable field's tag rides the `name` `emo-<tag>` under the same
+// contract, and its `input` events deliver the element's own value.
 
 def apply_styles(handle Int64, kind String, s ui.Style) {
   const ds = css.declarations(kind, s)
@@ -53,7 +55,7 @@ def carries(n ui.Node) Bool {
 // number that could not later become one. The root's cell is a number
 // for good: a DOM node is an `Int64` handle.
 class Unmounted {
-  def deliver(tag Int64) Void {
+  def deliver(tag Int64, text String, key Int64) Void {
   }
 }
 
@@ -79,8 +81,8 @@ class Dom {
       const pair = rs[i]
       emo.dom_set_style(point, pair[0], pair[1])
     }
-    emo.dom_sink() -> (tag Int64) {
-      self.sink.read().deliver(tag)
+    emo.dom_sink() -> (tag Int64, text String, key Int64) {
+      self.sink.read().deliver(tag, text, key)
     }
     const top = self.build(root)
     emo.dom_append(point, top)
@@ -174,7 +176,8 @@ class Dom {
 
   // Whether a slot's element goes on. It was kept, and a button is the
   // same button only while it raises the same event: the listener an
-  // element carries is the one it was given.
+  // element carries is the one it was given. A field is the same field
+  // by the same rule — its listener is the one its event was given to.
   def continues(p ui.Patch) Bool {
     if !p.kept() {
       return false
@@ -186,6 +189,19 @@ class Dom {
         (R.error, _) then { }
         (R.ok, was_node) then {
           if was_node.is(ui.Button) {
+            if was_node.event() != n.event() {
+              return false
+            }
+          }
+        }
+      }
+    }
+    if n.is(ui.TextInput) {
+      const before = p.old()
+      case before {
+        (R.error, _) then { }
+        (R.ok, was_node) then {
+          if was_node.is(ui.TextInput) {
             if was_node.event() != n.event() {
               return false
             }
@@ -265,13 +281,24 @@ class Dom {
       emo.dom_set_prop(h, "value", n.event().to_string())
     }
     if n.is(ui.TextInput) {
-      // The core's text input shows the model's value and carries no
-      // event tag, so it is read-only here for the same reason `ui_ssr`
-      // renders it read-only: typing has nowhere to go until a node
-      // with an event of its own exists.
+      // The core's text input shows the model's value, and a field with
+      // an event is editable: its tag rides the `name` `emo-<tag>` (the
+      // same markup contract `ui_ssr` emits) and its `input` events
+      // deliver what was typed. A kept field's text is written back
+      // only where it differs from the model's — the keystrokes typed
+      // since the last frame stay, and a model that answers the
+      // delivery with a different value still wins.
       emo.dom_set_prop(h, "type", "text")
-      emo.dom_set_prop(h, "value", n.value())
-      emo.dom_set_prop(h, "readOnly", true)
+      if n.event() >= 0 {
+        emo.dom_set_prop(h, "name", "emo-" + n.event().to_string())
+        // The page's own Tab traversal needs the field in the order.
+        emo.dom_set_prop(h, "tabindex", "0")
+      } else {
+        emo.dom_set_prop(h, "readOnly", true)
+      }
+      if emo.dom_value(h) != n.value() {
+        emo.dom_set_prop(h, "value", n.value())
+      }
     }
     if n.is(ui.Image) {
       emo.dom_set_prop(h, "src", n.src())
@@ -287,6 +314,12 @@ class Dom {
     self.paint(h, n)
     if n.is(ui.Button) {
       emo.dom_connect(h, "click", n.event())
+    }
+    if n.is(ui.TextInput) {
+      if n.event() >= 0 {
+        emo.dom_connect(h, "input", n.event())
+        emo.dom_connect(h, "keydown", n.event())
+      }
     }
     if carries(n) {
       const kids = n.children()

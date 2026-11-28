@@ -70,7 +70,7 @@ def growing() ui.Node {
 // ---- the style's fixed width wins over the intrinsic size -----------
 
 def wide_input() ui.Node {
-  return ui.text_input("n", ui.style().with_width(4.0))
+  return ui.text_input("n", 0 - 1, ui.style().with_width(4.0))
 }
 
 def long_text() ui.Node {
@@ -81,10 +81,59 @@ def long_text() ui.Node {
 
 def script_checks() {
   const s = ui_tui.script([4, 5])
-  check(s.next() == (R.ok, 4), "the script hands back the first tag")
-  check(s.next() == (R.ok, 5), "and the second")
-  check(s.next() == (R.error, 0), "then says there is no more")
-  check(s.next() == (R.error, 0), "and keeps saying it")
+  var step = s.next()
+  case step {
+    (R.ok, got) then {
+      check(got.tag() == 4 && got.text() == "",
+        "the script hands back the first tag, with no text")
+    }
+    (R.error, _) then {
+      check(false, "the script hands back the first tag, with no text")
+    }
+  }
+  step = s.next()
+  case step {
+    (R.ok, got) then {
+      check(got.tag() == 5 && got.text() == "", "and the second")
+    }
+    (R.error, _) then {
+      check(false, "and the second")
+    }
+  }
+  step = s.next()
+  case step {
+    (R.error, _) then { check(true, "then says there is no more") }
+    (R.ok, _) then { check(false, "then says there is no more") }
+  }
+  step = s.next()
+  case step {
+    (R.error, _) then { check(true, "and keeps saying it") }
+    (R.ok, _) then { check(false, "and keeps saying it") }
+  }
+  // A typed step carries its text beside the tag; a key step carries the
+  // key.
+  const t = ui_tui.steps([ui_tui.Step.new(tag: 7, text: "hi", key: 0),
+    ui_tui.Step.new(tag: 7, text: "", key: ui.key_enter())])
+  step = t.next()
+  case step {
+    (R.ok, got) then {
+      check(got.tag() == 7 && got.text() == "hi" && got.key() == 0,
+        "a typed step keeps its text")
+    }
+    (R.error, _) then {
+      check(false, "a typed step keeps its text")
+    }
+  }
+  step = t.next()
+  case step {
+    (R.ok, got) then {
+      check(got.tag() == 7 && got.text() == "" && got.key() == ui.key_enter(),
+        "a key step keeps its key")
+    }
+    (R.error, _) then {
+      check(false, "a key step keeps its key")
+    }
+  }
 }
 
 def layout_checks() {

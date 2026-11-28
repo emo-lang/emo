@@ -49,7 +49,7 @@ function browserCurrentPid(): number | null {
 let _domNext = 1;
 const _domNodes = new Map<number, any>();
 const _domHandles = new WeakMap<object, bigint>();
-let _domSink: ((tag: bigint) => any) | null = null;
+let _domSink: ((tag: bigint, text: string, key: bigint) => any) | null = null;
 
 function domHandle(node: any): bigint {
   if (typeof node === "object" && node !== null) {
@@ -58,7 +58,10 @@ function domHandle(node: any): bigint {
   }
   const id = _domNext++;
   _domNodes.set(id, node);
-  if (typeof node === "object" && node !== null) _domHandles.set(node, id);
+  // The handle is a BigInt like every Int64 the runtime carries: a
+  // plain number in dynamic position is a Byte there, and a known
+  // element's handle answered as one made `>=` against it refuse.
+  if (typeof node === "object" && node !== null) _domHandles.set(node, BigInt(id));
   return BigInt(id);
 }
 
@@ -135,11 +138,32 @@ function domClear(handle: any): void {
 }
 
 // Every event carries the tag the interface program chose for it; the
-// listener hands that tag to the sink, which steps the Elm loop.
+// listener hands that tag to the sink, which steps the Elm loop. An
+// `input` event is a field's: the element's own value rides with the
+// tag, the way a click's text is empty. A `keydown` the page maps into
+// the core's key vocabulary — Enter and Escape; every other key is the
+// toolkit's to consume, and the editing ones arrive as `input` events —
+// is delivered as the key on the focused field's tag, never as both a
+// text and a key.
 function domConnect(handle: any, event: any, tag: any): void {
-  domNode(handle).addEventListener(String(event), () => {
-    domDeliver(BigInt(tag));
+  domNode(handle).addEventListener(String(event), (e: any) => {
+    if (String(event) === "keydown") {
+      const key = domKeyNumber(e && e.key ? String(e.key) : "");
+      if (key !== 0n) {
+        domDeliver(BigInt(tag), "", key);
+      }
+      return;
+    }
+    const text = String(event) === "input" ? domValue(handle) : "";
+    domDeliver(BigInt(tag), text, 0n);
   });
+}
+
+// The core's key vocabulary, for the keys a page hands over.
+function domKeyNumber(key: string): bigint {
+  if (key === "Enter") return 10n;
+  if (key === "Escape") return 27n;
+  return 0n;
 }
 
 function domValue(handle: any): string {
@@ -165,14 +189,14 @@ function domViewport(): any {
 // An event's failure is the root's: report it and keep the page
 // listening. A listener firing before the interface program installed
 // its sink is a wiring mistake, said so once per event.
-function domDeliver(tag: bigint): void {
+function domDeliver(tag: bigint, text: string, key: bigint): void {
   if (_domSink === null) {
     console.error(
       "dom: event " + tag + " fired before dom_sink registered a sink"
     );
     return;
   }
-  Promise.resolve(_domSink(tag)).catch((e: any) => {
+  Promise.resolve(_domSink(tag, text, key)).catch((e: any) => {
     try {
       _taskError(e);
     } catch (err) {

@@ -67,14 +67,15 @@ props and styles:
 |---|---|
 | `Text` | `span` with the body as text |
 | `Button` | `button` with `type="button"` and the tag in the `name="event"`/`value` pair, plus a click listener |
-| `TextInput` | read-only `input type="text"` showing the model's value |
+| `TextInput` | `input type="text"` showing the model's value; with an event it is editable, its tag rides the `name="emo-<tag>"` pair, its `input` events deliver what was typed, and its `keydown`s deliver Enter and Escape as the key |
 | `Image` | `img` with `src` and an empty `alt` |
 | `Spacer` | `div` |
 | `Column`, `Row`, `Scroll` | `div` with its children appended |
 
-A `text_input` is read-only for the same reason `ui_ssr` renders it
-that way: the core node carries no event tag, so typing has nowhere to
-go until a node with an event of its own exists. A node class this
+A `text_input` without an event is read-only; one with an event is
+editable, and a kept field's value is written back only where the
+model's differs — the browser fires no `input` event for a programmatic
+write, so the keystrokes typed since the last frame stay. A node class this
 renderer does not know raises rather than guessing an element.
 
 ## Styles

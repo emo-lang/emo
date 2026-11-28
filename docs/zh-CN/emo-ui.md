@@ -253,13 +253,17 @@ def view(reg ui.Registry, model Model) Node {
 事件身份是 FFI 接缝。节点只携带一个 `Int64` tag,永不携带闭包(闭包不能跨 FFI,E4200)。建树时把带类型的消息登记进一张 Emo 侧的表,并往节点上盖它的索引,于是 `update` 保持带类型(`Msg`),而后端只看到整数:
 
 ```emo
-reg.on(msg Msg) Int64       // registers msg, returns its tag
-reg.dispatch(tag Int64) Msg // the driver's lookup
+reg.on(msg Msg) Int64              // registers msg, returns its tag
+reg.dispatch(tag Int64) Msg        // the driver's lookup
+reg.on_text(name String, make Block) Int64  // a field's factory, one stable tag
+reg.message_for(tag Int64, text String) Block // the message a delivery becomes
 ```
 
 这张表是循环自己持有、并交给 `view` 的对象,而不是模块级绑定:模块级 `const` 在编译目标上每次读取都会重跑初始化式,模块级 `var` 只有 `ocaml` 支持,表放在那里等于每次读取都拿到一张新的空表(`CHECK.md`,模块级绑定)。放在循环里持有也更贴合它本身——这张表属于某一个正在跑的循环,所以同一进程里两个循环各持一张。**已随 T48.2 落地为 `ui.Registry`。** tag 一律在建树之前用独立语句取好,绝不写在构成树的那个实参表里:`on` 是副作用,而操作数的求值顺序由 target 决定——`ocaml` 与其它每个 target 相反——所以从实参位置发出的 tag 会因 target 而异(`CHECK.md`,操作数求值顺序)。
 
 这保住了 README 关于事件是消息的承诺,保住了带类型的 update,也尊重了回调分层。不属于 model 的局部可变状态用语言自己的原语——一格用 `Box`,集合用 `List`/`Map`——在 `view` 时读取;README 的「响应式原语住在标准库」由这些满足,而「编译器优化成定向刷新」的承诺是之后针对这些读取的一趟处理,不是一张隐式图。
+
+**载荷决定(2026-11-28 落地,`feat/emo-ui`)。** 一个事件是 `deliver(tag, text, key)`:单方法,载荷走方法自己的编组参数——单方法接口是 C→Emo 回调契约唯一认的回调形状(`CHECK.md`),而 `String` 与 `Int64` 都在它的编组层里。点击是 `("", 0)`;字段的打字文本以 text 投递;键落在焦点字段的 tag 上、以 key 投递——键是核心词汇表的 `Int64`,String 永远装不下它,所以键落地那天载荷行多了一列(键决定,同日)。带值的消息是应用自己的类,由 registry 存下的**工厂**构造:`on_input("draft", -> (t String, k Int64) { … })` 为字段投递的一切发出一个稳定 tag——打字是 `(text, 0)`,后端不消费的键是 `("", 键号)`,工厂靠键是否为零区分两者。由字段内容构造的消息会一值一 tag,这是那张表的旧限制,而按名字去重(镜像 `keyed`,不去比较 `Block`,block 没有值得信的相等)把它退役了。语言的两个事实塑造了其余一切,都由探针证得:`is()` 对枚举成员直接 raise,所以带一份打字文本的循环,其**每一条**消息都得是类实例——点击的消息是无字段类,照样去重,因为类实例的相等是结构相等;raw 循环的投递干脆拒绝任何一种载荷,因为它的消息就是 tag 本身,载荷没有可成为的整数。拥有可编辑控件的后端替人留住按键:kept 字段的文本只在模型的值不同时才写回,模型回答那次投递,其余一动不动。toolkit 消费掉的东西应用永远看不见:编辑键保持原生,后端只转发它不消费的键——拥有字段的后端转发 Enter,GTK 与 DOM 转发 Escape。**焦点保持 toolkit 内部,已决定:**路由键需要焦点控件,而 toolkit 本来就知道;核心焦点模型需要 Bool 或身份载荷——又一次缝生长——所以焦点事件与应用转向是下一个输入模型轮。语料承载整个形状:它的消息是四个类,它的字段是 `on_input("draft", …)` 读键,同一步打字与同一次 Enter 在每个能按的 后端上逐字节一致。
 
 还有一种循环形状跳过这张表:`run_raw` 把后端的 tag 本身当作消息直接交给 `update`。表的价值在于把一小组稳定的整数值查成消息值;当应用的消息本身就是整数时——文本编辑器的按键,一个字节一条、一种编辑操作一条——就没有可查的东西,而一百条的表在每次渲染时线性去重,足以耗尽 metal 的 arena。`view` 依然收到一个 `Registry`,所以两种形状共用同一个应用签名。**已随 emo-desktop A33.1 落地为 `ui.run_raw`。**
 
@@ -282,15 +286,15 @@ interface Backend {
 }
 ```
 
-`mount` 把第一棵树和后端投递事件用的 sink 一起交给后端——一个单方法 `Events` 接口,`deliver(tag)`,这就是后端关于应用所知道的全部。单方法接口正是 C→Emo 回调契约早已命名的回调类型(`CHECK.md`),所以原生 shim 经同一条跳板抵达 sink,与抵达任何其它回调一样。已随 T48.2 落地为 `ui.Backend`/`ui.Events`。
+`mount` 把第一棵树和后端投递事件用的 sink 一起交给后端——一个单方法 `Events` 接口,`deliver(tag, text, key)`,这就是后端关于应用所知道的全部:一个 tag,加上事件是字段时的载荷(点击是 `("", 0)`,打字以 text,键以 key)。单方法接口正是 C→Emo 回调契约早已命名的回调类型(`CHECK.md`),所以原生 shim 经同一条跳板抵达 sink,与抵达任何其它回调一样,载荷以方法自己的编组参数穿过。已随 T48.2 落地为 `ui.Backend`/`ui.Events`;text 参数是 2026-11-28 的载荷决定,key 参数是同日的键决定(Layer 5)。
 
 每个平台实现它:
 
 - **macOS(已落地,T48.8):** 一个 Emo 类,其方法调用 `foreign def` shim,另一边是 C ABI 上的 AppKit shim。十个动词是 `window_make`、`label_make`、`button_make`、`set_text`、`place`、`remove`、`connect`、`root`、`run` 与 `autotest_arm`;Emo 侧以 point 度量这棵树(`box.emo`),遍历它,并把节点映射到原生 handle。`projects/emo-ui/macos/` 是这个包,`corpus/` 是它进入收敛语料(T48.12)的入口——共享应用摆在一块界面上,由一段逗号分隔的 tag 脚本驱动,shim 在 `EMO_GUI_AUTOTEST` 下逐次点击后结束进程,所以它的字节不用键盘、也不用截图就能检查。
 - **GTK 4(已落地,T48.9):** 同一个十动词 `ui_*` 契约、同一套 point 盒模型,落在 C ABI 的另一侧。`projects/emo-ui/gtk/` 是这个包,`corpus/` 是它进入收敛语料的入口——与 macOS 同一个共享应用、同样的脚本与钉住的字节。GTK 本来就是 C,所以 shim 更薄:Emo 命名不了的只有信号处理函数与自驱动脚本,而 `place` 原样施加 frame,因为 GtkFixed 的原点在左上角。manifest 的 `pkg_config = ["gtk4"]` 就是打包的全部故事;关口在 GTK 4 能回答的宿主上本机构建,否则在容器(GTK 4 加 Xvfb)里编译同一份生成的 C,所以 macOS 宿主也能检查这个后端。
 - **TUI(已落地,T48.4):** 一个纯 Emo 类,把树排到字符网格上并写 ANSI;`run()` 从脚本化输入拉取 tag 并交给循环的 sink。`projects/emo-ui/tui/` 是这个包,`tui/golden/` 是那段脚本化输入的金标,`corpus/` 是它进入收敛语料的入口:`screen` 把网格作为数据交回,`paint` 写出字节,同一块界面在解释器、`ocaml`、`typescript` 与 `beam` 上逐字节相同。
-- **Debug(已落地,T48.3):** 无头的那一个,也是这条接缝的参考实现。它把循环交给它的每一棵树渲染进一份日志而不是打印——于是何时让文本到达 stdout 由调用方决定,金标不会被一个恰好挂上去的后端搅动——而 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver` 手工步进,投递到 `mount` 拿到的那个 sink 上。`projects/emo-ui/golden/` 就是它为的东西:一块界面经核心、以消费者抵达核心的方式走一遍,再以文本出来,在解释器与全部五个托管 target 上逐字节相同(`wasm` 那一半的循环形状已于 T48.6 关闭,`c` 那一半已于 T48.8 关闭)。这个形态之所以这么窄是被 target 逼的、不是选的:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为枚举或元组在两个 target 上打印出的字节并不相同(`CHECK.md`,枚举的显示形式);它的金标也先在建树之前用独立语句取好 tag,因为操作数求值顺序由 target 决定(`CHECK.md`)。
-- **SSR(已落地,T48.6):** `projects/emo-ui/ssr/` 把树渲染成 HTML 与驻留的样式表,在全部五个 target 上逐字节一致。`mount` 打印整份文档,`patch` 打印浏览器换入的片段;`run()` 直接返回,因为服务端没有输入源,`deliver(tag)` 就是推进一个事件的那次请求。`corpus/` 是它进入收敛语料的入口。交互模型是表单与链接,只有服务端往返才放得下的三个节点(`form`、`link`、`field`)就住在这个包里,而不是核心。
+- **Debug(已落地,T48.3):** 无头的那一个,也是这条接缝的参考实现。它把循环交给它的每一棵树渲染进一份日志而不是打印——于是何时让文本到达 stdout 由调用方决定,金标不会被一个恰好挂上去的后端搅动——而 `run()` 什么也不驱动,因为无头就意味着没有输入源:事件由外部经 `deliver`(点击)与 `deliver_text`(字段的打字文本)手工步进,投递到 `mount` 拿到的那个 sink 上。`projects/emo-ui/golden/` 就是它为的东西:一块界面经核心、以消费者抵达核心的方式走一遍,再以文本出来,在解释器与全部五个托管 target 上逐字节相同(`wasm` 那一半的循环形状已于 T48.6 关闭,`c` 那一半已于 T48.8 关闭)。这个形态之所以这么窄是被 target 逼的、不是选的:它只插值 `String`、`Int64`、`Bool` 与 `Float64`,因为枚举或元组在两个 target 上打印出的字节并不相同(`CHECK.md`,枚举的显示形式);它的金标也先在建树之前用独立语句取好 tag,因为操作数求值顺序由 target 决定(`CHECK.md`)。
+- **SSR(已落地,T48.6):** `projects/emo-ui/ssr/` 把树渲染成 HTML 与驻留的样式表,在全部五个 target 上逐字节一致。`mount` 打印整份文档,`patch` 打印浏览器换入的片段;`run()` 直接返回,因为服务端没有输入源,`deliver` 就是推进一个事件的那次请求——`deliver_text` 推进字段 POST 回来的值,它以 `emo-<tag>` 之名随请求体到达。带事件的字段渲染为可编辑(无 `readonly`),不带事件的保持只读。`corpus/` 是它进入收敛语料的入口。交互模型是表单与链接,只有服务端往返才放得下的三个节点(`form`、`link`、`field`)就住在这个包里,而不是核心。
 - **DOM(已落地,T48.11):** `projects/emo-ui/browser/` 是包 `emo/ui_browser`,一个压在运行时 `dom_*` 调用上的 Emo 类(这些调用随浏览器路径于 T48.10 落地)。布局由浏览器自己的布局引擎完成,所以这个包带的是样式映射(`css.emo`),而不是 point 盒模型;`run()` 把控制权交给浏览器后返回。`corpus/` 是它进入收敛语料的入口,`page.mjs` 是关口点击脚本所在的 stub 页面。
 
 如今它们跑的是同一个应用。`projects/emo-ui/corpus/` 是包 `emo/ui_corpus`(T48.12):状态是计数器,表单是显示计数的一个输入框与一个提交按钮,列表是可滚动列表,另有 `view` 注册的三个 tag——一个模块,里面没有平台的名字。每个后端的 `corpus/` 都是薄入口:`require` 共享包、构建该后端、把 `ui_corpus.view` 与 `ui_corpus.update` 交给 `ui.run`。debug、SSR 与 TUI 入口由 `corpus/check.sh` 在各自 manifest 声明的每个托管 target 上检查;macOS、GTK 4 与浏览器入口由各自包的关口检查,跑同一段自驱动脚本、对照同一份钉住的字节。
