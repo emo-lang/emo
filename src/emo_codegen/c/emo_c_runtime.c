@@ -5532,6 +5532,20 @@ double emo_f64_trunc(double x) { return trunc(x); }
 
 int64_t emo_os_getpid(void) { return (int64_t)getpid(); }
 
+/* `os.desk_release()`: the desktop era's door (T18.4) — the release
+   verb the machine's input service judges, the held pass's dress
+   signal. The gate exists on the machine's own target alone; a hosted
+   image answers -1, the refusal the door's discipline carries. */
+#ifdef EMO_GATE_EMOOS
+int64_t emo_os_desk_release(void) {
+  extern long emo_syscall(long n, long a, long b, long c, long d, long e,
+                          long f);
+  return (int64_t)emo_syscall(66, 0, 0, 0, 0, 0, 0);
+}
+#else
+int64_t emo_os_desk_release(void) { return -1; }
+#endif
+
 int64_t emo_os_getppid(void) { return (int64_t)getppid(); }
 
 emo_value emo_os_fork(void) {

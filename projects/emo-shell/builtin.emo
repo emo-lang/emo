@@ -19,7 +19,7 @@ def is_builtin(name String) Bool {
     || name == "poweroff" || name == "export" || name == "unset" || name == "true"
     || name == "false" || name == "jobs" || name == "fg" || name == "bg"
     || name == "wait" || name == "kill" || name == "break" || name == "continue"
-    || name == "return" || name == "help"
+    || name == "return" || name == "help" || name == "desktop"
 }
 
 // The builtin roster, the editor's completion reading it — the same
@@ -27,7 +27,7 @@ def is_builtin(name String) Bool {
 def names() Array[String] {
   return ["cd", "pwd", "echo", "exit", "poweroff", "export", "unset", "true",
     "false", "jobs", "fg", "bg", "wait", "kill", "break", "continue", "return",
-    "help"]
+    "help", "desktop"]
 }
 
 // One builtin, its words already expanded; the answer is the exit
@@ -52,6 +52,9 @@ def run(sh shell.Shell, words Array[String]) Int64 {
   }
   if name == "poweroff" {
     return poweroff(sh, words)
+  }
+  if name == "desktop" {
+    return desktop(sh, words)
   }
   if name == "export" {
     return export(sh, words)
@@ -185,6 +188,19 @@ def poweroff(sh shell.Shell, words Array[String]) Int64 {
   }
   sh.set_status(0)
   sh.stop()
+  return 0
+}
+
+// desktop: the held pass's door (T18.4) — the release verb the input
+// service judges, the merged stream's reader dressing the era the
+// moment its next judgment runs. No words; the answer flies back at
+// once, the shell's prompt before the desktop paints.
+def desktop(sh shell.Shell, words Array[String]) Int64 {
+  if words.length() > 1 {
+    sh.err("emosh: desktop: too many arguments")
+    return 1
+  }
+  os.desk_release()
   return 0
 }
 

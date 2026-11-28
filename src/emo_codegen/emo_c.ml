@@ -724,6 +724,9 @@ and emit_runtime_impl env (use_ty : Emo_check.t) (name : string)
   | "os_getpid" ->
       let v = Printf.sprintf "emo_os_getpid()" in
       if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
+  | "os_desk_release" ->
+      let v = Printf.sprintf "emo_os_desk_release()" in
+      if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v
   | "os_getppid" ->
       let v = Printf.sprintf "emo_os_getppid()" in
       if is_dyn use_ty then Printf.sprintf "emo_box_i64(%s)" v else v

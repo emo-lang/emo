@@ -750,6 +750,11 @@ emo_os_trap_trampoline:
     li a0, EMO_KOFF + 0x870029e8  # the input service's pid cell (T8.3)
     j .Lroute_post
 .Lroute_desktop:
+    li t3, 66
+    beq t6, t3, .Lroute_input # op 66, desk_release (T18.4): the shell's
+                              # `desktop` door — the input service's
+                              # judgment flies the held pass its dress
+                              # signal
     li t3, 18
     beq t6, t3, .Lroute_input # op 18, input_info: the input service's
                               # (T8.13 — the route's op, not the verb's

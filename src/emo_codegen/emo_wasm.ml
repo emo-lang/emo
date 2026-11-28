@@ -2400,7 +2400,7 @@ let rec expr env (x : Emo_ir.expr) : unit =
           | "os_argv" | "os_getenv" | "os_setenv" | "os_unsetenv"
           | "os_signal_ignore" | "os_signal_default" | "os_kill" | "os_setpgid"
           | "os_waitpid_nohang" | "os_tty_raw" | "os_tty_restore"
-          | "os_sleep_ms" ),
+          | "os_sleep_ms" | "os_desk_release" ),
           _ ) ->
           (* the process half: a WasmGC module has no process to fork,
              so these raise when called — the package ships (its fd and

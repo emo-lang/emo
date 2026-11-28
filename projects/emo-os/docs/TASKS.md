@@ -1228,35 +1228,52 @@ on both transports.
     compositor outbox cell, the `gpu_serve_word` def) stalled on the
     value-word encoding and broke the desk pass's key delivery; both
     are moot under the guard.
-  - **T18.4 — the desktop at boot, the terminal in emosh (designed
-    2026-11-27, not started).** The ride's ask: the desktop opens
-    itself at boot and the terminal stays emosh. The design, from the
-    input lanes' own split: the desktop's pass is spawned by the
-    root's shell stage *before* the emosh exec (the exec destroys the
-    root's image, so the spawn must precede it), the pass runs held —
-    its compositions and dressing wait on a release cell — and emosh
-    grows the `desktop` door that releases it: a new gate verb
-    `desk_release` (Tier C, the additions rule) routed to the input
-    service, which posts a release event (a new type beside 0x454D and
-    0x4558) into the merged stream; the desktop pass's loop reads the
-    release event and dresses. The input service's serve grows the
-    two-lane routing its own structure wants anyway: the ask's verb
-    names the lane (verb 2 the console's bytes — the shell's terminal;
-    verb 12 the merged stream's device events — the desktop's focused
-    surface), the lanes never cross, and the race that taught the
-    design (the root's exec loader's staging buffer is the shared
-    scratch page the desktop's session writes) is closed by the held
-    mode: the session writes nothing until the release. The pieces:
-    the held gate and the release-event judge in hello/main.emo's
-    desktop pass; the verb and its route in gate.emo and trap.S; the
-    release event's post in the input service; the `desktop` builtin
-    in emosh (the stub's verb rides the syscall package — the locks
-    re-pin); the feeder's `desktop` beat in start.sh. The exit table's
-    eight-entry bound (the finding above) gates a *useful* emosh
-    terminal — the table's expansion lands first or beside. The
-    receive-dispatch landmine (the finding above) is orthogonal but
-    the same session should read the value-word tag specification
-    before either lands.
+  - **T18.4 — the desktop at boot, the terminal in emosh (landed
+    2026-11-27, uncommitted).** The ride's ask, as built: the root's
+    shell stage *spawns* emosh (verb 48 — a child of its own, the
+    old verb 54 replace gone from this stage) and runs the desktop
+    pass itself, held. The door: gate verb 66 `desk_release` (Tier C,
+    the additions rule — every verb through 65 is taken), routed to
+    the input service; the arm sets the one-shot release cell and the
+    **sticky serial cell** in one flight, and the boot's shell stage
+    flies it by its own raw ecall the moment the spawn lands — the
+    release event (type 0x4552 "ER", beside "EM" and "EX") answers the
+    held pass's first merged read and the era dresses, the terminal
+    the shell's for its life. emosh grows the `desktop` builtin over
+    the same verb (`os.desk_release()`, the extern family's newest
+    member — emo_c.ml, emo_wasm.ml's raise list, emo_eval, the ocaml
+    runtime, the checker's table, emo_c_runtime's `#ifdef
+    EMO_GATE_EMOOS` body, the sysroot wrapper's define, and the os
+    package's own def; the locks re-pinned, `just lock-refresh`'s 182
+    ok). The two-lane serve, the shape the tracker called: verb 2's
+    reads park in the hold beside verb 12's — **the old op 2 blocked
+    the whole service inside `input_byte`, and a blocked shell read
+    starved every other lane's word** — the seats split by their own
+    word's op at the loop top, the byte answered the moment the UART
+    ring holds one. The serial lane's ownership is two halves: the
+    sticky cell from the door, and a parked verb-2 read between the
+    shell's bytes — either one skips the merged stream's 0x454D heads
+    (`input_entitled_for`), the lanes never crossing. And the serve
+    loop's starvation guard: a parked byte seat with an empty ring
+    parks the service on the device world **inside a loop that
+    re-judges at every wake** — falling through to the receive would
+    never re-run the judgment (a device line's wake of a receive park
+    re-parks, the A11.2 rule), the seat starving behind the shell's
+    typing. The exit table's expansion landed beside it (32 entries at
+    `0x87002300`, the bound the append's own constant). Verified: the
+    emosh era's ride dresses the era (the wire's `desktop icons 2`,
+    `desktop apps 6`, the compositions' digests the golden's own) with
+    the prompt alive, and the golden's two legs stayed byte for byte
+    (the REPL knows none of the new paths — no verb 66, no op 2 seat
+    before its own echo beat, no cell).
+  - **T18.4 — the design's first cut (kept for the record):** the
+    pass was to be spawned *before* the emosh exec (the exec destroys
+    the root's image, so the spawn must precede it) — the landed shape
+    keeps the ordering but swaps the replace for the spawn: the root
+    *is* the desktop pass, the child is the shell, and the race the
+    design feared (the exec loader's staging buffer against the
+    session's scratch writes) is structurally gone — the spawn
+    completes before the first paint, the stages never overlap.
   - **Found on the way from the first ride (2026-11-27, the stock
     tree):** the exit table is eight entries (`exit_pids` at
     `0x87002120` through `exit_codes` at `0x87002160`), and the proof

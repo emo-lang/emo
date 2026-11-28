@@ -2778,6 +2778,19 @@ case desk_spawned {
 // the child's pid, the value the exit code.
 const ev_exit = 0x4558
 
+// The release's type (T18.4): 0x4552 ("ER"), the family's own — the
+// dress signal emosh's `desktop` door flies the held pass, the value
+// one, the code zero.
+const ev_release = 0x4552
+
+// The held gate's word (T18.4): the boot era's shell stage pokes it
+// before the emosh spawn, and `desktop` opens held — the loop reads
+// the merged stream and paints nothing until the release event lands,
+// the exec staging page still while the child's image loads. The
+// REPL's `desktop` word (the golden's) finds the zero and opens
+// straight, the era byte for byte what it was.
+const desk_hold = buf + 6400
+
 // The shortcut's type (emo-desktop M36, EmoOS T16.1): 0x5343 ("SC"),
 // the family's third member — the input service's chord layer hands
 // the shell the value whatever window holds the focus; the code field
@@ -4946,13 +4959,31 @@ if dash_present() {
   }
 }
 if emosh_present() {
+  // The desktop era at boot (T18.4): the shell stage spawns the C
+  // shell (the exec verb — a child of its own, the terminal its lane
+  // of the input service) and runs the desktop itself, held: the pass
+  // reads the merged stream and paints nothing until the shell's
+  // `desktop` word flies the release (the exec's staging page shared
+  // with this pass's scratch, the held gate the still hand). The
+  // spawn's refusal falls through to the REPL, the hold cleared —
+  // the fallback the golden pins, byte for byte.
+  poke64(desk_hold, 1)
   const en = put_emosh_name(buf + 18000)
-  case syscall.execve(buf + 18000, en, 0, 0, 0, 0) {
+  case syscall.exec(buf + 18000, en) {
     (R.error, why) then {
       println("emosh: ${why}")
       shell.desk_err(why)
+      poke64(desk_hold, 0)
     }
-    (R.ok, _) then {}
+    (R.ok, _) then {
+      // The era's door flies now (T18.4): the release cell set, the
+      // serial lane's sticky hand-over with it — the child's first
+      // read parks, the desktop's held loop takes the release event
+      // and dresses, the terminal stays the shell's. The pass never
+      // returns: the era's loop is the machine's rest.
+      ecall(66, 0, 0, 0, 0, 0, 0)
+      desktop()
+    }
   }
 }
 // The self-hosted compiler (T4.5): the image carries TCC and its link
@@ -5154,6 +5185,20 @@ def shell_mode() Void {
 // banner and prompt are on the console, so this body paints the era
 // and takes the stream.
 def desktop() Void {
+  // The held gate (T18.4): the boot era's shell stage left the word
+  // set — the loop reads the merged stream for the release event and
+  // paints nothing, the scratch page still while the shell's image
+  // loads. The REPL's `desktop` word finds the zero and opens
+  // straight.
+  if peek64(desk_hold) != 0 {
+    var waiting = true
+    while waiting {
+      const ev = syscall.input_read()
+      if ev_type(ev) == ev_release {
+        waiting = false
+      }
+    }
+  }
   const fholder = ArrayBuilder.new()
   case desk_strike() {
     (R.error, _) then { mark() }

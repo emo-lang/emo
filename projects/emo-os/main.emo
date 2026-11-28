@@ -159,9 +159,15 @@ const pgid_bound = 256
 const arena_for = koff + 0x8700d800
 const arena_bound = 256
 const user_program_cell = 0x87fff000
-const exit_count = koff + 0x87002118
-const exit_pids = koff + 0x87002120
-const exit_codes = koff + 0x87002160
+// The exits' table (T18.4's round): eight entries died on the proof
+// chain's unwaited children alone — the desktop era's forks answered
+// EAGAIN at the shell's first external command. Thirty-two entries on
+// the handoff page's free stretch past the blobs' cells; the append's
+// bound is this constant's, the scan and the compact are count-driven.
+const exit_count = koff + 0x87002300
+const exit_pids = koff + 0x87002308
+const exit_codes = koff + 0x87002408
+const exit_bound = 32
 const pending_flag = koff + 0x870021a0
 const pending_target = koff + 0x870021a8
 
@@ -461,6 +467,36 @@ const exit_ring = koff + 0x87002f60
 const exit_ring_seats = 8
 const exit_ring_seat = 16
 const ev_exit = 0x4558
+
+// The desktop era's release (T18.4): the held desktop pass reads the
+// merged stream for this one word — type 0x4552 ("ER", the machine
+// types' own family beside "EM" and "EX"), the dress signal the era's
+// door flies. The verb's one-shot cell sits on the handoff page's free
+// stretch past the exits' table; the serial cell beside it is the
+// lane's sticky hand-over (the terminal the shell's from the door's
+// first flight on), the parked verb-2 read the derived half between
+// the shell's bytes.
+const ev_release = 0x4552
+const desk_release_cell = koff + 0x87002510
+const input_serial_cell = koff + 0x87002518
+
+// Whether the shell lane holds a read (T18.4): a parked verb-2 word
+// in the hold is the C shell's read waiting for its byte — the merged
+// stream's judgment skips the 0x454D heads while it sits, the lanes
+// never crossing, the bytes the read's alone.
+def input_byte_lane_waiting() Bool {
+  var i = 0
+  while i < input_hold_seats {
+    var seat = input_hold + (i * input_hold_seat)
+    if peek64(seat) != 0 {
+      if op_of(peek64(seat + 8)) == 2 {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  return false
+}
 
 // The parents (emo-desktop A12.1): one cell per pid, the spawner's
 // pid written at the spawn and at the exec — one write per pid ever,
@@ -1368,7 +1404,7 @@ def process_serve_gate(w Int64) Void {
           }
           if phit0 == false {
             var n = peek64(exit_count)
-            if n < 8 {
+            if n < exit_bound {
               poke64(exit_pids + (n * 8), pid)
               poke64(exit_codes + (n * 8), status)
               poke64(exit_count, n + 1)
@@ -2392,6 +2428,21 @@ def shortcut_take_for(pid Int64) Int64 {
 // is who the moves serve; no panel, and every head — the moves beside
 // the rest — falls to the focus's verdict, the A11.2 shape.
 def input_entitled_for(pid Int64, ty Int64) Bool {
+  // The serial lane's owner (T18.4): the shell's door flew (the cell,
+  // sticky — the terminal is the shell's for its life) or a shell read
+  // sits parked between its bytes — the merged stream's reader skips
+  // the 0x454D heads either way, the bytes waiting in the UART ring
+  // for the read that pops them. The REPL's era (the golden's) knows
+  // neither and the bytes ride the stream, the desktop loop's own
+  // hand.
+  if ty == 17741 {
+    if peek64(input_serial_cell) != 0 {
+      return false
+    }
+    if input_byte_lane_waiting() {
+      return false
+    }
+  }
   if ty == 3 {
     var panel = peek64(comp_panel_cell)
     if panel != 0 {
@@ -2608,12 +2659,36 @@ def input_hold_serve(dev Int64, q Int64) Void {
         if peek64(comp_dead_cells + (pid * 8)) != 0 {
           poke64(seat, 0)
         } else {
-          var e = exit_event_take(pid)
-          if e >= 0 {
+          // The lanes split by the seat's own word (T18.4): a verb-2
+          // seat is the shell's byte read — answered the moment the
+          // UART ring holds a byte, the merged judgment none of its
+          // business; a verb-12 seat takes the merged stream's path.
+          if op_of(peek64(seat + 8)) == 2 {
+            if peek64(in_cons) != peek64(in_prod) {
+              var w = peek64(seat + 8)
+              poke64(seat, 0)
+              gate_reply(caller_of(w), input_byte())
+            }
+          } else {
+          // The release before the deaths (T18.4): the shell's door
+          // flew while this reader held — the dress signal is its
+          // alone, the era painted the moment the loop top judges.
+          var rel = 0
+          if peek64(desk_release_cell) != 0 {
+            poke64(desk_release_cell, 0)
+            rel = (ev_release << 48) | 1
+          }
+          if rel != 0 {
             var w = peek64(seat + 8)
             poke64(seat, 0)
-            gate_reply(caller_of(w), e)
+            gate_reply(caller_of(w), rel)
           } else {
+            var e = exit_event_take(pid)
+            if e >= 0 {
+              var w = peek64(seat + 8)
+              poke64(seat, 0)
+              gate_reply(caller_of(w), e)
+            } else {
             // the shortcut before the focus's judgment (T16.1): the
             // panel's owner hears the chord whatever the focus names —
             // the held read answered with the pending event, the focus
@@ -2633,6 +2708,8 @@ def input_hold_serve(dev Int64, q Int64) Void {
                 }
               }
             }
+          }
+          }
           }
         }
       }
@@ -2659,11 +2736,21 @@ def input_serve_read(w Int64, dev Int64, q Int64) Int64 {
   // swallows it.
   var served = false
   while !served {
-    var ex = exit_event_take(caller_of(w))
-    if ex >= 0 {
-      gate_reply(caller_of(w), ex)
+    // The release first (T18.4): the shell's `desktop` door flew the
+    // cell while this serve was parked on the device world — the
+    // route's post woke it — and the dress signal outranks whatever
+    // the stream holds, the held desktop painting the era the moment
+    // its reader's next judgment runs.
+    if peek64(desk_release_cell) != 0 {
+      poke64(desk_release_cell, 0)
+      gate_reply(caller_of(w), (ev_release << 48) | 1)
       served = true
     } else {
+      var ex = exit_event_take(caller_of(w))
+      if ex >= 0 {
+        gate_reply(caller_of(w), ex)
+        served = true
+      } else {
       var ty = input_peek_type(dev, q)
       if ty < 0 {
         device_wait()
@@ -2711,6 +2798,7 @@ def input_serve_read(w Int64, dev Int64, q Int64) Int64 {
         }
       }
     }
+    }
   }
   return 0
 }
@@ -2732,12 +2820,35 @@ def input_parked(w Int64, dev Int64, q Int64) Void {
     }
   } else {
     if op == 2 {
-      gate_reply(caller_of(w), input_byte())
+      // The shell lane's read parks beside the merged reads (T18.4's
+      // two-lane serve): the byte answers from the hold when the UART
+      // ring holds one — the old shape blocked the whole service
+      // inside this arm, the merged stream's words starving behind
+      // the shell's typing.
+      if !input_hold_put(caller_of(w), w) {
+        println("input: the hold overflowed")
+        halt()
+      }
     } else {
       if op == 13 {
         // the re-judgment's kick (emo-desktop A11.2): the focus's
         // world moved — the held reads are judged by the loop's next
         // pass, nothing to answer
+      } else {
+      if op == 66 {
+        // desk_release (T18.4): the desktop era's door — the boot's
+        // shell stage flies it the moment the spawn lands (the root's
+        // own raw ecall), emosh's `desktop` word flies it again by
+        // hand. The one-shot cell is the held desktop pass's dress
+        // signal, the loop top's judgment (or the parked serve's own
+        // wake — the post woke it) hands the release event to the
+        // verb-12 reader that asks next. The serial cell rides sticky:
+        // the terminal is the shell's for its life, the merged
+        // stream's 0x454D heads skipped from here on. The answer flies
+        // now: the caller's next act costs it nothing.
+        poke64(desk_release_cell, 1)
+        poke64(input_serial_cell, 1)
+        gate_reply(caller_of(w), 0)
       } else {
       if op == 18 {
         // input_info (T8.13): the index-th pointer's axes, the
@@ -2749,6 +2860,7 @@ def input_parked(w Int64, dev Int64, q Int64) Void {
         } else {
           gate_reply(caller_of(w), -4)
         }
+      }
       }
       }
     }
@@ -2782,10 +2894,21 @@ def input_service(boss Pid) Void {
     // sender's own pid) go back a byte, the one send only a dynamic
     // binding carries.
     input_hold_serve(dev, q)
+    // The shell lane's starvation guard (T18.4): a verb-2 seat waits
+    // on the UART ring, the ring holds no byte — the service parks on
+    // the device world and the judgment re-runs at every wake until
+    // the byte is served. The park is the point: a device line's wake
+    // of the receive park re-parks without ever reaching this loop's
+    // top (the A11.2 rule), so falling through to the receive here
+    // would starve the seat the ticks' own broadcast never saves.
+    while input_byte_lane_waiting() && peek64(in_cons) == peek64(in_prod) {
+      device_wait()
+      input_hold_serve(dev, q)
+    }
     receive {
       x then {
         var op = op_of(x)
-        if op == 2 || op == 12 || op == 13 || op == 18 {
+        if op == 2 || op == 12 || op == 13 || op == 18 || op == 66 {
           input_parked(x, dev, q)
         } else {
           x <- input_byte()
