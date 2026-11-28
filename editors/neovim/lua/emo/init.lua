@@ -59,24 +59,20 @@ function M.setup(opts)
     desc = 'emo: wire insert completion to an explicit keypress',
     callback = function(args)
       local client = vim.lsp.get_client_by_id(args.data.client_id)
-      if
-        client ~= nil
-        and client.name == 'emo'
-        and config.get().completion
-      then
+      if client ~= nil and client.name == 'emo' and config.get().completion then
         vim.lsp.completion.enable(true, client.id, args.buf, { autotrigger = false })
         vim.keymap.set('i', '<Tab>', explicit_tab, {
           buffer = args.buf,
           expr = true,
           desc = 'emo: indent, or open completion off indentation',
         })
-        local opts = {
+        local navigate = {
           buffer = args.buf,
           expr = true,
           desc = 'emo: open completion, navigate while open',
         }
-        vim.keymap.set('i', '<C-n>', explicit_completion('<C-n>'), opts)
-        vim.keymap.set('i', '<C-p>', explicit_completion('<C-p>'), opts)
+        vim.keymap.set('i', '<C-n>', explicit_completion('<C-n>'), navigate)
+        vim.keymap.set('i', '<C-p>', explicit_completion('<C-p>'), navigate)
       end
     end,
   })
