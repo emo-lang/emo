@@ -1266,6 +1266,17 @@ on both transports.
     the prompt alive, and the golden's two legs stayed byte for byte
     (the REPL knows none of the new paths — no verb 66, no op 2 seat
     before its own echo beat, no cell).
+  - **Found on the way from the fork (2026-11-28):** the first fork of
+    the desktop's era answered EAGAIN with the exit table long fixed —
+    the diagnostic's numbers (`rows 115 room 85`) named the growth
+    list: the fork's clone seats the parent's every grown row beside
+    its own, and the shell's era's rows against the old two hundred
+    seats refused it. The list moved past the signals' last span
+    (`.emo_grow2` at `0x87048000`, the count at the head, a thousand
+    and twenty-four rows), T1.4a's execargs keeping the old page's
+    tail. The fork's own checks passed and the child's execvp answered
+    the volume's honest `command not found` — the terminal's external
+    commands live or die by the volume's contents, not the machine's.
   - **T18.4 — the design's first cut (kept for the record):** the
     pass was to be spawned *before* the emosh exec (the exec destroys
     the root's image, so the spawn must precede it) — the landed shape
